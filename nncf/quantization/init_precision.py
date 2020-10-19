@@ -18,9 +18,12 @@ from nncf.quantization.layers import QUANTIZATION_MODULES, QuantizersSwitcher, B
 from .hessian_trace import HessianTraceEstimator
 from .hw_precision_constraints import HWPrecisionConstraints
 from .quantizer_id import QuantizerId
+from .quantizer_propagation import AdjacentQuantizersLocations
 from ..dynamic_graph.graph import NNCFGraph
 from ..dynamic_graph.transform_graph import is_nncf_module
+from ..layer_utils import ProxyModule
 from ..layers import NNCFConv2d
+from ..module_operations import UpdateParameter
 from ..structures import QuantizationPrecisionInitArgs
 from ..utils import in_scope_list, get_all_modules_by_type
 
@@ -127,6 +130,57 @@ class TracesPerLayer:
         return bool(self._traces_order)
 
 
+class AdjacentQuantizers(NamedTuple):
+    activation_quantizers: List[Tuple[QuantizerId, BaseQuantizer]]
+    weight_quantizers: List[Tuple[QuantizerId, BaseQuantizer]]
+
+
+class GroupsOfAdjacentQuantizers:
+    def __init__(self, quantization_ctrl: 'QuantizationController'):
+        repeated_groups = []
+        non_weight_quantizers = quantization_ctrl.non_weight_quantizers
+        sorted_quantizers = OrderedDict(sorted(non_weight_quantizers.items(), key=lambda x: str(x[0])))
+        for quantizer_id, quantizer_info in sorted_quantizers.items():
+            group = quantizer_info.adjacent_quantizers_locations  # type: AdjacentQuantizersLocations
+            if group:
+                repeated_groups.append(group)
+
+        self._quantizer_per_group_id = {}
+        self._groups_of_adjacent_quantizers: List[AdjacentQuantizers] = []
+
+        unique_groups = list(dict.fromkeys(repeated_groups))
+
+        for i, group in enumerate(unique_groups):
+            quantized_module_scopes = group.quantized_module_scopes
+            paired_wq = []
+            for scope in quantized_module_scopes:
+                for quantizer_id, quantizer in quantization_ctrl.weight_quantizers.items():
+                    if scope == quantizer_id.get_scope():
+                        paired_wq.append((quantizer_id, quantizer))
+                        self._quantizer_per_group_id[id(quantizer)] = i
+                        break
+            paired_aq = []
+            for ia_op_ctx in group.activation_quantizer_ctxs:
+                for quantizer_id, quantizer_info in quantization_ctrl.non_weight_quantizers.items():
+                    if ia_op_ctx == quantizer_id.ia_op_exec_context:
+                        quantizer = quantizer_info.quantizer_module_ref
+                        paired_aq.append((quantizer_id, quantizer))
+                        self._quantizer_per_group_id[id(quantizer)] = i
+                        break
+
+            self._groups_of_adjacent_quantizers.append(AdjacentQuantizers(paired_aq, paired_wq))
+
+    def get_group_id_for_quantizer(self, quantizer: BaseQuantizer):
+        qid = id(quantizer)
+        return self._quantizer_per_group_id.get(qid, None)
+
+    def __iter__(self):
+        return iter(self._groups_of_adjacent_quantizers)
+
+    def __bool__(self):
+        return bool(self._groups_of_adjacent_quantizers) and bool(self._quantizer_per_group_id)
+
+
 class HAWQPrecisionInitializer(ManualPrecisionInitializer):
     def __init__(self, algo: 'QuantizationController', config: 'NNCFConfig',
                  init_args: QuantizationPrecisionInitArgs):
@@ -142,6 +196,7 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
             if self._hw_precision_constraints else config.get('bits', [4, 8])
         self._init_device = init_args.device
         self.flops_counter = CompressionRatioCalculator(self._model, self._quantizers_handler)
+        self._groups_of_adjacent_quantizers = GroupsOfAdjacentQuantizers(algo)
 
     def apply_init(self):
         original_device = next(self._model.parameters()).device
@@ -156,6 +211,10 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         bits_configurations = self.get_configs_constrained_by_order(self._bits, num_weights)
 
         ordered_weight_quantization_ids = list(self._ordered_weight_quantizations.keys())
+
+        self._merge_constraints_for_adjacent_quantizers(self._groups_of_adjacent_quantizers,
+                                                        self._hw_precision_constraints)
+
         bits_configurations = self._filter_configs_by_precision_constraints(bits_configurations,
                                                                             self._hw_precision_constraints,
                                                                             ordered_weight_quantization_ids,
@@ -163,37 +222,59 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         if not bits_configurations:
             raise RuntimeError('All bits configurations are incompatible with HW Config!')
 
+        bits_configurations = self._filter_configs_by_grouped_weight_quantizers(bits_configurations,
+                                                                                ordered_weight_quantization_ids,
+                                                                                self._groups_of_adjacent_quantizers,
+                                                                                traces_order)
+        if not bits_configurations:
+            raise RuntimeError('No bits configurations are left after removing inconsistent groups of weight quantizers'
+                               ' with adjacent activation quantizers!')
+
+        flops_bits_per_config = self.get_flops_bits_per_config(bits_configurations, traces_order)
+        min_ratio = min(flops_bits_per_config)
+        max_ratio = max(flops_bits_per_config)
         skipped_quantizers = self._quantizers_handler.get_skipped_weight_quantizers_per_id()
-        min_ratio, max_ratio = self.flops_counter.ratio_limits(self._bits, traces_order, self._hw_precision_constraints,
-                                                               skipped_quantizers)
-        if not min_ratio <= self._compression_ratio <= max_ratio:
-            raise AttributeError('Invalid compression ratio={}. Should be between within range [{:.2f}, {:.2f}]'.format(
-                self._compression_ratio, min_ratio, max_ratio))
+        t_min_ratio, t_max_ratio, max_config, max_config_unordered = self.flops_counter.ratio_limits(self._bits, traces_order,
+                                                                               self._hw_precision_constraints,
+                                                                               skipped_quantizers)
+
+        result = self._filter_configs_by_precision_constraints([max_config_unordered],
+                                                                            self._hw_precision_constraints,
+                                                                            ordered_weight_quantization_ids,
+                                                                            traces_order)
+
+        print(f'Theoretical min={t_min_ratio} and max={t_max_ratio}, the rest={result}')
+
+        # if not min_ratio <= self._compression_ratio <= max_ratio:
+        #     raise AttributeError('Invalid compression ratio={}. Should be within range [{:.2f}, {:.2f}]'.format(
+        #         self._compression_ratio, min_ratio, max_ratio))
 
         perturbations, weight_observers = self.calc_quantization_noise()
 
         configuration_metric = self.calc_hawq_metric_per_configuration(bits_configurations, perturbations,
                                                                        traces_per_layer, self._init_device)
 
-        flops_bits_per_config = self.get_flops_bits_per_config(bits_configurations, traces_order)
-        config_index = self.choose_configuration(configuration_metric, flops_bits_per_config)
-        chosen_config_per_layer = bits_configurations[config_index]
-        chosen_config_per_layer = self.get_ordered_config(chosen_config_per_layer, traces_order)
-        nncf_logger.info('Chosen HAWQ configuration with ratio={:.2f}, bitwidth per weightable layer={}'.format(
-            flops_bits_per_config[config_index], chosen_config_per_layer))
+        # config_index = self.choose_configuration(configuration_metric, flops_bits_per_config)
+        # chosen_config_per_layer = bits_configurations[config_index]
+        # chosen_config_per_layer = self.get_ordered_config(chosen_config_per_layer, traces_order)
+        chosen_config_per_layer = max_config
+        # nncf_logger.info('Chosen HAWQ configuration with ratio={:.2f}, bitwidth per weightable layer={}'.format(
+        #     flops_bits_per_config[config_index], chosen_config_per_layer))
         nncf_logger.debug('Order of the weightable layers in the HAWQ configuration={}'.format(traces_order))
 
         self.set_chosen_config(chosen_config_per_layer)
 
-        if is_debug():
+        if not is_debug():
             hawq_debugger = HAWQDebugger(bits_configurations, perturbations,
                                          weight_observers, traces_per_layer, self._bits)
-            hawq_debugger.dump_metric_MB(configuration_metric)
-            hawq_debugger.dump_metric_flops(configuration_metric, flops_bits_per_config, config_index)
-            hawq_debugger.dump_avg_traces()
-            hawq_debugger.dump_density_of_quantization_noise()
-            hawq_debugger.dump_perturbations_ratio()
-            hawq_debugger.dump_bitwidth_graph(self._algo, self._model)
+            # hawq_debugger.dump_metric_MB(configuration_metric)
+            # hawq_debugger.dump_metric_flops(configuration_metric, flops_bits_per_config, config_index)
+            # hawq_debugger.dump_avg_traces()
+            # hawq_debugger.dump_density_of_quantization_noise()
+            # hawq_debugger.dump_perturbations_ratio()
+            hawq_debugger.dump_bitwidth_graph(self._algo, self._model, self._groups_of_adjacent_quantizers,
+                                              self._hw_precision_constraints,
+                                              self._quantizers_handler)
 
         self._model.rebuild_graph()
         str_bw = [str(element) for element in self.get_bitwidth_per_scope()]
@@ -204,7 +285,24 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         ordered_metric_per_layer = self.get_metric_per_layer(chosen_config_per_layer, perturbations, traces_per_layer)
         return ordered_metric_per_layer
 
-    def get_flops_bits_per_config(self, bits_configurations, traces_order):
+    @staticmethod
+    def _merge_constraints_for_adjacent_quantizers(groups_of_adjacent_quantizers, hw_precision_constraints):
+        for group_of_adjacent_quantizers in groups_of_adjacent_quantizers:
+            all_bits_sets = []
+            quantizer_ids = []
+            all_quantizers = group_of_adjacent_quantizers.weight_quantizers + group_of_adjacent_quantizers.activation_quantizers
+            for quantizer_id, _ in all_quantizers:
+                all_bits_sets.append(hw_precision_constraints.get(quantizer_id))
+                quantizer_ids.append(quantizer_id)
+            minimal_set_bits = set.intersection(*all_bits_sets)
+            for quantizer_id in quantizer_ids:
+                if not minimal_set_bits:
+                    raise RuntimeError(
+                        'No bits configurations are left after removing inconsistent groups of weight quantizers'
+                        ' with adjacent activation quantizers!')
+                hw_precision_constraints.replace(quantizer_id, minimal_set_bits)
+
+    def get_flops_bits_per_config(self, bits_configurations, traces_order) -> List[float]:
         skipped = self._quantizers_handler.get_skipped_weight_quantizers_per_id()
         flops_bits_per_config = []
         for bits_config in bits_configurations:
@@ -216,9 +314,10 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         sorted_quantizers = OrderedDict(sorted(self._all_quantizers_per_scope.items(), key=lambda x: str(x[0])))
         full_bitwidth_per_scope = []
         for scope, quantizer in sorted_quantizers.items():
-            quantizer_id = self._quantizers_handler.get_id(quantizer)
-            if quantizer.num_bits != self.original_precisions[quantizer_id]:
-                full_bitwidth_per_scope.append([quantizer.num_bits, str(scope)])
+            # TODO: why composite?? 'ModuleDict/SymmetricQuantizer[ResNet/Sequential[layer1]/Bottleneck[1]/__iadd___0;ResNet/Sequential[layer1]/Bottleneck[2]/BatchNorm2d[bn3]/batch_norm_0]'
+            # quantizer_id = self._quantizers_handler.get_id(quantizer)
+            # if quantizer.num_bits != self.original_precisions[quantizer_id]:
+            full_bitwidth_per_scope.append([quantizer.num_bits, str(scope)])
         return full_bitwidth_per_scope
 
     @staticmethod
@@ -234,10 +333,11 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
 
     @staticmethod
     def disable_all_gradients_except_weights_of_quantized_modules(
-            quantizers_switcher: QuantizersSwitcher,
-            quantized_weight_modules_registry: Dict[str, torch.nn.Module],
-            model: nn.Module,
-            scopes_of_skipped_weight_quantizers: List['Scope'] = None) -> ParamsToRestore: # pylint: disable=undefined-variable
+        quantizers_switcher: QuantizersSwitcher,
+        quantized_weight_modules_registry: Dict[str, torch.nn.Module],
+        model: nn.Module,
+        scopes_of_skipped_weight_quantizers: List[
+            'Scope'] = None) -> ParamsToRestore:  # pylint: disable=undefined-variable
         """
         Disables gradients of all parameters, except for layers that have quantizers for weights, which wasn't skipped
         because of single precision constraints.
@@ -356,8 +456,9 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         filtered_bits_configurations = []
         for bits_configuration in bits_configurations:
             is_all_bitwidth_compatible = True
-            for i, bitwidth in enumerate(bits_configuration):
-                weight_id = ordered_weight_ids[traces_order[i]]
+            ordered_config = HAWQPrecisionInitializer.get_ordered_config(bits_configuration, traces_order)
+            for i, bitwidth in enumerate(ordered_config):
+                weight_id = ordered_weight_ids[i]
                 bits_constraints = hw_precision_constraints.get(weight_id)
                 if bitwidth not in bits_constraints:
                     is_all_bitwidth_compatible = False
@@ -379,7 +480,15 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
             for wi in self._ordered_weight_quantizations.values():
                 wi.num_bits = b
 
-            self._model.do_dummy_forward(force_eval=True)
+            # TODO: replace with do_dummy_forward call on compressing in eval mode only
+            # Call each UpdateWeight op, instead of calling dummy_forward. It's needed because dummy_forward must be
+            # run with force_eval=False, which overrides BatchNorm statistics. This requirement comes from the models
+            # with quantizers on the branches, which are enabled in train mode (AuxLogits for Inception3)
+            for quantized_module in self._algo.quantized_weight_modules_registry.values():
+                ops = [op for op in quantized_module.pre_ops.values() if isinstance(op, UpdateParameter)]
+                ops += [op for op in quantized_module.post_ops.values() if isinstance(op, UpdateParameter)]
+                for op in ops:
+                    op(ProxyModule(quantized_module), None)
 
             for i, observer in enumerate(observers):
                 perturbations.add(layer_id=i, bitwidth=b, perturbation=observer.get_observation().to(self._init_device))
@@ -416,10 +525,21 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
     def set_chosen_config(self, weight_bits_per_layer: List[int]):
         for wq, bits in zip(self._ordered_weight_quantizations.values(), weight_bits_per_layer):
             wq.num_bits = bits
-        pairs = self._algo.get_weights_activation_quantizers_pairs()
-        for pair in pairs:
-            wqs, aq = pair
-            aq.num_bits = max([wq.num_bits for wq in wqs])
+        if self._groups_of_adjacent_quantizers:
+            for group in self._groups_of_adjacent_quantizers:
+                bitwidth_set = {wq.num_bits for _, wq in group.weight_quantizers}
+                if len(bitwidth_set) > 1:
+                    raise RuntimeError('Invalid grouping of weight quantizers')
+                if bitwidth_set:
+                    bitwidth = bitwidth_set.pop()
+                    for _, aq in group.activation_quantizers:
+                        aq.num_bits = bitwidth
+        else:
+            # TODO: delete not-consistent pairs of activation and weights for pattern-based approach
+            pairs = self._algo.get_weights_activation_quantizers_pairs()
+            for pair in pairs:
+                wqs, aq = pair
+                aq.num_bits = max([wq.num_bits for wq in wqs])
 
     def get_metric_per_layer(self, chosen_config_per_layer: List[int], perturbations: Perturbations,
                              traces_per_layer: TracesPerLayer):
@@ -429,6 +549,40 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         ordered_metric_per_layer = [i[0] for i in
                                     sorted(enumerate(metric_per_layer), reverse=True, key=lambda x: x[1])]
         return ordered_metric_per_layer
+
+    @staticmethod
+    def _filter_configs_by_grouped_weight_quantizers(bits_configurations: List[List[int]],
+                                                     ordered_weight_quantization_ids: List[QuantizerId],
+                                                     groups_of_adjacent_quantizers: GroupsOfAdjacentQuantizers,
+                                                     traces_order: List[int], ) -> List[List[int]]:
+        """ removes configs where adjacent weight quantizers have different bitwidth. Adjacency is defined by common
+        activation quantizers"""
+        filtered_bits_configurations = []
+        all_grouped_indexes = []
+        for group_of_adjacent_quantizers in groups_of_adjacent_quantizers:
+            wqs = group_of_adjacent_quantizers.weight_quantizers
+            if len(wqs) > 1:
+                indexes_of_grouped_wq = []
+                for quantizer_id, _ in wqs:
+                    index = ordered_weight_quantization_ids.index(quantizer_id)
+                    indexes_of_grouped_wq.append(index)
+                all_grouped_indexes.append(indexes_of_grouped_wq)
+
+        if not all_grouped_indexes:
+            return bits_configurations
+
+        for bits_configuration in bits_configurations:
+            ordered_config = HAWQPrecisionInitializer.get_ordered_config(bits_configuration, traces_order)
+            keep_config = True
+            for indexes_of_grouped_wq in all_grouped_indexes:
+                grouped_bits = [ordered_config[index] for index in indexes_of_grouped_wq]
+                if grouped_bits[1:] != grouped_bits[:-1]:
+                    keep_config = False
+                    break
+            if keep_config:
+                filtered_bits_configurations.append(bits_configuration)
+
+        return filtered_bits_configurations
 
 
 class WeightQuantizersHandler:
@@ -465,7 +619,7 @@ class WeightQuantizersHandler:
     def get_ordered_weight_quantizers_per_id(self) -> Dict[QuantizerId, BaseQuantizer]:
         return self._ordered_weight_quantizations
 
-    def get_id(self, quantizer: BaseQuantizer) -> Dict[int, QuantizerId]:
+    def get_id(self, quantizer: BaseQuantizer) -> QuantizerId:
         address = id(quantizer)
         return self._quantizer_address_to_id_mapping[address]
 
@@ -549,12 +703,12 @@ class CompressionRatioCalculator:
                     min_config[order[i]] = min(bit_constraints)
                     max_config[order[i]] = max(bit_constraints)
 
-        min_config = HAWQPrecisionInitializer.get_ordered_config(min_config, order)
+        min_config_ordered = HAWQPrecisionInitializer.get_ordered_config(min_config, order)
         max_config = HAWQPrecisionInitializer.get_ordered_config(max_config, order)
 
-        max_ratio = self.ratio_for_bits_configuration(min_config, skipped)
+        max_ratio = self.ratio_for_bits_configuration(min_config_ordered, skipped)
         min_ratio = self.ratio_for_bits_configuration(max_config, skipped)
-        return min_ratio, max_ratio
+        return min_ratio, max_ratio, min_config_ordered, min_config
 
 
 class HAWQDebugger:
@@ -606,24 +760,30 @@ class HAWQDebugger:
         all_quantizations = OrderedDict(sorted(all_quantizations.items(), key=lambda x: str(x[0])))
         return all_quantizations
 
+    # pylint: disable=too-many-branches
     @staticmethod
-    def get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope) -> NNCFGraph:
+    def get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope,
+                           groups_of_adjacent_quantizers: GroupsOfAdjacentQuantizers,
+                           precision_constraints: HWPrecisionConstraints,
+                           quantizers_handler) -> NNCFGraph:
+        grouped_mode = bool(groups_of_adjacent_quantizers)
         nncf_graph = model.get_graph()
         for node_key in nncf_graph.get_all_node_keys():
             node = nncf_graph.get_nx_node_by_key(node_key)
-            node_id = node[NNCFGraph.ID_NODE_ATTR]
             color = ''
             if node[NNCFGraph.OP_EXEC_CONTEXT_NODE_ATTR]:
                 operator_name = node[NNCFGraph.OP_EXEC_CONTEXT_NODE_ATTR].operator_name
                 scope = node[NNCFGraph.OP_EXEC_CONTEXT_NODE_ATTR].input_agnostic.scope_in_model
                 module = model.get_module_by_scope(scope)
                 if isinstance(module, NNCFConv2d):
-                    color = 'blue'
+                    color = 'lightblue'
                     if module.groups == module.in_channels:
                         operator_name = 'DW_Conv2d'
                         color = 'purple'
-
-                node['label'] = '_#'.join([operator_name, str(node_id)])
+                if not grouped_mode:
+                    operator_name += '_#{}'.format(str(node[NNCFGraph.ID_NODE_ATTR]))
+                node['label'] = operator_name
+                node['style'] = 'filled'
                 if color:
                     node['color'] = color
 
@@ -631,32 +791,47 @@ class HAWQDebugger:
         bits_color_map = {4: 'red', 8: 'green', 6: 'orange'}
         for quantizer_id, quantizer_info in non_weight_quantizers.items():
             affected_iap_ctx_list = quantizer_info.affected_ia_op_exec_contexts
-
             for activation_iap_ctx in affected_iap_ctx_list:
                 post_hooked_nx_node_key = nncf_graph.get_node_id_by_iap_context(activation_iap_ctx)
                 post_hooked_module_node = nncf_graph.get_nx_node_by_key(post_hooked_nx_node_key)
                 operator_name = post_hooked_module_node[NNCFGraph.OP_EXEC_CONTEXT_NODE_ATTR].operator_name
-                node_id = post_hooked_module_node[NNCFGraph.ID_NODE_ATTR]
-                post_hooked_module_node['label'] = '_#'.join([operator_name, str(node_id)])
+                if not grouped_mode:
+                    operator_name += '_#{}'.format(str(post_hooked_module_node[NNCFGraph.ID_NODE_ATTR]))
+                post_hooked_module_node['label'] = operator_name
 
                 for next_nx_node_key in nncf_graph.get_successors(post_hooked_nx_node_key):
                     activation_fq_node = nncf_graph.get_nx_node_by_key(next_nx_node_key)
-                    bits = non_weight_quantizers[quantizer_id].quantizer_module_ref.num_bits
+                    activation_quantizer = non_weight_quantizers[quantizer_id].quantizer_module_ref
+                    bits = activation_quantizer.num_bits
 
                     activation_fq_node['color'] = bits_color_map[bits]
+                    activation_fq_node['style'] = 'filled'
                     node_id = activation_fq_node[NNCFGraph.ID_NODE_ATTR]
+                    if grouped_mode:
+                        node_id = groups_of_adjacent_quantizers.get_group_id_for_quantizer(activation_quantizer)
+                        if node_id is None:
+                            nncf_logger.error('No group for activation quantizer: {}'.format(next_nx_node_key))
+                            node_id = 'UNDEFINED'
                     activation_fq_node['label'] = '{}_bit__AFQ_#{}'.format(bits, str(node_id))
 
         for scope, quantizer in all_quantizers_per_full_scope.items():
             if quantizer.is_weights:
                 node = nncf_graph.find_node_in_nx_graph_by_scope(scope)
-                if not node:
+                if node is None:
                     raise AttributeError('Failed to get node by scope={}'.format(str(scope)))
                 if node[NNCFGraph.OP_EXEC_CONTEXT_NODE_ATTR]:
                     bits = quantizer.num_bits
                     node_id = node[NNCFGraph.ID_NODE_ATTR]
-                    node['label'] = '{}_bit__WFQ_#{}'.format(bits, str(node_id))
+                    quantizer_id = quantizers_handler.get_id(quantizer)
+                    supported_bits = precision_constraints.get(quantizer_id)
+                    if grouped_mode:
+                        node_id = groups_of_adjacent_quantizers.get_group_id_for_quantizer(quantizer)
+                        if node_id is None:
+                            nncf_logger.error('No group for weight quantizer: {}'.format(scope))
+                            node_id = 'UNDEFINED'
+                    node['label'] = '{}_bit_from_{}__WFQ_#{}'.format(bits, [str(b) for b in supported_bits], str(node_id))
                     node['color'] = bits_color_map[bits]
+                    node['style'] = 'filled'
         return nncf_graph
 
     def dump_avg_traces(self):
@@ -758,9 +933,14 @@ class HAWQDebugger:
         ax.legend()
         plt.savefig(os.path.join(self._dump_dir, 'Quantization_noise_vs_Average_Trace'))
 
-    def dump_bitwidth_graph(self, algo_ctrl: 'QuantizationController', model: 'NNCFNetwork'):
+    def dump_bitwidth_graph(self, algo_ctrl: 'QuantizationController', model: 'NNCFNetwork',
+                            groups_of_adjacent_quantizers: GroupsOfAdjacentQuantizers,
+                            hw_precision_constraints,
+                            quantizers_handler):
         all_quantizers_per_full_scope = self.get_all_quantizers_per_full_scope(model)
-        graph = self.get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope)
+        graph = self.get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope, groups_of_adjacent_quantizers,
+                                        hw_precision_constraints,
+                                        quantizers_handler)
         graph.dump_graph(self._dump_dir / Path('bitwidth_graph.dot'))
 
 

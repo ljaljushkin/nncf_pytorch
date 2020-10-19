@@ -21,6 +21,16 @@
         "initializer": {
             "range": {
                 "num_init_steps": 5
+            },
+            "precision": {
+                "type": "hawq",
+                "bits": [
+                    4,
+                    8
+                ],
+                "num_data_points": 100,
+                "iter_number": 200,
+                "tolerance": 1e-4
             }
         },
         "ignored_scopes": [

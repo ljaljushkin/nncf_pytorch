@@ -74,12 +74,14 @@ class InsertionInfo:
     def __init__(self, op_exec_context: OperationExecutionContext,
                  is_input=False,
                  is_output=False,
-                 shape_to_operate_on=None):
+                 shape_to_operate_on=None,
+                 adjacent_quantizers_locations: 'AdjacentQuantizersLocations' = None):
         self.op_exec_context = op_exec_context  # type: OperationExecutionContext
         self.is_input = is_input
         self.is_output = is_output
         self.shape_to_operate_on = shape_to_operate_on
         self.linked_op_exec_contexts = []  # type: List[OperationExecutionContext]
+        self.adjacent_quantizers_locations = adjacent_quantizers_locations
 
     def __eq__(self, other: 'InsertionInfo'):
         return self.op_exec_context == other.op_exec_context and Counter(self.linked_op_exec_contexts) == Counter(

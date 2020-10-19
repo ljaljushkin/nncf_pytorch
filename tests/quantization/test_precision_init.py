@@ -12,9 +12,10 @@
 """
 import itertools
 import json
+import numpy as np
 from collections import namedtuple, OrderedDict
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
 
 import math
 import os
@@ -24,21 +25,24 @@ import torch.nn as nn
 import torch.utils.data
 from functools import partial
 from torch.utils import model_zoo
-from torchvision.models import MobileNetV2, mobilenet_v2
+from torchvision.models import MobileNetV2, mobilenet_v2, resnet50, inception_v3
 from torchvision.transforms import transforms
 
 from examples.classification.main import create_cifar
 from examples.common.model_loader import load_model
 from examples.common.models import squeezenet1_1_custom
+from examples.common.sample_config import SampleConfig
+from examples.object_detection.models.ssd_vgg import SSD_VGG
 from nncf import register_default_init_args, NNCFConfig
 from nncf.checkpoint_loading import load_state
 from nncf.debug import set_debug_log_dir
 from nncf.dynamic_graph.context import Scope, ScopeElement
+from nncf.dynamic_graph.graph_builder import create_input_infos
 from nncf.hw_config import HWConfigType
 from nncf.quantization.hessian_trace import HessianTraceEstimator
 from nncf.quantization.hw_precision_constraints import HWPrecisionConstraints
 from nncf.quantization.init_precision import HAWQPrecisionInitializer, TracesPerLayer, Perturbations, \
-    PerturbationObserver, HAWQDebugger, CompressionRatioCalculator, WeightQuantizersHandler
+    PerturbationObserver, HAWQDebugger, CompressionRatioCalculator, WeightQuantizersHandler, GroupsOfAdjacentQuantizers
 from nncf.quantization.layers import QUANTIZATION_MODULES, QuantizerConfig, QuantizersSwitcher
 from nncf.quantization.quantizer_id import WeightQuantizerId
 from nncf.utils import get_all_modules_by_type, safe_thread_call
@@ -54,12 +58,15 @@ from tests.test_compressed_graph import check_graph
 from tests.modules.test_rnn import _seed
 
 
-def create_test_dataloaders(model_size, dataset_dir, batch_size):
+def create_test_dataloaders(config, dataset_dir):
+    input_info = create_input_infos(config)[0]
+    image_size = input_info.shape[-1]
+    batch_size = input_info.shape[0]
     normalize = transforms.Normalize(mean=(0.5, 0.5, 0.5),
                                      std=(0.5, 0.5, 0.5))
 
     train_transforms = transforms.Compose([
-        transforms.CenterCrop(model_size),
+        transforms.CenterCrop(image_size),
         transforms.ToTensor(),
         normalize,
     ])
@@ -91,10 +98,10 @@ def compare_with_ref_if_exists(actual_state, path_to_ref):
             json.dump(actual_state, f)
 
 
-def create_hawq_test_config(batch_size=10, num_data_points=100):
+def create_hawq_test_config(batch_size=10, num_data_points=100, image_size=10):
     config = get_quantization_config_without_range_init()
     config['input_info'] = {
-        "sample_size": [1, 3, 10, 10],
+        "sample_size": [batch_size, 3, image_size, image_size],
     }
     config['batch_size'] = batch_size
     config['compression'].update({
@@ -117,23 +124,38 @@ def create_hawq_test_config(batch_size=10, num_data_points=100):
     return config
 
 
+def create_hawq_test_config_prop_based():
+    config = create_hawq_test_config()
+    config['quantizer_setup_type'] = 'propagation_based'
+    return config
+
+
 def create_config_with_ratio(config_creator, ratio):
-    def impl(batch_size):
-        config = config_creator(batch_size)
+    def impl():
+        config = config_creator()
         config['compression']['initializer']['precision']['compression_ratio'] = ratio
         return config
 
     return impl
 
 
-def create_hawq_hw_test_config(batch_size):
-    config = create_hawq_test_config(batch_size)
+def create_config_with_sample_size(config_creator, sample_size):
+    def impl():
+        config = config_creator()
+        config['input_info']['sample_size'] = sample_size
+        return config
+
+    return impl
+
+
+def create_hawq_hw_test_config():
+    config = create_hawq_test_config()
     config["hw_config_type"] = HWConfigType.VPU.value
     return config
 
 
-def create_staged_hawq_test_config(batch_size):
-    config = create_hawq_test_config(batch_size)
+def create_staged_hawq_test_config():
+    config = create_hawq_test_config()
     config["compression"]["params"] = {
         "activations_quant_start_epoch": 0,
         "weights_quant_start_epoch": 1
@@ -141,19 +163,38 @@ def create_staged_hawq_test_config(batch_size):
     return config
 
 
+def ssd_vgg_512_test():
+    ssd_params = SampleConfig({
+        "steps": [8, 16, 32, 64, 128, 256, 512],
+        "min_sizes": [35.84, 76.8, 153.6, 230.4, 307.2, 384.0, 460.8],
+        "max_sizes": [76.8, 153.6, 230.4, 307.2, 384.0, 460.8, 537.6],
+        "aspect_ratios": [[2], [2, 3], [2, 3], [2, 3], [2, 3], [2], [2]],
+        "variance": [0.1, 0.1, 0.2, 0.2],
+        "clip": False,
+        "flip": True
+    })
+    return SSD_VGG(cfg=ssd_params, size=512, num_classes=21)
+
+
 def get_avg_traces(model, init_device: str):
     """ Assigns bigger average traces for DepthWise Conv than for ordinary Conv and Linear"""
     all_convs = get_all_modules_by_type(model, 'Conv2d')
+    all_linear = get_all_modules_by_type(model, 'Linear')
     dw_conv_indexes = [i for i, conv in enumerate(all_convs.values()) if conv.groups == conv.in_channels]
     dw_conv_indexes.append(len(all_convs))
-    num_traces = len(all_convs) + 1  # +1 Linear
+    num_traces = len(all_convs) + len(all_linear)
 
     mock_avg_traces = []
     scale = 1e-1
     for i in range(num_traces):
-        relative_sensativity = 2 * num_traces + i if i in dw_conv_indexes else num_traces - i
-        mock_avg_traces.append(torch.Tensor([scale * relative_sensativity]).to(init_device))
+        relative_sensitivity = 2 * num_traces + i if i in dw_conv_indexes else num_traces - i
+        mock_avg_traces.append(torch.Tensor([scale * relative_sensitivity]).to(init_device))
     return torch.Tensor(mock_avg_traces).to(init_device)
+
+
+def get_permutted_avg_traces_for_vpu(model, init_device: str):
+    avg_traces = get_avg_traces_for_vpu(model, init_device)
+    return avg_traces[np.random.permutation(len(avg_traces))]
 
 
 def get_avg_traces_for_vpu(model, init_device: str):
@@ -167,52 +208,76 @@ def get_avg_traces_for_vpu(model, init_device: str):
         [avg_traces[i] for i, conv in enumerate(all_convs.values()) if conv.groups != conv.in_channels]).to(init_device)
 
 
-@pytest.mark.parametrize(('config_creator', 'filename_suffix', 'avg_traces_creator'),
-                         ([create_hawq_test_config, 'pattern_based', get_avg_traces],
-                          [create_staged_hawq_test_config, 'pattern_based', get_avg_traces],
-                          [create_hawq_hw_test_config, 'hw_config_vpu', get_avg_traces_for_vpu],
-                          [create_config_with_ratio(create_hawq_hw_test_config, 1.63), 'hw_config_vpu_ratio',
-                           get_avg_traces_for_vpu]
-                          ))
-def test_hawq_precision_init(_seed, dataset_dir, tmp_path, mocker, config_creator: Callable, filename_suffix: str,
-                             avg_traces_creator: Callable):
-    batch_size = 10
-    config = config_creator(batch_size)
-    model = MobileNetV2(num_classes=10)
-    model.eval()
+class HAWQTestStruct(NamedTuple):
+    model_creator: Callable[[], nn.Module] = mobilenet_v2
+    config_creator: Callable[[int], NNCFConfig] = create_hawq_hw_test_config
+    filename_suffix: str = 'hw_config_vpu'
+    avg_traces_creator: Callable[[nn.Module, str], torch.Tensor] = get_permutted_avg_traces_for_vpu
+
+    def __str__(self):
+        return '_'.join([self.model_creator.__name__, self.config_creator.__name__, self.filename_suffix])
+
+
+TEST_PARAMS = (
+    HAWQTestStruct(config_creator=create_hawq_test_config,
+                   filename_suffix='pattern_based',
+                   avg_traces_creator=get_avg_traces),
+    HAWQTestStruct(config_creator=create_staged_hawq_test_config,
+                   filename_suffix='pattern_based',
+                   avg_traces_creator=get_avg_traces),
+    HAWQTestStruct(config_creator=create_hawq_test_config_prop_based,
+                   avg_traces_creator=get_avg_traces,
+                   filename_suffix='prop_based'),
+    HAWQTestStruct(avg_traces_creator=get_avg_traces_for_vpu,
+                   config_creator=create_config_with_ratio(create_hawq_hw_test_config, 1.46)),
+    HAWQTestStruct(config_creator=create_config_with_ratio(create_hawq_hw_test_config, 1.4),
+                   filename_suffix='hw_config_vpu_ratio'),
+    HAWQTestStruct(model_creator=squeezenet1_1_custom,
+                   config_creator=create_config_with_sample_size(create_hawq_hw_test_config, [1, 3, 224, 224])),
+    HAWQTestStruct(model_creator=resnet50),
+    HAWQTestStruct(model_creator=inception_v3,
+                    avg_traces_creator=get_avg_traces_for_vpu,
+                   config_creator=create_config_with_sample_size(create_hawq_hw_test_config, [2, 3, 299, 299])),
+    HAWQTestStruct(model_creator=ssd_vgg_512_test,
+                   config_creator=create_config_with_sample_size(create_hawq_hw_test_config, [1, 3, 512, 512]),
+                   avg_traces_creator=get_avg_traces_for_vpu),
+)
+
+
+@pytest.mark.parametrize('params', TEST_PARAMS, ids=[str(p) for p in TEST_PARAMS])
+def test_hawq_precision_init(_seed, dataset_dir, tmp_path, mocker, params):
+    config = params.config_creator()
+    model = params.model_creator()
 
     criterion = nn.CrossEntropyLoss().cuda()
     if not dataset_dir:
         dataset_dir = str(tmp_path)
-    train_loader, _ = create_test_dataloaders(config.get("model_size"), dataset_dir, batch_size)
+    train_loader, _ = create_test_dataloaders(config, dataset_dir)
     config = register_default_init_args(config, train_loader, criterion)
 
     mocked_trace = mocker.patch('nncf.quantization.hessian_trace.HessianTraceEstimator.get_average_traces')
-    mocked_trace.return_value = avg_traces_creator(model, 'cuda')
-    from torchvision.models.mobilenet import model_urls
-    load_state(model, model_zoo.load_url(model_urls['mobilenet_v2']))
+    mocked_trace.return_value = params.avg_traces_creator(model, 'cuda')
     model, algo_ctrl = create_compressed_model_and_algo_for_test(model, config)
     model = model.cuda()
-
     all_quantizers_per_full_scope = HAWQDebugger.get_all_quantizers_per_full_scope(model)
     quantizer_switcher = QuantizersSwitcher(list(all_quantizers_per_full_scope.values()))
     # graph may not contain some quantizers (e.g. in staged scenario)
     quantizer_switcher.enable_quantizers()
     model.rebuild_graph()
-    graph = HAWQDebugger.get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope)
-    path_to_dot = 'mobilenet_v2_mixed_bitwidth_graph_{}.dot'.format(filename_suffix)
-    check_graph(graph, path_to_dot, os.path.join('quantized', 'hawq'), sort_dot_graph=False)
+    # groups_of_adjacent_quantizers = GroupsOfAdjacentQuantizers(algo_ctrl)
+    # graph = HAWQDebugger.get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope,
+    #                                         groups_of_adjacent_quantizers)
+    # path_to_dot = '{}_mixed_bitwidth_graph_{}.dot'.format(params.model_creator.__name__, params.filename_suffix)
+    # check_graph(graph, path_to_dot, os.path.join('quantized', 'hawq'), sort_dot_graph=False)
 
 
 def test_hawq_hw_vpu_config_e2e(_seed, dataset_dir, tmp_path):
-    batch_size = 10
-    config = create_hawq_hw_test_config(batch_size)
+    config = create_hawq_hw_test_config()
     model = MobileNetV2(num_classes=10)
-    model.eval()
     criterion = nn.CrossEntropyLoss()
     if not dataset_dir:
         dataset_dir = str(tmp_path)
-    train_loader, _ = create_test_dataloaders(config.get("model_size"), dataset_dir, batch_size)
+    train_loader, _ = create_test_dataloaders(config, dataset_dir)
     config = register_default_init_args(config, train_loader, criterion)
 
     create_compressed_model_and_algo_for_test(model, config)
@@ -291,7 +356,7 @@ def test_hawq_on_single_conv_without_quantizers(_seed, dataset_dir, tmp_path, pa
 
     if not dataset_dir:
         dataset_dir = str(tmp_path)
-    data_loader, _ = create_test_dataloaders(config.get("model_size"), dataset_dir, params.batch_size)
+    data_loader, _ = create_test_dataloaders(config, dataset_dir)
     device = next(model.parameters()).device
 
     for _, param in model.named_parameters():
@@ -412,7 +477,7 @@ def hawq_dumping_worker(gpu, ngpus_per_node, config, tmp_path):
 def test_hawq_broadcast_avg_traces_in_distributed_mode(tmp_path):
     num_data_points = 10
     batch_size = 2
-    config = create_hawq_test_config(batch_size, num_data_points)
+    config = create_hawq_test_config(batch_size, num_data_points, image_size=224)
 
     ngpus_per_node = torch.cuda.device_count()
     config.world_size = ngpus_per_node
