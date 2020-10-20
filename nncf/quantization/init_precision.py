@@ -285,7 +285,7 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         config_index = self.choose_configuration(configuration_metric, flops_bits_per_config)
         chosen_config_in_traces_order = bits_configurations[config_index]
         chosen_config_in_execution_order = traces_order.get_execution_order_config(chosen_config_in_traces_order)
-        # chosen_config_in_execution_order = max_config
+        chosen_config_in_execution_order = max_config
         nncf_logger.info('Chosen HAWQ configuration with ratio={:.2f}, bitwidth per weightable layer={}'.format(
             flops_bits_per_config[config_index], chosen_config_in_execution_order))
         nncf_logger.debug('Order of the weightable layers in the HAWQ configuration (in descending order of average '

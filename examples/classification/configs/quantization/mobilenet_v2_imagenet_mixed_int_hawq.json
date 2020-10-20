@@ -24,16 +24,9 @@
         },
         "weight_decay": 1e-05
     },
+    "hw_config_type": "vpu",
     "compression": {
         "algorithm": "quantization",
-        "weights": {
-            "mode": "asymmetric",
-            "per_channel": true
-        },
-        "activations": {
-            "mode": "asymmetric"
-        },
-        "quantize_inputs": true,
         "initializer": {
             "precision": {
                 "type": "hawq",
@@ -43,7 +36,8 @@
                 ],
                 "num_data_points": 100,
                 "iter_number": 200,
-                "tolerance": 1e-4
+                "tolerance": 1e-1,
+                "compression_ratio": 1
             }
         }
     }
