@@ -104,7 +104,7 @@ def create_compressed_model(model: Module, config: NNCFConfig,
             graph = graph_builder.build_graph(model)
             graph.visualize_graph(osp.join(config.get("log_dir", "."), "original_graph.dot"))
 
-    if is_debug():
+    if not is_debug():
         set_debug_log_dir(config.get("log_dir", "."))
 
     input_info_list = create_input_infos(config)

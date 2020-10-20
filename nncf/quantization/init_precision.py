@@ -41,13 +41,14 @@ class ManualPrecisionInitializer:
                                                            self._hw_precision_constraints)
 
         quantization_types = [class_type.__name__ for class_type in QUANTIZATION_MODULES.registry_dict.values()]
-        self._ordered_weight_quantizations = self._quantizers_handler.get_ordered_weight_quantizers_per_id()
+        self._weight_quantizations_by_execution_order = self._quantizers_handler.get_weight_quantizers_in_execution_order_per_id()
 
         self._all_quantizers_per_scope = get_all_modules_by_type(
             self._model.get_compression_modules_by_type(CompressionModuleType.ACTIVATION_QUANTIZER), quantization_types)
         self._all_quantizers_per_scope.update(get_all_modules_by_type(
             self._model.get_compression_modules_by_type(CompressionModuleType.FUNCTION_QUANTIZER), quantization_types))
-        self._all_quantizers_per_scope.update(self._quantizers_handler.get_all_ordered_weight_quantizers_per_scope())
+        self._all_quantizers_per_scope.update(
+            self._quantizers_handler.get_all_weight_quantizers_in_execution_order_per_scope())
 
     def apply_init(self):
         for pair in self._bitwidth_per_scope:
@@ -111,23 +112,52 @@ class Perturbations:
         return self._perturbations
 
 
-class TracesPerLayer:
-    def __init__(self, traces_per_layer: Tensor):
-        self._traces_per_layer = traces_per_layer
-        self._traces_order = [i[0] for i in
-                              sorted(enumerate(traces_per_layer), reverse=False, key=lambda x: x[1])]
+class TracesOrder:
+    def __init__(self, execution_indexes_of_weights_ordered_by_traces: List[int]):
+        self._index_by_traces_to_execution_index = execution_indexes_of_weights_ordered_by_traces
+        self._num_weights = len(execution_indexes_of_weights_ordered_by_traces)
+        self._index_by_execution_to_index_by_traces = \
+            [execution_indexes_of_weights_ordered_by_traces.index(i) for i in range(self._num_weights)]
 
-    def get(self, index: int) -> Tensor:
-        return self._traces_per_layer[index]
+    def get_execution_order_config(self, bitwidth_by_traces: List[int]) -> List[int]:
+        assert self._num_weights == len(bitwidth_by_traces), f'{self._num_weights} and {len(bitwidth_by_traces)}'
+        execution_order_config = [0] * len(bitwidth_by_traces)
+        for i, bitwidth in enumerate(bitwidth_by_traces):
+            execution_order_config[self._index_by_traces_to_execution_index[i]] = bitwidth
+        return execution_order_config
 
-    def get_order_of_traces(self) -> List[int]:
-        return self._traces_order
+    def get_traces_order_config(self, bitwidth_by_execution: List[int]) -> List[int]:
+        traces_order_config = [0] * len(bitwidth_by_execution)
+        for i, bitwidth in enumerate(bitwidth_by_execution):
+            traces_order_config[self._index_by_execution_to_index_by_traces[i]] = bitwidth
+        return traces_order_config
 
-    def get_all(self) -> Tensor:
-        return self._traces_per_layer
+    def get_execution_index_by_traces_index(self, traces_index: int):
+        return self._index_by_traces_to_execution_index[traces_index]
 
     def __bool__(self):
-        return bool(self._traces_order)
+        return bool(self._index_by_traces_to_execution_index)
+
+
+class TracesPerLayer:
+    def __init__(self, traces_per_layer_by_execution: Tensor):
+        self._traces_per_layer_by_execution = traces_per_layer_by_execution
+        execution_indexes_of_weights_in_descending_order_of_traces = \
+            [i[0] for i in sorted(enumerate(traces_per_layer_by_execution), reverse=False, key=lambda x: x[1])]
+        self.traces_order = TracesOrder(execution_indexes_of_weights_in_descending_order_of_traces)
+
+    def get_by_execution_index(self, execution_index: int) -> Tensor:
+        return self._traces_per_layer_by_execution[execution_index]
+
+    def get_by_trace_index(self, trace_index: int) -> Tensor:
+        execution_index = self.traces_order.get_execution_index_by_traces_index(trace_index)
+        return self._traces_per_layer_by_execution[execution_index]
+
+    def get_all(self) -> Tensor:
+        return self._traces_per_layer_by_execution
+
+    def __bool__(self):
+        return bool(self.traces_order)
 
 
 class AdjacentQuantizers(NamedTuple):
@@ -206,87 +236,87 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         if not traces_per_layer:
             raise RuntimeError('Failed to calculate hessian traces!')
 
-        traces_order = traces_per_layer.get_order_of_traces()
-        num_weights = len(self._ordered_weight_quantizations)
-        bits_configurations = self.get_configs_constrained_by_order(self._bits, num_weights)
+        traces_order = traces_per_layer.traces_order
+        num_weights = len(self._weight_quantizations_by_execution_order)
+        bits_configurations = self.get_configs_constrained_by_traces_order(self._bits, num_weights)
 
-        ordered_weight_quantization_ids = list(self._ordered_weight_quantizations.keys())
+        weight_quantization_ids_by_execution_order = list(self._weight_quantizations_by_execution_order.keys())
 
         self._merge_constraints_for_adjacent_quantizers(self._groups_of_adjacent_quantizers,
                                                         self._hw_precision_constraints)
-
+        print(f'Num all configurations {len(bits_configurations)}')
         bits_configurations = self._filter_configs_by_precision_constraints(bits_configurations,
                                                                             self._hw_precision_constraints,
-                                                                            ordered_weight_quantization_ids,
+                                                                            weight_quantization_ids_by_execution_order,
                                                                             traces_order)
+
         if not bits_configurations:
             raise RuntimeError('All bits configurations are incompatible with HW Config!')
+        print(f'Num filtered configurations by constraints {len(bits_configurations)}')
 
         bits_configurations = self._filter_configs_by_grouped_weight_quantizers(bits_configurations,
-                                                                                ordered_weight_quantization_ids,
+                                                                                weight_quantization_ids_by_execution_order,
                                                                                 self._groups_of_adjacent_quantizers,
                                                                                 traces_order)
+
         if not bits_configurations:
             raise RuntimeError('No bits configurations are left after removing inconsistent groups of weight quantizers'
                                ' with adjacent activation quantizers!')
+        print(f'Num filtered configurations by grouping {len(bits_configurations)}')
 
         flops_bits_per_config = self.get_flops_bits_per_config(bits_configurations, traces_order)
         min_ratio = min(flops_bits_per_config)
         max_ratio = max(flops_bits_per_config)
+        print(f'Real min={min_ratio} and max={max_ratio}')
         skipped_quantizers = self._quantizers_handler.get_skipped_weight_quantizers_per_id()
-        t_min_ratio, t_max_ratio, max_config, max_config_unordered = self.flops_counter.ratio_limits(self._bits, traces_order,
-                                                                               self._hw_precision_constraints,
-                                                                               skipped_quantizers)
+        t_min_ratio, t_max_ratio, max_config = self.flops_counter.ratio_limits(self._bits, self._hw_precision_constraints,
+                                                                   skipped_quantizers)
+        print(f'Theoretical min={t_min_ratio} and max={t_max_ratio}')
 
-        result = self._filter_configs_by_precision_constraints([max_config_unordered],
-                                                                            self._hw_precision_constraints,
-                                                                            ordered_weight_quantization_ids,
-                                                                            traces_order)
-
-        print(f'Theoretical min={t_min_ratio} and max={t_max_ratio}, the rest={result}')
-
-        # if not min_ratio <= self._compression_ratio <= max_ratio:
-        #     raise AttributeError('Invalid compression ratio={}. Should be within range [{:.2f}, {:.2f}]'.format(
-        #         self._compression_ratio, min_ratio, max_ratio))
+        if not min_ratio <= self._compression_ratio <= max_ratio:
+            raise AttributeError('Invalid compression ratio={}. Should be within range [{:.3f}, {:.3f}]'.format(
+                self._compression_ratio, min_ratio, max_ratio))
 
         perturbations, weight_observers = self.calc_quantization_noise()
 
         configuration_metric = self.calc_hawq_metric_per_configuration(bits_configurations, perturbations,
                                                                        traces_per_layer, self._init_device)
 
-        # config_index = self.choose_configuration(configuration_metric, flops_bits_per_config)
-        # chosen_config_per_layer = bits_configurations[config_index]
-        # chosen_config_per_layer = self.get_ordered_config(chosen_config_per_layer, traces_order)
-        chosen_config_per_layer = max_config
-        # nncf_logger.info('Chosen HAWQ configuration with ratio={:.2f}, bitwidth per weightable layer={}'.format(
-        #     flops_bits_per_config[config_index], chosen_config_per_layer))
-        nncf_logger.debug('Order of the weightable layers in the HAWQ configuration={}'.format(traces_order))
+        config_index = self.choose_configuration(configuration_metric, flops_bits_per_config)
+        chosen_config_in_traces_order = bits_configurations[config_index]
+        chosen_config_in_execution_order = traces_order.get_execution_order_config(chosen_config_in_traces_order)
+        # chosen_config_in_execution_order = max_config
+        nncf_logger.info('Chosen HAWQ configuration with ratio={:.2f}, bitwidth per weightable layer={}'.format(
+            flops_bits_per_config[config_index], chosen_config_in_execution_order))
+        nncf_logger.debug('Order of the weightable layers in the HAWQ configuration (in descending order of average '
+                          'Hessian traces) ={}'.format(traces_order))
 
-        self.set_chosen_config(chosen_config_per_layer)
-
+        self.set_chosen_config(chosen_config_in_execution_order)
+        self._model.rebuild_graph()
         if not is_debug():
             hawq_debugger = HAWQDebugger(bits_configurations, perturbations,
                                          weight_observers, traces_per_layer, self._bits)
-            # hawq_debugger.dump_metric_MB(configuration_metric)
-            # hawq_debugger.dump_metric_flops(configuration_metric, flops_bits_per_config, config_index)
-            # hawq_debugger.dump_avg_traces()
-            # hawq_debugger.dump_density_of_quantization_noise()
-            # hawq_debugger.dump_perturbations_ratio()
+            hawq_debugger.dump_metric_MB(configuration_metric)
+            hawq_debugger.dump_metric_flops(configuration_metric, flops_bits_per_config, config_index)
+            hawq_debugger.dump_avg_traces()
+            hawq_debugger.dump_density_of_quantization_noise()
+            hawq_debugger.dump_perturbations_ratio()
             hawq_debugger.dump_bitwidth_graph(self._algo, self._model, self._groups_of_adjacent_quantizers,
                                               self._hw_precision_constraints,
                                               self._quantizers_handler)
-
-        self._model.rebuild_graph()
         str_bw = [str(element) for element in self.get_bitwidth_per_scope()]
         nncf_logger.info('\n'.join(['\n\"bitwidth_per_scope\": [', ',\n'.join(str_bw), ']']))
 
         self._model.to(original_device)
 
-        ordered_metric_per_layer = self.get_metric_per_layer(chosen_config_per_layer, perturbations, traces_per_layer)
+        ordered_metric_per_layer = self.get_metric_per_layer(chosen_config_in_execution_order, perturbations,
+                                                             traces_per_layer)
         return ordered_metric_per_layer
 
     @staticmethod
     def _merge_constraints_for_adjacent_quantizers(groups_of_adjacent_quantizers, hw_precision_constraints):
+        if not hw_precision_constraints:
+            return
         for group_of_adjacent_quantizers in groups_of_adjacent_quantizers:
             all_bits_sets = []
             quantizer_ids = []
@@ -302,12 +332,13 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
                         ' with adjacent activation quantizers!')
                 hw_precision_constraints.replace(quantizer_id, minimal_set_bits)
 
-    def get_flops_bits_per_config(self, bits_configurations, traces_order) -> List[float]:
+    def get_flops_bits_per_config(self, bits_configurations: List[List[int]], traces_order: TracesOrder) -> List[float]:
         skipped = self._quantizers_handler.get_skipped_weight_quantizers_per_id()
         flops_bits_per_config = []
         for bits_config in bits_configurations:
-            bits_config = self.get_ordered_config(bits_config, traces_order)
-            flops_bits_per_config.append(self.flops_counter.ratio_for_bits_configuration(bits_config, skipped))
+            execution_order_config = traces_order.get_execution_order_config(bits_config)
+            flops_bits_per_config.append(
+                self.flops_counter.ratio_for_bits_configuration(execution_order_config, skipped))
         return flops_bits_per_config
 
     def get_bitwidth_per_scope(self) -> List[List[Union[int, str]]]:
@@ -319,13 +350,6 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
             # if quantizer.num_bits != self.original_precisions[quantizer_id]:
             full_bitwidth_per_scope.append([quantizer.num_bits, str(scope)])
         return full_bitwidth_per_scope
-
-    @staticmethod
-    def get_ordered_config(bit_configuration: List[int], order: List[int]) -> List[int]:
-        ordered_config = [0] * len(bit_configuration)
-        for i, bitwidth in enumerate(bit_configuration):
-            ordered_config[order[i]] = bitwidth
-        return ordered_config
 
     class ParamsToRestore(NamedTuple):
         originally_disabled_gradients: List[str]
@@ -429,7 +453,7 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         quantizers_switcher.enable_quantizers()
 
     @staticmethod
-    def get_configs_constrained_by_order(bits_: List[int], num_layers: int) -> List[List[int]]:
+    def get_configs_constrained_by_traces_order(bits_: List[int], num_layers: int) -> List[List[int]]:
         bits = sorted(bits_)
         m = len(bits)
         L = num_layers
@@ -449,14 +473,14 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
     def _filter_configs_by_precision_constraints(bits_configurations: List[List[int]],
                                                  hw_precision_constraints: HWPrecisionConstraints,
                                                  ordered_weight_ids: List[QuantizerId],
-                                                 traces_order: List[int]) -> List[List[int]]:
+                                                 traces_order: TracesOrder) -> List[List[int]]:
         if not hw_precision_constraints:
             return bits_configurations
 
         filtered_bits_configurations = []
         for bits_configuration in bits_configurations:
             is_all_bitwidth_compatible = True
-            ordered_config = HAWQPrecisionInitializer.get_ordered_config(bits_configuration, traces_order)
+            ordered_config = traces_order.get_execution_order_config(bits_configuration)
             for i, bitwidth in enumerate(ordered_config):
                 weight_id = ordered_weight_ids[i]
                 bits_constraints = hw_precision_constraints.get(weight_id)
@@ -470,14 +494,14 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
     def calc_quantization_noise(self) -> [Perturbations, List[PerturbationObserver]]:
         hook_handles = []
         observers = []
-        for module in self._ordered_weight_quantizations.values():
+        for module in self._weight_quantizations_by_execution_order.values():
             observer = PerturbationObserver(self._init_device)
             hook_handles.append(module.register_forward_hook(observer.calc_perturbation))
             observers.append(observer)
 
         perturbations = Perturbations()
         for b in self._bits:
-            for wi in self._ordered_weight_quantizations.values():
+            for wi in self._weight_quantizations_by_execution_order.values():
                 wi.num_bits = b
 
             # TODO: replace with do_dummy_forward call on compressing in eval mode only
@@ -503,10 +527,10 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         configuration_metric = []
         for bits_config in bits_configurations:
             hawq_metric = torch.Tensor([0]).to(device)
-            for i, layer_bits in enumerate(bits_config):
-                order = traces_per_layer.get_order_of_traces()[i]
-                hawq_metric += traces_per_layer.get(order) * perturbations.get(layer_id=order,
-                                                                               bitwidth=layer_bits)
+            for trace_index, layer_bits in enumerate(bits_config):
+                execution_index = traces_per_layer.traces_order.get_execution_index_by_traces_index(trace_index)
+                hawq_metric += traces_per_layer.get_by_trace_index(trace_index) * perturbations.get(
+                    layer_id=execution_index, bitwidth=layer_bits)
             configuration_metric.append(hawq_metric)
         return configuration_metric
 
@@ -522,8 +546,8 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         best_config_index = configuration_metric.index(best_metric)
         return best_config_index
 
-    def set_chosen_config(self, weight_bits_per_layer: List[int]):
-        for wq, bits in zip(self._ordered_weight_quantizations.values(), weight_bits_per_layer):
+    def set_chosen_config(self, weight_bitwidth_in_execution_order: List[int]):
+        for wq, bits in zip(self._weight_quantizations_by_execution_order.values(), weight_bitwidth_in_execution_order):
             wq.num_bits = bits
         if self._groups_of_adjacent_quantizers:
             for group in self._groups_of_adjacent_quantizers:
@@ -541,20 +565,20 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
                 wqs, aq = pair
                 aq.num_bits = max([wq.num_bits for wq in wqs])
 
-    def get_metric_per_layer(self, chosen_config_per_layer: List[int], perturbations: Perturbations,
+    def get_metric_per_layer(self, chosen_config_in_execution_order: List[int], perturbations: Perturbations,
                              traces_per_layer: TracesPerLayer):
         metric_per_layer = []
-        for i, layer_bits in enumerate(chosen_config_per_layer):
-            metric_per_layer.append(traces_per_layer.get(i) * perturbations.get(i, layer_bits))
+        for i, layer_bits in enumerate(chosen_config_in_execution_order):
+            metric_per_layer.append(traces_per_layer.get_by_execution_index(i) * perturbations.get(i, layer_bits))
         ordered_metric_per_layer = [i[0] for i in
                                     sorted(enumerate(metric_per_layer), reverse=True, key=lambda x: x[1])]
         return ordered_metric_per_layer
 
     @staticmethod
     def _filter_configs_by_grouped_weight_quantizers(bits_configurations: List[List[int]],
-                                                     ordered_weight_quantization_ids: List[QuantizerId],
+                                                     weight_quantization_ids_by_execution_order: List[QuantizerId],
                                                      groups_of_adjacent_quantizers: GroupsOfAdjacentQuantizers,
-                                                     traces_order: List[int], ) -> List[List[int]]:
+                                                     traces_order: TracesOrder) -> List[List[int]]:
         """ removes configs where adjacent weight quantizers have different bitwidth. Adjacency is defined by common
         activation quantizers"""
         filtered_bits_configurations = []
@@ -564,18 +588,18 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
             if len(wqs) > 1:
                 indexes_of_grouped_wq = []
                 for quantizer_id, _ in wqs:
-                    index = ordered_weight_quantization_ids.index(quantizer_id)
-                    indexes_of_grouped_wq.append(index)
+                    index_by_execution_order = weight_quantization_ids_by_execution_order.index(quantizer_id)
+                    indexes_of_grouped_wq.append(index_by_execution_order)
                 all_grouped_indexes.append(indexes_of_grouped_wq)
 
         if not all_grouped_indexes:
             return bits_configurations
 
         for bits_configuration in bits_configurations:
-            ordered_config = HAWQPrecisionInitializer.get_ordered_config(bits_configuration, traces_order)
+            bitwidth_by_execution_order = traces_order.get_execution_order_config(bits_configuration)
             keep_config = True
             for indexes_of_grouped_wq in all_grouped_indexes:
-                grouped_bits = [ordered_config[index] for index in indexes_of_grouped_wq]
+                grouped_bits = [bitwidth_by_execution_order[index] for index in indexes_of_grouped_wq]
                 if grouped_bits[1:] != grouped_bits[:-1]:
                     keep_config = False
                     break
@@ -594,11 +618,12 @@ class WeightQuantizersHandler:
         self._quantizer_address_to_id_mapping = {id(quantizer): q_id for q_id, quantizer in all_quantizers.items()}
         quantization_types = [class_type.__name__ for class_type in QUANTIZATION_MODULES.registry_dict.values()]
         weight_module_dict = model.get_nncf_wrapped_model()
-        self._ordered_weight_quantizers_per_scope = get_all_modules_by_type(weight_module_dict, quantization_types)
+        self._weight_quantizers_in_execution_order_per_scope = get_all_modules_by_type(weight_module_dict,
+                                                                                       quantization_types)
         ordered_weight_quantization_list = []
         self._scopes_of_skipped_weight_quantizers = []
         self._skipped_weight_quantizers = {}
-        for scope, quantizer in self._ordered_weight_quantizers_per_scope.items():
+        for scope, quantizer in self._weight_quantizers_in_execution_order_per_scope.items():
             address = id(quantizer)
             if quantizer.is_weights:
                 quantizer_id = self._quantizer_address_to_id_mapping[address]
@@ -608,16 +633,16 @@ class WeightQuantizersHandler:
                 else:
                     self._scopes_of_skipped_weight_quantizers.append(scope)
                     self._skipped_weight_quantizers[quantizer_id] = quantizer
-        self._ordered_weight_quantizations = OrderedDict(ordered_weight_quantization_list)
+        self._weight_quantizers_in_execution_order = OrderedDict(ordered_weight_quantization_list)
 
     def get_scope_of_skipped_weight_quantizers(self) -> List['Scope']:
         return self._scopes_of_skipped_weight_quantizers
 
-    def get_all_ordered_weight_quantizers_per_scope(self) -> Dict['Scope', BaseQuantizer]:
-        return self._ordered_weight_quantizers_per_scope
+    def get_all_weight_quantizers_in_execution_order_per_scope(self) -> Dict['Scope', BaseQuantizer]:
+        return self._weight_quantizers_in_execution_order_per_scope
 
-    def get_ordered_weight_quantizers_per_id(self) -> Dict[QuantizerId, BaseQuantizer]:
-        return self._ordered_weight_quantizations
+    def get_weight_quantizers_in_execution_order_per_id(self) -> Dict[QuantizerId, BaseQuantizer]:
+        return self._weight_quantizers_in_execution_order
 
     def get_id(self, quantizer: BaseQuantizer) -> QuantizerId:
         address = id(quantizer)
@@ -639,7 +664,7 @@ class CompressionRatioCalculator:
     def __init__(self, model, quantizers_handler: WeightQuantizersHandler):
         flops_count_per_module_name = model.get_flops_per_module()
 
-        self._ordered_weight_quantizations = quantizers_handler.get_ordered_weight_quantizers_per_id()
+        self._weight_quantizers_in_execution_order = quantizers_handler.get_weight_quantizers_in_execution_order_per_id()
 
         self.ops_per_quantizer_id = {}
         for name, module in model.named_modules():
@@ -654,13 +679,13 @@ class CompressionRatioCalculator:
 
         self.total_ops_count = sum(v for v in self.ops_per_quantizer_id.values()) * self.DEFAULT_NUMBER_OF_BITS
 
-    def ratio_for_bits_configuration(self, bits_config: List[int],
+    def ratio_for_bits_configuration(self, execution_order_bits_config: List[int],
                                      skipped: Dict[QuantizerId, BaseQuantizer] = None) -> float:
         """
         Calculates compression ratio for a given bits configuration
 
         Args:
-            bits_config: list of bits for each weight quantization
+            execution_order_bits_config: list of bits for each weight quantization in the order of execution
             skipped: quantizers that were skipped from bitwidth initialization, since their bitwidth is determined
             unambiguously based on constraints of the HW config
 
@@ -668,7 +693,8 @@ class CompressionRatioCalculator:
             compression ratio of mixed-precision model by relation to fully INT8
         """
         quantizer_ops = 0
-        for num_bits, (quantizer_id, quantizer) in zip(bits_config, self._ordered_weight_quantizations.items()):
+        for num_bits, (quantizer_id, quantizer) in zip(execution_order_bits_config,
+                                                       self._weight_quantizers_in_execution_order.items()):
             quantizer_ops += num_bits * self.ops_per_quantizer_id[quantizer_id]
         if skipped:
             for quantizer_id, quantizer in skipped.items():
@@ -676,14 +702,13 @@ class CompressionRatioCalculator:
 
         return self.total_ops_count / quantizer_ops
 
-    def ratio_limits(self, bits: List[int], order: List[int] = None, constraints: HWPrecisionConstraints = None,
+    def ratio_limits(self, bits: List[int], constraints: HWPrecisionConstraints = None,
                      skipped: Dict[QuantizerId, BaseQuantizer] = None) -> (float, float):
         """
         Calculates minimum and maximum compression ratio.
 
         Args:
             bits: list of all available bits for weight quantization
-            order: defines the order in which bits are assigned for quantizers
             constraints: precision constraints defined by HW config
             skipped: quantizers that were skipped from bitwidth initialization, since their bitwidth is determined
             unambiguously based on constraints of the HW config
@@ -691,24 +716,19 @@ class CompressionRatioCalculator:
         Returns:
             minimum and maximum compression ratio
         """
-        config_len = len(self._ordered_weight_quantizations)
+        config_len = len(self._weight_quantizers_in_execution_order)
         min_config = [min(bits)] * config_len
         max_config = [max(bits)] * config_len
-        if not order:
-            order = list(range(config_len))
         if constraints:
-            for i, quantizer_id in enumerate(self._ordered_weight_quantizations):
+            for i, quantizer_id in enumerate(self._weight_quantizers_in_execution_order):
                 bit_constraints = constraints.get(quantizer_id)
                 if bit_constraints:
-                    min_config[order[i]] = min(bit_constraints)
-                    max_config[order[i]] = max(bit_constraints)
+                    min_config[i] = min(bit_constraints)
+                    max_config[i] = max(bit_constraints)
 
-        min_config_ordered = HAWQPrecisionInitializer.get_ordered_config(min_config, order)
-        max_config = HAWQPrecisionInitializer.get_ordered_config(max_config, order)
-
-        max_ratio = self.ratio_for_bits_configuration(min_config_ordered, skipped)
+        max_ratio = self.ratio_for_bits_configuration(min_config, skipped)
         min_ratio = self.ratio_for_bits_configuration(max_config, skipped)
-        return min_ratio, max_ratio, min_config_ordered, min_config
+        return min_ratio, max_ratio, min_config
 
 
 class HAWQDebugger:
@@ -724,15 +744,15 @@ class HAWQDebugger:
         self._dump_dir = Path(DEBUG_LOG_DIR) / Path("hawq_dumps")
         self._dump_dir.mkdir(parents=True, exist_ok=True)
 
-        self._traces_order = traces_per_layer.get_order_of_traces()
+        self._traces_order = traces_per_layer.traces_order
         self._traces_per_layer = traces_per_layer.get_all()
 
         num_of_weights = []
         norm_of_weights = []
         for i in range(self._num_weights):
-            order = self._traces_order[i]
-            num_of_weights.append(weight_observers[order].get_numels())
-            norm_of_weights.append(weight_observers[order].get_input_norm())
+            trace_index = self._traces_order.get_execution_index_by_traces_index(i)
+            num_of_weights.append(weight_observers[trace_index].get_numels())
+            norm_of_weights.append(weight_observers[trace_index].get_input_norm())
         self._num_weights_per_layer = torch.Tensor(num_of_weights)
         self._norm_weights_per_layer = torch.Tensor(norm_of_weights)
 
@@ -763,9 +783,7 @@ class HAWQDebugger:
     # pylint: disable=too-many-branches
     @staticmethod
     def get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope,
-                           groups_of_adjacent_quantizers: GroupsOfAdjacentQuantizers,
-                           precision_constraints: HWPrecisionConstraints,
-                           quantizers_handler) -> NNCFGraph:
+                           groups_of_adjacent_quantizers: GroupsOfAdjacentQuantizers) -> NNCFGraph:
         grouped_mode = bool(groups_of_adjacent_quantizers)
         nncf_graph = model.get_graph()
         for node_key in nncf_graph.get_all_node_keys():
@@ -822,14 +840,12 @@ class HAWQDebugger:
                 if node[NNCFGraph.OP_EXEC_CONTEXT_NODE_ATTR]:
                     bits = quantizer.num_bits
                     node_id = node[NNCFGraph.ID_NODE_ATTR]
-                    quantizer_id = quantizers_handler.get_id(quantizer)
-                    supported_bits = precision_constraints.get(quantizer_id)
                     if grouped_mode:
                         node_id = groups_of_adjacent_quantizers.get_group_id_for_quantizer(quantizer)
                         if node_id is None:
                             nncf_logger.error('No group for weight quantizer: {}'.format(scope))
                             node_id = 'UNDEFINED'
-                    node['label'] = '{}_bit_from_{}__WFQ_#{}'.format(bits, [str(b) for b in supported_bits], str(node_id))
+                    node['label'] = '{}_bit__WFQ_#{}'.format(bits, str(node_id))
                     node['color'] = bits_color_map[bits]
                     node['style'] = 'filled'
         return nncf_graph
@@ -899,8 +915,8 @@ class HAWQDebugger:
             qnoise = 0
             for i in range(self._num_weights):
                 layer_bits = bits_config[i]
-                order = self._traces_order[i]
-                qnoise += self._perturbations.get(layer_id=order, bitwidth=layer_bits)
+                execution_index = self._traces_order.get_execution_index_by_traces_index(i)
+                qnoise += self._perturbations.get(layer_id=execution_index, bitwidth=layer_bits)
             noise_per_config.append(qnoise)
 
         list_to_plot = [cm.item() for cm in noise_per_config]
@@ -938,9 +954,7 @@ class HAWQDebugger:
                             hw_precision_constraints,
                             quantizers_handler):
         all_quantizers_per_full_scope = self.get_all_quantizers_per_full_scope(model)
-        graph = self.get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope, groups_of_adjacent_quantizers,
-                                        hw_precision_constraints,
-                                        quantizers_handler)
+        graph = self.get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope, groups_of_adjacent_quantizers)
         graph.dump_graph(self._dump_dir / Path('bitwidth_graph.dot'))
 
 
