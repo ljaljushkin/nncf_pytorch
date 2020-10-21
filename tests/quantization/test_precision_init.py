@@ -136,11 +136,22 @@ class HAWQConfigBuilder:
         self._name += 'staged'
         return self
 
+    def _set_target_device(self, config_type: str):
+        self._config["target_device"] = config_type
+        self._name += f'_{config_type}'
+        return self
+
     def for_vpu(self):
-        vpu_str = HWConfigType.VPU.value
-        self._config["target_device"] = vpu_str
-        self._name += f'_{vpu_str}'
-        return self.prop_based()
+        return self.prop_based()._set_target_device(HWConfigType.VPU.value)
+
+    def for_cpu(self):
+        return self.prop_based()._set_target_device(HWConfigType.CPU.value)
+
+    def for_none(self):
+        return self.prop_based()._set_target_device('NONE')
+
+    def none_device(self):
+        self._config["target_device"] = None
 
     def build(self):
         return self._config
@@ -243,9 +254,12 @@ TEST_PARAMS = (
     HAWQTestStruct(config_builder=HAWQConfigBuilder().staged().pattern_based(),
                    filename_suffix='pattern_based',
                    avg_traces_creator=get_avg_traces),
-    HAWQTestStruct(config_builder=HAWQConfigBuilder().prop_based(),
+    HAWQTestStruct(config_builder=HAWQConfigBuilder().for_none(),
                    avg_traces_creator=get_avg_traces,
-                   filename_suffix='prop_based'),
+                   filename_suffix='prop_based_none'),
+    HAWQTestStruct(config_builder=HAWQConfigBuilder().for_cpu(),
+                   avg_traces_creator=get_avg_traces,
+                   filename_suffix='prop_based_cpu'),
     HAWQTestStruct(avg_traces_creator=get_avg_traces_for_vpu,
                    config_builder=HAWQConfigBuilder().with_ratio(1.15).for_vpu()),
     HAWQTestStruct(config_builder=HAWQConfigBuilder().with_ratio(1.03).for_vpu(),
