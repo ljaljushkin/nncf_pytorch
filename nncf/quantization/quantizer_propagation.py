@@ -10,17 +10,16 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-#pylint:disable=too-many-lines
+# pylint:disable=too-many-lines
 from collections import deque
 from enum import Enum
-from typing import Dict, Tuple, Set
+from typing import Dict, Tuple, Set, Any, Callable
 
 import networkx as nx
 import warnings
 from copy import deepcopy
 
-
-from nncf.dynamic_graph.graph import OperationExecutionContext, NNCFGraph
+from nncf.dynamic_graph.graph import OperationExecutionContext, NNCFGraph, InputAgnosticOperationExecutionContext
 # pylint: disable=wildcard-import
 # pylint: disable=unused-wildcard-import
 from nncf.dynamic_graph.operator_metatypes import *
@@ -184,6 +183,7 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
     QUANTIZATION_TRAIT_NODE_ATTR = "quantization_trait"
     ALLOWED_INPUT_QUANTIZATION_TYPES_NODE_ATTR = "allowed_input_quantization_types"
     OPERATOR_METATYPE_NODE_ATTR = "op_meta"
+    OPERATOR_SCOPE = "op_scope"
     INSERTION_POINT_DATA_NODE_ATTR = "insertion_point"
     NODE_TYPE_NODE_ATTR = "node_type"
     BARRIER_NODE_KEY_POSTFIX = "BARRIER"
@@ -214,8 +214,10 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
                     self.QUANTIZATION_TRAIT_NODE_ATTR] = QuantizationTrait.NON_QUANTIZABLE
                 qpg_node[self.AFFECTING_PROPAGATING_QUANTIZERS_ATTR] = []
                 qpg_node[self.OPERATOR_METATYPE_NODE_ATTR] = node[InsertionPointGraph.OPERATOR_METATYPE_NODE_ATTR]
-                scope_node = str(node[InsertionPointGraph.REGULAR_NODE_REF_NODE_ATTR][
-                    NNCFGraph.OP_EXEC_CONTEXT_NODE_ATTR].input_agnostic)
+                iap_context = node[InsertionPointGraph.REGULAR_NODE_REF_NODE_ATTR][
+                    NNCFGraph.OP_EXEC_CONTEXT_NODE_ATTR].input_agnostic
+                qpg_node[self.OPERATOR_SCOPE] = iap_context.scope_in_model
+                scope_node = str(iap_context)
 
                 if in_scope_list(scope_node, self._ignored_scopes):
                     self.ignored_node_keys.append(node_key)
@@ -234,7 +236,7 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
 
         for u_node_key, v_node_key in barrier_node_extra_edges:
             edge_attr = {QuantizerPropagationStateGraph.AFFECTING_PROPAGATING_QUANTIZERS_ATTR: []}
-            next_v_node_key = list(self.succ[v_node_key].keys())[0] # POST HOOK v
+            next_v_node_key = list(self.succ[v_node_key].keys())[0]  # POST HOOK v
             self.add_edge(v_node_key, u_node_key, **edge_attr)
             self.add_edge(u_node_key, next_v_node_key, **edge_attr)
             self.remove_edge(v_node_key, next_v_node_key)
@@ -252,7 +254,7 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
     def get_barrier_node_key(node_key: str):
         return QuantizerPropagationStateGraph.BARRIER_NODE_KEY_POSTFIX + node_key
 
-    #pylint:disable=too-many-branches
+    # pylint:disable=too-many-branches
     def merge_quantizer_into_path(self, prop_quantizer: PropagatingQuantizer, path: List):
         curr_node = self.nodes[prop_quantizer.current_location_node_key]
         curr_node[QuantizerPropagationStateGraph.PROPAGATING_QUANTIZER_NODE_ATTR] = None
@@ -491,7 +493,7 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
 
     def get_visualized_graph(self):
         out_graph = nx.DiGraph()
-        unified_scale_group_vs_pq_node_id_dict = {} # type: Dict[int, List[str]]
+        unified_scale_group_vs_pq_node_id_dict = {}  # type: Dict[int, List[str]]
         for node_key, node in self.nodes.items():
             node_type = node[QuantizerPropagationStateGraph.NODE_TYPE_NODE_ATTR]
             if node_type == QuantizerPropagationStateGraphNodeType.INSERTION_POINT:
@@ -556,6 +558,22 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
 
         return out_graph
 
+    def traverse_graph(self, curr_node_key: str,
+                       traverse_function: Callable[[str, Any], Tuple[bool, Any]],
+                       output: Any,
+                       traverse_forward: bool = True) -> Any:
+        return self._traverse_graph_recursive_helper(curr_node_key, traverse_function, output, traverse_forward)
+
+    def _traverse_graph_recursive_helper(self, curr_node_key: str,
+                                         traverse_function: Callable[[str, Any], Tuple[bool, Any]],
+                                         output: Any, traverse_forward: bool):
+        is_finished, output = traverse_function(curr_node_key, output)
+        node_keys_holder = self.succ if traverse_forward else self.pred
+        if not is_finished:
+            for node_key in node_keys_holder[curr_node_key]:
+                self._traverse_graph_recursive_helper(node_key, traverse_function, output, traverse_forward)
+        return output
+
     def _get_next_prop_quantizer_id(self):
         self._created_prop_quantizer_counter += 1
         return self._created_prop_quantizer_counter
@@ -569,6 +587,24 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
 
     def get_unified_scale_group_id_by_propagating_quantizer_id(self, pqid: int) -> int:
         return self._unified_scale_group_manager.get_group_id_by_propagating_quantizer_id(pqid)
+
+
+class AdjacentQuantizersLocations:
+    """ Contains locations of adjacent quantizers: input agnostic operation execution context for activations and
+    scope - for quantized modules """
+
+    def __init__(self):
+        self.activation_quantizer_ctxs = set()  # type: Set[InputAgnosticOperationExecutionContext]
+        self.quantized_module_scopes = set()  # type: Set['Scope']
+
+    def add_activation_quantizer_ctx(self, iap_ctx: InputAgnosticOperationExecutionContext):
+        self.activation_quantizer_ctxs.add(iap_ctx)
+
+    def add_quantized_module_scope(self, scope: 'Scope'):
+        self.quantized_module_scopes.add(scope)
+
+    def __bool__(self) -> bool:
+        return bool(self.activation_quantizer_ctxs) and bool(self.quantized_module_scopes)
 
 
 class QuantizerPropagationSolver:
@@ -588,6 +624,7 @@ class QuantizerPropagationSolver:
                  debug_interface: 'QuantizationDebugInterface' = None,
                  propagation_strategy: PropagationStrategy = PropagationStrategy.AGGRESSIVE,
                  default_qconfig_list: List[QuantizerConfig] = None):
+        self.adjacent_quantizers_locations_per_node_key = {}  # type: Dict[str, AdjacentQuantizersLocations]
         self.default_qlobal_qconfig_list = default_qconfig_list
         self._hw_config = hw_config  # type: HWConfig
         self._debug_interface = debug_interface
@@ -637,6 +674,9 @@ class QuantizerPropagationSolver:
         non_unified_final_prop_quantizers = set()  # type: Set[PropagatingQuantizer]
         unified_final_prop_quantizers = {}  # type: Dict[int, Set[PropagatingQuantizer]]
 
+        self.adjacent_quantizers_locations_per_node_key = self._get_adjacent_quantizers_locations_per_node_key(
+            quant_prop_graph, self._finished_propagating_quantizers)
+
         for finished_prop_quantizer in self._finished_propagating_quantizers:
             if finished_prop_quantizer.unified_scale:
                 # Handle unified scale quantizers separately since they require special InsertionInfo construction
@@ -677,12 +717,13 @@ class QuantizerPropagationSolver:
         final_node = quant_prop_graph.nodes[final_node_key]
         insertion_point = final_node[
             QuantizerPropagationStateGraph.INSERTION_POINT_DATA_NODE_ATTR]  # type: InsertionPoint
+        # TODO: fix this, rethink InsertionInfo here and elsewhere
         insertion_info = InsertionInfo(OperationExecutionContext(
             operator_name=insertion_point.ia_op_exec_context.operator_name,
             scope_in_model=insertion_point.ia_op_exec_context.scope_in_model,
             call_order=insertion_point.ia_op_exec_context.call_order,
-            tensor_metas=[None]
-        ))  # TODO: fix this, rethink InsertionInfo here and elsewhere
+            tensor_metas=[None],
+        ), adjacent_quantizers_locations=self.adjacent_quantizers_locations_per_node_key[final_node_key])
         return insertion_info
 
     def propagation_step(self, curr_prop_quantizer: PropagatingQuantizer,
@@ -896,7 +937,7 @@ class QuantizerPropagationSolver:
 
         return quant_prop_graph
 
-    #pylint:disable=too-many-return-statements
+    # pylint:disable=too-many-return-statements
     def check_branching_transition(self, quant_prop_graph: QuantizerPropagationStateGraph,
                                    prop_quantizer: PropagatingQuantizer,
                                    branching_node_key: str) -> Optional[TransitionStatus]:
@@ -1035,3 +1076,76 @@ class QuantizerPropagationSolver:
 
     def get_active_propagating_quantizers_queue(self):
         return self._active_propagating_quantizers_queue
+
+    @staticmethod
+    def _get_adjacent_quantizers_locations_per_node_key(quant_prop_graph: QuantizerPropagationStateGraph,
+                                                        finished_propagating_quantizers: List[PropagatingQuantizer]):
+        visited = {node_key: False for node_key in quant_prop_graph.nodes()}
+        adjacent_quantizers_locations_per_node_key = {}  # type: Dict[str, AdjacentQuantizersLocations]
+
+        def traverse_function_up(node_key: str,
+                                 output: AdjacentQuantizersLocations) -> Tuple[bool, Any]:
+            if visited[node_key]:
+                return True, output
+            visited[node_key] = True
+
+            is_finished = False
+            node = quant_prop_graph.nodes[node_key]
+            node_type = node[QuantizerPropagationStateGraph.NODE_TYPE_NODE_ATTR]
+
+            if node_type == QuantizerPropagationStateGraphNodeType.INSERTION_POINT:
+                insertion_point_data = node[
+                    QuantizerPropagationStateGraph.INSERTION_POINT_DATA_NODE_ATTR]  # type: InsertionPoint
+                if node[QuantizerPropagationStateGraph.PROPAGATING_QUANTIZER_NODE_ATTR] is not None:
+                    output.add_activation_quantizer_ctx(insertion_point_data.ia_op_exec_context)
+                    adjacent_quantizers_locations_per_node_key[node_key] = output
+                    is_finished = True
+                else:
+                    for sub_node_key in quant_prop_graph.succ[node_key]:
+                        output = quant_prop_graph.traverse_graph(sub_node_key, traverse_function_down, output,
+                                                                 traverse_forward=True)
+            elif node_type == QuantizerPropagationStateGraphNodeType.OPERATOR:
+                if node[QuantizerPropagationStateGraph.QUANTIZATION_TRAIT_NODE_ATTR] \
+                    == QuantizationTrait.INPUTS_QUANTIZABLE:
+                    raise RuntimeError('Should not reach quantizable operator on backward traverse!')
+            else:
+                raise RuntimeError('Final graph is expected to be without barrier!')
+            return is_finished, output
+
+        def traverse_function_down(node_key: str, output: AdjacentQuantizersLocations) -> Tuple[bool, Any]:
+            if visited[node_key]:
+                return True, output
+            visited[node_key] = True
+
+            node = quant_prop_graph.nodes[node_key]
+            node_type = node[QuantizerPropagationStateGraph.NODE_TYPE_NODE_ATTR]
+            is_finished = False
+            if node_type == QuantizerPropagationStateGraphNodeType.INSERTION_POINT:
+                insertion_point_data = node[
+                    QuantizerPropagationStateGraph.INSERTION_POINT_DATA_NODE_ATTR]  # type: InsertionPoint
+                if node[QuantizerPropagationStateGraph.PROPAGATING_QUANTIZER_NODE_ATTR] is not None:
+                    output.add_activation_quantizer_ctx(insertion_point_data.ia_op_exec_context)
+                    adjacent_quantizers_locations_per_node_key[node_key] = output
+                else:
+                    for sub_node_key in quant_prop_graph.pred[node_key]:
+                        output = quant_prop_graph.traverse_graph(sub_node_key, traverse_function_up, output,
+                                                                 traverse_forward=False)
+            elif node_type == QuantizerPropagationStateGraphNodeType.OPERATOR:
+                if node[QuantizerPropagationStateGraph.QUANTIZATION_TRAIT_NODE_ATTR] \
+                    == QuantizationTrait.INPUTS_QUANTIZABLE:
+                    output.add_quantized_module_scope(node[QuantizerPropagationStateGraph.OPERATOR_SCOPE])
+                    is_finished = True
+                elif node[QuantizerPropagationStateGraph.QUANTIZATION_TRAIT_NODE_ATTR] \
+                    == QuantizationTrait.NON_QUANTIZABLE:
+                    raise RuntimeError('Should not reach non-quantizable operator!')
+            else:
+                raise RuntimeError('Final graph is expected to be without barrier!')
+            return is_finished, output
+
+        for finished_prop_quantizer in finished_propagating_quantizers:
+            node_key = finished_prop_quantizer.current_location_node_key
+            adjacent_quantizers_locations = AdjacentQuantizersLocations()
+            quant_prop_graph.traverse_graph(node_key, traverse_function_down, adjacent_quantizers_locations,
+                                            traverse_forward=True)
+
+        return adjacent_quantizers_locations_per_node_key

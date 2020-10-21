@@ -49,7 +49,8 @@ from nncf.quantization.layers import QUANTIZATION_MODULES, QuantizationMode, Qua
 from nncf.quantization.metrics import NetworkQuantizationShareMetric, MemoryCostMetric, ShareEdgesQuantizedDataPath
 from nncf.quantization.quantizer_id import WeightQuantizerId, NonWeightQuantizerId, InputQuantizerId, \
     FunctionQuantizerId
-from nncf.quantization.quantizer_propagation import QuantizerPropagationSolver, QuantizerPropagationStateGraph
+from nncf.quantization.quantizer_propagation import QuantizerPropagationSolver, QuantizerPropagationStateGraph, \
+    AdjacentQuantizersLocations
 from nncf.quantization.schedulers import QUANTIZATION_SCHEDULERS
 from nncf.structures import QuantizationPrecisionInitArgs, QuantizationRangeInitArgs
 from nncf.utils import get_all_modules_by_type, in_scope_list, is_main_process, should_consider_scope
@@ -110,9 +111,11 @@ PotentialQuantizedModule = namedtuple('PotentialQuantizedModule', 'module module
 
 class NonWeightQuantizerInfo:
     def __init__(self, quantizer_module_ref: BaseQuantizer,
-                 affected_ia_op_exec_contexts: List[InputAgnosticOperationExecutionContext]):
+                 affected_ia_op_exec_contexts: List[InputAgnosticOperationExecutionContext],
+                 adjacent_quantizers_locations: AdjacentQuantizersLocations = None):
         self.quantizer_module_ref = quantizer_module_ref
         self.affected_ia_op_exec_contexts = affected_ia_op_exec_contexts
+        self.adjacent_quantizers_locations = adjacent_quantizers_locations
 
 
 @COMPRESSION_ALGORITHMS.register('quantization')
@@ -494,7 +497,8 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
             nncf_logger.info(
                 "Processing linked activation quantizer group:\n {}\n".format("\n".join(serialized_context_list)))
 
-        self._non_weight_quantizers[quantizer_id] = NonWeightQuantizerInfo(quantizer, affected_ia_op_exec_contexts)
+        self._non_weight_quantizers[quantizer_id] = NonWeightQuantizerInfo(
+            quantizer, affected_ia_op_exec_contexts, insertion_info.adjacent_quantizers_locations)
 
         insertion_commands = []
         for curr_ia_op_exec_context in affected_ia_op_exec_contexts:
@@ -605,7 +609,8 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
             ia_op_exec_context = module_input_node.op_exec_context.input_agnostic
             quantizer_id = InputQuantizerId(ia_op_exec_context)
             self._hw_precision_constraints.add(quantizer_id, [qconfig])
-            self._non_weight_quantizers[quantizer_id] = NonWeightQuantizerInfo(quantizer, [ia_op_exec_context])
+            self._non_weight_quantizers[quantizer_id] = NonWeightQuantizerInfo(
+                quantizer, [ia_op_exec_context], AdjacentQuantizersLocations())
 
         return insertion_commands
 
