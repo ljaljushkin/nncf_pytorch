@@ -39,6 +39,7 @@ from nncf.debug import set_debug_log_dir
 from nncf.dynamic_graph.context import Scope, ScopeElement
 from nncf.dynamic_graph.graph_builder import create_input_infos
 from nncf.hw_config import HWConfigType
+from nncf.quantization.algo import QuantizerSetupType
 from nncf.quantization.hessian_trace import HessianTraceEstimator
 from nncf.quantization.hw_precision_constraints import HWPrecisionConstraints
 from nncf.quantization.init_precision import HAWQPrecisionInitializer, TracesPerLayer, Perturbations, \
@@ -112,9 +113,16 @@ class HAWQConfigBuilder:
         self._name += '_'.join(['ratio', str(ratio)])
         return self
 
-    def prop_based(self):
-        self._config['quantizer_setup_type'] = 'propagation_based'
+    def _with_quantizer_setup_type(self, setup_type: QuantizerSetupType):
+        self._config['quantizer_setup_type'] = setup_type.value
+        self._name += f'_{setup_type.value}'
         return self
+
+    def prop_based(self):
+        return self._with_quantizer_setup_type(QuantizerSetupType.PROPAGATION_BASED)
+
+    def pattern_based(self):
+        return self._with_quantizer_setup_type(QuantizerSetupType.PATTERN_BASED)
 
     def with_sample_size(self, sample_size: List[int]):
         self._config['input_info']['sample_size'] = sample_size
@@ -129,8 +137,10 @@ class HAWQConfigBuilder:
         return self
 
     def for_vpu(self):
-        self._config["target_device"] = HWConfigType.VPU.value
-        return self
+        vpu_str = HWConfigType.VPU.value
+        self._config["target_device"] = vpu_str
+        self._name += f'_{vpu_str}'
+        return self.prop_based()
 
     def build(self):
         return self._config
@@ -218,19 +228,19 @@ def get_avg_traces_for_vpu(model, init_device: str):
 
 class HAWQTestStruct(NamedTuple):
     model_creator: Callable[[], nn.Module] = mobilenet_v2
-    config_builder: HAWQConfigBuilder = HAWQConfigBuilder().for_vpu()
+    config_builder: HAWQConfigBuilder = HAWQConfigBuilder().prop_based().for_vpu()
     filename_suffix: str = 'hw_config_vpu'
     avg_traces_creator: Callable[[nn.Module, str], torch.Tensor] = get_permutted_avg_traces_for_vpu
 
     def __str__(self):
-        return '_'.join([self.model_creator.__name__, str(self.config_builder), self.filename_suffix])
+        return '_'.join([self.model_creator.__name__, str(self.config_builder)])
 
 
 TEST_PARAMS = (
-    HAWQTestStruct(config_builder=HAWQConfigBuilder(),
+    HAWQTestStruct(config_builder=HAWQConfigBuilder().pattern_based(),
                    filename_suffix='pattern_based',
                    avg_traces_creator=get_avg_traces),
-    HAWQTestStruct(config_builder=HAWQConfigBuilder().staged(),
+    HAWQTestStruct(config_builder=HAWQConfigBuilder().staged().pattern_based(),
                    filename_suffix='pattern_based',
                    avg_traces_creator=get_avg_traces),
     HAWQTestStruct(config_builder=HAWQConfigBuilder().prop_based(),
@@ -256,11 +266,6 @@ TEST_PARAMS = (
 @pytest.mark.parametrize('params', TEST_PARAMS, ids=[str(p) for p in TEST_PARAMS])
 def test_hawq_precision_init(_seed, dataset_dir, tmp_path, mocker, params):
     config = params.config_builder.build()
-    # TODO: move to builder
-    if params.filename_suffix == 'pattern_based':
-        config['quantizer_setup_type'] = 'pattern_based'
-    else:
-        config['target_device'] = 'VPU'
     model = params.model_creator()
 
     criterion = nn.CrossEntropyLoss().cuda()
@@ -527,7 +532,6 @@ MANUAL_CONFIG_TEST_PARAMS = [
 ]
 
 
-
 @pytest.mark.parametrize('manual_config_params', MANUAL_CONFIG_TEST_PARAMS,
                          ids=[pair[0] for pair in MANUAL_CONFIG_TEST_PARAMS])
 def test_hawq_manual_configs(manual_config_params):
@@ -543,6 +547,7 @@ def test_hawq_manual_configs(manual_config_params):
     table = compression_ctrl.non_stable_metric_collectors[0].get_bits_stat()
     # pylint: disable=protected-access
     assert table._rows == bit_stats
+
 
 # TODO: renamo
 # TODO: parametrize??

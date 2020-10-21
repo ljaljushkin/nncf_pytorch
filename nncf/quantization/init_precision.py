@@ -231,7 +231,7 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         self._groups_of_adjacent_quantizers = GroupsOfAdjacentQuantizers(algo)
 
     def apply_init(self):
-        if not self._quantizers_handler.get_ordered_weight_quantizers_per_id():
+        if not self._quantizers_handler.get_weight_quantizers_in_execution_order_per_id():
             return None
         original_device = next(self._model.parameters()).device
         self._model.to(self._init_device)

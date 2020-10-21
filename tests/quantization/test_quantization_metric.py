@@ -193,7 +193,7 @@ def test_network_quantization_share_metric(network_quantization_share_metric_tes
     config['compression']["activations"] = network_quantization_share_metric_test_struct.activations
     config['compression']["weights"] = network_quantization_share_metric_test_struct.weights
     config['compression']["ignored_scopes"] = network_quantization_share_metric_test_struct.ignored_scopes
-    config['quantizer_setup_type'] = network_quantization_share_metric_test_struct.quantizer_setup_type
+    config['quantizer_setup_type'] = network_quantization_share_metric_test_struct.with_setup_type
     config['target_device'] = network_quantization_share_metric_test_struct.target_device
     cntrl, compressed_model = create_compressed_model(test_models.AlexNet(), config)
     quantizer_setup_type = QuantizerSetupType.PATTERN_BASED if config['quantizer_setup_type'] == 'pattern_based'\
@@ -312,7 +312,7 @@ def test_share_edges_quantized_data_path(share_edges_quantized_data_path_test_st
     config = get_basic_quantization_config()
     config['compression']["ignored_scopes"] = share_edges_quantized_data_path_test_struct.ignored_scopes
     config['input_info']['sample_size'] = [2, 3, 299, 299]
-    config['quantizer_setup_type'] = share_edges_quantized_data_path_test_struct.quantizer_setup_type
+    config['quantizer_setup_type'] = share_edges_quantized_data_path_test_struct.with_setup_type
 
     _, compressed_model = create_compressed_model(test_models.Inception3(aux_logits=True, transform_input=True), config)
     qmetric = ShareEdgesQuantizedDataPath(compressed_model)
