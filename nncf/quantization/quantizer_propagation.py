@@ -625,6 +625,7 @@ class QuantizerPropagationSolver:
                  propagation_strategy: PropagationStrategy = PropagationStrategy.AGGRESSIVE,
                  default_qconfig_list: List[QuantizerConfig] = None):
         self.adjacent_quantizers_locations_per_node_key = {}  # type: Dict[str, AdjacentQuantizersLocations]
+        self.default_qlobal_qconfig_list = default_qconfig_list
         self._hw_config = hw_config  # type: HWConfig
         self._debug_interface = debug_interface
         self._propagation_strategy = propagation_strategy  # TODO: determine from config
@@ -644,7 +645,6 @@ class QuantizerPropagationSolver:
                     # !!! FIXME !!! Ensure that INPUTS_QUANTIZABLE ops always have non-None qconf_list
                     if HWConfig.is_qconf_list_corresponding_to_unspecified_op(qconf_list):
                         self._operator_allowed_qconfigs_map[op_meta] = default_qconfig_list
-
         self._active_propagating_quantizers_queue = deque()
         self._finished_propagating_quantizers = []  # type: List[PropagatingQuantizer]
         self._ignored_scopes = ignored_scopes
@@ -854,7 +854,10 @@ class QuantizerPropagationSolver:
             for trait, meta_list in DEFAULT_QUANT_TRAIT_TO_OP_DICT.items():
                 if trait == QuantizationTrait.INPUTS_QUANTIZABLE:
                     for op_meta in meta_list:  # type: OperatorMetatype
-                        retval[op_meta] = deepcopy(self.DEFAULT_QUANTIZATION_TYPES)
+                        if self.default_qlobal_qconfig_list is not None:
+                            retval[op_meta] = deepcopy(self.default_qlobal_qconfig_list)
+                        else:
+                            retval[op_meta] = deepcopy(self.DEFAULT_QUANTIZATION_TYPES)
                 elif trait == QuantizationTrait.NON_QUANTIZABLE:
                     for op_meta in meta_list:  # type: OperatorMetatype
                         retval[op_meta] = None

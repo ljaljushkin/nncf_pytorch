@@ -5,6 +5,8 @@ from typing import List, Dict, Union, Tuple, NamedTuple
 
 import os
 import torch
+import warnings
+
 from bisect import bisect_left
 from operator import itemgetter
 from torch import Tensor, nn
@@ -229,6 +231,8 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         self._groups_of_adjacent_quantizers = GroupsOfAdjacentQuantizers(algo)
 
     def apply_init(self):
+        if not self._quantizers_handler.get_ordered_weight_quantizers_per_id():
+            return None
         original_device = next(self._model.parameters()).device
         self._model.to(self._init_device)
 
@@ -243,15 +247,17 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         weight_quantization_ids_by_execution_order = list(self._weight_quantizations_by_execution_order.keys())
 
         self._merge_constraints_for_adjacent_quantizers(self._groups_of_adjacent_quantizers,
-                                                        self._hw_precision_constraints)
+                                                    self._hw_precision_constraints)
         print(f'Num all configurations {len(bits_configurations)}')
+
         bits_configurations = self._filter_configs_by_precision_constraints(bits_configurations,
                                                                             self._hw_precision_constraints,
                                                                             weight_quantization_ids_by_execution_order,
                                                                             traces_order)
-
         if not bits_configurations:
-            raise RuntimeError('All bits configurations are incompatible with HW Config!')
+            warnings.warn('All bits configurations are incompatible with HW Config!')
+            return None
+
         print(f'Num filtered configurations by constraints {len(bits_configurations)}')
 
         bits_configurations = self._filter_configs_by_grouped_weight_quantizers(bits_configurations,
@@ -260,8 +266,10 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
                                                                                 traces_order)
 
         if not bits_configurations:
-            raise RuntimeError('No bits configurations are left after removing inconsistent groups of weight quantizers'
+            warnings.warn('No bits configurations are left after removing inconsistent groups of weight quantizers'
                                ' with adjacent activation quantizers!')
+            return None
+
         print(f'Num filtered configurations by grouping {len(bits_configurations)}')
 
         flops_bits_per_config = self.get_flops_bits_per_config(bits_configurations, traces_order)
@@ -280,7 +288,7 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         perturbations, weight_observers = self.calc_quantization_noise()
 
         configuration_metric = self.calc_hawq_metric_per_configuration(bits_configurations, perturbations,
-                                                                       traces_per_layer, self._init_device)
+                                                                           traces_per_layer, self._init_device)
 
         config_index = self.choose_configuration(configuration_metric, flops_bits_per_config)
         chosen_config_in_traces_order = bits_configurations[config_index]
@@ -454,10 +462,12 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
 
     @staticmethod
     def get_configs_constrained_by_traces_order(bits_: List[int], num_layers: int) -> List[List[int]]:
+        bit_configs = []
+        if num_layers == 0:
+            return bit_configs
         bits = sorted(bits_)
         m = len(bits)
         L = num_layers
-        bit_configs = []
         for j in range(1, m + 1):
             for combo_bits in itertools.combinations(bits, j):
                 for combo_partitions in itertools.combinations(list(range(1, L)), j - 1):
