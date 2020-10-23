@@ -30,9 +30,10 @@ from torchvision.transforms import transforms
 
 from examples.classification.main import create_cifar
 from examples.common.model_loader import load_model
-from examples.common.models import squeezenet1_1_custom
+from examples.common.models import squeezenet1_1_custom, icnet
 from examples.common.sample_config import SampleConfig
 from examples.object_detection.models.ssd_vgg import SSD_VGG
+from examples.semantic_segmentation.utils.loss_funcs import cross_entropy_icnet
 from nncf import register_default_init_args, NNCFConfig
 from nncf.checkpoint_loading import load_state
 from nncf.debug import set_debug_log_dir
@@ -173,7 +174,7 @@ class HAWQConfigBuilder:
                     "bits": [
                         4,
                         8,
-                        6
+                        # 6
                     ],
                     "num_data_points": num_data_points,
                     "iter_number": 1,
@@ -184,6 +185,10 @@ class HAWQConfigBuilder:
                 }
             }})
         return config
+
+
+def icnet_camvid():
+    return icnet(num_classes=12, input_size_hw=[768, 960])
 
 
 def ssd_vgg_512_test():
@@ -261,7 +266,7 @@ TEST_PARAMS = (
                    avg_traces_creator=get_avg_traces,
                    filename_suffix='prop_based_cpu'),
     HAWQTestStruct(avg_traces_creator=get_avg_traces_for_vpu,
-                   config_builder=HAWQConfigBuilder().with_ratio(1.15).for_vpu()),
+                   config_builder=HAWQConfigBuilder().with_ratio(1.46).for_vpu()),
     HAWQTestStruct(config_builder=HAWQConfigBuilder().with_ratio(1.03).for_vpu(),
                    filename_suffix='hw_config_vpu_ratio'),
     HAWQTestStruct(model_creator=squeezenet1_1_custom,
@@ -269,8 +274,8 @@ TEST_PARAMS = (
     HAWQTestStruct(model_creator=resnet50,
                    config_builder=HAWQConfigBuilder().with_ratio(1.11).for_vpu()),
     HAWQTestStruct(model_creator=inception_v3,
-                   avg_traces_creator=get_avg_traces_for_vpu,
-                   config_builder=HAWQConfigBuilder().with_sample_size([2, 3, 299, 299]).for_vpu().with_ratio(1.01)),
+                   # avg_traces_creator=get_avg_traces_for_vpu,
+                   config_builder=HAWQConfigBuilder().with_sample_size([2, 3, 299, 299]).for_vpu().with_ratio(1.5)),
     HAWQTestStruct(model_creator=ssd_vgg_512_test,
                    config_builder=HAWQConfigBuilder().with_sample_size([1, 3, 512, 512]).for_vpu().with_ratio(1.09),
                    avg_traces_creator=get_avg_traces_for_vpu),

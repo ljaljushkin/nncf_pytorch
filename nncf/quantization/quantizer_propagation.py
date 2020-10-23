@@ -45,6 +45,7 @@ DEFAULT_QUANT_TRAIT_TO_OP_DICT = {
         Conv3dMetatype,
         ConvTranspose2dMetatype,
         ConvTranspose3dMetatype,
+        # DepthwiseConv2dSubtype,
         LinearMetatype,
         HardTanhMetatype,
         TanhMetatype,

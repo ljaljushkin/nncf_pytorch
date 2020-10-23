@@ -230,6 +230,7 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         self._init_device = init_args.device
         self.flops_counter = CompressionRatioCalculator(self._model, self._quantizers_handler)
         self._groups_of_adjacent_quantizers = GroupsOfAdjacentQuantizers(algo)
+        self.strict = False
 
     def apply_init(self):
         if not self._quantizers_handler.get_weight_quantizers_in_execution_order_per_id():
@@ -245,35 +246,46 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         num_weights = len(self._weight_quantizations_by_execution_order)
         bits_configurations = self.get_configs_constrained_by_traces_order(self._bits, num_weights)
 
+        print(f'Num all configurations={len(bits_configurations)}')
         weight_quantizer_ids_in_execution_order = list(self._weight_quantizations_by_execution_order.keys())
 
-        self._merge_constraints_for_adjacent_quantizers(self._groups_of_adjacent_quantizers,
-                                                        self._hw_precision_constraints)
+        if self.strict:
+            self._merge_constraints_for_adjacent_quantizers(self._groups_of_adjacent_quantizers,
+                                                            self._hw_precision_constraints)
 
         bits_configurations = self._filter_configs_by_precision_constraints(bits_configurations,
                                                                             self._hw_precision_constraints,
                                                                             weight_quantizer_ids_in_execution_order,
                                                                             traces_order)
+        print(f'Num filtered configurations after applying HW precision constraints={len(bits_configurations)}')
         if not bits_configurations:
             warnings.warn('All bits configurations are incompatible with HW Config!', RuntimeWarning)
             return None
 
-        bits_configurations = self._filter_configs_by_grouped_weight_quantizers(bits_configurations,
-                                                                                weight_quantizer_ids_in_execution_order,
-                                                                                self._groups_of_adjacent_quantizers,
-                                                                                traces_order)
-
-        if not bits_configurations:
-            warnings.warn('No bits configurations are left after removing inconsistent groups of weight quantizers'
-                          ' with adjacent activation quantizers!', RuntimeWarning)
-            return None
+        if self.strict:
+            bits_configurations = self._filter_configs_by_grouped_weight_quantizers(bits_configurations,
+                                                                                    weight_quantizer_ids_in_execution_order,
+                                                                                    self._groups_of_adjacent_quantizers,
+                                                                                    traces_order)
+            print(f'Num filtered configurations after grouping={len(bits_configurations)}')
+            if not bits_configurations:
+                warnings.warn('No bits configurations are left after removing inconsistent groups of weight quantizers'
+                              ' with adjacent activation quantizers!', RuntimeWarning)
+                return None
 
         flops_bits_per_config = self.get_flops_bits_per_config(bits_configurations, traces_order)
+        print(f'FLOPS={flops_bits_per_config}')
         min_ratio = min(flops_bits_per_config)
         max_ratio = max(flops_bits_per_config)
+        print(f'Ratio limits with HAWQ constraints: min={min_ratio}, max={max_ratio}')
         if not min_ratio <= self._compression_ratio <= max_ratio:
             raise AttributeError('Invalid compression ratio={}. Should be within range [{:.3f}, {:.3f}]'.format(
                 self._compression_ratio, min_ratio, max_ratio))
+
+        skipped_quantizers = self._quantizers_handler.get_skipped_weight_quantizers_per_id()
+        t_min_ratio, t_max_ratio, max_config = self.flops_counter.ratio_limits(self._bits, self._hw_precision_constraints,
+                                                                   skipped_quantizers)
+        print(f'Ratio limits without HAWQ constraints: min={t_min_ratio}, max={t_max_ratio}')
 
         perturbations, weight_observers = self.calc_quantization_noise()
 
@@ -283,6 +295,7 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         config_index = self.choose_configuration(configuration_metric, flops_bits_per_config)
         chosen_config_in_traces_order = bits_configurations[config_index]
         chosen_config_in_execution_order = traces_order.get_execution_order_config(chosen_config_in_traces_order)
+        # chosen_config_in_execution_order = max_config
         nncf_logger.info('Chosen HAWQ configuration with ratio={:.2f}, bitwidth per weightable layer={}'.format(
             flops_bits_per_config[config_index], chosen_config_in_execution_order))
         nncf_logger.debug('Order of the weightable layers in the HAWQ configuration (in descending order of average '
@@ -290,7 +303,7 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
 
         self.set_chosen_config(chosen_config_in_execution_order)
         self._model.rebuild_graph()
-        if is_debug():
+        if not is_debug():
             hawq_debugger = HAWQDebugger(bits_configurations, perturbations,
                                          weight_observers, traces_per_layer, self._bits)
             hawq_debugger.dump_metric_MB(configuration_metric)
@@ -333,7 +346,7 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
         for bits_config in bits_configurations:
             execution_order_config = traces_order.get_execution_order_config(bits_config)
             flops_bits_per_config.append(
-                self.flops_counter.ratio_for_bits_configuration(execution_order_config, skipped))
+                self.flops_counter.ratio_for_bits_configuration(bits_config, skipped))
         return flops_bits_per_config
 
     def get_bitwidth_per_scope(self) -> List[List[Union[int, str]]]:
@@ -349,11 +362,11 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
 
     @staticmethod
     def disable_all_gradients_except_weights_of_quantized_modules(
-            quantizers_switcher: QuantizersSwitcher,
-            quantized_weight_modules_registry: Dict[str, torch.nn.Module],
-            model: nn.Module,
-            scopes_of_skipped_weight_quantizers: List[
-                'Scope'] = None) -> ParamsToRestore:  # pylint: disable=undefined-variable
+        quantizers_switcher: QuantizersSwitcher,
+        quantized_weight_modules_registry: Dict[str, torch.nn.Module],
+        model: nn.Module,
+        scopes_of_skipped_weight_quantizers: List[
+            'Scope'] = None) -> ParamsToRestore:  # pylint: disable=undefined-variable
         """
         Disables gradients of all parameters, except for layers that have quantizers for weights, which wasn't skipped
         because of single precision constraints.
@@ -545,13 +558,36 @@ class HAWQPrecisionInitializer(ManualPrecisionInitializer):
             wq.num_bits = bits
         if self._groups_of_adjacent_quantizers:
             for group in self._groups_of_adjacent_quantizers:
-                bitwidth_set = {wq.num_bits for _, wq in group.weight_quantizers}
-                if len(bitwidth_set) > 1:
-                    raise RuntimeError('Invalid grouping of weight quantizers')
-                if bitwidth_set:
-                    bitwidth = bitwidth_set.pop()
-                    for _, aq in group.activation_quantizers:
-                        aq.num_bits = bitwidth
+                weight_bitwidth_set = {wq.num_bits for _, wq in group.weight_quantizers}
+                if self.strict:
+                    if len(weight_bitwidth_set) > 1:
+                        raise RuntimeError('Invalid grouping of weight quantizers')
+                    if weight_bitwidth_set:
+                        bitwidth_to_init = weight_bitwidth_set.pop()
+                        for _, aq in group.activation_quantizers:
+                            aq.num_bits = bitwidth_to_init
+                    else:
+                        for quantizer_id, aq in group.activation_quantizers:
+                            activation_bitwidth_set = self._hw_precision_constraints.get(quantizer_id)
+                            if activation_bitwidth_set.__len__() == 1:
+                                aq.num_bits = activation_bitwidth_set.pop()
+                            if activation_bitwidth_set:
+                                aq.num_bits = min(activation_bitwidth_set)
+                else:
+                    for quantizer_id, aq in group.activation_quantizers:
+                        activation_bitwidth_set = self._hw_precision_constraints.get(quantizer_id)
+                        if activation_bitwidth_set.__len__() == 1:
+                            aq.num_bits = activation_bitwidth_set.pop()
+                            continue
+                        intersection = activation_bitwidth_set.intersection(weight_bitwidth_set)
+                        if intersection:
+                            aq.num_bits = min(intersection)
+                            continue
+                        if weight_bitwidth_set:
+                            aq.num_bits = min(weight_bitwidth_set)
+                        else:
+                            if activation_bitwidth_set:
+                                aq.num_bits = min(activation_bitwidth_set)
         else:
             # TODO: delete not-consistent pairs of activation and weights for pattern-based approach
             pairs = self._algo.get_weights_activation_quantizers_pairs()
@@ -694,7 +730,9 @@ class CompressionRatioCalculator:
             for quantizer_id, quantizer in skipped.items():
                 quantizer_ops += quantizer.num_bits * self.ops_per_quantizer_id[quantizer_id]
 
-        return self.total_ops_count / quantizer_ops
+        ratio = self.total_ops_count / quantizer_ops
+        print(f'{ratio}--{execution_order_bits_config}')
+        return ratio
 
     def ratio_limits(self, bits: List[int], constraints: HWPrecisionConstraints = None,
                      skipped: Dict[QuantizerId, BaseQuantizer] = None) -> (float, float):
@@ -722,7 +760,7 @@ class CompressionRatioCalculator:
 
         max_ratio = self.ratio_for_bits_configuration(min_config, skipped)
         min_ratio = self.ratio_for_bits_configuration(max_config, skipped)
-        return min_ratio, max_ratio
+        return min_ratio, max_ratio, min_config
 
 
 class HAWQDebugger:
