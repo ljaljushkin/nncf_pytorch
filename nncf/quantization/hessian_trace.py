@@ -79,8 +79,17 @@ class GradientsCalculator:
         args, kwargs = self._data_loader.get_inputs(dataloader_output)
 
         self._model.zero_grad()
-        outputs = self._model(*args, **kwargs)
-        loss = self._criterion(outputs, self._data_loader.get_target(dataloader_output))
+        inception = True
+        if not inception:
+            outputs = self._model(*args, **kwargs)
+            loss = self._criterion(outputs, self._data_loader.get_target(dataloader_output))
+        else:
+            output, aux_outputs = self._model(*args, **kwargs)
+            target = self._data_loader.get_target(dataloader_output)
+            loss1 = self._criterion(output, target)
+            loss2 = self._criterion(aux_outputs, target)
+            loss = loss1 + 0.4 * loss2
+
         loss.backward(create_graph=True)
         grads = self._parameter_handler.get_gradients()
         self._model.zero_grad()

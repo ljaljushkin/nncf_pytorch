@@ -12,7 +12,8 @@
     "num_classes": 1000,
     "batch_size": 256,
     "epochs": 60,
-    "hw_config_type": "vpu",
+    "target_device": "VPU",
+    "quantizer_setup_type": "propagation_based",
     "compression": {
         "algorithm": "quantization",
         "initializer": {

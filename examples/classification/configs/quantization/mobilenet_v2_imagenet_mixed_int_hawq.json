@@ -14,12 +14,14 @@
     "workers": 6,
     "epochs": 60,
     "multiprocessing_distributed": true,
-    "hw_config_type": "vpu",
+    "target_device": "VPU",
+    "quantizer_setup_type": "propagation_based",
     "compression": {
         "algorithm": "quantization",
         "initializer": {
             "precision": {
                 "type": "hawq",
+                "bits": [4,8],
                 "compression_ratio": 1.46,
                 "num_data_points": 100,
                 "iter_number": 200,

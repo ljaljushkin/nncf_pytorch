@@ -12,9 +12,10 @@
     "num_classes": 1000,
     "batch_size": 100,
     "workers": 6,
-    "epochs": 60,
+    "epochs": 30,
     "multiprocessing_distributed": true,
-    "hw_config_type": "vpu",
+    "target_device": "VPU",
+    "quantizer_setup_type": "propagation_based",
     "compression": {
         "algorithm": "quantization",
         "initializer": {
@@ -30,10 +31,10 @@
             "base_wd": 1e-5,
             "batch_multiplier": 1,
             "activations_quant_start_epoch": 3,
-            "weights_quant_start_epoch": 22,
-            "lr_poly_drop_start_epoch": 50,
+            "weights_quant_start_epoch": 12,
+            "lr_poly_drop_start_epoch": 20,
             "lr_poly_drop_duration_epochs": 10,
-            "disable_wd_start_epoch": 50
+            "disable_wd_start_epoch": 20
         }
     }
 }

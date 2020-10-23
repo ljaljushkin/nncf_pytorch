@@ -14,7 +14,8 @@
     "workers": 6,
     "epochs": 30,
     "multiprocessing_distributed": true,
-    "hw_config_type": "vpu",
+    "target_device": "VPU",
+    "quantizer_setup_type": "propagation_based",
     "compression": {
         "algorithm": "quantization",
         "initializer": {
