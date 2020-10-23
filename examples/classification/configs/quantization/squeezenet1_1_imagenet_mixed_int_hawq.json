@@ -11,27 +11,10 @@
     },
     "num_classes": 1000,
     "batch_size": 256,
-    "epochs": 150,
-    "optimizer": {
-        "base_lr": 0.00031,
-        "schedule_type": "plateau",
-        "type": "Adam",
-        "scheduler_params": {
-            "threshold": 0.1,
-            "cooldown": 3
-        },
-        "weight_decay": 1e-05
-    },
-    "quantizer_setup_type": "pattern_based",
+    "epochs": 60,
+    "hw_config_type": "vpu",
     "compression": {
         "algorithm": "quantization",
-        "weights": {
-            "mode": "asymmetric",
-            "per_channel": true
-        },
-        "activations": {
-            "mode": "asymmetric"
-        },
         "initializer": {
             "precision": {
                 "type": "hawq",
@@ -43,6 +26,15 @@
             "range": {
                 "type": "min_max"
             }
+        },
+        "params": {
+            "base_lr": 3.1e-4,
+            "base_wd": 1e-5,
+            "activations_quant_start_epoch": 3,
+            "weights_quant_start_epoch": 22,
+            "lr_poly_drop_start_epoch": 50,
+            "lr_poly_drop_duration_epochs": 10,
+            "disable_wd_start_epoch": 50
         }
     }
 }
