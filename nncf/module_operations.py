@@ -27,7 +27,6 @@ class BaseOp(nn.Module):
         return self.op(*inputs)
 
 
-
 class UpdateInputs(BaseOp):
     def __call__(self, _, inputs):
         return super().__call__(*inputs)
@@ -50,3 +49,8 @@ class UpdateParameter(BaseOp):
 class UpdateWeight(UpdateParameter):
     def __init__(self, op):
         super().__init__("weight", op)
+
+
+class UpdatePaddingValue(UpdateParameter):
+    def __init__(self, op):
+        super().__init__("padding_value", op)

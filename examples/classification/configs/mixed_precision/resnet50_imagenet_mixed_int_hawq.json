@@ -10,7 +10,7 @@
         ]
     },
     "num_classes": 1000,
-    "batch_size": 150,
+    "batch_size": 140,
     "workers": 6,
     "multiprocessing_distributed": true,
     "optimizer": {

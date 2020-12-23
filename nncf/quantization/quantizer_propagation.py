@@ -81,9 +81,11 @@ DEFAULT_QUANT_TRAIT_TO_OP_DICT = {
 class QuantizerInsertionInfo(InsertionInfo):
     def __init__(self, op_exec_context: OperationExecutionContext, is_input=False, is_output=False,
                  shape_to_operate_on=None,
-                 quantizers_between_quantizable_layers: 'QuantizersBetweenQuantizableLayers' = None):
+                 quantizers_between_quantizable_layers: 'QuantizersBetweenQuantizableLayers' = None,
+                 parent_node_scope = None):
         super().__init__(op_exec_context, is_input, is_output, shape_to_operate_on)
         self.quantizers_between_quantizable_layers = quantizers_between_quantizable_layers
+        self.parent_node_scope = parent_node_scope
 
     @staticmethod
     def from_insertion_info(insertion_info: InsertionInfo) -> 'QuantizerInsertionInfo':
@@ -115,6 +117,7 @@ class PropagatingQuantizer:
         self.last_accepting_location_node_key = None
         self.id = id_
         self.unified_scale = unified_scale
+        self.parent_op_scope = None
 
     def __eq__(self, other):
         return self.id == other.id
@@ -789,7 +792,8 @@ class QuantizerPropagationSolver:
             scope_in_model=insertion_point.ia_op_exec_context.scope_in_model,
             call_order=insertion_point.ia_op_exec_context.call_order,
             tensor_metas=[None],
-        ), quantizers_between_quantizable_layers=self.quantizers_between_quantizable_layers_per_key[final_node_key])
+        ), quantizers_between_quantizable_layers=self.quantizers_between_quantizable_layers_per_key[final_node_key],
+            parent_node_scope=prop_quant.parent_op_scope)
         return insertion_info
 
     def propagation_step(self, curr_prop_quantizer: PropagatingQuantizer,
@@ -998,6 +1002,7 @@ class QuantizerPropagationSolver:
                         qconf_list = per_tensor_qconf_list
 
                 prop_quantizer = quant_prop_graph.add_propagating_quantizer(qconf_list, pred_ip_key, is_unified_scale)
+                prop_quantizer.parent_op_scope = node[QuantizerPropagationStateGraph.OPERATOR_SCOPE]
                 self._active_propagating_quantizers_queue.appendleft(prop_quantizer)
 
         return quant_prop_graph

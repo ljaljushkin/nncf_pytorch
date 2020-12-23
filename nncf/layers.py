@@ -49,6 +49,7 @@ class NNCFConv1d(_NNCFModuleMixin, nn.Conv1d):
 
 class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
     op_func_name = "conv2d"
+    padding_value = torch.zeros([1])
 
     @staticmethod
     def from_module(module):
@@ -59,6 +60,16 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
         )
         dict_update(nncf_conv.__dict__, module.__dict__)
         return nncf_conv
+
+    def _conv_forward(self, input, weight):
+        if self.padding_mode != 'zeros':
+            return F.conv2d(F.pad(input, self._reversed_padding_repeated_twice, mode=self.padding_mode,
+                                  value=self.padding_value.item()),
+                            weight, self.bias, self.stride,
+                            (0, 0), self.dilation, self.groups)
+        return F.conv2d(F.pad(input, self._reversed_padding_repeated_twice, value=self.padding_value.item()),
+                        weight, self.bias, self.stride,
+                        (0, 0), self.dilation, self.groups)
 
 
 class NNCFLinear(_NNCFModuleMixin, nn.Linear):
