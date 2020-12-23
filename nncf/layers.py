@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 import warnings
 from torch import nn
-from torch.nn import init
+from torch.nn import init, Parameter
 from torch.nn.utils.rnn import PackedSequence
 
 from nncf.registry import Registry
@@ -49,7 +49,7 @@ class NNCFConv1d(_NNCFModuleMixin, nn.Conv1d):
 
 class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
     op_func_name = "conv2d"
-    padding_value = torch.zeros([1])
+    padding_value = Parameter(torch.zeros([1]), requires_grad=False)
 
     @staticmethod
     def from_module(module):

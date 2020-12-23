@@ -575,7 +575,7 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
 
         module_scope = insertion_info.parent_node_scope
         module = target_model.get_module_by_scope(insertion_info.parent_node_scope)
-        # TODO: should an option
+        # TODO: should be an option
         adjust_padding = True
         if isinstance(module, NNCFConv2d) and adjust_padding:
             op = UpdatePaddingValue(AdjustPadding(quantizer)).to(device)
