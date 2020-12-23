@@ -49,7 +49,22 @@ class NNCFConv1d(_NNCFModuleMixin, nn.Conv1d):
 
 class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
     op_func_name = "conv2d"
-    padding_value = Parameter(torch.zeros([1]), requires_grad=False)
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size,
+        stride,
+        padding=0,
+        dilation=1,
+        groups: int = 1,
+        bias: bool = True,
+        padding_mode: str = 'zeros'  # TODO: refine this type
+    ):
+        super(NNCFConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups,
+                                         bias, padding_mode)
+        self.padding_value = Parameter(torch.zeros([1]), requires_grad=False)
 
     @staticmethod
     def from_module(module):
