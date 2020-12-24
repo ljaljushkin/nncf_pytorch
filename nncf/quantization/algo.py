@@ -560,18 +560,17 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
         class AdjustPadding:
             def __init__(self, activation_quantizer):
                 self.aq = activation_quantizer
-                self.is_enabled = isinstance(self.aq,
-                                             SymmetricQuantizer) and self.aq.num_bits == 4 and not self.aq.signed
+                self.is_applicable = isinstance(self.aq, SymmetricQuantizer) and not self.aq.per_channel
+
+            def is_enabled(self):
+                return self.is_applicable and self.aq.num_bits == 4 and not self.aq.signed
 
             def __call__(self, previous_padding_value):
-                if self.is_enabled:
-                    # level_low, level_high, levels = self.aq.calculate_level_ranges(self.aq.num_bits, signed=True)
-                    # self.aq.set_level_ranges()
-                    # TODO: move input_low to base_quantizer
+                if self.is_enabled():
                     safe_scale = abs(self.aq.scale) + self.aq.eps
                     new_padding_value = safe_scale / 2
                     return new_padding_value
-                return previous_padding_value
+                return torch.zeros_like(previous_padding_value)  # an ordinary convolution is always zero-padded
 
         module_scope = insertion_info.parent_node_scope
         module = target_model.get_module_by_scope(insertion_info.parent_node_scope)
