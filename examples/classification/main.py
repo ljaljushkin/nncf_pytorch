@@ -49,7 +49,8 @@ from nncf import create_compressed_model
 from nncf.compression_method_api import CompressionLevel
 from nncf.dynamic_graph.graph_builder import create_input_infos
 from nncf.initialization import register_default_init_args, default_criterion_fn
-from nncf.utils import safe_thread_call, is_main_process
+from nncf.quantization.layers import SymmetricQuantizer
+from nncf.utils import safe_thread_call, is_main_process, get_all_modules_by_type
 from examples.classification.common import configure_device, set_seed, load_resuming_checkpoint
 
 model_names = sorted(name for name in models.__dict__
@@ -152,7 +153,16 @@ def main_worker(current_gpu, config: SampleConfig):
 
     resuming_model_sd, resuming_checkpoint = load_resuming_checkpoint(resuming_checkpoint_path)
     compression_ctrl, model = create_compressed_model(model, nncf_config, resuming_state_dict=resuming_model_sd)
-
+    num_applicable = 0
+    for qid, q in compression_ctrl.non_weight_quantizers.items():
+        q = q.quantizer_module_ref
+        if isinstance(q, SymmetricQuantizer):
+            print(f'symmetric signed={q.signed} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
+        if not q.signed:
+            print(f'unsigned type={q.__class__.__name__} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
+        if isinstance(q, SymmetricQuantizer) and not q.signed and q.num_bits == 4 and not q.per_channel:
+            num_applicable += 1
+    print(f"WARNING!!!! num layers to adjust={num_applicable}")
     if config.to_onnx:
         compression_ctrl.export_model(config.to_onnx)
         logger.info("Saved to {}".format(config.to_onnx))
