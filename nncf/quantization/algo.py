@@ -560,7 +560,7 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
         class AdjustPadding:
             def __init__(self, activation_quantizer):
                 self.aq = activation_quantizer
-                self.is_applicable = isinstance(self.aq, SymmetricQuantizer) and not self.aq.per_channel
+                self.is_applicable = isinstance(self.aq, SymmetricQuantizer)  # and not self.aq.per_channel
 
             def is_enabled(self):
                 return self.is_applicable and self.aq.num_bits == 4 and not self.aq.signed

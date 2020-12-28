@@ -156,12 +156,16 @@ def main_worker(current_gpu, config: SampleConfig):
     num_applicable = 0
     for qid, q in compression_ctrl.non_weight_quantizers.items():
         q = q.quantizer_module_ref
-        if isinstance(q, SymmetricQuantizer):
-            print(f'symmetric signed={q.signed} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
-        if not q.signed:
-            print(f'unsigned type={q.__class__.__name__} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
-        if isinstance(q, SymmetricQuantizer) and not q.signed and q.num_bits == 4 and not q.per_channel:
+        # if isinstance(q, SymmetricQuantizer):
+        #     print(f'symmetric signed={q.signed} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
+        # if not q.signed:
+        #     print(f'unsigned type={q.__class__.__name__} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
+        # if isinstance(q, SymmetricQuantizer) and not q.signed:
+        #     print(f'bits={q.num_bits} type={q.__class__.__name__} per_channel={q.per_channel} signed={q.signed} id={qid} ')
+        if isinstance(q, SymmetricQuantizer) and not q.signed and q.num_bits == 4:
             num_applicable += 1
+            print(
+                f'bits={q.num_bits} type={q.__class__.__name__} per_channel={q.per_channel} signed={q.signed} id={qid} ')
     print(f"WARNING!!!! num layers to adjust={num_applicable}")
     if config.to_onnx:
         compression_ctrl.export_model(config.to_onnx)
