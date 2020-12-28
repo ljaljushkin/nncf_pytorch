@@ -49,7 +49,7 @@ from nncf import create_compressed_model
 from nncf.compression_method_api import CompressionLevel
 from nncf.dynamic_graph.graph_builder import create_input_infos
 from nncf.initialization import register_default_init_args, default_criterion_fn
-from nncf.quantization.layers import SymmetricQuantizer
+from nncf.module_operations import UpdatePaddingValue
 from nncf.utils import safe_thread_call, is_main_process, get_all_modules_by_type
 from examples.classification.common import configure_device, set_seed, load_resuming_checkpoint
 
@@ -153,20 +153,34 @@ def main_worker(current_gpu, config: SampleConfig):
 
     resuming_model_sd, resuming_checkpoint = load_resuming_checkpoint(resuming_checkpoint_path)
     compression_ctrl, model = create_compressed_model(model, nncf_config, resuming_state_dict=resuming_model_sd)
-    num_applicable = 0
-    for qid, q in compression_ctrl.non_weight_quantizers.items():
-        q = q.quantizer_module_ref
-        # if isinstance(q, SymmetricQuantizer):
-        #     print(f'symmetric signed={q.signed} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
-        # if not q.signed:
-        #     print(f'unsigned type={q.__class__.__name__} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
-        # if isinstance(q, SymmetricQuantizer) and not q.signed:
-        #     print(f'bits={q.num_bits} type={q.__class__.__name__} per_channel={q.per_channel} signed={q.signed} id={qid} ')
-        if isinstance(q, SymmetricQuantizer) and not q.signed and q.num_bits == 4:
-            num_applicable += 1
-            print(
-                f'bits={q.num_bits} type={q.__class__.__name__} per_channel={q.per_channel} signed={q.signed} id={qid} ')
-    print(f"WARNING!!!! num layers to adjust={num_applicable}")
+    stats = {'num_applicable': 0, 'num_enabled': 0, 'num_kernel_overlap': 0, 'num_all_apad': 0}
+    all_convs = get_all_modules_by_type(model, 'NNCFConv2d')
+    for scope, module in all_convs.items():
+        for op in module.pre_ops.values():
+            if isinstance(op, UpdatePaddingValue):
+                stats['num_all_apad'] += 1
+                if op.operand.is_enabled():
+                    stats['num_enabled'] += 1
+                    # if op.operand.is_kernel_overlap_pad:
+                    #     stats['num_kernel_overlap'] += 1
+                    # if op.operand.is_enabled() and op.operand.is_kernel_overlap_pad:
+                    #     stats['num_applicable'] += 1
+                    aq = op.operand.aq
+                    print(
+                        f'!!!{scope} {op.operand.kernel_size} enabled={op.operand.is_enabled()} bits={aq.num_bits} type={aq.__class__.__name__} per_channel={aq.per_channel} signed={aq.signed}')
+                # for qid, q in compression_ctrl.non_weight_quantizers.items():
+                #     q = q.quantizer_module_ref
+                #     # if isinstance(q, SymmetricQuantizer):
+                #     #     print(f'symmetric signed={q.signed} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
+                #     # if not q.signed:
+                #     #     print(f'unsigned type={q.__class__.__name__} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
+                #     # if isinstance(q, SymmetricQuantizer) and not q.signed:
+                #     #     print(f'bits={q.num_bits} type={q.__class__.__name__} per_channel={q.per_channel} signed={q.signed} id={qid} ')
+                #     if isinstance(q, SymmetricQuantizer) and not q.signed and q.num_bits == 4:
+                #         num_applicable += 1
+                #         print(
+                #             f'bits={q.num_bits} type={q.__class__.__name__} per_channel={q.per_channel} signed={q.signed} id={qid} ')
+    print(f"WARNING!!!! {stats} out of {len(all_convs)}")
     if config.to_onnx:
         compression_ctrl.export_model(config.to_onnx)
         logger.info("Saved to {}".format(config.to_onnx))

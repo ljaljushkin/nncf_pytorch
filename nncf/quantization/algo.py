@@ -558,15 +558,21 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
                                                        OperationPriority.QUANTIZATION_PRIORITY))
 
         class AdjustPadding:
-            def __init__(self, activation_quantizer):
+            def __init__(self, activation_quantizer, kernel_size=(3, 3)):
                 self.aq = activation_quantizer
-                self.is_applicable = isinstance(self.aq, SymmetricQuantizer)  # and not self.aq.per_channel
+                self.kernel_size = kernel_size
+                is_kernel_overlap_pad = len([v for v in kernel_size if v > 1]) == len(kernel_size)
+                self.is_applicable = isinstance(self.aq,
+                                                SymmetricQuantizer) and is_kernel_overlap_pad and not self.aq.per_channel
 
             def is_enabled(self):
                 return self.is_applicable and self.aq.num_bits == 4 and not self.aq.signed
 
             def __call__(self, previous_padding_value):
                 if self.is_enabled():
+                    # is_kernel_overlap_pad = len([v for v in self.kernel_size if v > 1]) == len(self.kernel_size)
+                    # if is_kernel_overlap_pad:
+                    #     print(f'kernel_size = {self.kernel_size}')
                     safe_scale = abs(self.aq.scale) + self.aq.eps
                     new_padding_value = safe_scale / 2
                     return new_padding_value
@@ -577,7 +583,8 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
         # TODO: should be an option
         adjust_padding = True
         if isinstance(module, NNCFConv2d) and adjust_padding:
-            op = UpdatePaddingValue(AdjustPadding(quantizer)).to(device)
+            kernel_size = module.kernel_size
+            op = UpdatePaddingValue(AdjustPadding(quantizer, kernel_size)).to(device)
             insertion_commands.append(InsertionCommand(InsertionPoint(
                 InputAgnosticOperationExecutionContext('', module_scope, 0),
                 InsertionType.NNCF_MODULE_PRE_OP), op, OperationPriority.DEFAULT_PRIORITY))
