@@ -28,7 +28,8 @@
             "precision": {
                 "type": "hawq",
                 "bits": [2, 4, 8],
-                "compression_ratio": 1.5
+                "compression_ratio": 1.5,
+                "dump_hawq_data": true
             },
             "range": {
                 "type": "min_max"

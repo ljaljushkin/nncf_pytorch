@@ -26,12 +26,12 @@
     "target_device": "VPU",
     "compression": {
         "algorithm": "quantization",
-        "quantize_inputs": true,
         "initializer": {
             "precision": {
                 "type": "hawq",
                 "bits": [2, 4, 8],
-                "compression_ratio": 1.5
+                "compression_ratio": 1.5,
+                "dump_hawq_data": true
             }
         }
     }
