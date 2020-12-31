@@ -29,7 +29,7 @@
         "initializer": {
             "precision": {
                 "type": "hawq",
-                "bits": [4, 8],
+                "bits": [2, 4, 8],
                 "compression_ratio": 1.5
             }
         }

@@ -10,7 +10,7 @@
         ]
     },
     "num_classes": 1000,
-    "batch_size": 200,
+    "batch_size": 256,
     "workers": 6,
     "multiprocessing_distributed": true,
     "optimizer": {
@@ -30,7 +30,7 @@
         "initializer": {
             "precision": {
                 "type": "hawq",
-                "bits": [4, 8],
+                "bits": [2, 4, 8],
                 "compression_ratio": 1.5
             }
         }
