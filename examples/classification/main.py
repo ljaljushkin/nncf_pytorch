@@ -15,6 +15,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from copy import deepcopy
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -52,6 +53,20 @@ from nncf.initialization import register_default_init_args, default_criterion_fn
 from nncf.module_operations import UpdatePaddingValue
 from nncf.utils import safe_thread_call, is_main_process, get_all_modules_by_type
 from examples.classification.common import configure_device, set_seed, load_resuming_checkpoint
+#from examples.classification.staged_quantization_worker import KDLossCalculator
+
+class KDLossCalculator:
+    def __init__(self, original_model, temperature=1.0):
+        self.original_model = original_model
+        self.original_model = original_model
+        self.temperature = temperature
+    def loss(self, inputs, quantized_network_outputs):
+        T = self.temperature
+        with torch.no_grad():
+            ref_output = self.original_model(inputs).detach()
+        kd_loss = -(nn.functional.log_softmax(quantized_network_outputs / T, dim=1) *
+                                        nn.functional.softmax(ref_output / T, dim=1)).mean() * (T * T * quantized_network_outputs.shape[1])
+        return kd_loss
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
@@ -68,6 +83,7 @@ def get_argument_parser():
     )
     parser.add_argument('--test-every-n-epochs', default=1, type=int,
                         help='Enables running validation every given number of epochs')
+    parser.add_argument("--distillation", action='store_true', help="Train with knowledge distillation")
     return parser
 
 
@@ -96,11 +112,11 @@ def main(argv):
     if config.metrics_dump is not None:
         write_metrics(0, config.metrics_dump)
 
-    if not is_staged_quantization(config):
-        start_worker(main_worker, config)
-    else:
-        from examples.classification.staged_quantization_worker import staged_quantization_main_worker
-        start_worker(staged_quantization_main_worker, config)
+    # if not is_staged_quantization(config):
+    start_worker(main_worker, config)
+    # else:
+    #     from examples.classification.staged_quantization_worker import staged_quantization_main_worker
+    #     start_worker(staged_quantization_main_worker, config)
 
 
 def inception_criterion_fn(model_outputs: Any, target: Any, criterion: _Loss) -> torch.Tensor:
@@ -148,12 +164,17 @@ def main_worker(current_gpu, config: SampleConfig):
                        num_classes=config.get('num_classes', 1000),
                        model_params=config.get('model_params'),
                        weights_path=config.get('weights'))
+    original_model = deepcopy(model)
 
     model.to(config.device)
 
     resuming_model_sd, resuming_checkpoint = load_resuming_checkpoint(resuming_checkpoint_path)
     compression_ctrl, model = create_compressed_model(model, nncf_config, resuming_state_dict=resuming_model_sd)
     stats = {'num_applicable': 0, 'num_enabled': 0, 'num_kernel_overlap': 0, 'num_all_apad': 0}
+
+    for fq in compression_ctrl.all_quantizations.values():
+        fq.enable_quantization()
+
     all_convs = get_all_modules_by_type(model, 'NNCFConv2d')
     for scope, module in all_convs.items():
         for op in module.pre_ops.values():
@@ -180,32 +201,34 @@ def main_worker(current_gpu, config: SampleConfig):
                 #         num_applicable += 1
                 #         print(
                 #             f'bits={q.num_bits} type={q.__class__.__name__} per_channel={q.per_channel} signed={q.signed} id={qid} ')
-    print(f"WARNING!!!! {stats} out of {len(all_convs)}")
+    logger.info(f"WARNING!!!! {stats} out of {len(all_convs)}")
     if config.to_onnx:
         compression_ctrl.export_model(config.to_onnx)
         logger.info("Saved to {}".format(config.to_onnx))
         return
 
     model, _ = prepare_model_for_execution(model, config)
+    original_model.to(config.device)
     if config.distributed:
         compression_ctrl.distributed()
 
     # define optimizer
     params_to_optimize = get_parameter_groups(model, config)
     optimizer, lr_scheduler = make_optimizer(params_to_optimize, config)
+    kd_loss_calculator = KDLossCalculator(original_model) if config.distillation else None
 
     best_acc1 = 0
     # optionally resume from a checkpoint
-    if resuming_checkpoint_path is not None:
-        if config.mode.lower() == 'train' and config.to_onnx is None:
-            config.start_epoch = resuming_checkpoint['epoch']
-            best_acc1 = resuming_checkpoint['best_acc1']
-            compression_ctrl.scheduler.load_state_dict(resuming_checkpoint['scheduler'])
-            optimizer.load_state_dict(resuming_checkpoint['optimizer'])
-            logger.info("=> loaded checkpoint '{}' (epoch: {}, best_acc1: {:.3f})"
-                        .format(resuming_checkpoint_path, resuming_checkpoint['epoch'], best_acc1))
-        else:
-            logger.info("=> loaded checkpoint '{}'".format(resuming_checkpoint_path))
+    #if resuming_checkpoint_path is not None:
+    #    if config.mode.lower() == 'train' and config.to_onnx is None:
+    #        config.start_epoch = resuming_checkpoint['epoch']
+    #        best_acc1 = resuming_checkpoint['best_acc1']
+    #        compression_ctrl.scheduler.load_state_dict(resuming_checkpoint['scheduler'])
+    #        optimizer.load_state_dict(resuming_checkpoint['optimizer'])
+    #        logger.info("=> loaded checkpoint '{}' (epoch: {}, best_acc1: {:.3f})"
+    #                    .format(resuming_checkpoint_path, resuming_checkpoint['epoch'], best_acc1))
+    #    else:
+    #        logger.info("=> loaded checkpoint '{}'".format(resuming_checkpoint_path))
 
     log_common_mlflow_params(config)
 
@@ -220,11 +243,11 @@ def main_worker(current_gpu, config: SampleConfig):
 
     if config.mode.lower() == 'train':
         train(config, compression_ctrl, model, criterion, train_criterion_fn, lr_scheduler, model_name, optimizer,
-              train_loader, train_sampler, val_loader, best_acc1)
+              train_loader, train_sampler, val_loader, kd_loss_calculator, best_acc1)
 
 
 def train(config, compression_ctrl, model, criterion, criterion_fn, lr_scheduler, model_name, optimizer,
-          train_loader, train_sampler, val_loader, best_acc1=0):
+          train_loader, train_sampler, val_loader, kd_loss_calculator, best_acc1=0):
     best_compression_level = CompressionLevel.NONE
     for epoch in range(config.start_epoch, config.epochs):
         # update compression scheduler state at the begin of the epoch
@@ -235,7 +258,7 @@ def train(config, compression_ctrl, model, criterion, criterion_fn, lr_scheduler
             train_sampler.set_epoch(epoch)
 
         # train for one epoch
-        train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compression_ctrl, epoch, config)
+        train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compression_ctrl, epoch, config, kd_loss_calculator)
 
         # Learning rate scheduling should be applied after optimizer’s update
         lr_scheduler.step(epoch if not isinstance(lr_scheduler, ReduceLROnPlateau) else best_acc1)
@@ -382,12 +405,13 @@ def create_data_loaders(config, train_dataset, val_dataset):
     return train_loader, train_sampler, val_loader, init_loader
 
 
-def train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compression_ctrl, epoch, config):
+def train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compression_ctrl, epoch, config, kd_loss_calculator):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
     compression_losses = AverageMeter()
     criterion_losses = AverageMeter()
+    kd_losses_meter = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
 
@@ -409,10 +433,11 @@ def train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compres
         # compute output
         output = model(input_)
         criterion_loss = criterion_fn(output, target, criterion)
+        kd_loss = kd_loss_calculator.loss(input_, output) if config.distillation else torch.zeros([1]).to(config.device)
 
         # compute compression loss
         compression_loss = compression_ctrl.loss()
-        loss = criterion_loss + compression_loss
+        loss = criterion_loss + compression_loss + kd_loss
 
         if isinstance(output, InceptionOutputs):
             output = output.logits
@@ -422,6 +447,7 @@ def train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compres
         comp_loss_val = compression_loss.item() if isinstance(compression_loss, torch.Tensor) else compression_loss
         compression_losses.update(comp_loss_val, input_.size(0))
         criterion_losses.update(criterion_loss.item(), input_.size(0))
+        kd_losses_meter.update(kd_loss.item(), input_.size(0))
         top1.update(acc1, input_.size(0))
         top5.update(acc5, input_.size(0))
 
@@ -443,11 +469,12 @@ def train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compres
                 'Data: {data_time.val:.3f} ({data_time.avg:.3f}) '
                 'CE_loss: {ce_loss.val:.4f} ({ce_loss.avg:.4f}) '
                 'CR_loss: {cr_loss.val:.4f} ({cr_loss.avg:.4f}) '
+                'KD_loss: {kd_loss.val:.4f} ({kd_loss.avg:.4f}) '
                 'Loss: {loss.val:.4f} ({loss.avg:.4f}) '
                 'Acc@1: {top1.val:.3f} ({top1.avg:.3f}) '
                 'Acc@5: {top5.val:.3f} ({top5.avg:.3f})'.format(
                     epoch, i, len(train_loader), get_lr(optimizer), batch_time=batch_time,
-                    data_time=data_time, ce_loss=criterion_losses, cr_loss=compression_losses,
+                    data_time=data_time, ce_loss=criterion_losses, cr_loss=compression_losses, kd_loss=kd_losses_meter,
                     loss=losses, top1=top1, top5=top5,
                     rank='{}:'.format(config.rank) if config.multiprocessing_distributed else ''
                 ))
@@ -457,6 +484,7 @@ def train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compres
             config.tb.add_scalar("train/learning_rate", get_lr(optimizer), i + global_step)
             config.tb.add_scalar("train/criterion_loss", criterion_losses.avg, i + global_step)
             config.tb.add_scalar("train/compression_loss", compression_losses.avg, i + global_step)
+            config.tb.add_scalar("train/kd_loss", kd_losses_meter.avg, i + global_step)
             config.tb.add_scalar("train/loss", losses.avg, i + global_step)
             config.tb.add_scalar("train/top1", top1.avg, i + global_step)
             config.tb.add_scalar("train/top5", top5.avg, i + global_step)
