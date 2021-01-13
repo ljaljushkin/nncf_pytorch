@@ -24,7 +24,7 @@ import numpy as np
 import operator
 import shutil
 import torch
-from nncf.layers import NNCFEmbedding, NNCFEmbeddingBag
+from nncf.layers import NNCFEmbedding, NNCFEmbeddingBag, NNCFConv2d
 from torch import nn
 
 from nncf.algo_selector import COMPRESSION_ALGORITHMS
@@ -39,14 +39,14 @@ from nncf.dynamic_graph.input_wrapping import MODEL_INPUT_OP_NAME
 from nncf.dynamic_graph.transform_graph import is_nncf_module
 from nncf.hw_config import HWConfig
 from nncf.initialization import DataLoaderRangeInitializeRunner
-from nncf.module_operations import UpdateWeight, UpdateInputs
+from nncf.module_operations import UpdateWeight, UpdateInputs, UpdatePaddingValue
 from nncf.nncf_logger import logger as nncf_logger
 from nncf.nncf_network import NNCFNetwork, CompressionModuleType, InsertionCommand, OperationPriority, \
     InsertionPoint, InsertionType, InsertionPointGraph, InsertionPointGraphNodeType
 from nncf.quantization.hw_precision_constraints import HWPrecisionConstraints
 from nncf.quantization.init_precision import PrecisionInitializerFactory
 from nncf.quantization.layers import QUANTIZATION_MODULES, QuantizationMode, QuantizerConfig, BaseQuantizer, \
-    QuantizerExportMode, QuantizersSwitcher
+    QuantizerExportMode, QuantizersSwitcher, SymmetricQuantizer
 from nncf.quantization.metrics import NetworkQuantizationShareMetric, MemoryCostMetric, ShareEdgesQuantizedDataPath
 from nncf.quantization.quantizer_id import WeightQuantizerId, NonWeightQuantizerId, InputQuantizerId, \
     FunctionQuantizerId
@@ -556,6 +556,39 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
                                                                       InsertionType.OPERATOR_POST_HOOK),
                                                        hook,
                                                        OperationPriority.QUANTIZATION_PRIORITY))
+
+        class AdjustPadding:
+            def __init__(self, activation_quantizer, kernel_size=(3, 3)):
+                self.aq = activation_quantizer
+                self.kernel_size = kernel_size
+                is_kernel_overlap_pad = len([v for v in kernel_size if v > 1]) == len(kernel_size)
+                self.is_applicable = isinstance(self.aq,
+                                                SymmetricQuantizer) and is_kernel_overlap_pad and not self.aq.per_channel
+
+            def is_enabled(self):
+                return self.is_applicable and self.aq.num_bits == 4 and not self.aq.signed
+
+            def __call__(self, previous_padding_value):
+                if self.is_enabled():
+                    # is_kernel_overlap_pad = len([v for v in self.kernel_size if v > 1]) == len(self.kernel_size)
+                    # if is_kernel_overlap_pad:
+                    #     print(f'kernel_size = {self.kernel_size}')
+                    safe_scale = abs(self.aq.scale) + self.aq.eps
+                    new_padding_value = safe_scale / 2
+                    return new_padding_value
+                return torch.zeros_like(previous_padding_value)  # an ordinary convolution is always zero-padded
+
+        module_scope = insertion_info.parent_node_scope
+        module = target_model.get_module_by_scope(insertion_info.parent_node_scope)
+        # TODO: should be an option
+        adjust_padding = True
+        if isinstance(module, NNCFConv2d) and adjust_padding:
+            kernel_size = module.kernel_size
+            op = UpdatePaddingValue(AdjustPadding(quantizer, kernel_size)).to(device)
+            insertion_commands.append(InsertionCommand(InsertionPoint(
+                InputAgnosticOperationExecutionContext('', module_scope, 0),
+                InsertionType.NNCF_MODULE_PRE_OP), op, OperationPriority.DEFAULT_PRIORITY))
+
         return insertion_commands
 
     def _quantize_inputs(self, target_model: NNCFNetwork,

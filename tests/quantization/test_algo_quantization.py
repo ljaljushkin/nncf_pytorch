@@ -212,6 +212,7 @@ def test_get_weight_activation_pairs__with_extra_module():
 
     compare_weights_activation_quantizers_pairs(actual_pairs, algo, ref_pair_names, model_name)
 
+
 def test_can_load_quant_algo__with_defaults():
     model = BasicConvTestModel()
     config = get_quantization_config_without_range_init()
@@ -454,8 +455,27 @@ def test_quantize_inputs():
         '/nncf_model_input_3',
         '/nncf_model_input_4'
     ]
-    actual_input_quantizer_str_scopes =\
-         [str_scope for str_scope in model.activation_quantizers if 'nncf_model_input' in str_scope]
+    actual_input_quantizer_str_scopes = \
+        [str_scope for str_scope in model.activation_quantizers if 'nncf_model_input' in str_scope]
     assert len(REF_QUANTIZED_INPUT_MODULE_SCOPES) == len(actual_input_quantizer_str_scopes)
     for ref_qinput_scope_str in REF_QUANTIZED_INPUT_MODULE_SCOPES:
         assert isinstance(model.activation_quantizers[ref_qinput_scope_str], SymmetricQuantizer)
+
+
+def test_export_padded_conv(tmp_path):
+    class TestModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            padding_size = 2
+            padding_value = -1.4
+            conv = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, padding=padding_size, stride=2)
+            self.nncf_conv = NNCFConv2d.from_module(conv)
+            self.nncf_conv.padding_value = padding_value
+
+        def forward(self, x):
+            return self.nncf_conv(x)
+
+    dummy_input = torch.randn(1, 1, 4, 4)
+    torch.onnx.export(TestModel(), dummy_input, str(tmp_path / "conv.onnx"), verbose=False)
+
+    # TODO: parse and find Pad with predefined padding value
