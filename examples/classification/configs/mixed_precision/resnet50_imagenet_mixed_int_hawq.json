@@ -14,7 +14,7 @@
     "workers": 6,
     "multiprocessing_distributed": true,
     "optimizer": {
-        "base_lr": 1e-6,
+        "base_lr": 3.1e-5,
         "schedule_type": "plateau",
         "type": "Adam",
         "scheduler_params": {
@@ -27,8 +27,8 @@
     "compression": {
         "algorithm": "quantization",
         "params" : {
-            "activations_quant_start_epoch": 1000,
-            "weights_quant_start_epoch": 1000
+            "activations_quant_start_epoch": 2,
+            "weights_quant_start_epoch": 2
         },
         "initializer": {
             "precision": {
