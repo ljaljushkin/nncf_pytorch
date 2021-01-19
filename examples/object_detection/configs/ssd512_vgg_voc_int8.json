@@ -14,16 +14,19 @@
     "rgb": true
   },
   "max_iter": 5000,
-  "batch_size": 64,
+  "batch_size": 24,
   "iter_size": 1,
   "save_freq": 3, // in epochs
   "optimizer": {
-    "type": "Adam",
-    "base_lr": 1e-4,
-    "weight_decay": 5e-4,
-    "schedule_type": "multistep",
-    "steps": [2]
-  },
+        "base_lr": 0.00031,
+        "schedule_type": "plateau",
+        "type": "Adam",
+        "scheduler_params": {
+            "threshold": 0.1,
+            "cooldown": 3
+        },
+        "weight_decay": 5e-4
+    },
   "ssd_params": {
     "steps": [8, 16, 32, 64, 128, 256, 512],
     "min_sizes": [35.84, 76.8, 153.6, 230.4, 307.2, 384.0, 460.8],
@@ -33,11 +36,18 @@
     "clip": false,
     "flip": true
   },
+  "target_device": "VPU",
   "compression": {
     "algorithm": "quantization",
     "initializer": {
       "range": {
         "num_init_samples": 640
+      },
+      "precision": {
+        "type": "hawq",
+        "compression_ratio": 1.5,
+        "num_data_points": 100,
+        "tolerance": 0.001
       }
     }
   }
