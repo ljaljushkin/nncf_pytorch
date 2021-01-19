@@ -56,15 +56,20 @@ from examples.classification.common import configure_device, set_seed, load_resu
 #from examples.classification.staged_quantization_worker import KDLossCalculator
 
 class KDLossCalculator:
-    def __init__(self, original_model, temperature=1.0):
+    def __init__(self, original_model, temperature=1.0, is_L2_norm=False):
         self.original_model = original_model
         self.original_model = original_model
         self.temperature = temperature
+        self.is_L2_norm = is_L2_norm
+
     def loss(self, inputs, quantized_network_outputs):
         T = self.temperature
         with torch.no_grad():
             ref_output = self.original_model(inputs).detach()
-        kd_loss = -(nn.functional.log_softmax(quantized_network_outputs / T, dim=1) *
+        if self.is_L2_norm:
+            kd_loss = torch.norm(quantized_network_outputs - ref_output, p=2) ** 2
+        else:
+            kd_loss = -(nn.functional.log_softmax(quantized_network_outputs / T, dim=1) *
                                         nn.functional.softmax(ref_output / T, dim=1)).mean() * (T * T * quantized_network_outputs.shape[1])
         return kd_loss
 
@@ -182,25 +187,9 @@ def main_worker(current_gpu, config: SampleConfig):
                 stats['num_all_apad'] += 1
                 if op.operand.is_enabled():
                     stats['num_enabled'] += 1
-                    # if op.operand.is_kernel_overlap_pad:
-                    #     stats['num_kernel_overlap'] += 1
-                    # if op.operand.is_enabled() and op.operand.is_kernel_overlap_pad:
-                    #     stats['num_applicable'] += 1
                 aq = op.operand.aq
                 print(
                     f'!!!{scope} {op.operand.kernel_size} enabled={op.operand.is_enabled()} bits={aq.num_bits} type={aq.__class__.__name__} per_channel={aq.per_channel} signed={aq.signed}')
-                # for qid, q in compression_ctrl.non_weight_quantizers.items():
-                #     q = q.quantizer_module_ref
-                #     # if isinstance(q, SymmetricQuantizer):
-                #     #     print(f'symmetric signed={q.signed} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
-                #     # if not q.signed:
-                #     #     print(f'unsigned type={q.__class__.__name__} per_channel={q.per_channel} bits={q.num_bits} id={qid}')
-                #     # if isinstance(q, SymmetricQuantizer) and not q.signed:
-                #     #     print(f'bits={q.num_bits} type={q.__class__.__name__} per_channel={q.per_channel} signed={q.signed} id={qid} ')
-                #     if isinstance(q, SymmetricQuantizer) and not q.signed and q.num_bits == 4:
-                #         num_applicable += 1
-                #         print(
-                #             f'bits={q.num_bits} type={q.__class__.__name__} per_channel={q.per_channel} signed={q.signed} id={qid} ')
     logger.info(f"WARNING!!!! {stats} out of {len(all_convs)}")
     if config.to_onnx:
         compression_ctrl.export_model(config.to_onnx)
@@ -215,7 +204,7 @@ def main_worker(current_gpu, config: SampleConfig):
     # define optimizer
     params_to_optimize = get_parameter_groups(model, config)
     optimizer, lr_scheduler = make_optimizer(params_to_optimize, config)
-    kd_loss_calculator = KDLossCalculator(original_model) if config.distillation else None
+    kd_loss_calculator = KDLossCalculator(original_model, is_L2_norm=True) if config.distillation else None
 
     best_acc1 = 0
     # optionally resume from a checkpoint

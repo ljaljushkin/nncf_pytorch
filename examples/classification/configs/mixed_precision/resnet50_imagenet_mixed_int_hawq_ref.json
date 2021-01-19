@@ -25,12 +25,12 @@
     },
     "target_device": "VPU",
     "compression": {
-        "weights": {
-            "logarithm_scale": true
-        },
-        "activations": {
-            "logarithm_scale": true
-        },
+//        "weights": {
+//            "logarithm_scale": true
+//        },
+//        "activations": {
+//            "logarithm_scale": true
+//        },
         "algorithm": "quantization",
         "initializer": {
             "precision": {
