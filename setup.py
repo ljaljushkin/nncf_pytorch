@@ -63,7 +63,7 @@ INSTALL_REQUIRES = ["ninja==1.10.0.post2",
                     "yattag==1.14.0",
                     "jsonschema==3.2.0",
                     "wheel==0.36.1",
-                    "defusedxml==0.7.0rc1",
+                    "defusedxml",
                     "mlflow==1.12.1",
                     "returns==0.14",
                     "pandas==1.1.5"]

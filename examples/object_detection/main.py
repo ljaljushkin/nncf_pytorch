@@ -40,7 +40,8 @@ from examples.object_detection.layers.modules import MultiBoxLoss
 from examples.object_detection.model import build_ssd
 from nncf import create_compressed_model, load_state
 from nncf.dynamic_graph.graph_builder import create_input_infos
-from nncf.utils import is_main_process
+from nncf.module_operations import UpdatePaddingValue
+from nncf.utils import is_main_process, get_all_modules_by_type
 
 
 def str2bool(v):
@@ -258,6 +259,24 @@ def create_model(config: SampleConfig, resuming_model_sd: dict = None):
     ssd_net.to(config.device)
 
     compression_ctrl, compressed_model = create_compressed_model(ssd_net, config.nncf_config, resuming_model_sd)
+
+    stats = {'num_applicable': 0, 'num_enabled': 0, 'num_kernel_overlap': 0, 'num_all_apad': 0}
+
+    for fq in compression_ctrl.all_quantizations.values():
+        fq.enable_quantization()
+
+    all_convs = get_all_modules_by_type(compressed_model, 'NNCFConv2d')
+    for scope, module in all_convs.items():
+        for op in module.pre_ops.values():
+            if isinstance(op, UpdatePaddingValue):
+                stats['num_all_apad'] += 1
+                if op.operand.is_enabled():
+                    stats['num_enabled'] += 1
+                aq = op.operand.aq
+                print(
+                    f'!!!{scope} {op.operand.kernel_size} enabled={op.operand.is_enabled()} bits={aq.num_bits} type={aq.__class__.__name__} per_channel={aq.per_channel} signed={aq.signed}')
+    logger.info(f"WARNING!!!! {stats} out of {len(all_convs)}")
+
     compressed_model, _ = prepare_model_for_execution(compressed_model, config)
 
     compressed_model.train()

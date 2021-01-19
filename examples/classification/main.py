@@ -186,9 +186,9 @@ def main_worker(current_gpu, config: SampleConfig):
                     #     stats['num_kernel_overlap'] += 1
                     # if op.operand.is_enabled() and op.operand.is_kernel_overlap_pad:
                     #     stats['num_applicable'] += 1
-                    aq = op.operand.aq
-                    print(
-                        f'!!!{scope} {op.operand.kernel_size} enabled={op.operand.is_enabled()} bits={aq.num_bits} type={aq.__class__.__name__} per_channel={aq.per_channel} signed={aq.signed}')
+                aq = op.operand.aq
+                print(
+                    f'!!!{scope} {op.operand.kernel_size} enabled={op.operand.is_enabled()} bits={aq.num_bits} type={aq.__class__.__name__} per_channel={aq.per_channel} signed={aq.signed}')
                 # for qid, q in compression_ctrl.non_weight_quantizers.items():
                 #     q = q.quantizer_module_ref
                 #     # if isinstance(q, SymmetricQuantizer):
