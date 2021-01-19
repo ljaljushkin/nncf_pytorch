@@ -45,9 +45,10 @@
       },
       "precision": {
         "type": "hawq",
-        "compression_ratio": 1.5,
         "num_data_points": 100,
-        "tolerance": 0.001
+        "tolerance": 0.001,
+        "dump_hawq_data": true,
+        "compression_ratio": 1.5
       }
     }
   }
