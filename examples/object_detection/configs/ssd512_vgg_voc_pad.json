@@ -1,0 +1,121 @@
+{
+  "model": "ssd_vgg",
+  "batchnorm": true,
+  "input_info": {
+    "sample_size": [8, 3, 512, 512]
+  },
+  "pretrained": true,
+  "num_classes": 21,
+  "dataset": "voc",
+  "preprocessing": {
+    "mean": [0.406, 0.456, 0.485],
+    "std": [0.255, 0.224, 0.229],
+    "normalize_coef": 255,
+    "rgb": true
+  },
+  "max_iter": 300000,
+  "batch_size": 24,
+  "iter_size": 1,
+  "save_freq": 3, // in epochs
+  "optimizer": {
+        "base_lr": 0.00031,
+        "schedule_type": "plateau",
+        "type": "Adam",
+        "scheduler_params": {
+            "threshold": 0.1,
+            "cooldown": 3
+        },
+        "weight_decay": 5e-4
+    },
+  "ssd_params": {
+    "steps": [8, 16, 32, 64, 128, 256, 512],
+    "min_sizes": [35.84, 76.8, 153.6, 230.4, 307.2, 384.0, 460.8],
+    "max_sizes": [76.8, 153.6, 230.4, 307.2, 384.0, 460.8, 537.6],
+    "aspect_ratios": [[2], [2, 3], [2, 3], [2, 3], [2, 3], [2], [2]],
+    "variance": [0.1, 0.1, 0.2, 0.2],
+    "clip": false,
+    "flip": true
+  },
+  "target_device": "VPU",
+  "compression": {
+    "algorithm": "quantization",
+    "initializer": {
+      "range": {
+        "num_init_samples": 640
+      },
+      "precision": {
+        "type": "manual",
+        "bitwidth_per_scope": [
+          [8, "ModuleDict/SymmetricQuantizer[/nncf_model_input_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/L2Norm[L2Norm]/__rmul___0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/L2Norm[L2Norm]/div_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/MaxPool2d[33]/max_pool2d_0]"],
+          [8, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[12]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[16]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[19]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[22]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[26]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[29]/RELU_0]"],
+          [8, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[2]/RELU_0]"],
+          [8, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[32]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[36]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[39]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[42]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[46]/RELU_0]"],
+          [8, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[49]/RELU_0]"],
+          [8, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[5]/RELU_0]"],
+          [8, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[basenet]/ReLU[9]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[extras]/ReLU[11]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[extras]/ReLU[14]/RELU_0]"],
+          [8, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[extras]/ReLU[17]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[extras]/ReLU[20]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[extras]/ReLU[23]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[extras]/ReLU[26]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[extras]/ReLU[29]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[extras]/ReLU[2]/RELU_0]"],
+          [4, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[extras]/ReLU[5]/RELU_0]"],
+          [8, "ModuleDict/SymmetricQuantizer[SSD_VGG/MultiOutputSequential[extras]/ReLU[8]/RELU_0]"],
+          [8, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[0]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[10]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[14]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[17]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[20]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[24]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[27]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[30]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[34]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[37]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[3]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[40]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[44]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[47]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/MultiOutputSequential[basenet]/NNCFConv2d[7]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/MultiOutputSequential[extras]/NNCFConv2d[0]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/MultiOutputSequential[extras]/NNCFConv2d[12]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[extras]/NNCFConv2d[15]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/MultiOutputSequential[extras]/NNCFConv2d[18]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[extras]/NNCFConv2d[21]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/MultiOutputSequential[extras]/NNCFConv2d[24]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[extras]/NNCFConv2d[27]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/MultiOutputSequential[extras]/NNCFConv2d[3]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/MultiOutputSequential[extras]/NNCFConv2d[6]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/MultiOutputSequential[extras]/NNCFConv2d[9]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[0]/NNCFConv2d[conf]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[0]/NNCFConv2d[loc]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [2, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[1]/NNCFConv2d[conf]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[1]/NNCFConv2d[loc]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[2]/NNCFConv2d[conf]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[2]/NNCFConv2d[loc]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[3]/NNCFConv2d[conf]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[3]/NNCFConv2d[loc]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [2, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[4]/NNCFConv2d[conf]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [8, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[4]/NNCFConv2d[loc]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [2, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[5]/NNCFConv2d[conf]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[5]/NNCFConv2d[loc]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"],
+          [2, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[6]/NNCFConv2d[conf]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]"],
+          [4, "SSD_VGG/SSDDetectionOutput[detection_head]/ModuleList[heads]/SSDHead[6]/NNCFConv2d[loc]/ModuleDict[pre_ops]/UpdateWeight[1]/SymmetricQuantizer[op]"]
+        ]
+      }
+    }
+  }
+}
