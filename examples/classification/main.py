@@ -15,7 +15,6 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from copy import deepcopy
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -28,6 +27,7 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 import torchvision.transforms as transforms
 import warnings
+from copy import deepcopy
 from functools import partial
 from shutil import copyfile
 from torch.nn.modules.loss import _Loss
@@ -35,6 +35,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision.datasets import CIFAR10, CIFAR100
 from torchvision.models import InceptionOutputs
 
+from examples.classification.common import configure_device, set_seed, load_resuming_checkpoint
 from examples.common.argparser import get_common_argument_parser
 from examples.common.example_logger import logger
 from examples.common.execution import ExecutionMode, get_execution_mode, \
@@ -43,7 +44,7 @@ from examples.common.model_loader import load_model
 from examples.common.optimizer import get_parameter_groups, make_optimizer
 from examples.common.sample_config import SampleConfig, create_sample_config
 from examples.common.utils import configure_logging, configure_paths, create_code_snapshot, \
-    print_args, make_additional_checkpoints, get_name, is_staged_quantization, print_statistics, \
+    print_args, make_additional_checkpoints, get_name, print_statistics, \
     is_pretrained_model_requested, log_common_mlflow_params, SafeMLFLow, MockDataset
 from examples.common.utils import write_metrics
 from nncf import create_compressed_model
@@ -52,8 +53,7 @@ from nncf.dynamic_graph.graph_builder import create_input_infos
 from nncf.initialization import register_default_init_args, default_criterion_fn
 from nncf.module_operations import UpdatePaddingValue
 from nncf.utils import safe_thread_call, is_main_process, get_all_modules_by_type
-from examples.classification.common import configure_device, set_seed, load_resuming_checkpoint
-#from examples.classification.staged_quantization_worker import KDLossCalculator
+
 
 class KDLossCalculator:
     def __init__(self, original_model, temperature=1.0, is_L2_norm=False):
@@ -61,17 +61,20 @@ class KDLossCalculator:
         self.original_model = original_model
         self.temperature = temperature
         self.is_L2_norm = is_L2_norm
+        self.mse = torch.nn.MSELoss()
 
     def loss(self, inputs, quantized_network_outputs):
         T = self.temperature
         with torch.no_grad():
             ref_output = self.original_model(inputs).detach()
         if self.is_L2_norm:
-            kd_loss = torch.norm(quantized_network_outputs - ref_output, p=2) ** 2
+            kd_loss = self.mse(ref_output, quantized_network_outputs)
         else:
             kd_loss = -(nn.functional.log_softmax(quantized_network_outputs / T, dim=1) *
-                                        nn.functional.softmax(ref_output / T, dim=1)).mean() * (T * T * quantized_network_outputs.shape[1])
+                        nn.functional.softmax(ref_output / T, dim=1)).mean() * (
+                          T * T * quantized_network_outputs.shape[1])
         return kd_loss
+
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
@@ -208,7 +211,7 @@ def main_worker(current_gpu, config: SampleConfig):
 
     best_acc1 = 0
     # optionally resume from a checkpoint
-    #if resuming_checkpoint_path is not None:
+    # if resuming_checkpoint_path is not None:
     #    if config.mode.lower() == 'train' and config.to_onnx is None:
     #        config.start_epoch = resuming_checkpoint['epoch']
     #        best_acc1 = resuming_checkpoint['best_acc1']
@@ -247,7 +250,8 @@ def train(config, compression_ctrl, model, criterion, criterion_fn, lr_scheduler
             train_sampler.set_epoch(epoch)
 
         # train for one epoch
-        train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compression_ctrl, epoch, config, kd_loss_calculator)
+        train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compression_ctrl, epoch, config,
+                    kd_loss_calculator)
 
         # Learning rate scheduling should be applied after optimizer’s update
         lr_scheduler.step(epoch if not isinstance(lr_scheduler, ReduceLROnPlateau) else best_acc1)
@@ -394,7 +398,8 @@ def create_data_loaders(config, train_dataset, val_dataset):
     return train_loader, train_sampler, val_loader, init_loader
 
 
-def train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compression_ctrl, epoch, config, kd_loss_calculator):
+def train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compression_ctrl, epoch, config,
+                kd_loss_calculator):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
