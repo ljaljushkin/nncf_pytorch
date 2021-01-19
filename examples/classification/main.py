@@ -187,7 +187,7 @@ def main_worker(current_gpu, config: SampleConfig):
                 stats['num_all_apad'] += 1
                 if op.operand.is_enabled():
                     stats['num_enabled'] += 1
-               aq = op.operand.aq
+                aq = op.operand.aq
                 print(
                     f'!!!{scope} {op.operand.kernel_size} enabled={op.operand.is_enabled()} bits={aq.num_bits} type={aq.__class__.__name__} per_channel={aq.per_channel} signed={aq.signed}')
     logger.info(f"WARNING!!!! {stats} out of {len(all_convs)}")
