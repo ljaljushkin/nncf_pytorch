@@ -573,7 +573,7 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
                 self.force_enabled = True
 
             def is_enabled(self):
-                if self.force_enabled:
+                if self.force_enabled is not None:
                     return self.force_enabled
                 return self.is_applicable and self.aq.num_bits == 4 and not self.aq.signed
 
