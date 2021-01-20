@@ -317,7 +317,7 @@ def train_step(batch_iterator, compression_ctrl, config, criterion, net, train_d
 
         # forward
         out = net(images)
-        kd_loss = kd_loss_calculator.loss(images, out) if config.distillation else torch.zeros([1]).to(config.device)
+        kd_loss = kd_loss_calculator.loss(images, out) if config.distillation else torch.tensor(0.).to(config.device)
 
         # backprop
         loss_l, loss_c = criterion(out, targets)
