@@ -14,6 +14,7 @@
 import os.path as osp
 import sys
 import time
+from copy import deepcopy
 from pathlib import Path
 
 import torch
@@ -65,6 +66,7 @@ def get_argument_parser():
     parser.add_argument('--train_anno', help='path to training annotations or VOC root directory')
     parser.add_argument('--test_imgs', help='path to testing images or VOC root directory')
     parser.add_argument('--test_anno', help='path to testing annotations or VOC root directory')
+    parser.add_argument("--distillation", action='store_true', help="Train with knowledge distillation")
     return parser
 
 
@@ -83,6 +85,19 @@ def main(argv):
         config.train_imgs = config.train_anno = config.test_imgs = config.test_anno = config.dataset_dir
     start_worker(main_worker, config)
 
+
+class KDLossCalculator:
+    def __init__(self, original_model):
+        self.original_model = original_model
+        self.mse = torch.nn.MSELoss()
+
+    def loss(self, inputs, quantized_network_outputs):
+        with torch.no_grad():
+            ref_output = self.original_model(inputs).detach()
+
+            loc_data, conf_data, _ = ref_output
+            q_loc_data, q_conf_data, _ = quantized_network_outputs
+            return self.mse(loc_data, q_loc_data) + self.mse(conf_data, q_conf_data)
 
 # pylint:disable=too-many-branches
 def main_worker(current_gpu, config):
@@ -155,7 +170,7 @@ def main_worker(current_gpu, config):
         resuming_model_sd, resuming_checkpoint = load_resuming_model_state_dict_and_checkpoint_from_path(
             resuming_checkpoint_path)
 
-    compression_ctrl, net = create_model(config, resuming_model_sd)
+    compression_ctrl, net, original_model = create_model(config, resuming_model_sd)
     if config.distributed:
         config.batch_size //= config.ngpus_per_node
         config.workers //= config.ngpus_per_node
@@ -167,6 +182,7 @@ def main_worker(current_gpu, config):
 
     params_to_optimize = get_parameter_groups(net, config)
     optimizer, lr_scheduler = make_optimizer(params_to_optimize, config)
+    kd_loss_calculator = KDLossCalculator(original_model) if config.distillation else None
 
     #################################
     # Load additional checkpoint data
@@ -200,7 +216,7 @@ def main_worker(current_gpu, config):
                     write_metrics(mAp, config.metrics_dump)
             return
 
-    train(net, compression_ctrl, train_data_loader, test_data_loader, criterion, optimizer, config, lr_scheduler)
+    train(net, compression_ctrl, train_data_loader, test_data_loader, criterion, optimizer, config, lr_scheduler, kd_loss_calculator)
 
 
 def create_dataloaders(config):
@@ -257,6 +273,8 @@ def create_model(config: SampleConfig, resuming_model_sd: dict = None):
         load_state(ssd_net, sd)
 
     ssd_net.to(config.device)
+    original_model = deepcopy(ssd_net)
+    original_model.to(config.device)
 
     compression_ctrl, compressed_model = create_compressed_model(ssd_net, config.nncf_config, resuming_model_sd)
 
@@ -280,13 +298,15 @@ def create_model(config: SampleConfig, resuming_model_sd: dict = None):
     compressed_model, _ = prepare_model_for_execution(compressed_model, config)
 
     compressed_model.train()
-    return compression_ctrl, compressed_model
+
+    return compression_ctrl, compressed_model, original_model
 
 
-def train_step(batch_iterator, compression_ctrl, config, criterion, net, train_data_loader):
+def train_step(batch_iterator, compression_ctrl, config, criterion, net, train_data_loader, kd_loss_calculator):
     batch_loss_l = torch.tensor(0.).to(config.device)
     batch_loss_c = torch.tensor(0.).to(config.device)
     batch_loss = torch.tensor(0.).to(config.device)
+    batch_loss_kd = torch.tensor(0.).to(config.device)
     for _ in range(0, config.iter_size):
         # load train data
         try:
@@ -301,19 +321,22 @@ def train_step(batch_iterator, compression_ctrl, config, criterion, net, train_d
 
         # forward
         out = net(images)
+        kd_loss = kd_loss_calculator.loss(images, out) if config.distillation else torch.zeros([1]).to(config.device)
+
         # backprop
         loss_l, loss_c = criterion(out, targets)
         loss_comp = compression_ctrl.loss()
-        loss = loss_l + loss_c + loss_comp
+        loss = loss_l + loss_c + loss_comp + kd_loss
         batch_loss += loss
         loss.backward()
         batch_loss_l += loss_l
         batch_loss_c += loss_c
-    return batch_iterator, batch_loss, batch_loss_c, batch_loss_l, loss_comp
+        batch_loss_kd += kd_loss
+    return batch_iterator, batch_loss, batch_loss_c, batch_loss_l, batch_loss_kd, loss_comp
 
 
 # pylint: disable=too-many-statements
-def train(net, compression_ctrl, train_data_loader, test_data_loader, criterion, optimizer, config, lr_scheduler):
+def train(net, compression_ctrl, train_data_loader, test_data_loader, criterion, optimizer, config, lr_scheduler, kd_loss_calculator):
     net.train()
     # loss counters
     loc_loss = 0  # epoch
@@ -379,14 +402,16 @@ def train(net, compression_ctrl, train_data_loader, test_data_loader, criterion,
                 lr_scheduler.step(mAP)
 
         optimizer.zero_grad()
-        batch_iterator, batch_loss, batch_loss_c, batch_loss_l, loss_comp = train_step(
-            batch_iterator, compression_ctrl, config, criterion, net, train_data_loader
+        batch_iterator, batch_loss, batch_loss_c, batch_loss_l, batch_loss_kd, loss_comp = train_step(
+            batch_iterator, compression_ctrl, config, criterion, net, train_data_loader, kd_loss_calculator
         )
         optimizer.step()
 
         batch_loss_l = batch_loss_l / config.iter_size
         batch_loss_c = batch_loss_c / config.iter_size
-        model_loss = (batch_loss_l + batch_loss_c) / config.iter_size
+        batch_loss_kd = batch_loss_kd / config.iter_size
+
+        model_loss = (batch_loss_l + batch_loss_c + batch_loss_kd) / config.iter_size
         batch_loss = batch_loss / config.iter_size
 
         loc_loss += batch_loss_l.item()
@@ -399,6 +424,7 @@ def train(net, compression_ctrl, train_data_loader, test_data_loader, criterion,
         if is_on_first_rank(config):
             config.tb.add_scalar("train/loss_l", batch_loss_l.item(), iteration)
             config.tb.add_scalar("train/loss_c", batch_loss_c.item(), iteration)
+            config.tb.add_scalar("train/loss_kd", batch_loss_kd.item(), iteration)
             config.tb.add_scalar("train/loss", batch_loss.item(), iteration)
 
         if iteration % config.print_freq == 0:
