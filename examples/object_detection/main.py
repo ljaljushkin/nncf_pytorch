@@ -93,8 +93,7 @@ class KDLossCalculator:
 
     def loss(self, inputs, quantized_network_outputs):
         with torch.no_grad():
-            ref_output = self.original_model(inputs).detach()
-
+            ref_output = self.original_model(inputs)
             loc_data, conf_data, _ = ref_output
             q_loc_data, q_conf_data, _ = quantized_network_outputs
             return self.mse(loc_data, q_loc_data) + self.mse(conf_data, q_conf_data)
@@ -279,9 +278,6 @@ def create_model(config: SampleConfig, resuming_model_sd: dict = None):
     compression_ctrl, compressed_model = create_compressed_model(ssd_net, config.nncf_config, resuming_model_sd)
 
     stats = {'num_applicable': 0, 'num_enabled': 0, 'num_kernel_overlap': 0, 'num_all_apad': 0}
-
-    for fq in compression_ctrl.all_quantizations.values():
-        fq.enable_quantization()
 
     all_convs = get_all_modules_by_type(compressed_model, 'NNCFConv2d')
     for scope, module in all_convs.items():
