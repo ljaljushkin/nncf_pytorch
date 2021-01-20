@@ -283,6 +283,8 @@ def create_model(config: SampleConfig, resuming_model_sd: dict = None):
     for scope, module in all_convs.items():
         for op in module.pre_ops.values():
             if isinstance(op, UpdatePaddingValue):
+                if 'NNCFConv2d[loc]' in str(scope):
+                    op.operand.force_disable()
                 stats['num_all_apad'] += 1
                 if op.operand.is_enabled():
                     stats['num_enabled'] += 1

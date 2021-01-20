@@ -564,8 +564,17 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
                 is_kernel_overlap_pad = len([v for v in kernel_size if v > 1]) == len(kernel_size)
                 self.is_applicable = isinstance(self.aq,
                                                 SymmetricQuantizer) and is_kernel_overlap_pad and not self.aq.per_channel
+                self.force_enabled = None
+
+            def force_disable(self):
+                self.force_enabled = False
+
+            def force_enable(self):
+                self.force_enabled = True
 
             def is_enabled(self):
+                if self.force_enabled:
+                    return self.force_enabled
                 return self.is_applicable and self.aq.num_bits == 4 and not self.aq.signed
 
             def __call__(self, previous_padding_value):
