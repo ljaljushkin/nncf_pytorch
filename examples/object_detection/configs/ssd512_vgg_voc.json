@@ -2,7 +2,7 @@
   "model": "ssd_vgg",
   "batchnorm": true,
   "input_info": {
-    "sample_size":  [1, 3, 512, 512]
+    "sample_size":  [8, 3, 512, 512]
   },
   "pretrained": false,
   "basenet": "./vgg16_bn-6c64b313.pth", // taken from https://download.pytorch.org/models/vgg16_bn-6c64b313.pth
@@ -14,7 +14,7 @@
     "normalize_coef": 255,
     "rgb": true
   },
-  "batch_size": 160,
+  "batch_size": 64,
   "max_iter": 120000,
   "iter_size": 1,
   "save_freq": 50, // in epochs
