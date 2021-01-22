@@ -280,17 +280,22 @@ def create_model(config: SampleConfig, resuming_model_sd: dict = None):
     stats = {'num_applicable': 0, 'num_enabled': 0, 'num_kernel_overlap': 0, 'num_all_apad': 0}
 
     all_convs = get_all_modules_by_type(compressed_model, 'NNCFConv2d')
-    for scope, module in all_convs.items():
+    threshold = 3
+    for i, (scope, module) in enumerate(all_convs.items()):
         for op in module.pre_ops.values():
             if isinstance(op, UpdatePaddingValue):
-                if 'NNCFConv2d[loc]' in str(scope):
+                aq = op.operand.aq
+                if 'extras' in str(scope) or aq.input_shape[2] <= 34:
                     op.operand.force_disable()
                 stats['num_all_apad'] += 1
                 if op.operand.is_enabled():
-                    stats['num_enabled'] += 1
-                aq = op.operand.aq
-                print(
-                    f'!!!{scope} {op.operand.kernel_size} enabled={op.operand.is_enabled()} bits={aq.num_bits} type={aq.__class__.__name__} per_channel={aq.per_channel} signed={aq.signed}')
+                    if stats['num_enabled'] >= threshold:
+                        op.operand.force_disable()
+                    else:
+                        stats['num_enabled'] += 1
+                logger.info(
+                    f'!!!AQ_shape={aq.input_shape} conv={scope} {op.operand.kernel_size} enabled={op.operand.is_enabled()} bits={aq.num_bits} type={aq.__class__.__name__} per_channel={aq.per_channel} signed={aq.signed}'
+                    f'\t\nAQ_scope={aq.log_module_name}')
     logger.info(f"WARNING!!!! {stats} out of {len(all_convs)}")
 
     compressed_model, _ = prepare_model_for_execution(compressed_model, config)
@@ -358,24 +363,24 @@ def train(net, compression_ctrl, train_data_loader, test_data_loader, criterion,
         epoch = iteration // epoch_size
 
         compression_ctrl.scheduler.step()
-        if iteration % epoch_size == 0:
-            compression_ctrl.scheduler.epoch_step(epoch)
-            if is_main_process():
-                print_statistics(compression_ctrl.statistics())
+        # if iteration % epoch_size == 0:
+        #     compression_ctrl.scheduler.epoch_step(epoch)
+        #     if is_main_process():
+        #         print_statistics(compression_ctrl.statistics())
 
-        if (iteration + 1) % epoch_size == 0:
+        if (iteration + 1) % config.test_interval == 0:
             compression_level = compression_ctrl.compression_level()
             is_best = False
-            if (epoch + 1) % test_freq_in_epochs == 0:
-                with torch.no_grad():
-                    net.eval()
-                    mAP = test_net(net, config.device, test_data_loader, distributed=config.multiprocessing_distributed)
-                    is_best_by_mAP = mAP > best_mAp and compression_level == best_compression_level
-                    is_best = is_best_by_mAP or compression_level > best_compression_level
-                    if is_best:
-                        best_mAp = mAP
-                    best_compression_level = max(compression_level, best_compression_level)
-                    net.train()
+            # if (epoch + 1) % test_freq_in_epochs == 0:
+            with torch.no_grad():
+                net.eval()
+                mAP = test_net(net, config.device, test_data_loader, distributed=config.multiprocessing_distributed)
+                is_best_by_mAP = mAP > best_mAp and compression_level == best_compression_level
+                is_best = is_best_by_mAP or compression_level > best_compression_level
+                if is_best:
+                    best_mAp = mAP
+                best_compression_level = max(compression_level, best_compression_level)
+                net.train()
 
             if is_on_first_rank(config):
                 logger.info('Saving state, iter: {}'.format(iteration))
@@ -429,8 +434,8 @@ def train(net, compression_ctrl, train_data_loader, test_data_loader, criterion,
             t_finish = time.time()
             t_elapsed = t_finish - t_start
             t_start = time.time()
-            logger.info('{}: iter {} epoch {} || Loss: {:.4} || Time {:.4}s || lr: {} || CR loss: {}'.format(
-                config.rank, iteration, epoch, model_loss.item(), t_elapsed, optimizer.param_groups[0]['lr'],
+            logger.info('{}: iter {} epoch {} || Loss: {:.4} || KD: {:.4} || Time {:.4}s || lr: {} || CR loss: {}'.format(
+                config.rank, iteration, epoch, model_loss.item(), (batch_loss_kd/config.iter_size).item(), t_elapsed, optimizer.param_groups[0]['lr'],
                 loss_comp.item() if isinstance(loss_comp, torch.Tensor) else loss_comp
             ))
 

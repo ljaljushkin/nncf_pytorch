@@ -13,7 +13,8 @@
     "normalize_coef": 255,
     "rgb": true
   },
-  "max_iter": 300000,
+  "max_iter": 1000,
+  "test_interval": 200,
   "batch_size": 24,
   "iter_size": 1,
   "save_freq": 3, // in epochs

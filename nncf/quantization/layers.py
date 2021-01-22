@@ -168,7 +168,7 @@ class BaseQuantizer(nn.Module):
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
         raise NotImplementedError
 
-    def apply_minmax_init(self, min_values, max_values, log_module_name: str = None):
+    def apply_minmax_init(self, min_values, max_values, log_module_name: str = None, input_shape=None):
         """min_values and max_values must have the same shape as specified in self.scale_shape"""
         raise NotImplementedError
 
@@ -348,7 +348,7 @@ class SymmetricQuantizer(BaseQuantizer):
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
         return {self.SCALE_PARAM_NAME: self.scale.detach()}
 
-    def apply_minmax_init(self, min_values, max_values, log_module_name: str = None):
+    def apply_minmax_init(self, min_values, max_values, log_module_name: str = None, input_shape=None):
         if self.initialized:
             nncf_logger.debug("Skipped initializing {} - loaded from checkpoint".format(log_module_name))
             return
@@ -367,9 +367,11 @@ class SymmetricQuantizer(BaseQuantizer):
                                                      SCALE_LOWER_THRESHOLD * torch.ones_like(self._scale_param_storage))
         if self._is_using_log_scale_storage:
             self._scale_param_storage.data.log_()
-
-        nncf_logger.info("Set sign: {} and scale: {} for {}".format(self.signed,
+        self.input_shape = input_shape
+        self.log_module_name = log_module_name
+        nncf_logger.info("Set sign: {} and scale: {} shape {} for {}".format(self.signed,
                                                                     get_flat_tensor_contents_string(self.scale),
+                                                                    input_shape,
                                                                     log_module_name))
 
     def broadcast_initialized_params(self, src: int = 0):
@@ -490,7 +492,7 @@ class AsymmetricQuantizer(BaseQuantizer):
         return {self.INPUT_LOW_PARAM_NAME: self.input_low.detach(),
                 self.INPUT_RANGE_PARAM_NAME: self.input_range.detach()}
 
-    def apply_minmax_init(self, min_values, max_values, log_module_name: str = None):
+    def apply_minmax_init(self, min_values, max_values, log_module_name: str = None, input_shape=None):
         if self.initialized:
             nncf_logger.debug("Skipped initializing {} - loaded from checkpoint".format(log_module_name))
             return

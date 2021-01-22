@@ -119,11 +119,13 @@ class MeanMinMaxInitializer(QuantizeRangeInitializer):
         self.log_module_name = log_module_name
         self.all_min_values = []
         self.all_max_values = []
+        self.input_shape = None
 
     def register_input(self, x: torch.Tensor):
         with no_nncf_trace():
             self.all_min_values.append(min_reduce_like(x, self.scale_shape))
             self.all_max_values.append(max_reduce_like(x, self.scale_shape))
+            self.input_shape = x.shape
 
     def reset(self):
         self.all_min_values.clear()
@@ -140,7 +142,7 @@ class MeanMinMaxInitializer(QuantizeRangeInitializer):
             max_values = stacked_max.mean(dim=0).view(self.scale_shape)
         nncf_logger.debug("Statistics: min={} max={}".format(get_flat_tensor_contents_string(min_values),
                                                              get_flat_tensor_contents_string(max_values)))
-        self.quantize_module.apply_minmax_init(min_values, max_values, self.log_module_name)
+        self.quantize_module.apply_minmax_init(min_values, max_values, self.log_module_name, self.input_shape)
 
 
 def get_per_channel_history(raw_input_history: queue.Queue, scale_shape: List[int], discard_zeros=False) -> List:

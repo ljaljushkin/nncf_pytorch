@@ -18,10 +18,11 @@ import torch
 import torch.nn.functional as F
 import warnings
 from torch import nn
-from torch.nn import init, Parameter
+from torch.nn import init, Parameter, Conv2d
 from torch.nn.utils.rnn import PackedSequence
 
 from nncf.registry import Registry
+from nncf.nncf_logger import logger as nncf_logger
 from .layer_utils import _NNCFModuleMixin
 
 
@@ -78,10 +79,14 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
         return nncf_conv
 
     def custom_forward(self, input):
+        if self.padding_value:
+            Conv2d._conv_forward(self, input, self.weight)
         return self._conv_forward(input, self.weight, self.padding_value)
 
     def _conv_forward(self, input, weight, padding_value):
         self.padding_value.data.fill_(padding_value.item())
+        # if padding_value:
+        #     nncf_logger.info('pad {%f}' % padding_value.item())
         if self.padding_mode != 'zeros':
             return F.conv2d(F.pad(input, self._reversed_padding_repeated_twice, mode=self.padding_mode,
                                   value=self.padding_value.item()),
