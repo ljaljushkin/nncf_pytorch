@@ -180,13 +180,14 @@ def main_worker(current_gpu, config: SampleConfig):
     compression_ctrl, model = create_compressed_model(model, nncf_config, resuming_state_dict=resuming_model_sd)
     stats = {'num_applicable': 0, 'num_enabled': 0, 'num_kernel_overlap': 0, 'num_all_apad': 0}
 
-    for fq in compression_ctrl.all_quantizations.values():
-        fq.enable_quantization()
+    # for fq in compression_ctrl.all_quantizations.values():
+    #     fq.enable_quantization()
 
     all_convs = get_all_modules_by_type(model, 'NNCFConv2d')
     for scope, module in all_convs.items():
         for op in module.pre_ops.values():
             if isinstance(op, UpdatePaddingValue):
+                # op.operand.force_disable()
                 stats['num_all_apad'] += 1
                 if op.operand.is_enabled():
                     stats['num_enabled'] += 1

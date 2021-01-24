@@ -1,0 +1,33 @@
+{
+    "model": "resnet50",
+    "dataset": "CIFAR100",
+    "pretrained": true,
+    "input_info": {
+        "sample_size": [2, 3, 32, 32]
+    },
+    "num_classes": 100,
+    "batch_size": 256,
+    "workers": 6,
+    "multiprocessing_distributed": true,
+    "optimizer": {
+        "base_lr": 0.00031,
+        "schedule_type": "plateau",
+        "type": "Adam",
+        "scheduler_params": {
+            "threshold": 0.1,
+            "cooldown": 3
+        },
+        "weight_decay": 1e-4
+    },
+    "target_device": "VPU",
+    "compression": {
+        "algorithm": "quantization",
+        "initializer": {
+            "precision": {
+                "type": "hawq",
+                "compression_ratio": 1.5,
+                "dump_hawq_data": true
+            }
+        }
+    }
+}
