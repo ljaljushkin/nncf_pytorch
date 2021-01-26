@@ -39,7 +39,8 @@ from nncf.initialization import register_default_init_args
 from examples.common.model_loader import load_model, load_resuming_model_state_dict_and_checkpoint_from_path
 from examples.common.optimizer import make_optimizer
 from examples.common.utils import configure_logging, configure_paths, make_additional_checkpoints, print_args, \
-    write_metrics, print_statistics, is_pretrained_model_requested, log_common_mlflow_params, SafeMLFLow
+    write_metrics, print_statistics, is_pretrained_model_requested, log_common_mlflow_params, SafeMLFLow, \
+    adjust_padding_stats
 from examples.semantic_segmentation.metric import IoU
 from examples.semantic_segmentation.test import Test
 from examples.semantic_segmentation.train import Train
@@ -56,6 +57,7 @@ def get_arguments(args):
         choices=["camvid", "cityscapes", "mapillary"],
         default=None
     )
+    parser.add_argument("--distillation", action='store_true', help="Train with knowledge distillation")
     return parser.parse_args(args=args)
 
 
@@ -272,6 +274,18 @@ def get_params_to_optimize(model_without_dp, aux_lr, config):
         params_to_optimize = model_without_dp.parameters()
     return params_to_optimize
 
+# class KDLossCalculator:
+#     def __init__(self, original_model):
+#         self.original_model = original_model
+#         self.mse = torch.nn.MSELoss()
+#
+#     def loss(self, inputs, quantized_network_outputs):
+#         with torch.no_grad():
+#             ref_output = self.original_model(inputs)
+#             loc_data, conf_data, _ = ref_output
+#             q_loc_data, q_conf_data, _ = quantized_network_outputs
+#             return self.mse(loc_data, q_loc_data) + self.mse(conf_data, q_conf_data)
+
 
 # pylint: disable=too-many-branches
 # pylint: disable=too-many-statements
@@ -288,7 +302,7 @@ def train(model, model_without_dp, compression_ctrl, train_loader, val_loader, c
 
     params_to_optimize = get_params_to_optimize(model_without_dp, lr * 10, config)
     optimizer, lr_scheduler = make_optimizer(params_to_optimize, config)
-
+    # kd_loss_calculator = KDLossCalculator(original_model) if config.distillation else None
     # Evaluation metric
 
     ignore_index = None
@@ -505,6 +519,7 @@ def main_worker(current_gpu, config):
         resuming_model_sd, resuming_checkpoint = load_resuming_model_state_dict_and_checkpoint_from_path(
             resuming_checkpoint_path)
     compression_ctrl, model = create_compressed_model(model, nncf_config, resuming_state_dict=resuming_model_sd)
+    adjust_padding_stats(model)
     model, model_without_dp = prepare_model_for_execution(model, config)
 
     if config.distributed:

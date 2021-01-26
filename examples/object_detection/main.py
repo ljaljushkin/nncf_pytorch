@@ -33,7 +33,7 @@ from nncf.initialization import register_default_init_args
 from examples.common.optimizer import get_parameter_groups, make_optimizer
 from examples.common.utils import get_name, make_additional_checkpoints, print_statistics, configure_paths, \
     create_code_snapshot, is_on_first_rank, configure_logging, print_args, is_pretrained_model_requested, \
-    log_common_mlflow_params, SafeMLFLow
+    log_common_mlflow_params, SafeMLFLow, adjust_padding_stats
 from examples.common.utils import write_metrics
 from examples.object_detection.dataset import detection_collate, get_testing_dataset, get_training_dataset
 from examples.object_detection.eval import test_net
@@ -277,26 +277,7 @@ def create_model(config: SampleConfig, resuming_model_sd: dict = None):
 
     compression_ctrl, compressed_model = create_compressed_model(ssd_net, config.nncf_config, resuming_model_sd)
 
-    stats = {'num_applicable': 0, 'num_enabled': 0, 'num_kernel_overlap': 0, 'num_all_apad': 0}
-
-    all_convs = get_all_modules_by_type(compressed_model, 'NNCFConv2d')
-    threshold = 3
-    for i, (scope, module) in enumerate(all_convs.items()):
-        for op in module.pre_ops.values():
-            if isinstance(op, UpdatePaddingValue):
-                aq = op.operand.aq
-                if 'extras' in str(scope) or aq.input_shape[2] <= 34:
-                    op.operand.force_disable()
-                stats['num_all_apad'] += 1
-                if op.operand.is_enabled():
-                    if stats['num_enabled'] >= threshold:
-                        op.operand.force_disable()
-                    else:
-                        stats['num_enabled'] += 1
-                logger.info(
-                    f'!!!AQ_shape={aq.input_shape} conv={scope} {op.operand.kernel_size} enabled={op.operand.is_enabled()} bits={aq.num_bits} type={aq.__class__.__name__} per_channel={aq.per_channel} signed={aq.signed}'
-                    f'\t\nAQ_scope={aq.log_module_name}')
-    logger.info(f"WARNING!!!! {stats} out of {len(all_convs)}")
+    adjust_padding_stats(compressed_model)
 
     compressed_model, _ = prepare_model_for_execution(compressed_model, config)
 

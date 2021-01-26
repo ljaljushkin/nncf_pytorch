@@ -45,7 +45,7 @@ from examples.common.optimizer import get_parameter_groups, make_optimizer
 from examples.common.sample_config import SampleConfig, create_sample_config
 from examples.common.utils import configure_logging, configure_paths, create_code_snapshot, \
     print_args, make_additional_checkpoints, get_name, print_statistics, \
-    is_pretrained_model_requested, log_common_mlflow_params, SafeMLFLow, MockDataset
+    is_pretrained_model_requested, log_common_mlflow_params, SafeMLFLow, MockDataset, adjust_padding_stats
 from examples.common.utils import write_metrics
 from nncf import create_compressed_model
 from nncf.compression_method_api import CompressionLevel
@@ -178,23 +178,11 @@ def main_worker(current_gpu, config: SampleConfig):
 
     resuming_model_sd, resuming_checkpoint = load_resuming_checkpoint(resuming_checkpoint_path)
     compression_ctrl, model = create_compressed_model(model, nncf_config, resuming_state_dict=resuming_model_sd)
-    stats = {'num_applicable': 0, 'num_enabled': 0, 'num_kernel_overlap': 0, 'num_all_apad': 0}
 
     # for fq in compression_ctrl.all_quantizations.values():
     #     fq.enable_quantization()
+    adjust_padding_stats(model)
 
-    all_convs = get_all_modules_by_type(model, 'NNCFConv2d')
-    for scope, module in all_convs.items():
-        for op in module.pre_ops.values():
-            if isinstance(op, UpdatePaddingValue):
-                # op.operand.force_disable()
-                stats['num_all_apad'] += 1
-                if op.operand.is_enabled():
-                    stats['num_enabled'] += 1
-                aq = op.operand.aq
-                print(
-                    f'!!!{scope} {op.operand.kernel_size} enabled={op.operand.is_enabled()} bits={aq.num_bits} type={aq.__class__.__name__} per_channel={aq.per_channel} signed={aq.signed}')
-    logger.info(f"WARNING!!!! {stats} out of {len(all_convs)}")
     if config.to_onnx:
         compression_ctrl.export_model(config.to_onnx)
         logger.info("Saved to {}".format(config.to_onnx))
