@@ -79,7 +79,7 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
         return nncf_conv
 
     def custom_forward(self, input):
-        if self.padding_value:
+        if not self.padding_value:
             Conv2d._conv_forward(self, input, self.weight)
         return self._conv_forward(input, self.weight, self.padding_value)
 
