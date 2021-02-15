@@ -12,10 +12,16 @@
 """
 
 # pylint:disable=too-many-lines
-from collections import OrderedDict, Counter
+from collections import Counter
+from collections import OrderedDict
 from pathlib import Path
 from string import Template
-from typing import List, Dict, Tuple, Optional, Callable, Set
+from typing import Callable
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Set
+from typing import Tuple
 
 import functools
 import networkx as nx
@@ -27,48 +33,89 @@ from copy import deepcopy
 from torch import nn
 
 from nncf.algo_selector import COMPRESSION_ALGORITHMS
-from nncf.compression_method_api import CompressionAlgorithmBuilder, CompressionAlgorithmController, CompressionLevel
+from nncf.common.os import safe_open
+from nncf.common.utils.logger import logger as nncf_logger
+from nncf.compression_method_api import CompressionAlgorithmBuilder
+from nncf.compression_method_api import CompressionAlgorithmController
+from nncf.compression_method_api import CompressionLevel
 from nncf.config import NNCFConfig
-from nncf.debug import is_debug, DebugInterface, CallCountTracker
-from nncf.dynamic_graph.context import TracingContext, Scope
+from nncf.debug import CallCountTracker
+from nncf.debug import DebugInterface
+from nncf.debug import is_debug
+from nncf.dynamic_graph.context import Scope
+from nncf.dynamic_graph.context import TracingContext
 from nncf.dynamic_graph.graph import InputAgnosticOperationExecutionContext
-from nncf.dynamic_graph.graph import NNCFNodeExpression as N, NNCFGraph
+from nncf.dynamic_graph.graph import NNCFGraph
+from nncf.dynamic_graph.graph import NNCFNodeExpression as N
 from nncf.dynamic_graph.input_wrapping import MODEL_INPUT_OP_NAME
 from nncf.dynamic_graph.transform_graph import is_nncf_module
-from nncf.hw_config import HWConfig, HWConfigType
+from nncf.hw_config import HWConfig
+from nncf.hw_config import HWConfigType
 from nncf.initialization import SimpleDataLoaderRunner
 from nncf.layer_utils import _NNCFModuleMixin
+from nncf.module_operations import UpdatePaddingValue
 from nncf.module_operations import UpdateWeight
-from nncf.common.utils.logger import logger as nncf_logger
-from nncf.nncf_network import NNCFNetwork, ExtraCompressionModuleType, InsertionCommand, OperationPriority, \
-    InsertionPoint, InsertionType, InsertionPointGraph, InsertionPointGraphNodeType, InsertionInfo
+from nncf.nncf_network import ExtraCompressionModuleType
+from nncf.nncf_network import InsertionCommand
+from nncf.nncf_network import InsertionInfo
+from nncf.nncf_network import InsertionPoint
+from nncf.nncf_network import InsertionPointGraph
+from nncf.nncf_network import InsertionPointGraphNodeType
+from nncf.nncf_network import InsertionType
+from nncf.nncf_network import NNCFNetwork
+from nncf.nncf_network import OperationPriority
 from nncf.quantization.init_precision import PrecisionInitializerFactory
-from nncf.quantization.init_range import RangeInitParams, RangeInitConfig, PerLayerRangeInitConfig, \
-    StatCollectorGenerator, DataLoaderRangeInitializeRunner
-from nncf.quantization.layers import QUANTIZATION_MODULES, QuantizationMode, QuantizerConfig, BaseQuantizer, \
-    QuantizerExportMode, QuantizersSwitcher
-from nncf.quantization.metrics import NetworkQuantizationShareMetric, MemoryCostMetric, ShareEdgesQuantizedDataPath, \
-    NetworkQuantizationShareMetricBuildTimeInfo
+from nncf.quantization.init_range import DataLoaderRangeInitializeRunner
+from nncf.quantization.init_range import PerLayerRangeInitConfig
+from nncf.quantization.init_range import RangeInitConfig
+from nncf.quantization.init_range import RangeInitParams
+from nncf.quantization.init_range import StatCollectorGenerator
+from nncf.quantization.layers import BaseQuantizer
+from nncf.quantization.layers import QUANTIZATION_MODULES
+from nncf.quantization.layers import QuantizationMode
+from nncf.quantization.layers import QuantizerConfig
+from nncf.quantization.layers import QuantizerExportMode
+from nncf.quantization.layers import QuantizersSwitcher
+from nncf.quantization.metrics import MemoryCostMetric
+from nncf.quantization.metrics import NetworkQuantizationShareMetric
+from nncf.quantization.metrics import NetworkQuantizationShareMetricBuildTimeInfo
+from nncf.quantization.metrics import ShareEdgesQuantizedDataPath
+from nncf.quantization.module_operations import AdjustPadding
+from nncf.quantization.module_operations import AdjustPaddingArgs
 from nncf.quantization.precision_constraints import HardwareQuantizationConstraints
 from nncf.quantization.precision_init.adjacent_quantizers import GroupsOfAdjacentQuantizers
 from nncf.quantization.precision_init.autoq_init import AutoQPrecisionInitParams
 from nncf.quantization.precision_init.base_init import BasePrecisionInitParams
 from nncf.quantization.precision_init.hawq_init import HAWQPrecisionInitParams
 from nncf.quantization.precision_init.manual_init import ManualPrecisionInitParams
-from nncf.quantization.quantizer_id import WeightQuantizerId, NonWeightQuantizerId, InputQuantizerId, \
-    QuantizerId
-from nncf.quantization.quantizer_propagation import QuantizerPropagationSolver, QuantizerPropagationStateGraph
-from nncf.quantization.quantizer_setup import QuantizationPointId, SingleConfigQuantizationPoint, QuantizerSetupBase, \
-    SingleConfigQuantizerSetup, MultiConfigQuantizerSetup
+from nncf.quantization.quantizer_id import InputQuantizerId
+from nncf.quantization.quantizer_id import NonWeightQuantizerId
+from nncf.quantization.quantizer_id import QuantizerId
+from nncf.quantization.quantizer_id import WeightQuantizerId
+from nncf.quantization.quantizer_propagation import QuantizerPropagationSolver
+from nncf.quantization.quantizer_propagation import QuantizerPropagationStateGraph
+from nncf.quantization.quantizer_setup import MultiConfigQuantizerSetup
+from nncf.quantization.quantizer_setup import QuantizationPointId
+from nncf.quantization.quantizer_setup import QuantizerSetupBase
+from nncf.quantization.quantizer_setup import SingleConfigQuantizationPoint
+from nncf.quantization.quantizer_setup import SingleConfigQuantizerSetup
 from nncf.quantization.schedulers import QUANTIZATION_SCHEDULERS
-from nncf.quantization.structs import QuantizerSetupType, QuantizationConstraints, QuantizerGroup, QuantizableModule, \
-    NonWeightQuantizerInfo, WeightQuantizerInfo
-from nncf.structures import QuantizationPrecisionInitArgs, QuantizationRangeInitArgs, AutoQPrecisionInitArgs
+from nncf.quantization.structs import NonWeightQuantizerInfo
+from nncf.quantization.structs import QuantizableModule
+from nncf.quantization.structs import QuantizationConstraints
+from nncf.quantization.structs import QuantizerGroup
+from nncf.quantization.structs import QuantizerSetupType
+from nncf.quantization.structs import WeightQuantizerInfo
+from nncf.structures import AutoQPrecisionInitArgs
+from nncf.structures import QuantizationPrecisionInitArgs
+from nncf.structures import QuantizationRangeInitArgs
 from nncf.tensor_statistics.algo import TensorStatisticsCollectionBuilder
 from nncf.tensor_statistics.collectors import ReductionShape
-from nncf.tensor_statistics.statistics import TensorStatistic, MinMaxTensorStatistic
-from nncf.utils import in_scope_list, is_main_process, should_consider_scope
-from nncf.common.os import safe_open
+from nncf.tensor_statistics.statistics import MinMaxTensorStatistic
+from nncf.tensor_statistics.statistics import TensorStatistic
+from nncf.utils import in_scope_list
+from nncf.utils import is_main_process
+from nncf.utils import should_consider_scope
 
 
 class QuantizerSetupGeneratorBase:
@@ -193,7 +240,7 @@ class QuantizerSetupGeneratorBase:
         Dict[Scope, List[QuantizerConfig]]:
         raise NotImplementedError
 
-    def get_quantizable_modules(self) -> List[QuantizableModule]:
+    def get_quantizable_modules(self) -> List[QuantizableModule]:  # TODO[nlyalyus]: scope of weight module
         modules = self._target_model.get_nncf_modules()
         quantized_modules_with_potential_qconfig = []
 
@@ -524,6 +571,7 @@ class PropagationBasedQuantizerSetupGenerator(QuantizerSetupGeneratorBase):
             self._debug_interface.visualize_insertion_point_graph(insertion_point_graph)
         prop_graph_solver = QuantizerPropagationSolver(
             ignored_scopes=self.ignored_scopes,
+            target_scopes=self.target_scopes,
             debug_interface=self._debug_interface,
             hw_config=self.hw_config,
             default_qconfig_list=[self._get_default_qconfig(
@@ -880,6 +928,40 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
         command = InsertionCommand(insertion_point, op, OperationPriority.QUANTIZATION_PRIORITY)
         return quantizer_id, command
 
+    def _get_adjust_padding_args(self, quantization_point: SingleConfigQuantizationPoint,
+                                 quantizer_module_id: NonWeightQuantizerId,
+                                 target_model: NNCFNetwork,
+                                 quantization_points: List[SingleConfigQuantizationPoint]):
+        result = None
+        if quantization_point.adjust_padding_is_applicable:
+            for module_scope in quantization_point.parent_node_scopes:
+                module = target_model.get_module_by_scope(module_scope)
+                weight_bitwidth = None
+                for qp in quantization_points:
+                    is_weight = not qp.is_activation_quantization_point()
+                    if is_weight and (qp.insertion_point.module_scope == module_scope):
+                        weight_bitwidth = qp.qconfig.bits
+                        break
+                if weight_bitwidth:
+                    activation_quantizer = self._non_weight_quantizers[quantizer_module_id].quantizer_module_ref
+                    result = AdjustPaddingArgs(weight_bitwidth, activation_quantizer, module, module_scope)
+        return result
+
+    @staticmethod
+    def _add_adjust_padding_ops(adjust_padding_args: List[AdjustPaddingArgs], target_model: NNCFNetwork):
+        commands = []
+        for args in adjust_padding_args:
+            module_scope = args.module_scope
+            ap = AdjustPadding.create(args)
+            if ap:
+                device = next(target_model.parameters()).device
+                op = UpdatePaddingValue(ap).to(device)
+                insertion_point = InsertionPoint(insertion_type=InsertionType.NNCF_MODULE_PRE_OP,
+                                                 module_scope=module_scope)
+                nncf_logger.warning(f'Padding will be adjusted for {module_scope}')
+                commands.append(InsertionCommand(insertion_point, op, OperationPriority.DEFAULT_PRIORITY))
+        return commands
+
     class ActivationQuantizationHook:
         """Cannot simply register the quantizer module as a callable hook, since we need to call
         a thread-local version of the quantizer module during base module execution."""
@@ -920,6 +1002,7 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
                 qp_id_vs_quant_module_id_dict[us_qp_id] = quant_module_id
             insertion_commands += commands
 
+        adjust_padding_args = []
         for qp_id in non_unified_scales_quantization_point_ids:
             qp = quantizer_setup.quantization_points[qp_id]
             ip = qp.insertion_point
@@ -942,6 +1025,10 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
                                                                                       insertion_info,
                                                                                       qconfig,
                                                                                       range_init_minmax_values)
+                args = self._get_adjust_padding_args(qp, quantizer_module_id, target_model,
+                                                     list(quantizer_setup.quantization_points.values()))
+                if args:
+                    adjust_padding_args.append(args)
             elif qp.is_weight_quantization_point():
                 quantizer_module_id, command = self._add_single_weight_quantizer(target_model, ip, qconfig,
                                                                                  range_init_minmax_values)
@@ -949,6 +1036,11 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
 
             qp_id_vs_quant_module_id_dict[qp_id] = quantizer_module_id
             insertion_commands += commands
+
+        commands = self._add_adjust_padding_ops(adjust_padding_args, target_model)
+        if commands:
+            insertion_commands += commands
+
         return insertion_commands, qp_id_vs_quant_module_id_dict
 
     def _build_commands_for_single_unified_scale_group(self,
@@ -1655,13 +1747,19 @@ class ExperimentalQuantizationController(QuantizationController):
         current_setup = self.get_quantizer_setup_for_current_state()
         if Counter(current_setup.quantization_points.keys()) != Counter(quantizer_setup.quantization_points.keys()):
             raise ValueError("The new setup is inconsistent with the original parameter space!")
-        for qp_id in quantizer_setup.quantization_points:
+        for qp_id, qp in quantizer_setup.quantization_points.items():
             current_qconfig = current_setup.quantization_points[qp_id].qconfig
             new_qconfig = quantizer_setup.quantization_points[qp_id].qconfig
+            new_padding_adjust_applicable = AdjustPadding.is_config_applicable(new_qconfig)
+            current_padding_adjust_applicable = AdjustPadding.is_config_applicable(current_qconfig)
+            # TODO: what if padding is not enabled? per operator... shouldn't check for it!
+            need_padding_regeneration = qp.adjust_padding_is_applicable and \
+                                        new_padding_adjust_applicable != current_padding_adjust_applicable
             if current_qconfig.per_channel != new_qconfig.per_channel or \
                     (new_qconfig.signedness_to_force is not None and
                      current_qconfig.signedness_to_force != new_qconfig.signedness_to_force) or \
-                    current_qconfig.mode != new_qconfig.mode:
+                    current_qconfig.mode != new_qconfig.mode or \
+                    need_padding_regeneration:
                 return True
         return False
 

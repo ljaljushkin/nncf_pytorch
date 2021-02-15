@@ -10,6 +10,8 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
+import logging
+
 from abc import abstractmethod, ABC
 from typing import List, Tuple, Dict, Callable, Union
 
@@ -28,7 +30,7 @@ from nncf.dynamic_graph.context import get_version_agnostic_name, TracingContext
 from nncf.dynamic_graph.graph import NNCFGraph, InputAgnosticOperationExecutionContext
 from nncf.dynamic_graph.graph_builder import create_input_infos, create_mock_tensor, GraphBuilder, \
     create_dummy_forward_fn, ModelInputInfo
-from nncf import nncf_model_input
+from nncf import nncf_model_input, set_log_level
 from nncf.layers import LSTMCellNNCF, NNCF_RNN
 from nncf.nncf_network import NNCFNetwork, InsertionType
 from nncf.utils import get_all_modules_by_type
@@ -108,7 +110,10 @@ def sort_dot(path):
 def check_graph(graph: NNCFGraph, path_to_dot, graph_dir, sort_dot_graph=True):
     # pylint:disable=protected-access
     nx_graph = graph._get_graph_for_structure_analysis()
+    check_nx_graph(nx_graph, path_to_dot, graph_dir, sort_dot_graph=sort_dot_graph)
 
+
+def check_nx_graph(nx_graph: nx.DiGraph, path_to_dot, graph_dir, sort_dot_graph=True):
     data_dir = os.path.join(os.path.dirname(__file__), 'data/reference_graphs')
     dot_dir = os.path.join(data_dir, graph_dir)
     path_to_dot = os.path.abspath(os.path.join(dot_dir, path_to_dot))
@@ -306,9 +311,11 @@ class TestModelsGraph:
         assert ref_num_sparsed == len(compression_ctrl.sparsified_module_info)
         check_model_graph(compressed_model, desc.dot_filename, algo)
 
-    def test_quantize_network(self, desc: ModelDesc, _case_config):
+    def test_quantize_network(self, desc: ModelDesc, _case_config, tmp_path):
         model = desc.model_builder()
+        set_log_level(logging.DEBUG)
         config = get_basic_quantization_config(_case_config.quant_type, input_sample_sizes=desc.input_sample_sizes)
+        config['log_dir'] = str(tmp_path)
         compressed_model, _ = \
             create_compressed_model_and_algo_for_test(model, config, dummy_forward_fn=desc.dummy_forward_fn,
                                                       wrap_inputs_fn=desc.wrap_inputs_fn)
@@ -786,7 +793,7 @@ def test_compressed_graph_models_hw(desc, hw_config_type):
     config = get_basic_quantization_config_with_hw_config_type(hw_config_type.value,
                                                                input_sample_size=desc.input_sample_sizes)
     input_info_list = create_input_infos(config)
-    compressed_model = NNCFNetwork(model, input_infos=input_info_list)
+    compressed_model = NNCFNetwork(model, input_infos=input_info_list, target_scopes=config['compression']['target_scopes'])
 
     # pylint:disable=protected-access
     quantization_builder = CompositeCompressionAlgorithmBuilder(config).child_builders[0]  # type: QuantizationBuilder

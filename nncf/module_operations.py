@@ -49,3 +49,8 @@ class UpdateParameter(BaseOp):
 class UpdateWeight(UpdateParameter):
     def __init__(self, op):
         super().__init__("weight", op)
+
+
+class UpdatePaddingValue(UpdateParameter):
+    def __init__(self, op):
+        super().__init__("padding_value", op)

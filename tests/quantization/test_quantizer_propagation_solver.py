@@ -593,7 +593,7 @@ class TestQuantizerPropagationSolver:
     @pytest.fixture(params=QCONFIG_PRIMARY_SECONDARY_BEFORE_AND_AFTER_MERGING)
     def qconfig_merge_test_struct(request):
         return request.param
-
+    # TODO[nlyalyus]: tests how configs are merged
     def test_get_merged_qconfigs(self, qconfig_merge_test_struct: MergeQConfigTestStruct):
         for strategy in PropagationStrategy:
             quant_prop_solver = QuantizerPropagationSolver(propagation_strategy=strategy,

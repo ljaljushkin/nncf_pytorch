@@ -47,7 +47,7 @@ def fill_linear_weight(linear, value):
         linear.weight[:n, :n] += torch.eye(n)
 
 
-def create_conv(in_channels, out_channels, kernel_size, weight_init, bias_init, padding=0, stride=1):
+def create_conv(in_channels, out_channels, kernel_size, weight_init=1, bias_init=0, padding=0, stride=1):
     conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, stride=stride)
     fill_conv_weight(conv, weight_init)
     fill_bias(conv, bias_init)
@@ -141,7 +141,7 @@ def get_empty_config(model_size=4, input_sample_sizes: Union[Tuple[List[int]], L
 
     config = NNCFConfig()
     config.update({
-        "model": "basic_sparse_conv",
+        "model": "empty_config",
         "model_size": model_size,
         "input_info": input_info if input_info else _create_input_info()
     })
@@ -165,7 +165,7 @@ def create_compressed_model_and_algo_for_test(model: NNCFNetwork, config: NNCFCo
         -> Tuple[NNCFNetwork, CompressionAlgorithmController]:
     assert isinstance(config, NNCFConfig)
     NNCFConfig.validate(config)
-    algo, model = create_compressed_model(model, config, dump_graphs=False, dummy_forward_fn=dummy_forward_fn,
+    algo, model = create_compressed_model(model, config, dump_graphs=True, dummy_forward_fn=dummy_forward_fn,
                                           wrap_inputs_fn=wrap_inputs_fn,
                                           resuming_state_dict=resuming_state_dict)
     return model, algo

@@ -348,16 +348,6 @@ class HAWQPrecisionInitializer(BasePrecisionInitializer):
                 self.flops_counter.ratio_for_bits_configuration(bit_sequence, skipped))
         return flops_bits_per_config
 
-    def get_bitwidth_per_scope(self, quantizer_setup: SingleConfigQuantizerSetup) -> List[List[Union[int, str]]]:
-        scope_vs_bitwidth = {}
-        for qp in quantizer_setup.quantization_points.values():
-            scope_vs_bitwidth[str(qp.insertion_point)] = qp.qconfig.bits
-        sorted_scope_vs_bitwidth = OrderedDict(sorted(scope_vs_bitwidth.items(), key=lambda x: x[0]))
-        full_bitwidth_per_scope = []
-        for scope, bitwidth in sorted_scope_vs_bitwidth.items():
-            full_bitwidth_per_scope.append([bitwidth, scope])
-        return full_bitwidth_per_scope
-
     class ParamsToRestore(NamedTuple):
         originally_disabled_gradients: List[str]
         skipped_gradients_to_enable: List[Tuple[nn.Module, str]]

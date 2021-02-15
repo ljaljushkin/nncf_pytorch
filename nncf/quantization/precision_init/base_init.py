@@ -12,17 +12,21 @@
 """
 
 from collections import OrderedDict
+from typing import Dict
+from typing import List
+from typing import Union
+
 from copy import deepcopy
-from typing import Dict, List
 
 from nncf.module_operations import UpdateWeight
-
 from nncf.nncf_network import ExtraCompressionModuleType
-from nncf.quantization.layers import QUANTIZATION_MODULES, BaseQuantizer
+from nncf.quantization.layers import BaseQuantizer
+from nncf.quantization.layers import QUANTIZATION_MODULES
 from nncf.quantization.precision_constraints import HardwareQuantizationConstraints
-from nncf.quantization.quantizer_id import QuantizerId, WeightQuantizerId
-from nncf.quantization.structs import WeightQuantizerInfo
+from nncf.quantization.quantizer_id import QuantizerId
+from nncf.quantization.quantizer_id import WeightQuantizerId
 from nncf.quantization.quantizer_setup import SingleConfigQuantizerSetup
+from nncf.quantization.structs import WeightQuantizerInfo
 from nncf.structures import NNCFExtraConfigStruct
 from nncf.utils import get_all_modules_by_type
 
@@ -57,11 +61,22 @@ class BasePrecisionInitializer:
     def apply_init(self) -> SingleConfigQuantizerSetup:
         raise NotImplementedError
 
+    def get_bitwidth_per_scope(self, quantizer_setup: SingleConfigQuantizerSetup) -> List[List[Union[int, str]]]:
+        scope_vs_bitwidth = {}
+        for qp in quantizer_setup.quantization_points.values():
+            scope_vs_bitwidth[str(qp.insertion_point)] = qp.qconfig.bits
+        sorted_scope_vs_bitwidth = OrderedDict(sorted(scope_vs_bitwidth.items(), key=lambda x: x[0]))
+        full_bitwidth_per_scope = []
+        for scope, bitwidth in sorted_scope_vs_bitwidth.items():
+            full_bitwidth_per_scope.append([bitwidth, scope])
+        return full_bitwidth_per_scope
+
 
 class WeightQuantizersHandler:
     """
     Defines weight quantizers for precision initialization in the order of execution.
     """
+
     def is_wq_scope(self, scope: 'Scope') -> bool:
         return scope[-2].calling_module_class_name == UpdateWeight.__name__
 

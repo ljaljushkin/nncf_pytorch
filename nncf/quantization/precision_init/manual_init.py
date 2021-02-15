@@ -10,7 +10,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-
+from collections import OrderedDict
 from typing import List, Dict
 
 from nncf.quantization.precision_init.base_init import BasePrecisionInitParams, BasePrecisionInitializer
@@ -58,4 +58,7 @@ class ManualPrecisionInitializer(BasePrecisionInitializer):
             if not is_matched:
                 raise ValueError(
                     'Invalid scope name `{}`, failed to assign bitwidth {} to it'.format(scope_name, bitwidth))
-        return self._algo.get_quantizer_setup_for_current_state()
+        qsetup = self._algo.get_quantizer_setup_for_current_state()
+        str_bw = [str(element) for element in self.get_bitwidth_per_scope(qsetup)]
+        print('\n'.join(['\n\"bitwidth_per_scope\": [', ',\n'.join(str_bw), ']']))
+        return qsetup

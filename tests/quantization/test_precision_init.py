@@ -12,17 +12,20 @@
 """
 import itertools
 import json
+import logging
+import math
 from collections import namedtuple, OrderedDict
 from pathlib import Path
 from typing import Callable, NamedTuple, List, Dict
 
-import math
+import networkx as nx
 import os
 import pytest
 import torch
 import torch.nn as nn
 import torch.utils.data
 from functools import partial
+from nncf import set_log_level
 from random import random
 from torch.utils import model_zoo
 from torchvision.models import MobileNetV2, mobilenet_v2, resnet50, inception_v3
@@ -36,21 +39,25 @@ from nncf import register_default_init_args, NNCFConfig
 from nncf.checkpoint_loading import load_state
 from nncf.debug import set_debug_log_dir
 from nncf.dynamic_graph.context import Scope, ScopeElement
+from nncf.dynamic_graph.graph import NNCFGraph
 from nncf.dynamic_graph.graph_builder import create_input_infos
 from nncf.hw_config import HWConfigType
 from nncf.initialization import default_criterion_fn
-from nncf.quantization.structs import QuantizerSetupType
+from nncf.layers import NNCFConv2d
+from nncf.module_operations import UpdatePaddingValue
+from nncf.nncf_network import NNCFNetwork
 from nncf.quantization.hessian_trace import HessianTraceEstimator
-from nncf.quantization.precision_constraints import HardwareQuantizationConstraints
 from nncf.quantization.layers import QUANTIZATION_MODULES, QuantizersSwitcher, QuantizerConfig
+from nncf.quantization.precision_constraints import HardwareQuantizationConstraints
+from nncf.quantization.precision_init.base_init import WeightQuantizersHandler
 from nncf.quantization.precision_init.compression_ratio import CompressionRatioCalculator
 from nncf.quantization.precision_init.hawq_debug import HAWQDebugger
 from nncf.quantization.precision_init.hawq_init import BitwidthAssignmentMode, HAWQPrecisionInitializer, \
     TraceOrderBitwidthMatcher
-from nncf.quantization.precision_init.base_init import WeightQuantizersHandler
 from nncf.quantization.precision_init.perturbations import PerturbationObserver, Perturbations
 from nncf.quantization.precision_init.traces_order import TracesOrder, TracesPerLayer
 from nncf.quantization.quantizer_id import WeightQuantizerId
+from nncf.quantization.structs import QuantizerSetupType
 from nncf.structures import QuantizationPrecisionInitArgs
 from nncf.utils import get_all_modules_by_type, safe_thread_call
 from tests.conftest import TEST_ROOT, EXAMPLES_DIR
@@ -59,10 +66,10 @@ from tests.helpers import create_compressed_model_and_algo_for_test, create_conv
 from tests.quantization.test_quantization_helpers import compare_multi_gpu_dump, \
     get_quantization_config_without_range_init, distributed_init_test_default, post_compression_test_distr_init, \
     get_squeezenet_quantization_config, create_rank_dataloader
-from tests.test_compressed_graph import check_graph
-
 # pylint:disable=unused-import
 from tests.modules.test_rnn import _seed
+from tests.test_compressed_graph import check_graph
+from tests.test_compressed_graph import check_nx_graph
 from tests.test_models import squeezenet1_1
 
 
@@ -247,6 +254,30 @@ def get_avg_traces(model, init_device: str):
     return torch.randperm(num_layers).to(init_device) + 1
 
 
+def add_adjust_padding_nodes(nncf_graph: NNCFGraph, model: NNCFNetwork) -> nx.DiGraph():
+    # pylint:disable=protected-access
+    nx_graph = nncf_graph._get_graph_for_structure_analysis()
+
+    # TODO: rename
+    Args = namedtuple('Args', ('new_node_key', 'attr', 'parent_node_key'))
+
+    args = []
+    for node_key, nx_node in nx_graph.nodes.items():
+        scope = Scope.from_str(nx_node['scope'])
+        module = model.get_module_by_scope(scope)
+        if isinstance(module, NNCFConv2d):
+            adjust_padding_ops = filter(lambda x: isinstance(x, UpdatePaddingValue), module.pre_ops.values())
+            for _ in adjust_padding_ops:
+                new_node_key = f'{node_key}_apad'
+                attr = dict(type='', label='adjust_padding_value', style='filled', color='yellow')
+                args.append(Args(new_node_key, attr, node_key))
+
+    for arg in args:
+        nx_graph.add_node(arg.new_node_key, **arg.attr)
+        nx_graph.add_edge(arg.new_node_key, arg.parent_node_key)
+    return nx_graph
+
+
 def check_bitwidth_graph(algo_ctrl, model, path_to_dot, graph_dir):
     model = model.cuda()
     all_quantizers_per_full_scope = HAWQDebugger.get_all_quantizers_per_full_scope(model)
@@ -257,7 +288,8 @@ def check_bitwidth_graph(algo_ctrl, model, path_to_dot, graph_dir):
     groups_of_adjacent_quantizers = algo_ctrl.groups_of_adjacent_quantizers
     graph = HAWQDebugger.get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope,
                                             groups_of_adjacent_quantizers)
-    check_graph(graph, path_to_dot, graph_dir, sort_dot_graph=False)
+    nx_graph = add_adjust_padding_nodes(graph, model)
+    check_nx_graph(nx_graph, path_to_dot, graph_dir, sort_dot_graph=False)
 
 
 class HAWQTestStruct(NamedTuple):
@@ -304,6 +336,7 @@ HAWQ_TEST_PARAMS = (
 
 @pytest.mark.parametrize('params', HAWQ_TEST_PARAMS, ids=[str(p) for p in HAWQ_TEST_PARAMS])
 def test_hawq_precision_init(_seed, dataset_dir, tmp_path, mocker, params):
+    # set_log_level(logging.DEBUG)
     config = params.config_builder.build()
     model = params.model_creator().cuda()
 
@@ -312,14 +345,14 @@ def test_hawq_precision_init(_seed, dataset_dir, tmp_path, mocker, params):
         dataset_dir = str(tmp_path)
     train_loader, _ = create_test_dataloaders(config, dataset_dir)
     config = register_default_init_args(config, train_loader, criterion)
-
+    config['log_dir'] = str(tmp_path)
     mocked_trace = mocker.patch('nncf.quantization.hessian_trace.HessianTraceEstimator.get_average_traces',
                                 autospec=True)
     pregen_traces_for_all_layers = params.avg_traces_creator(model, 'cuda')
 
     # There may be less traces required to be calculated during HAWQ than there are weightable layers.
     def side_effect_fn(self, max_iter=500, tolerance=1e-5):
-        #pylint:disable=protected-access
+        # pylint:disable=protected-access
         return pregen_traces_for_all_layers[:len(self._parameter_handler.parameters)]
 
     mocked_trace.side_effect = side_effect_fn

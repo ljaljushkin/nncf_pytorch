@@ -77,13 +77,16 @@ class InsertionInfo:
                  in_port_id: Optional[int] = None,
                  is_input=False,
                  is_output=False,
-                 shape_to_operate_on=None):
+                 shape_to_operate_on=None,
+                 parent_nodes_scopes = None):
         self.op_exec_context = op_exec_context  # type: OperationExecutionContext
         self.in_port_id = in_port_id  # None for post-hook quantization, otherwise - pre-hook
         self.is_input = is_input
         self.is_output = is_output
         self.shape_to_operate_on = shape_to_operate_on
         self._linked_insertion_infos = []  # type: List[InsertionInfo]
+        # TODO: rename
+        self.parent_nodes_scopes = parent_nodes_scopes
 
     def get_linked_insertion_infos(self) -> List['InsertionInfo']:
         return self._linked_insertion_infos

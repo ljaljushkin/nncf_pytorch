@@ -235,7 +235,7 @@ class DefaultScopeNodeMatcher:
                     node_candidates[successor_node_key] = successor_node
         return node_candidates
 
-    def add_node(self, op_exec_context: OperationExecutionContext, inputs) -> NNCFNode:
+    def add_node(self, op_exec_context: OperationExecutionContext) -> NNCFNode:
         node_id = len(self._node_id_to_key_dict)
 
         name_parts = (str(op_exec_context.scope_in_model), op_exec_context.operator_name)
@@ -452,8 +452,7 @@ class NodeManager:
 
     def add_node(self, ia_op_exec_context: InputAgnosticOperationExecutionContext,
                  tensor_metas: List[TensorMeta],
-                 tm_comparators_per_scope: List[Tuple[TensorMetaComparator, List[str]]],
-                 inputs) -> NNCFNode:
+                 tm_comparators_per_scope: List[Tuple[TensorMetaComparator, List[str]]]) -> NNCFNode:
         matcher = self.choose_matcher(ia_op_exec_context)
         tm_comparators = self.choose_tm_comparators(ia_op_exec_context, tm_comparators_per_scope)
         op_exec_context = OperationExecutionContext(ia_op_exec_context.operator_name,
@@ -462,7 +461,7 @@ class NodeManager:
                                                     tensor_metas,
                                                     tm_comparators=tm_comparators)
 
-        return matcher.add_node(op_exec_context, inputs)
+        return matcher.add_node(op_exec_context)
 
 
 class NNCFGraphEdge:
@@ -525,7 +524,7 @@ class NNCFGraph:
                  tensor_metas: List[TensorMeta],
                  input_comparators_per_scope: List[Tuple[TensorMetaComparator, List[str]]],
                  inputs) -> NNCFNode:
-        node = self.match_manager.add_node(ia_op_exec_context, tensor_metas, input_comparators_per_scope, inputs)
+        node = self.match_manager.add_node(ia_op_exec_context, tensor_metas, input_comparators_per_scope)
 
         from nncf.dynamic_graph.input_wrapping import MODEL_INPUT_OP_NAME
         if node.op_exec_context.operator_name == MODEL_INPUT_OP_NAME:  # TODO: refactorable model input node name

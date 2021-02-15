@@ -11,24 +11,25 @@
  limitations under the License.
 """
 from collections import OrderedDict
-from copy import deepcopy
 from pathlib import Path
 from typing import List, Dict
 
 import os
 import torch
-
-from nncf.quantization.precision_init.adjacent_quantizers import GroupsOfAdjacentQuantizers
-from nncf.quantization.quantizer_id import NonWeightQuantizerId
+from copy import deepcopy
 from torch import Tensor
 
 from nncf.common.utils.logger import logger as nncf_logger
-from nncf.nncf_network import ExtraCompressionModuleType
+from nncf.dynamic_graph.context import Scope
+from nncf.dynamic_graph.graph import NNCFGraph, InputAgnosticOperationExecutionContext
+from nncf.layers import NNCFConv2d
+from nncf.module_operations import UpdatePaddingValue
+from nncf.nncf_network import ExtraCompressionModuleType, NNCFNetwork
 from nncf.quantization.layers import QUANTIZATION_MODULES
+from nncf.quantization.precision_init.adjacent_quantizers import GroupsOfAdjacentQuantizers
 from nncf.quantization.precision_init.perturbations import Perturbations, PerturbationObserver
 from nncf.quantization.precision_init.traces_order import TracesPerLayer
-from nncf.dynamic_graph.graph import NNCFGraph
-from nncf.layers import NNCFConv2d
+from nncf.quantization.quantizer_id import NonWeightQuantizerId
 from nncf.utils import get_all_modules_by_type
 
 
@@ -93,12 +94,9 @@ class HAWQDebugger:
             input_agnostic_op_exec_context = insertion_info.op_exec_context.input_agnostic
             affected_nncf_node_key = nncf_graph.get_node_key_by_iap_context(input_agnostic_op_exec_context)
             affected_nx_node = nncf_graph.get_nx_node_by_key(affected_nncf_node_key)
-            operator_name = affected_nx_node[NNCFGraph.OP_EXEC_CONTEXT_NODE_ATTR].operator_name
             node_id = affected_nx_node[NNCFGraph.ID_NODE_ATTR]
 
             affected_nncf_node = nncf_graph.get_node_by_id(node_id)
-            affected_nx_node['label'] = '_#'.join([operator_name, str(node_id)])
-
             if insertion_info.is_input:
                 # Module UpdateInputs pre-op used for activation quantization
                 previous_nodes = nncf_graph.get_previous_nodes(affected_nncf_node)
@@ -181,6 +179,12 @@ class HAWQDebugger:
                     if module.groups == module.in_channels:
                         operator_name = 'DW_Conv2d'
                         color = 'purple'
+                    kernel_size = 'x'.join(map(lambda x: str(x), module.kernel_size))
+                    operator_name += f'_k{kernel_size}'
+                    padding_values = set(module.padding)
+                    padding_enabled = len(padding_values) >= 1 and padding_values.pop()
+                    if padding_enabled:
+                        operator_name += '_PAD'
                 operator_name += '_#{}'.format(str(node[NNCFGraph.ID_NODE_ATTR]))
                 node['label'] = operator_name
                 node['style'] = 'filled'
@@ -193,7 +197,6 @@ class HAWQDebugger:
             HAWQDebugger._paint_activation_quantizer_node(nncf_graph, quantizer_id,
                                                           quantizer_info, bits_color_map,
                                                           groups_of_adjacent_quantizers)
-
         for scope, quantizer in all_quantizers_per_full_scope.items():
             if not quantizer.is_weights:
                 continue

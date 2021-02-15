@@ -1,12 +1,10 @@
 import math
-
-
-from functools import partial
 from typing import Dict, Tuple, Any, Callable, Optional
 
 import torch
-from torch.utils.data import DataLoader
+from functools import partial
 from torch.nn.modules.loss import _Loss
+from torch.utils.data import DataLoader
 
 from nncf.progress_bar import ProgressBar
 from nncf.structures import QuantizationPrecisionInitArgs, QuantizationRangeInitArgs, \
