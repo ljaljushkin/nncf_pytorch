@@ -932,7 +932,7 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
                                  quantizer_module_id: NonWeightQuantizerId,
                                  target_model: NNCFNetwork,
                                  quantization_points: List[SingleConfigQuantizationPoint]):
-        result = None
+        result = []
         if quantization_point.adjust_padding_is_applicable:
             for module_scope in quantization_point.parent_node_scopes:
                 module = target_model.get_module_by_scope(module_scope)
@@ -944,7 +944,7 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
                         break
                 if weight_bitwidth:
                     activation_quantizer = self._non_weight_quantizers[quantizer_module_id].quantizer_module_ref
-                    result = AdjustPaddingArgs(weight_bitwidth, activation_quantizer, module, module_scope)
+                    result.append(AdjustPaddingArgs(weight_bitwidth, activation_quantizer, module, module_scope))
         return result
 
     @staticmethod
@@ -1028,7 +1028,7 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
                 args = self._get_adjust_padding_args(qp, quantizer_module_id, target_model,
                                                      list(quantizer_setup.quantization_points.values()))
                 if args:
-                    adjust_padding_args.append(args)
+                    adjust_padding_args.extend(args)
             elif qp.is_weight_quantization_point():
                 quantizer_module_id, command = self._add_single_weight_quantizer(target_model, ip, qconfig,
                                                                                  range_init_minmax_values)
