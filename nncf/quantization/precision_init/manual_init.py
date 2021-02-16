@@ -14,7 +14,6 @@ from functools import partial
 from typing import Dict
 from typing import List
 
-from nncf.common.utils.logger import logger as nncf_logger
 from nncf.quantization.precision_init.base_init import BasePrecisionInitParams
 from nncf.quantization.precision_init.base_init import BasePrecisionInitializer
 from nncf.quantization.quantizer_setup import SingleConfigQuantizerSetup
@@ -50,9 +49,8 @@ class ManualPrecisionInitializer(BasePrecisionInitializer):
         quantizer_setup = None
         if self._hw_precision_constraints:
             quantizer_setup = self._algo.get_quantizer_setup_for_current_state()
-            apply_bitwidth_to_scope_fn = partial(self._apply_bitwidth_per_scope_for_propagation_based, quantizer_setup=quantizer_setup)
-            str_bw = [str(element) for element in self.get_bitwidth_per_scope(quantizer_setup)]
-            nncf_logger.info('\n'.join(['\n\"bitwidth_per_scope\": [', ',\n'.join(str_bw), ']']))
+            apply_bitwidth_to_scope_fn = partial(self._apply_bitwidth_per_scope_for_propagation_based,
+                                                 quantizer_setup=quantizer_setup)
 
         for pair in self._bitwidth_per_scope:
             bitwidth, scope_name = pair
@@ -62,8 +60,6 @@ class ManualPrecisionInitializer(BasePrecisionInitializer):
 
         if not self._hw_precision_constraints:
             quantizer_setup = self._algo.get_quantizer_setup_for_current_state()
-            str_bw = [str(element) for element in self.get_bitwidth_per_scope(quantizer_setup)]
-            nncf_logger.info('\n'.join(['\n\"bitwidth_per_scope\": [', ',\n'.join(str_bw), ']']))
         return quantizer_setup
 
     def _apply_bitwidth_to_scope_for_pattern_based(self, bitwidth: int, scope_name: str) -> bool:

@@ -21,7 +21,6 @@ from typing import Dict
 from typing import List
 from typing import NamedTuple
 
-import networkx as nx
 import os
 import pytest
 import torch
@@ -46,13 +45,9 @@ from nncf.checkpoint_loading import load_state
 from nncf.debug import set_debug_log_dir
 from nncf.dynamic_graph.context import Scope
 from nncf.dynamic_graph.context import ScopeElement
-from nncf.dynamic_graph.graph import NNCFGraph
 from nncf.dynamic_graph.graph_builder import create_input_infos
 from nncf.hw_config import HWConfigType
 from nncf.initialization import default_criterion_fn
-from nncf.layers import NNCFConv2d
-from nncf.module_operations import UpdatePaddingValue
-from nncf.nncf_network import NNCFNetwork
 from nncf.quantization.hessian_trace import HessianTraceEstimator
 from nncf.quantization.layers import QUANTIZATION_MODULES
 from nncf.quantization.layers import QuantizerConfig
