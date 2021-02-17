@@ -761,9 +761,15 @@ MANUAL_CONFIG_TEST_PARAMS = [
     ManualSampleConfigTestParams(name="mobilenet_v2_imagenet_mixed_int_manual.json",
                                  bit_stats=[['8', '23.077', '23.932', '47.009'],
                                             ['4', '22.222', '30.769', '52.991']]),
+    ManualSampleConfigTestParams(name="mobilenet_v2_imagenet_mixed_int_manual_staged.json",
+                                 bit_stats=[['8', '23.077', '24.786', '47.863'],
+                                            ['4', '22.222', '29.915', '52.137']]),
     ManualSampleConfigTestParams(name="resnet50_imagenet_mixed_int_manual.json",
                                  bit_stats=[['8', '21.600', '23.200', '44.800'],
                                             ['4', '21.600', '33.600', '55.200']]),
+    ManualSampleConfigTestParams(name="resnet50_imagenet_mixed_int_manual_staged.json",
+                                 bit_stats=[['8', '21.600', '28.000', '49.600'],
+                                            ['4', '21.600', '28.800', '50.400']]),
     ManualSampleConfigTestParams(name="squeezenet1_1_imagenet_mixed_int_manual.json",
                                  bit_stats=[['8', '24.528', '30.189', '54.717'],
                                             ['4', '24.528', '20.755', '45.283']]),
@@ -818,6 +824,7 @@ class ManualSingleConvTestParams:
 MANUAL_SINGLE_CONV_TEST_PARAMS = [
     ManualSingleConvTestParams(name='manual_init_multiple_int8_qconfigs').for_device('CPU').num_bits_for_activation(8),
     ManualSingleConvTestParams(name='manual_init_int4_sym_int8_asym').for_device('VPU').num_bits_for_activation(4),
+    ManualSingleConvTestParams(name='manual_init_trial').for_device('TRIAL').num_bits_for_activation(4),
     ManualSingleConvTestParams(name='incompatible_bitwidth').for_device('VPU').num_bits_for_activation(2).raises_error()
 ]
 
@@ -936,8 +943,8 @@ def test_quantization_configs__with_precisions_list():
     config['compression']['initializer'].update({
         "precision": {
             "bitwidth_per_scope":
-                [[2, 'ModelForTest/NNCFConv2d[conv1]'],
-                 [4, 'ModelForTest/NNCFConv2d[conv2]']]
+                [[2, 'InsertionType.NNCF_MODULE_PRE_OP ModelForTest/NNCFConv2d[conv1]'],
+                 [4, 'InsertionType.NNCF_MODULE_PRE_OP ModelForTest/NNCFConv2d[conv2]']]
         }})
     config['compression']["activations"] = {"bits": 6}
     config['quantizer_setup_type'] = 'pattern_based'
