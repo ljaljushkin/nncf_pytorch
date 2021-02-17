@@ -133,17 +133,16 @@ class ReshapeModel(ModelWithDummyParameter):
 class MultiBranchesModel(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1)
-        self.conv2a = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1, groups=3)
-        self.max_pool2b = nn.MaxPool2d(kernel_size=3)
-        self.conv2b = nn.Conv2d(in_channels=3, out_channels=1, kernel_size=5, padding=3)
-        self.conv2c = nn.Conv2d(in_channels=3, out_channels=1, kernel_size=3, padding=3)
-        self.conv2d = nn.Conv2d(in_channels=3, out_channels=1, kernel_size=3, padding=0)
+        self.conv_a = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1, groups=3)
+        self.max_pool_b = nn.MaxPool2d(kernel_size=3)
+        self.conv_b = nn.Conv2d(in_channels=3, out_channels=1, kernel_size=5, padding=3)
+        self.conv_c = nn.Conv2d(in_channels=3, out_channels=1, kernel_size=3, padding=3)
+        self.conv_d = nn.Conv2d(in_channels=3, out_channels=1, kernel_size=3, padding=0)
 
     def forward(self, x):
-        x = self.conv1(x)
-        xa = self.conv2a(x)
-        xb = self.conv2b(self.max_pool2b(x))
-        xc = self.conv2c(x)
-        xd = self.conv2d(x)
+        x = nn.ReLU()(x)
+        xa = self.conv_a(x)
+        xb = self.conv_b(self.max_pool_b(x))
+        xc = self.conv_c(x)
+        xd = self.conv_d(x)
         return xa, xb, xc, xd

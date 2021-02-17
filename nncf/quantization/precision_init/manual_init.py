@@ -13,6 +13,7 @@
 from typing import Dict
 from typing import List
 
+from nncf.common.utils.logger import logger as nncf_logger
 from nncf.quantization.precision_constraints import HardwareQuantizationConstraints
 from nncf.quantization.precision_init.base_init import BasePrecisionInitParams
 from nncf.quantization.precision_init.base_init import BasePrecisionInitializer
@@ -44,6 +45,8 @@ class ManualPrecisionInitializer(BasePrecisionInitializer):
 
     def apply_init(self) -> SingleConfigQuantizerSetup:
         quantizer_setup = self._algo.get_quantizer_setup_for_current_state()
+        str_bw = [str(element) for element in self.get_bitwidth_per_scope(quantizer_setup)]
+        print('\n'.join(['\n\"bitwidth_per_scope\": [', ',\n'.join(str_bw), ']']))
         for pair in self._bitwidth_per_scope:
             bitwidth, scope_name = pair
             is_matched = False
@@ -56,7 +59,7 @@ class ManualPrecisionInitializer(BasePrecisionInitializer):
                         q_configs = self._hw_precision_constraints.get(q_id)
                         matched_q_configs = list(filter(lambda x: x.bits == bitwidth, q_configs))
                         if not matched_q_configs:
-                            raise ValueError(msg.format(bitwidth, scope_name, q_configs))
+                            raise ValueError(msg.format(bitwidth, scope_name, list(map(str, q_configs))))
                         qp.qconfig = matched_q_configs[0]
                     else:
                         qp.qconfig.bits = bitwidth
