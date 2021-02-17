@@ -21,13 +21,13 @@ from typing import Dict
 from typing import List
 from typing import NamedTuple
 
+import networkx as nx
 import os
 import pytest
 import torch
 import torch.nn as nn
 import torch.utils.data
 from functools import partial
-from nncf import set_log_level
 from random import random
 from torch.utils import model_zoo
 from torchvision.models import MobileNetV2
@@ -46,9 +46,13 @@ from nncf.checkpoint_loading import load_state
 from nncf.debug import set_debug_log_dir
 from nncf.dynamic_graph.context import Scope
 from nncf.dynamic_graph.context import ScopeElement
+from nncf.dynamic_graph.graph import NNCFGraph
 from nncf.dynamic_graph.graph_builder import create_input_infos
 from nncf.hw_config import HWConfigType
 from nncf.initialization import default_criterion_fn
+from nncf.layers import NNCFConv2d
+from nncf.module_operations import UpdatePaddingValue
+from nncf.nncf_network import NNCFNetwork
 from nncf.quantization.hessian_trace import HessianTraceEstimator
 from nncf.quantization.layers import QUANTIZATION_MODULES
 from nncf.quantization.layers import QuantizerConfig
@@ -734,16 +738,18 @@ def test_can_broadcast_initialized_precisions_in_distributed_mode(config_builder
 class ManualConfigTestParamsBase:
     def __init__(self, name: str, bit_stats: List[List[str]]):
         self.name = name
-        self.nncf_config = self._get_nncf_config()
         self.bit_stats = bit_stats
-        self.model = load_model(self.nncf_config['model'], pretrained=False)
 
     def _get_config_path(self):
         raise NotImplementedError
 
-    def _get_nncf_config(self):
+    def create_nncf_config(self):
         config_path = self._get_config_path()
         return NNCFConfig.from_json(str(config_path))
+
+    @staticmethod
+    def create_model(model_name):
+        return load_model(model_name, pretrained=False)
 
 
 class ManualSampleConfigTestParams(ManualConfigTestParamsBase):
@@ -779,9 +785,9 @@ MANUAL_CONFIG_TEST_PARAMS = [
 @pytest.mark.parametrize('manual_config_params', MANUAL_CONFIG_TEST_PARAMS,
                          ids=[p.name for p in MANUAL_CONFIG_TEST_PARAMS])
 def test_hawq_manual_configs(manual_config_params):
-    config = manual_config_params.nncf_config
+    config = manual_config_params.create_nncf_config()
     config = register_default_init_args(config, train_loader=create_mock_dataloader(config), criterion=None)
-    model = manual_config_params.model
+    model = manual_config_params.create_model(config['model'])
 
     _, compression_ctrl = create_compressed_model_and_algo_for_test(model, config)
 

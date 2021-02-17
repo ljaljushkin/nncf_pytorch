@@ -72,6 +72,7 @@ class BasePrecisionInitializer:
         return full_bitwidth_per_scope
 
 
+
 class WeightQuantizersHandler:
     """
     Defines weight quantizers for precision initialization in the order of execution.

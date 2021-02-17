@@ -32,15 +32,38 @@ class MultiBranchesModelDesc(GeneralModelDesc):
         self._config_update = {'compression': {'algorithm': 'quantization'}}
 
     @staticmethod
-    def _num_bits_per_scope(num_bits_for_weights: List[int], num_bits_for_activations: List[int]):
-        w_pattern = 'MultiBranchesModel/NNCFConv2d[%s]'
-        w_scopes = ['conv1', 'conv2a', 'conv2b', 'conv2c', 'conv2d']
-        w_scopes = list(map(lambda x: w_pattern % x, w_scopes))
-        a_pattern = 'ModuleDict/SymmetricQuantizer[%s]'
-        a_scopes = ['/nncf_model_input_0', w_pattern % 'conv1' + '/conv2d_0']
-        a_scopes = list(map(lambda x: a_pattern % x, a_scopes))
-        return list(map(list, zip(num_bits_for_weights, w_scopes))) + \
-               list(map(list, zip(num_bits_for_activations, a_scopes)))
+    def _get_scopes():
+        w_scopes = [
+            'MultiBranchesModel/NNCFConv2d[conv1]',
+            'MultiBranchesModel/NNCFConv2d[conv2a]',
+            'MultiBranchesModel/NNCFConv2d[conv2b]',
+            'MultiBranchesModel/NNCFConv2d[conv2c]',
+            'MultiBranchesModel/NNCFConv2d[conv2d]'
+        ]
+        a_scopes = [
+            '/nncf_model_input_0',
+            'MultiBranchesModel/NNCFConv2d[conv1]/conv2d_0'
+        ]
+        return w_scopes, a_scopes
+
+    @staticmethod
+    def _get_scope_hw():
+        w_scopes = [
+            'InsertionType.NNCF_MODULE_PRE_OP MultiBranchesModel/NNCFConv2d[conv1]',
+            'InsertionType.NNCF_MODULE_PRE_OP MultiBranchesModel/NNCFConv2d[conv2a]',
+            'InsertionType.NNCF_MODULE_PRE_OP MultiBranchesModel/NNCFConv2d[conv2b]',
+            'InsertionType.NNCF_MODULE_PRE_OP MultiBranchesModel/NNCFConv2d[conv2c]',
+            'InsertionType.NNCF_MODULE_PRE_OP MultiBranchesModel/NNCFConv2d[conv2d]',
+            'InsertionType.OPERATOR_POST_HOOK /nncf_model_input_0'
+        ]
+        a_scopes = [
+            'InsertionType.OPERATOR_POST_HOOK MultiBranchesModel/NNCFConv2d[conv1]/conv2d_0',
+            'InsertionType.OPERATOR_PRE_HOOK 0 MultiBranchesModel/MaxPool2d[max_pool2b]/max_pool2d_0',
+            'InsertionType.OPERATOR_PRE_HOOK 0 MultiBranchesModel/NNCFConv2d[conv2a]/conv2d_0',
+            'InsertionType.OPERATOR_PRE_HOOK 0 MultiBranchesModel/NNCFConv2d[conv2c]/conv2d_0',
+            'InsertionType.OPERATOR_PRE_HOOK 0 MultiBranchesModel/NNCFConv2d[conv2d]/conv2d_0]'
+        ]
+        return w_scopes, a_scopes
 
     def trial(self, num_bits_for_weights: int = 8, num_bits_for_activations: int = 8):
         self._config_update['target_device'] = 'TRIAL'
@@ -63,10 +86,13 @@ class MultiBranchesModelDesc(GeneralModelDesc):
         self._config_update['target_device'] = 'VPU'
         return self
 
-    def manual_precision(self, num_bits_for_weights: List[int], num_bits_for_activations: List[int]):
-        bitwidth_per_scope = self._num_bits_per_scope(num_bits_for_weights, num_bits_for_activations)
-        self._config_update['compression'].update({'initializer': {'precision': {'type': 'manual',
-                                                                                 'bitwidth_per_scope': bitwidth_per_scope}}})
+    def manual_precision(self, num_bits_for_weights: List[int], num_bits_for_activations: List[int], hw_config=False):
+        scopes_factory = self._get_scope_hw if hw_config else self._get_scopes
+        w_scopes, a_scopes = scopes_factory()
+        bitwidth_per_scope = list(map(list, zip(num_bits_for_weights, w_scopes)))
+        bitwidth_per_scope.extend(list(map(list, zip(num_bits_for_activations, a_scopes))))
+        self._config_update['compression'].update(
+            {'initializer': {'precision': {'type': 'manual', 'bitwidth_per_scope': bitwidth_per_scope}}})
         return self
 
     def get_config(self):
@@ -80,13 +106,15 @@ ADJUST_PAD_DESC_LIST = [
     MultiBranchesModelDesc(name="all_int8").trial(8, 8),
     MultiBranchesModelDesc(name="dw_int8").trial().manual_precision([4, 8, 4, 4, 4], [4, 4]),
     MultiBranchesModelDesc(name="all_weights_int8").trial(8, 4),
-    MultiBranchesModelDesc(name="all_activations_int8").trial(4, 8)
-    # MultiBranchesModelDesc(name="vpu").vpu().num_bits_for_weights([4, 8, 4, 4, 4]),  TODO(nlyalyus) CVS-49035
+    MultiBranchesModelDesc(name="all_activations_int8").trial(4, 8),
+    MultiBranchesModelDesc(name="vpu").vpu().manual_precision([4, 8, 4, 4, 4], [4, 4, 4, 4, 4], hw_config=True),
 ]
+
 
 # TODO: try different branching merging strategy
 # TODO: try custom HW config, like DWConv2d adjust pad only? for int4 only?
-@pytest.mark.parametrize("desc", ADJUST_PAD_DESC_LIST, ids=[m.model_name for m in ADJUST_PAD_DESC_LIST])
+@pytest.mark.parametrize("desc", ADJUST_PAD_DESC_LIST,
+                         ids=[m.model_name for m in ADJUST_PAD_DESC_LIST])
 def test_adjust_padding_on_synthetic_models(desc: MultiBranchesModelDesc):
     model = desc.get_model()
     config = desc.get_config()
