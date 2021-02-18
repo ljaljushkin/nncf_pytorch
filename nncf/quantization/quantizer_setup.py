@@ -13,13 +13,13 @@ QuantizationPointId = int
 
 
 class QuantizationPointBase:
-    def __init__(self, insertion_point: InsertionPoint, parent_node_scopes=None, adjust_padding_is_applicable=True):
+    def __init__(self, insertion_point: InsertionPoint, parent_nodes_scopes=None, is_adjust_padding_applicable=True):
         self.insertion_point = insertion_point
         # TODO[nlyalyus] rename
-        self.parent_node_scopes = [] if parent_node_scopes is None else parent_node_scopes
+        self.parent_nodes_scopes = [] if parent_nodes_scopes is None else parent_nodes_scopes
         # TODO[nlyalyus]: should be an option per operation c['attributes']['adjust_padding'] = True
         # TODO: check that it's supported for operator_scope_str
-        self.adjust_padding_is_applicable = adjust_padding_is_applicable
+        self.is_adjust_padding_applicable = is_adjust_padding_applicable
 
     def is_activation_quantization_point(self) -> bool:
         return self.insertion_point.insertion_type == InsertionType.OPERATOR_PRE_HOOK or \
@@ -39,8 +39,9 @@ class QuantizationPointBase:
 
 
 class SingleConfigQuantizationPoint(QuantizationPointBase):
-    def __init__(self, insertion_point: InsertionPoint, qconfig: QuantizerConfig, parent_node_scopes=None, adjust_padding_is_applicable=False):
-        super().__init__(insertion_point, parent_node_scopes, adjust_padding_is_applicable)
+    def __init__(self, insertion_point: InsertionPoint, qconfig: QuantizerConfig, parent_nodes_scopes=None,
+                 is_adjust_padding_applicable=False):
+        super().__init__(insertion_point, parent_nodes_scopes, is_adjust_padding_applicable)
         self.qconfig = deepcopy(qconfig)
 
     def assign_input_shape(self, input_shape):
@@ -56,14 +57,16 @@ class SingleConfigQuantizationPoint(QuantizationPointBase):
 
 
 class MultiConfigQuantizationPoint(QuantizationPointBase):
-    def __init__(self, insertion_point: InsertionPoint, possible_qconfigs: List[QuantizerConfig]):
-        super().__init__(insertion_point)
+    def __init__(self, insertion_point: InsertionPoint, possible_qconfigs: List[QuantizerConfig],
+                 is_adjust_padding_applicable=False):
+        super().__init__(insertion_point, is_adjust_padding_applicable=is_adjust_padding_applicable)
         self.possible_qconfigs = deepcopy(possible_qconfigs)
 
     def select_qconfig(self, qconfig: QuantizerConfig) -> SingleConfigQuantizationPoint:
         if qconfig not in self.possible_qconfigs:
             raise ValueError("Invalid selection for a quantizer config!")
-        return SingleConfigQuantizationPoint(self.insertion_point, qconfig, self.parent_node_scopes, self.adjust_padding_is_applicable)
+        return SingleConfigQuantizationPoint(self.insertion_point, qconfig, self.parent_nodes_scopes,
+                                             self.is_adjust_padding_applicable)
 
     def assign_input_shape(self, input_shape):
         for qconfig in self.possible_qconfigs:

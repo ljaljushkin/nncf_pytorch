@@ -333,14 +333,22 @@ class PatternBasedQuantizerSetupGenerator(QuantizerSetupGeneratorBase):
 
             main_ip = InsertionPoint(InsertionType.OPERATOR_POST_HOOK,
                                      ia_op_exec_context=insertion_info.op_exec_context.input_agnostic)
-            main_qp = SingleConfigQuantizationPoint(main_ip, qconfig)
+            main_qp = SingleConfigQuantizationPoint(
+                main_ip, qconfig,
+                is_adjust_padding_applicable=insertion_info.is_adjust_padding_applicable)
+
             linked_iis = insertion_info.get_linked_insertion_infos()
             if not insertion_info.get_linked_insertion_infos():
                 retval.add_independent_quantization_point(main_qp)
             else:
-                linked_ips = [InsertionPoint(InsertionType.OPERATOR_POST_HOOK,
-                                             ia_op_exec_context=ii.op_exec_context.input_agnostic) for ii in linked_iis]
-                linked_qps = [SingleConfigQuantizationPoint(linked_ip, qconfig) for linked_ip in linked_ips]
+                linked_qps = []
+                for ii in linked_iis:
+                    linked_ip = InsertionPoint(InsertionType.OPERATOR_POST_HOOK,
+                                                ia_op_exec_context=ii.op_exec_context.input_agnostic)
+                    qp = SingleConfigQuantizationPoint(
+                        linked_ip, qconfig,
+                        is_adjust_padding_applicable=ii.is_adjust_padding_applicable)
+                    linked_qps.append(qp)
                 qp_group = [main_qp] + linked_qps
                 retval.add_unified_scale_group(qp_group)
         return retval
@@ -361,6 +369,7 @@ class PatternBasedQuantizerSetupGenerator(QuantizerSetupGeneratorBase):
                                                        str(ip.ia_op_exec_context),
                                                        scope_overrides=self._quantization_config.get("scope_overides"),
                                                        input_shape=input_shape)
+            # TODO[nlyalyus]: no adjust padding information. suppose it's not connected with conv or merged with corresponding PQ
             qp = SingleConfigQuantizationPoint(ip, qconfig)
             retval.append(qp)
 
@@ -427,7 +436,8 @@ class PatternBasedQuantizerSetupGenerator(QuantizerSetupGeneratorBase):
                                      in_port_id=main_info.in_port_id,
                                      is_input=main_info.is_input,
                                      is_output=main_info.is_output,
-                                     shape_to_operate_on=main_info.shape_to_operate_on)
+                                     shape_to_operate_on=main_info.shape_to_operate_on,
+                                     is_adjust_padding_applicable=main_info.is_adjust_padding_applicable)
             for linked_info_idx in intra_group_indices[1:]:
                 new_info.link_insertion_infos([target_insertion_infos[linked_info_idx], ])
             retval.append(new_info)
@@ -933,8 +943,8 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
                                  target_model: NNCFNetwork,
                                  quantization_points: List[SingleConfigQuantizationPoint]):
         result = []
-        if quantization_point.adjust_padding_is_applicable:
-            for module_scope in quantization_point.parent_node_scopes:
+        if quantization_point.is_adjust_padding_applicable:
+            for module_scope in quantization_point.parent_nodes_scopes:
                 module = target_model.get_module_by_scope(module_scope)
                 weight_bitwidth = None
                 for qp in quantization_points:
@@ -1021,6 +1031,7 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
 
             if qp.is_activation_quantization_point():
                 insertion_info = InsertionInfo.from_insertion_point(ip)
+                insertion_info.is_adjust_padding_applicable = qp.is_adjust_padding_applicable
                 quantizer_module_id, commands = self._add_single_activation_quantizer(target_model,
                                                                                       insertion_info,
                                                                                       qconfig,
@@ -1063,12 +1074,17 @@ class QuantizationBuilder(CompressionAlgorithmBuilder):
 
         primary_qp_id = sorted_qp_ids[0]
         linked_qp_ids = sorted_qp_ids[1:]
-        primary_insertion_info = InsertionInfo.from_insertion_point(
-            quantizer_setup.quantization_points[primary_qp_id].insertion_point)
-        linked_insertion_infos = [InsertionInfo.from_insertion_point(
-            quantizer_setup.quantization_points[qp_id].insertion_point) for qp_id in linked_qp_ids]
+        primary_qp = quantizer_setup.quantization_points[primary_qp_id]
+        primary_insertion_info = InsertionInfo.from_insertion_point(primary_qp.insertion_point)
+        primary_insertion_info.is_adjust_padding_applicable = primary_qp.is_adjust_padding_applicable
+        linked_insertion_infos = []
+        for qp_id in linked_qp_ids:
+            qp = quantizer_setup.quantization_points[qp_id]
+            linked_insertion_info = InsertionInfo.from_insertion_point(qp.insertion_point)
+            linked_insertion_info.is_adjust_padding_applicable = qp.is_adjust_padding_applicable
+            linked_insertion_infos.append(linked_insertion_info)
         primary_insertion_info.link_insertion_infos(linked_insertion_infos)
-        qconfig = quantizer_setup.quantization_points[primary_qp_id].qconfig
+        qconfig = primary_qp.qconfig
         linked_qconfigs = [quantizer_setup.quantization_points[qp_id].qconfig for qp_id in linked_qp_ids]
         for linked_qconfig in linked_qconfigs:
             if not qconfig.compatible_with_a_unified_scale_linked_qconfig(linked_qconfig):
@@ -1739,7 +1755,9 @@ class ExperimentalQuantizationController(QuantizationController):
             quant_module_id = self.setup_to_module_id_translation_dict[qp_id]
             quant_module = self.all_quantizations[quant_module_id]
             qconfig = quant_module.get_current_config()
-            new_qp = SingleConfigQuantizationPoint(qp.insertion_point, qconfig)
+            new_qp = SingleConfigQuantizationPoint(
+                qp.insertion_point, qconfig,
+                is_adjust_padding_applicable = qp.is_adjust_padding_applicable)
             retval.quantization_points[qp_id] = new_qp
         return retval
 
@@ -1753,7 +1771,7 @@ class ExperimentalQuantizationController(QuantizationController):
             new_padding_adjust_applicable = AdjustPadding.is_config_applicable(new_qconfig)
             current_padding_adjust_applicable = AdjustPadding.is_config_applicable(current_qconfig)
             # TODO: what if padding is not enabled? per operator... shouldn't check for it!
-            need_padding_regeneration = qp.adjust_padding_is_applicable and \
+            need_padding_regeneration = qp.is_adjust_padding_applicable and \
                                         new_padding_adjust_applicable != current_padding_adjust_applicable
             if current_qconfig.per_channel != new_qconfig.per_channel or \
                     (new_qconfig.signedness_to_force is not None and

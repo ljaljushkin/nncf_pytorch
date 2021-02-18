@@ -94,7 +94,7 @@ class PropagatingQuantizer:
        attributes etc.)"""
 
     def __init__(self, id_: int, quant_configs: List[QuantizerConfig], init_location_node_key: str,
-                 unified_scale: bool = False):
+                 unified_scale: bool = False, is_adjust_padding_applicable: bool = False):
         self.potential_quant_configs = quant_configs  # type: List[QuantizerConfig]
         self.affected_edges = set()
         self.affected_ip_nodes = set()  # type: Set[str]
@@ -107,6 +107,7 @@ class PropagatingQuantizer:
         self.quantized_input_sink_operator_nodes = set()
         # TODO[nlyalyus]: rename affected_propagating_quantizers
         self.affected_propagating_quantizers = set()
+        self.is_adjust_padding_applicable = is_adjust_padding_applicable
 
     def __eq__(self, other):
         return self.id == other.id
@@ -375,10 +376,11 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
 
         if merged_qconf_list is None:
             return None
-
-        # TODO nlyalyus: new propagating quantizer
+        is_adjust_padding_applicable = any([pq.is_adjust_padding_applicable for pq in quantizers_to_merge])
+        # TODO nlyalyus: new propagating quantizer, adjust padding enabled if at least a single child support
         merge_pq = PropagatingQuantizer(self._get_next_prop_quantizer_id(), merged_qconf_list,
-                                        target_ip_node_key)
+                                        target_ip_node_key,
+                                        is_adjust_padding_applicable=is_adjust_padding_applicable)
         merge_pq.last_accepting_location_node_key = target_ip_node_key
         merge_pq.affected_ip_nodes.add(target_ip_node_key)
         target_ip_node = self.nodes[target_ip_node_key]
@@ -476,7 +478,8 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
 
     def add_propagating_quantizer(self, qconf_list: List[QuantizerConfig], ip_node_key: str,
                                   unified_scale: bool = False,
-                                  unified_scale_group_id_override: Optional[int] = None) -> PropagatingQuantizer:
+                                  unified_scale_group_id_override: Optional[int] = None,
+                                  is_adjust_padding_applicable: bool = False) -> PropagatingQuantizer:
         ip_node = self.nodes[ip_node_key]
         ip_type = ip_node[QuantizerPropagationStateGraph.INSERTION_POINT_DATA_NODE_ATTR].insertion_type
         if ip_type != InsertionType.OPERATOR_PRE_HOOK:
@@ -484,8 +487,9 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
             # otherwise it is hard to determine affected node here (although possible)
             raise RuntimeError("Can only add propagating quantizers into pre-hook spots!")
 
+        # TODO[nlyalyus]
         prop_quantizer = PropagatingQuantizer(self._get_next_prop_quantizer_id(), qconf_list, ip_node_key,
-                                              unified_scale)
+                                              unified_scale, is_adjust_padding_applicable)
 
         if unified_scale:
             if unified_scale_group_id_override is None:
@@ -1017,7 +1021,8 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
             # TODO[nlyalyus]: the name "affecting_prop_quants" is occupied
             for pq in group.affecting_prop_quants:
                 quant_point = MultiConfigQuantizationPoint(self.get_insertion_point_for_propagating_quantizer(pq),
-                                                           pq.potential_quant_configs)
+                                                           pq.potential_quant_configs,
+                                                           is_adjust_padding_applicable=pq.is_adjust_padding_applicable)
                 parent_nodes_scopes = [self.nodes[node_key][QuantizerPropagationStateGraph.OPERATOR_SCOPE] for node_key in pq.quantized_input_sink_operator_nodes]
                 if pq.affected_propagating_quantizers:
                     affected_operator_nodes = set()
@@ -1025,7 +1030,7 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
                         affected_operator_nodes.update(apq.quantized_input_sink_operator_nodes)
                     directly_affected_nodes = pq.quantized_input_sink_operator_nodes - affected_operator_nodes
                     parent_nodes_scopes = [self.nodes[node_key][QuantizerPropagationStateGraph.OPERATOR_SCOPE] for node_key in directly_affected_nodes]
-                quant_point.parent_node_scopes = parent_nodes_scopes
+                quant_point.parent_nodes_scopes = parent_nodes_scopes
                 setup.quantization_points[pq.id] = quant_point
                 grouped_ids.add(pq.id)
 
@@ -1265,10 +1270,11 @@ class QuantizerPropagationSolver:
         self._global_constraints = global_constraints  # type: Dict['QuantizerGroup', 'QuantizationConstraints']
         self._run_consistency_checks = run_consistency_checks
 
+        self._adjust_padding_operation_set = set()
+        self._unified_scales_operation_set = set()
         if self._hw_config is not None:
             self._unified_scales_operation_set = self._hw_config.get_operations_with_unified_scales()
-        else:
-            self._unified_scales_operation_set = {}
+            self._adjust_padding_operation_set = self._hw_config.get_operations_with_adjusted_paddings()
 
         # Will handle the "wildcard" quantization situation for the time being
         if default_qconfig_list is not None:
@@ -1392,7 +1398,8 @@ class QuantizerPropagationSolver:
             call_order=insertion_point.ia_op_exec_context.call_order,
             tensor_metas=[None]  # TODO: fix this, rethink InsertionInfo here and elsewhere
         )
-        insertion_info = InsertionInfo(op_exec_context, in_port_id=in_port_id)
+        insertion_info = InsertionInfo(op_exec_context, in_port_id=in_port_id,
+                                       is_adjust_padding_applicable=prop_quant.is_adjust_padding_applicable)
         return insertion_info
 
     def _handle_quantizer_merge(self, waiting_pqs: Set[PropagatingQuantizer],
@@ -1744,8 +1751,10 @@ class QuantizerPropagationSolver:
         # quantizer configuration for different inputs is required
         pred_ip_key_vs_qconf_list = list(iter(pred_ip_key_vs_qconf_dict.items()))
         main_pq_ip_key, main_pq_qconf_list = pred_ip_key_vs_qconf_list[0]
-        main_prop_quantizer = quant_prop_graph.add_propagating_quantizer(main_pq_qconf_list, main_pq_ip_key,
-                                                                         is_unified_scale)
+        is_adjust_padding_applicable = quant_det_id in self._adjust_padding_operation_set
+        main_prop_quantizer = quant_prop_graph.add_propagating_quantizer(
+            main_pq_qconf_list, main_pq_ip_key, is_unified_scale,
+            is_adjust_padding_applicable=is_adjust_padding_applicable)
         main_prop_quantizer.last_accepting_location_node_key = main_pq_ip_key
         self._active_propagating_quantizers_queue.appendleft(main_prop_quantizer)
 
@@ -1756,10 +1765,15 @@ class QuantizerPropagationSolver:
                 main_prop_quantizer.id)
 
         for additional_pq_ip_key, _ in pred_ip_key_vs_qconf_list[1:]:
-            additional_pq = quant_prop_graph.add_propagating_quantizer(main_pq_qconf_list,
-                                                                       additional_pq_ip_key,
-                                                                       unified_scale=is_unified_scale,
-                                                                       unified_scale_group_id_override=main_pq_gid)
+            pred_node = quant_prop_graph.nodes[additional_pq_ip_key]
+            is_adjust_padding_applicable = False
+            if QuantizerPropagationStateGraph.OPERATOR_METATYPE_NODE_ATTR in pred_node:
+                pred_quant_det_id = pred_node[QuantizerPropagationStateGraph.OPERATOR_METATYPE_NODE_ATTR]
+                is_adjust_padding_applicable = pred_quant_det_id in self._adjust_padding_operation_set
+            additional_pq = quant_prop_graph.add_propagating_quantizer(
+                main_pq_qconf_list, additional_pq_ip_key,
+                unified_scale=is_unified_scale, unified_scale_group_id_override=main_pq_gid,
+                is_adjust_padding_applicable=is_adjust_padding_applicable)
             additional_pq.last_accepting_location_node_key = additional_pq_ip_key
             self._active_propagating_quantizers_queue.appendleft(additional_pq)
 

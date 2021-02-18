@@ -44,19 +44,6 @@ class MultiBranchesModelDesc(GeneralModelDesc):
         ]
         a_scopes = [
             'InsertionType.OPERATOR_POST_HOOK /nncf_model_input_0',
-        ]
-        return w_scopes, a_scopes
-
-    @staticmethod
-    def _get_scope_hw():
-        w_scopes = [
-            'InsertionType.NNCF_MODULE_PRE_OP MultiBranchesModel/NNCFConv2d[conv_a]',
-            'InsertionType.NNCF_MODULE_PRE_OP MultiBranchesModel/NNCFConv2d[conv_b]',
-            'InsertionType.NNCF_MODULE_PRE_OP MultiBranchesModel/NNCFConv2d[conv_c]',
-            'InsertionType.NNCF_MODULE_PRE_OP MultiBranchesModel/NNCFConv2d[conv_d]',
-        ]
-        a_scopes = [
-            'InsertionType.OPERATOR_POST_HOOK /nncf_model_input_0',
             'InsertionType.OPERATOR_PRE_HOOK 0 MultiBranchesModel/NNCFConv2d[conv_a]/conv2d_0',
             'InsertionType.OPERATOR_PRE_HOOK 0 MultiBranchesModel/MaxPool2d[max_pool_b]/max_pool2d_0',
             'InsertionType.OPERATOR_PRE_HOOK 0 MultiBranchesModel/NNCFConv2d[conv_c]/conv2d_0',
@@ -82,29 +69,18 @@ class MultiBranchesModelDesc(GeneralModelDesc):
         return self
 
     def vpu(self):
-        self._hw_config = True
         self._config_update['target_device'] = 'VPU'
         return self
 
     def custom_hw(self):
         custom_hw_config_dict = {
-            "target_device": "test",
+            "target_device": "VPU",
             "config": {
                 "quantization": {
                     "q4": {
-                        "bits": [4],
-                        "mode": [
-                            "symmetric",
-                        ],
+                        "bits": 4,
+                        "mode": "symmetric",
                         "granularity": "pertensor"
-                    },
-                    "q4_pad": {
-                        "bits": [4],
-                        "mode": [
-                            "symmetric",
-                        ],
-                        "granularity": "pertensor",
-                        "adjust_padding": True
                     },
                 }
             },
@@ -118,8 +94,11 @@ class MultiBranchesModelDesc(GeneralModelDesc):
                 },
                 {
                     "type": "DepthWiseConvolution",
+                    "attributes": {
+                        "adjust_padding": True
+                    },
                     "quantization": {
-                        "activations": "q4_pad",
+                        "activations": "q4",
                         "weights": "q4"
                     }
                 },
@@ -129,7 +108,7 @@ class MultiBranchesModelDesc(GeneralModelDesc):
         return self
 
     def manual_precision(self, num_bits_for_weights: List[int], num_bits_for_activations: List[int]):
-        scopes_factory = self._get_scope_hw if self._hw_config else self._get_scopes
+        scopes_factory = self._get_scopes
         w_scopes, a_scopes = scopes_factory()
         bitwidth_per_scope = list(map(list, zip(num_bits_for_weights, w_scopes)))
         bitwidth_per_scope.extend(list(map(list, zip(num_bits_for_activations, a_scopes))))
@@ -144,21 +123,12 @@ class MultiBranchesModelDesc(GeneralModelDesc):
 
 
 ADJUST_PAD_DESC_LIST = [
-    MultiBranchesModelDesc(name="all_int4").trial(4, 4),
-    MultiBranchesModelDesc(name="all_int8").trial(8, 8),
-    MultiBranchesModelDesc(name="int8_weights_conv_a").trial().manual_precision([8, 4, 4, 4], [4]),
-    MultiBranchesModelDesc(name="int8_weights_conv_bc").trial().manual_precision([4, 8, 8, 4], [4]),
-    MultiBranchesModelDesc(name="all_weights_int8").trial(8, 4),
-    MultiBranchesModelDesc(name="all_activations_int8").trial(4, 8),
-    MultiBranchesModelDesc(name="vpu_int8_conv_abcd").vpu().manual_precision([8, 4, 4, 4], [8, 8, 8, 8, 8]),
-    MultiBranchesModelDesc(name="vpu_int8_conv_ac").vpu().manual_precision([8, 4, 4, 4], [8, 8, 4, 8, 4]),
-    MultiBranchesModelDesc(name="vpu_int8_conv_ab").vpu().manual_precision([8, 4, 4, 4], [8, 8, 8, 4, 4]),
-    MultiBranchesModelDesc(name="vpu_int8_conv_acd").vpu().manual_precision([8, 4, 4, 4], [8, 8, 4, 8, 8]),
-    MultiBranchesModelDesc(name="vpu_int8_conv_abd").vpu().manual_precision([8, 4, 4, 4], [8, 8, 8, 4, 8]),
+    MultiBranchesModelDesc(name="vpu_all_int8").vpu(),
+    MultiBranchesModelDesc(name="vpu_all_weights_int8").vpu().manual_precision([8, 8, 8, 8], [8, 8, 4, 4, 4]),
+    MultiBranchesModelDesc(name="vpu_all_activations_int8").vpu().manual_precision([8, 4, 4, 4], [8, 8, 8, 8, 4]),
     MultiBranchesModelDesc(name="vpu_max_int4").vpu().manual_precision([4, 4, 4, 4], [8, 8, 4, 4, 4]),
-    MultiBranchesModelDesc(name="custom").custom_hw(),
+    MultiBranchesModelDesc(name="custom").custom_hw()
 ]
-
 
 
 # TODO: try different branching merging strategy
