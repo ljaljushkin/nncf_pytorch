@@ -32,6 +32,7 @@ class MultiBranchesModelDesc(GeneralModelDesc):
         self._config = get_empty_config(input_sample_sizes=self.input_sample_sizes)
         self._config_update = {'compression': {'algorithm': 'quantization'}}
         self._hw_config = False
+        self.custom_hw_config_dict = None
 
     @staticmethod
     def _get_scopes():
@@ -85,6 +86,48 @@ class MultiBranchesModelDesc(GeneralModelDesc):
         self._config_update['target_device'] = 'VPU'
         return self
 
+    def custom_hw(self):
+        custom_hw_config_dict = {
+            "target_device": "test",
+            "config": {
+                "quantization": {
+                    "q4": {
+                        "bits": [4],
+                        "mode": [
+                            "symmetric",
+                        ],
+                        "granularity": "pertensor"
+                    },
+                    "q4_pad": {
+                        "bits": [4],
+                        "mode": [
+                            "symmetric",
+                        ],
+                        "granularity": "pertensor",
+                        "adjust_padding": True
+                    },
+                }
+            },
+            "operations": [
+                {
+                    "type": "Convolution",
+                    "quantization": {
+                        "activations": "q4",
+                        "weights": "q4"
+                    }
+                },
+                {
+                    "type": "DepthWiseConvolution",
+                    "quantization": {
+                        "activations": "q4_pad",
+                        "weights": "q4"
+                    }
+                },
+            ]
+        }
+        self.custom_hw_config_dict = custom_hw_config_dict
+        return self
+
     def manual_precision(self, num_bits_for_weights: List[int], num_bits_for_activations: List[int]):
         scopes_factory = self._get_scope_hw if self._hw_config else self._get_scopes
         w_scopes, a_scopes = scopes_factory()
@@ -113,42 +156,22 @@ ADJUST_PAD_DESC_LIST = [
     MultiBranchesModelDesc(name="vpu_int8_conv_acd").vpu().manual_precision([8, 4, 4, 4], [8, 8, 4, 8, 8]),
     MultiBranchesModelDesc(name="vpu_int8_conv_abd").vpu().manual_precision([8, 4, 4, 4], [8, 8, 8, 4, 8]),
     MultiBranchesModelDesc(name="vpu_max_int4").vpu().manual_precision([4, 4, 4, 4], [8, 8, 4, 4, 4]),
+    MultiBranchesModelDesc(name="custom").custom_hw(),
 ]
 
 
+
 # TODO: try different branching merging strategy
-# TODO: try custom HW config, like DWConv2d adjust pad only? for int4 only?
 @pytest.mark.parametrize("desc", ADJUST_PAD_DESC_LIST,
                          ids=[m.model_name for m in ADJUST_PAD_DESC_LIST])
 def test_adjust_padding_on_synthetic_models(desc: MultiBranchesModelDesc, mocker):
     model = desc.get_model()
     config = desc.get_config()
-    hw_config_from_json = mocker.patch('nncf.hw_config.HWConfig.from_json')
-    hw_config_dict = {
-        "target_device": "test",
-        "config": {
-            "quantization": {
-                "q8_a": {
-                    "bits": [4, 8],
-                    "mode": [
-                        "symmetric",
-                        "asymmetric"
-                    ],
-                    "granularity": "pertensor"
-                },
-            }
-        },
-        "operations": [
-            {
-                "type": "DepthWiseConvolution",
-                "quantization": {
-                    "activations": "q8_a",
-                    "weights": "q8_a"
-                }
-            },
-        ]
-    }
-    hw_config_from_json.return_value = HWConfig.from_dict(hw_config_dict)
+
+    if desc.custom_hw_config_dict:
+        hw_config_from_json = mocker.patch('nncf.hw_config.HWConfig.from_json')
+        hw_config_from_json.return_value = HWConfig.from_dict(desc.custom_hw_config_dict)
+
     model, algo_ctrl = create_compressed_model_and_algo_for_test(model, config)
 
     check_bitwidth_graph(algo_ctrl, model, desc.get_dot_filename(), os.path.join('quantized', 'adjust_paddings'))

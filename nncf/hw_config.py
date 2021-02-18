@@ -64,6 +64,7 @@ class HWConfig(list):
     ATTRIBUTES_NAME = "attributes"
     SCALE_ATTRIBUTE_NAME = "scales"
     UNIFIED_TYPE_NAME = "unified"
+    ADJUST_PADDING_ATTRIBUTE_NAME = "adjust_padding"
 
     TYPE_TO_CONF_NAME_DICT = {
         HWConfigType.CPU: "cpu.json",
