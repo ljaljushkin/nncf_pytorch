@@ -79,16 +79,14 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
         dict_update(nncf_conv.__dict__, module.__dict__)
         return nncf_conv
 
-    def custom_forward(self, input):
-        # TODO[nlyalyus]: check implementations are equivalent, conv2d in pytorch doesn't support non-zero paddings
-        # if not self.padding_value:
-        #     Conv2d._conv_forward(self, input, self.weight)
-        return self._conv_forward(input, self.weight, self.padding_value)
+    def custom_forward(self, input_):
+        if not self.padding_value:
+            # pylint: disable=protected-access
+            Conv2d._conv_forward(self, input_, self.weight)
+        return self._conv_forward_non_zero_pad(input_, self.weight, self.padding_value)
 
-    def _conv_forward(self, input, weight, padding_value):
+    def _conv_forward_non_zero_pad(self, input, weight, padding_value):
         self.padding_value.data.fill_(padding_value.item())
-        # if padding_value:
-        #     nncf_logger.info('pad {%f}' % padding_value.item())
         if self.padding_mode != 'zeros':
             return F.conv2d(F.pad(input, self._reversed_padding_repeated_twice, mode=self.padding_mode,
                                   value=self.padding_value.item()),

@@ -31,7 +31,7 @@ class AdjustPaddingArgs(NamedTuple):
 
 
 class AdjustPadding:
-    def __init__(self, activation_quantizer):
+    def __init__(self, activation_quantizer: SymmetricQuantizer):
         self._activation_quantizer = activation_quantizer
         self._is_enabled = True
 
