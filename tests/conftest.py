@@ -14,8 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from nncf.common.utils.logger import logger as nncf_logger
-
 TEST_ROOT = Path(__file__).parent.absolute()
 PROJECT_ROOT = TEST_ROOT.parent.absolute()
 EXAMPLES_DIR = PROJECT_ROOT / 'examples'
@@ -63,6 +61,12 @@ def pytest_addoption(parser):
     )
     parser.addoption(
         "--run-openvino-eval", action="store_true", default=False, help="To run eval models via OpenVino"
+    )
+    parser.addoption(
+        "--onnx-dir", type=str, default=None, help="Path to converted onnx models"
+    )
+    parser.addoption(
+        "--ov-config-dir", type=str, default=None, help="Path to OpenVino configs"
     )
 
 
@@ -128,8 +132,11 @@ def openvino(request):
     return request.config.getoption("--run-openvino-eval")
 
 
-@pytest.yield_fixture()
-def _nncf_caplog(caplog):
-    nncf_logger.propagate = True
-    yield caplog
-    nncf_logger.propagate = False
+@pytest.fixture(scope="module")
+def onnx_dir(request):
+    return request.config.getoption("--onnx-dir")
+
+
+@pytest.fixture(scope="module")
+def ov_config_dir(request):
+    return request.config.getoption("--ov-config-dir")
