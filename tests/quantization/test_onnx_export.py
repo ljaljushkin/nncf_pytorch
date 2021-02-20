@@ -11,10 +11,15 @@
  limitations under the License.
 """
 import torch
+
 from nncf import NNCFConfig
-from tests.test_helpers import TwoConvTestModel, load_exported_onnx_version
-from nncf.quantization.layers import QuantizerConfig, QuantizationMode, SymmetricQuantizer, AsymmetricQuantizer, \
-    QuantizerExportMode
+from nncf.quantization.layers import AsymmetricQuantizer
+from nncf.quantization.layers import QuantizationMode
+from nncf.quantization.layers import QuantizerConfig
+from nncf.quantization.layers import QuantizerExportMode
+from nncf.quantization.layers import SymmetricQuantizer
+from tests.test_helpers import TwoConvTestModel
+from tests.test_helpers import load_exported_onnx_version
 
 
 def get_config_for_export_mode(should_be_onnx_standard: bool) -> NNCFConfig:

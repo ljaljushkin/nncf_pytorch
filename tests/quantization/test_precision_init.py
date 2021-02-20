@@ -21,6 +21,7 @@ from typing import Dict
 from typing import List
 from typing import NamedTuple
 
+import networkx as nx
 import os
 import pytest
 import torch
@@ -45,9 +46,13 @@ from nncf.checkpoint_loading import load_state
 from nncf.debug import set_debug_log_dir
 from nncf.dynamic_graph.context import Scope
 from nncf.dynamic_graph.context import ScopeElement
+from nncf.dynamic_graph.graph import NNCFGraph
 from nncf.dynamic_graph.graph_builder import create_input_infos
 from nncf.hw_config import HWConfigType
 from nncf.initialization import default_criterion_fn
+from nncf.layers import NNCFConv2d
+from nncf.module_operations import UpdatePaddingValue
+from nncf.nncf_network import NNCFNetwork
 from nncf.quantization.hessian_trace import HessianTraceEstimator
 from nncf.quantization.layers import QUANTIZATION_MODULES
 from nncf.quantization.layers import QuantizerConfig
@@ -80,10 +85,9 @@ from tests.quantization.test_quantization_helpers import distributed_init_test_d
 from tests.quantization.test_quantization_helpers import get_quantization_config_without_range_init
 from tests.quantization.test_quantization_helpers import get_squeezenet_quantization_config
 from tests.quantization.test_quantization_helpers import post_compression_test_distr_init
-from tests.test_compressed_graph import check_graph
-
 # pylint:disable=unused-import
 from tests.modules.test_rnn import _seed
+from tests.test_compressed_graph import check_nx_graph
 from tests.test_models import squeezenet1_1
 
 
@@ -268,6 +272,29 @@ def get_avg_traces(model, init_device: str):
     return torch.randperm(num_layers).to(init_device) + 1
 
 
+def add_adjust_padding_nodes(nncf_graph: NNCFGraph, model: NNCFNetwork) -> nx.DiGraph():
+    # pylint:disable=protected-access
+    nx_graph = nncf_graph._get_graph_for_structure_analysis()
+
+    NewNodeArgs = namedtuple('NewNodeArgs', ('node_key', 'attr', 'parent_node_key'))
+
+    args = []
+    for node_key, nx_node in nx_graph.nodes.items():
+        scope = Scope.from_str(nx_node['scope'])
+        module = model.get_module_by_scope(scope)
+        if isinstance(module, NNCFConv2d):
+            adjust_padding_ops = filter(lambda x: isinstance(x, UpdatePaddingValue), module.pre_ops.values())
+            for _ in adjust_padding_ops:
+                new_node_key = f'{node_key}_apad'
+                attr = dict(type='', label='adjust_padding_value', style='filled', color='yellow')
+                args.append(NewNodeArgs(new_node_key, attr, node_key))
+
+    for arg in args:
+        nx_graph.add_node(arg.node_key, **arg.attr)
+        nx_graph.add_edge(arg.node_key, arg.parent_node_key)
+    return nx_graph
+
+
 def check_bitwidth_graph(algo_ctrl, model, path_to_dot, graph_dir):
     model = model.cuda()
     all_quantizers_per_full_scope = HAWQDebugger.get_all_quantizers_per_full_scope(model)
@@ -278,7 +305,8 @@ def check_bitwidth_graph(algo_ctrl, model, path_to_dot, graph_dir):
     groups_of_adjacent_quantizers = algo_ctrl.groups_of_adjacent_quantizers
     graph = HAWQDebugger.get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope,
                                             groups_of_adjacent_quantizers)
-    check_graph(graph, path_to_dot, graph_dir, sort_dot_graph=False)
+    nx_graph = add_adjust_padding_nodes(graph, model)
+    check_nx_graph(nx_graph, path_to_dot, graph_dir, sort_dot_graph=False)
 
 
 class HAWQTestStruct(NamedTuple):
@@ -628,7 +656,7 @@ def get_scopes_of_skipped_weight_quantizers():
 
 def test_disable_quantizer_gradients():
     _, parameters_to_restore, model, *_ = disable_quantizer_gradients()
-    assert len(parameters_to_restore.originally_disabled_gradients) == 354
+    assert len(parameters_to_restore.originally_disabled_gradients) == 406
     assert len(parameters_to_restore.skipped_gradients_to_enable) == 3
     actual_requires_grad_per_param = get_requires_grad_per_param(model)
     path_to_ref = str(TEST_ROOT / 'data/hawq_reference/mobilenet_v2_requires_grad_per_param.json')
@@ -705,16 +733,18 @@ def test_can_broadcast_initialized_precisions_in_distributed_mode(config_builder
 class ManualConfigTestParamsBase:
     def __init__(self, name: str, bit_stats: List[List[str]]):
         self.name = name
-        self.nncf_config = self._get_nncf_config()
         self.bit_stats = bit_stats
-        self.model = load_model(self.nncf_config['model'], pretrained=False)
 
     def _get_config_path(self):
         raise NotImplementedError
 
-    def _get_nncf_config(self):
+    def create_nncf_config(self):
         config_path = self._get_config_path()
         return NNCFConfig.from_json(str(config_path))
+
+    @staticmethod
+    def create_model(model_name):
+        return load_model(model_name, pretrained=False)
 
 
 class ManualSampleConfigTestParams(ManualConfigTestParamsBase):
@@ -756,9 +786,9 @@ MANUAL_CONFIG_TEST_PARAMS = [
 @pytest.mark.parametrize('manual_config_params', MANUAL_CONFIG_TEST_PARAMS,
                          ids=[p.name for p in MANUAL_CONFIG_TEST_PARAMS])
 def test_hawq_manual_configs(manual_config_params):
-    config = manual_config_params.nncf_config
+    config = manual_config_params.create_nncf_config()
     config = register_default_init_args(config, train_loader=create_mock_dataloader(config), criterion=None)
-    model = manual_config_params.model
+    model = manual_config_params.create_model(config['model'])
 
     _, compression_ctrl = create_compressed_model_and_algo_for_test(model, config)
 

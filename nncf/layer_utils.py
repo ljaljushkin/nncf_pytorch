@@ -24,6 +24,7 @@ class _NNCFModuleMixin:
 
     op_func_name = ""
     target_weight_dim_for_compression = 0
+    custom_forward_fn_ = None
     ignored_algorithms = []
 
     def __init__(self, *args, **kwargs):
@@ -69,7 +70,9 @@ class _NNCFModuleMixin:
                 if not isinstance(op_args, tuple):
                     op_args = tuple([op_args])
                 args = op_args
-        results = super().forward.__func__(proxy_module, *args)
+        if not self.custom_forward_fn_:
+            self.custom_forward_fn_ = super().forward.__func__
+        results = self.custom_forward_fn_(proxy_module, *args)
         for op in self.post_ops.values():
             op_results = op(proxy_module, results)
             if op_results is not None:

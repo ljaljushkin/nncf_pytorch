@@ -1,20 +1,30 @@
 from collections import Counter
+from typing import Dict
+from typing import List
+from typing import Tuple
+
 from copy import deepcopy
-from typing import List, Tuple, Dict
 
 from nncf.common.utils.logger import logger as nncf_logger
-from nncf.nncf_network import InsertionPoint, InsertionType
+from nncf.nncf_network import InsertionPoint
+from nncf.nncf_network import InsertionType
 from nncf.quantization.layers import QuantizerConfig
 from nncf.tensor_statistics.collectors import ReductionShape
-from nncf.tensor_statistics.statistics import TensorStatistic, MinMaxTensorStatistic
+from nncf.tensor_statistics.statistics import MinMaxTensorStatistic
+from nncf.tensor_statistics.statistics import TensorStatistic
 from nncf.utils import get_scale_shape
 
 QuantizationPointId = int
 
 
 class QuantizationPointBase:
-    def __init__(self, insertion_point: InsertionPoint):
+    def __init__(self, insertion_point: InsertionPoint,
+                 scopes_of_directly_quantized_operators=None, is_adjust_padding_applicable=True):
         self.insertion_point = insertion_point
+        self.scopes_of_directly_quantized_operators = []
+        if scopes_of_directly_quantized_operators:
+            self.scopes_of_directly_quantized_operators = scopes_of_directly_quantized_operators
+        self.is_adjust_padding_applicable = is_adjust_padding_applicable
 
     def is_activation_quantization_point(self) -> bool:
         return self.insertion_point.insertion_type == InsertionType.OPERATOR_PRE_HOOK or \
@@ -34,8 +44,10 @@ class QuantizationPointBase:
 
 
 class SingleConfigQuantizationPoint(QuantizationPointBase):
-    def __init__(self, insertion_point: InsertionPoint, qconfig: QuantizerConfig):
-        super().__init__(insertion_point)
+    def __init__(self, insertion_point: InsertionPoint, qconfig: QuantizerConfig,
+                 scopes_of_directly_quantized_operators=None,
+                 is_adjust_padding_applicable=False):
+        super().__init__(insertion_point, scopes_of_directly_quantized_operators, is_adjust_padding_applicable)
         self.qconfig = deepcopy(qconfig)
 
     def assign_input_shape(self, input_shape):
@@ -51,14 +63,16 @@ class SingleConfigQuantizationPoint(QuantizationPointBase):
 
 
 class MultiConfigQuantizationPoint(QuantizationPointBase):
-    def __init__(self, insertion_point: InsertionPoint, possible_qconfigs: List[QuantizerConfig]):
-        super().__init__(insertion_point)
+    def __init__(self, insertion_point: InsertionPoint, possible_qconfigs: List[QuantizerConfig],
+                 scopes_of_directly_quantized_operators=None, is_adjust_padding_applicable=False):
+        super().__init__(insertion_point, scopes_of_directly_quantized_operators, is_adjust_padding_applicable)
         self.possible_qconfigs = deepcopy(possible_qconfigs)
 
     def select_qconfig(self, qconfig: QuantizerConfig) -> SingleConfigQuantizationPoint:
         if qconfig not in self.possible_qconfigs:
             raise ValueError("Invalid selection for a quantizer config!")
-        return SingleConfigQuantizationPoint(self.insertion_point, qconfig)
+        return SingleConfigQuantizationPoint(self.insertion_point, qconfig, self.scopes_of_directly_quantized_operators,
+                                             self.is_adjust_padding_applicable)
 
     def assign_input_shape(self, input_shape):
         for qconfig in self.possible_qconfigs:

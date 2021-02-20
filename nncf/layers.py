@@ -12,12 +12,14 @@
 """
 import math
 import numbers
-from typing import Tuple, Optional
+from typing import Optional
+from typing import Tuple
 
 import torch
 import torch.nn.functional as F
 import warnings
 from torch import nn
+from torch.nn import Parameter
 from torch.nn import init
 from torch.nn.utils.rnn import PackedSequence
 
@@ -50,6 +52,23 @@ class NNCFConv1d(_NNCFModuleMixin, nn.Conv1d):
 class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
     op_func_name = "conv2d"
 
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size,
+        stride=1,
+        padding=0,
+        dilation=1,
+        groups: int = 1,
+        bias: bool = True,
+        padding_mode: str = 'zeros'
+    ):
+        super().__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups,
+                                         bias, padding_mode)
+        self.padding_value = Parameter(torch.zeros([1]), requires_grad=False)
+        self.custom_forward_fn_ = self.custom_forward.__func__
+
     @staticmethod
     def from_module(module):
         assert module.__class__.__name__ == nn.Conv2d.__name__
@@ -59,6 +78,22 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
         )
         dict_update(nncf_conv.__dict__, module.__dict__)
         return nncf_conv
+
+    def custom_forward(self, input_):
+        return self._conv_forward(input_, self.weight, self.padding_value)
+
+    def _conv_forward(self, input_, weight, padding_value):
+        self.padding_value.data.fill_(padding_value.item())
+        if self.padding_mode != 'zeros':
+            return F.conv2d(F.pad(input_, self._reversed_padding_repeated_twice, mode=self.padding_mode,
+                                  value=self.padding_value.item()),
+                            weight, self.bias, self.stride,
+                            (0, 0), self.dilation, self.groups)
+        if not self.padding_value:
+            return F.conv2d(input_, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        return F.conv2d(F.pad(input_, self._reversed_padding_repeated_twice, value=self.padding_value.item()),
+                        weight, self.bias, self.stride,
+                        (0, 0), self.dilation, self.groups)
 
 
 class NNCFLinear(_NNCFModuleMixin, nn.Linear):
@@ -206,7 +241,9 @@ def register_module(*quantizable_field_names: str, ignored_algorithms: list = No
         if ignored_algorithms:
             setattr(NNCF_WRAPPED_USER_MODULES_DICT[cls], "ignored_algorithms", ignored_algorithms)
         return cls
+
     return wrap
+
 
 def add_nncf_functionality_to_user_module(module: torch.nn.Module):
     user_class = module.__class__
