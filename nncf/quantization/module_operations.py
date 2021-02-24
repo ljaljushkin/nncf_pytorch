@@ -53,11 +53,12 @@ class AdjustPadding:
             padding_values = set(module.padding)
             padding_enabled = len(padding_values) >= 1 and padding_values.pop()
             if padding_enabled:
-                result = isinstance(activation_quantizer, SymmetricQuantizer) and \
-                         not activation_quantizer.per_channel and \
-                         activation_quantizer.num_bits == 4 and \
-                         activation_quantizer.num_bits >= weight_bitwidth and \
-                         not activation_quantizer.signed
+                symmetric = isinstance(activation_quantizer, SymmetricQuantizer)
+                per_tensor = not activation_quantizer.per_channel
+                a_int4 = activation_quantizer.num_bits == 4
+                w_int24 = weight_bitwidth <= 4
+                unsigned = not activation_quantizer.signed
+                result = symmetric and per_tensor and a_int4 and w_int24 and unsigned
         return result
 
     @staticmethod

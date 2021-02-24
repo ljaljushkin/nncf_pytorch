@@ -20,7 +20,7 @@ from nncf.quantization.quantizer_propagation import PropagationStrategy
 from nncf.quantization.quantizer_propagation import QuantizerPropagationSolver
 from tests.helpers import create_compressed_model_and_algo_for_test
 from tests.helpers import get_empty_config
-from tests.quantization.test_precision_init import check_bitwidth_graph
+from tests.quantization.test_hawq_precision_init import check_bitwidth_graph
 from tests.test_compressed_graph import GeneralModelDesc
 from tests.test_helpers import load_exported_onnx_version
 from tests.test_models.synthetic import MultiBranchesModel
