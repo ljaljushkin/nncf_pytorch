@@ -21,7 +21,6 @@ from typing import Dict
 from typing import List
 from typing import NamedTuple
 
-import networkx as nx
 import os
 import pytest
 import torch
@@ -43,13 +42,11 @@ from nncf.checkpoint_loading import load_state
 from nncf.debug import set_debug_log_dir
 from nncf.dynamic_graph.context import Scope
 from nncf.dynamic_graph.context import ScopeElement
-from nncf.dynamic_graph.graph import NNCFGraph
 from nncf.dynamic_graph.graph_builder import create_input_infos
 from nncf.hw_config import HWConfigType
 from nncf.initialization import default_criterion_fn
-from nncf.layers import NNCFConv2d
 from nncf.module_operations import UpdatePaddingValue
-from nncf.nncf_network import NNCFNetwork
+from nncf.quantization.adjust_padding import add_adjust_padding_nodes
 from nncf.quantization.hessian_trace import HessianTraceEstimator
 from nncf.quantization.layers import QUANTIZATION_MODULES
 from nncf.quantization.layers import QuantizerConfig
@@ -265,29 +262,6 @@ def ssd_vgg_512_test():
 def get_avg_traces(model, init_device: str):
     num_layers = len(get_all_modules_by_type(model, ['Conv2d', 'Linear']))
     return torch.randperm(num_layers).to(init_device) + 1
-
-
-def add_adjust_padding_nodes(nncf_graph: NNCFGraph, model: NNCFNetwork) -> nx.DiGraph():
-    # pylint:disable=protected-access
-    nx_graph = nncf_graph._get_graph_for_structure_analysis()
-
-    NewNodeArgs = namedtuple('NewNodeArgs', ('node_key', 'attr', 'parent_node_key'))
-
-    args = []
-    for node_key, nx_node in nx_graph.nodes.items():
-        scope = Scope.from_str(nx_node['scope'])
-        module = model.get_module_by_scope(scope)
-        if isinstance(module, NNCFConv2d):
-            adjust_padding_ops = filter(lambda x: isinstance(x, UpdatePaddingValue), module.pre_ops.values())
-            for _ in adjust_padding_ops:
-                new_node_key = f'{node_key}_apad'
-                attr = dict(type='', label='adjust_padding_value', style='filled', color='yellow')
-                args.append(NewNodeArgs(new_node_key, attr, node_key))
-
-    for arg in args:
-        nx_graph.add_node(arg.node_key, **arg.attr)
-        nx_graph.add_edge(arg.node_key, arg.parent_node_key)
-    return nx_graph
 
 
 def check_bitwidth_graph(algo_ctrl, model, path_to_dot, graph_dir):

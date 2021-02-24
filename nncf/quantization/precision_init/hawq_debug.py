@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict
 from typing import List
 
+import networkx as nx
 import os
 import torch
 from copy import deepcopy
@@ -25,6 +26,7 @@ from nncf.dynamic_graph.graph import NNCFGraph
 from nncf.layers import NNCFConv2d
 from nncf.nncf_network import ExtraCompressionModuleType
 from nncf.nncf_network import NNCFNetwork
+from nncf.quantization.adjust_padding import add_adjust_padding_nodes
 from nncf.quantization.layers import QUANTIZATION_MODULES
 from nncf.quantization.precision_init.adjacent_quantizers import GroupsOfAdjacentQuantizers
 from nncf.quantization.precision_init.perturbations import PerturbationObserver
@@ -339,5 +341,7 @@ class HAWQDebugger:
     def dump_bitwidth_graph(self, algo_ctrl: 'QuantizationController', model: NNCFNetwork,
                             groups_of_adjacent_quantizers: GroupsOfAdjacentQuantizers):
         all_quantizers_per_full_scope = self.get_all_quantizers_per_full_scope(model)
-        graph = self.get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope, groups_of_adjacent_quantizers)
-        graph.dump_graph(self._dump_dir / Path('bitwidth_graph.dot'))
+        nncf_graph = self.get_bitwidth_graph(algo_ctrl, model, all_quantizers_per_full_scope,
+                                             groups_of_adjacent_quantizers)
+        nx_graph = add_adjust_padding_nodes(nncf_graph, model)
+        nx.drawing.nx_pydot.write_dot(nx_graph, self._dump_dir / Path('bitwidth_graph.dot'))

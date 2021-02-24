@@ -10,13 +10,18 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
+from collections import namedtuple
 from typing import NamedTuple
 
+import networkx as nx
 import torch
 from torch import nn
 
 from nncf.dynamic_graph.context import Scope
+from nncf.dynamic_graph.graph import NNCFGraph
 from nncf.layers import NNCFConv2d
+from nncf.module_operations import UpdatePaddingValue
+from nncf.nncf_network import NNCFNetwork
 from nncf.quantization.layers import BaseQuantizer
 from nncf.quantization.layers import QuantizationMode
 from nncf.quantization.layers import QuantizerConfig
@@ -79,3 +84,26 @@ class AdjustPadding:
     def is_config_applicable(qconfig: QuantizerConfig):
         return not qconfig.is_weights and not qconfig.per_channel and qconfig.bits == 4 and \
                not qconfig.signedness_to_force and qconfig.mode == QuantizationMode.SYMMETRIC
+
+
+def add_adjust_padding_nodes(nncf_graph: NNCFGraph, model: NNCFNetwork) -> nx.DiGraph():
+    # pylint:disable=protected-access
+    nx_graph = nncf_graph._get_graph_for_structure_analysis()
+
+    NewNodeArgs = namedtuple('NewNodeArgs', ('node_key', 'attr', 'parent_node_key'))
+
+    args = []
+    for node_key, nx_node in nx_graph.nodes.items():
+        scope = Scope.from_str(nx_node['scope'])
+        module = model.get_module_by_scope(scope)
+        if isinstance(module, NNCFConv2d):
+            adjust_padding_ops = filter(lambda x: isinstance(x, UpdatePaddingValue), module.pre_ops.values())
+            for _ in adjust_padding_ops:
+                new_node_key = f'{node_key}_apad'
+                attr = dict(type='', label='adjust_padding_value', style='filled', color='yellow')
+                args.append(NewNodeArgs(new_node_key, attr, node_key))
+
+    for arg in args:
+        nx_graph.add_node(arg.node_key, **arg.attr)
+        nx_graph.add_edge(arg.node_key, arg.parent_node_key)
+    return nx_graph

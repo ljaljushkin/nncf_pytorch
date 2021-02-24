@@ -64,6 +64,8 @@ from nncf.nncf_network import InsertionPointGraphNodeType
 from nncf.nncf_network import InsertionType
 from nncf.nncf_network import NNCFNetwork
 from nncf.nncf_network import OperationPriority
+from nncf.quantization.adjust_padding import AdjustPadding
+from nncf.quantization.adjust_padding import AdjustPaddingArgs
 from nncf.quantization.init_precision import PrecisionInitializerFactory
 from nncf.quantization.init_range import DataLoaderRangeInitializeRunner
 from nncf.quantization.init_range import PerLayerRangeInitConfig
@@ -80,8 +82,6 @@ from nncf.quantization.metrics import MemoryCostMetric
 from nncf.quantization.metrics import NetworkQuantizationShareMetric
 from nncf.quantization.metrics import NetworkQuantizationShareMetricBuildTimeInfo
 from nncf.quantization.metrics import ShareEdgesQuantizedDataPath
-from nncf.quantization.module_operations import AdjustPadding
-from nncf.quantization.module_operations import AdjustPaddingArgs
 from nncf.quantization.precision_constraints import HardwareQuantizationConstraints
 from nncf.quantization.precision_init.adjacent_quantizers import GroupsOfAdjacentQuantizers
 from nncf.quantization.precision_init.autoq_init import AutoQPrecisionInitParams
