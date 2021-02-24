@@ -365,6 +365,7 @@ def test_hawq_precision_init(_seed, dataset_dir, tmp_path, mocker, params):
     mocked_trace = mocker.patch('nncf.quantization.hessian_trace.HessianTraceEstimator.get_average_traces',
                                 autospec=True)
     pregen_traces_for_all_layers = params.avg_traces_creator(model, 'cuda')
+    adjust_pad_creation_spy = mocker.spy(UpdatePaddingValue, '__init__')
 
     # There may be less traces required to be calculated during HAWQ than there are weightable layers.
     def side_effect_fn(self, max_iter=500, tolerance=1e-5):
@@ -373,6 +374,9 @@ def test_hawq_precision_init(_seed, dataset_dir, tmp_path, mocker, params):
 
     mocked_trace.side_effect = side_effect_fn
     model, algo_ctrl = create_compressed_model_and_algo_for_test(model, config)
+
+    final_num_of_adjust_pad_ops = len(get_all_modules_by_type(model, 'UpdatePaddingValue'))
+    assert adjust_pad_creation_spy.call_count == final_num_of_adjust_pad_ops
 
     path_to_dot = '{}_{}.dot'.format(params.model_creator.__name__, params.config_builder.filename_suffix())
     graph_dir = os.path.join('quantized', 'hawq')
@@ -486,6 +490,7 @@ def test_autoq_precision_init(_seed, dataset_dir, tmp_path, mocker, params):
 
     from nncf.quantization.precision_init.autoq_init import AutoQPrecisionInitializer
     autoq_obj_init_spy = mocker.spy(AutoQPrecisionInitializer, '__init__')
+    adjust_pad_creation_spy = mocker.spy(UpdatePaddingValue, '__init__')
 
     config = register_default_init_args(config, train_loader=train_loader,
                                         autoq_eval_fn=lambda *x: random(),
@@ -501,6 +506,8 @@ def test_autoq_precision_init(_seed, dataset_dir, tmp_path, mocker, params):
     assert random_action_spy.call_count == bw_init_config['warmup_iter_number'] * n_quantizer
     assert select_action_spy.call_count == learning_iter_number * (n_quantizer + 1) + bw_init_config[
         'warmup_iter_number']
+    final_num_of_adjust_pad_ops = len(get_all_modules_by_type(model, 'UpdatePaddingValue'))
+    assert adjust_pad_creation_spy.call_count == final_num_of_adjust_pad_ops
 
     path_to_dot = '{}_{}.dot'.format(params.model_creator.__name__, params.config_builder.filename_suffix())
     graph_dir = os.path.join('quantized', 'autoq')

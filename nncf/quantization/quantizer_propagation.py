@@ -1060,7 +1060,7 @@ class QuantizerPropagationStateGraph(nx.DiGraph):
                     for apq in pq.downstream_propagating_quantizers:
                         affected_operator_nodes.update(apq.quantized_input_sink_operator_nodes)
                     directly_quantized_operators =[
-                        self.nodes[key] for key in (pq.quantized_input_sink_operator_nodes - affected_operator_nodes)]
+                        self.nodes[key] for key in pq.quantized_input_sink_operator_nodes - affected_operator_nodes]
                     scopes_of_directly_quantized_operators = [
                         node[QuantizerPropagationStateGraph.OPERATOR_SCOPE] for node in directly_quantized_operators]
                 quant_point.scopes_of_directly_quantized_operators = scopes_of_directly_quantized_operators

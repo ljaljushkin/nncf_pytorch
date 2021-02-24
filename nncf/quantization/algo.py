@@ -33,9 +33,9 @@ from copy import deepcopy
 from torch import nn
 
 from nncf.algo_selector import COMPRESSION_ALGORITHMS
+from nncf.api.compression import CompressionLevel
 from nncf.common.os import safe_open
 from nncf.common.utils.logger import logger as nncf_logger
-from nncf.api.compression import CompressionLevel
 from nncf.compression_method_api import PTCompressionAlgorithmBuilder
 from nncf.compression_method_api import PTCompressionAlgorithmController
 from nncf.config import NNCFConfig
@@ -719,6 +719,10 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         self._build_time_metric_infos = None
         self.hw_config = None
 
+        # can be False to disable setting of adjust padding operations on precision init, because it may add unnecessary
+        # noise on model evaluation (e.g. in AutoQ)
+        self._should_setup_adjust_pad_ops = True
+
         hw_config_type = self.config.get("hw_config_type")
         if hw_config_type is not None:
             hw_config_path = HWConfig.get_path_to_hw_config(hw_config_type)
@@ -1035,10 +1039,11 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
                                                                                       insertion_info,
                                                                                       qconfig,
                                                                                       range_init_minmax_values)
-                args = self._get_adjust_padding_args(qp, quantizer_module_id, target_model,
-                                                     list(quantizer_setup.quantization_points.values()))
-                if args:
-                    adjust_padding_args.extend(args)
+                if self._should_setup_adjust_pad_ops:
+                    args = self._get_adjust_padding_args(qp, quantizer_module_id, target_model,
+                                                         list(quantizer_setup.quantization_points.values()))
+                    if args:
+                        adjust_padding_args.extend(args)
             elif qp.is_weight_quantization_point():
                 quantizer_module_id, command = self._add_single_weight_quantizer(target_model, ip, qconfig,
                                                                                  range_init_minmax_values)
@@ -1683,6 +1688,7 @@ class ExperimentalQuantizationBuilder(QuantizationBuilder):
         super().__init__(NNCFConfig(), should_init=should_init)
         self._quantizer_setup = quantizer_setup
         self._tensor_stats = tensor_stats_for_all_setup_variations
+        self._should_setup_adjust_pad_ops = False
 
     def _handle_frozen_layers(self):
         pass
@@ -1717,7 +1723,8 @@ class ExperimentalQuantizationBuilder(QuantizationBuilder):
                                                   self._quantizer_setup,
                                                   self._setup_to_module_id_translation_dict,
                                                   self._tensor_stats,
-                                                  build_time_metric_infos)
+                                                  build_time_metric_infos,
+                                                  self._should_setup_adjust_pad_ops)
 
 
 class ExperimentalQuantizationController(QuantizationController):
@@ -1728,7 +1735,8 @@ class ExperimentalQuantizationController(QuantizationController):
                  initial_quantizer_setup: SingleConfigQuantizerSetup,
                  setup_to_module_id_translation_dict: Dict[QuantizationPointId, QuantizerId],
                  tensor_stats: Dict[InsertionPoint, Dict[ReductionShape, TensorStatistic]],
-                 build_time_metric_info: NetworkQuantizationShareMetricBuildTimeInfo):
+                 build_time_metric_info: NetworkQuantizationShareMetricBuildTimeInfo,
+                 should_setup_adjust_pad_ops=False):
         super().__init__(target_model,
                          NNCFConfig(),
                          should_init=False,
@@ -1739,6 +1747,7 @@ class ExperimentalQuantizationController(QuantizationController):
                          collect_compression_metrics=True,
                          build_time_metric_info=build_time_metric_info)
         self._target_model_ref = target_model
+        self._should_setup_adjust_pad_ops = should_setup_adjust_pad_ops
         self._initial_quantizer_setup = initial_quantizer_setup
         self._tensor_stats = tensor_stats
         self.setup_to_module_id_translation_dict = setup_to_module_id_translation_dict
@@ -1759,7 +1768,8 @@ class ExperimentalQuantizationController(QuantizationController):
             qconfig = quant_module.get_current_config()
             new_qp = SingleConfigQuantizationPoint(
                 qp.insertion_point, qconfig,
-                is_adjust_padding_applicable = qp.is_adjust_padding_applicable)
+                is_adjust_padding_applicable=qp.is_adjust_padding_applicable,
+                scopes_of_directly_quantized_operators=qp.scopes_of_directly_quantized_operators)
             retval.quantization_points[qp_id] = new_qp
         return retval
 
@@ -1773,7 +1783,9 @@ class ExperimentalQuantizationController(QuantizationController):
             new_padding_adjust_applicable = AdjustPadding.is_config_applicable(new_qconfig)
             current_padding_adjust_applicable = AdjustPadding.is_config_applicable(current_qconfig)
             need_padding_regeneration = \
-                qp.is_adjust_padding_applicable and new_padding_adjust_applicable != current_padding_adjust_applicable
+                self._should_setup_adjust_pad_ops and \
+                qp.is_adjust_padding_applicable and \
+                new_padding_adjust_applicable != current_padding_adjust_applicable
             if current_qconfig.per_channel != new_qconfig.per_channel or \
                     (new_qconfig.signedness_to_force is not None and
                      current_qconfig.signedness_to_force != new_qconfig.signedness_to_force) or \
