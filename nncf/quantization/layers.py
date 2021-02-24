@@ -398,6 +398,9 @@ class SymmetricQuantizer(BaseQuantizer):
             nncf_logger.warning("Forcing signed to {} for module {}".format(self.signedness_to_force, log_module_name))
             sign = self.signedness_to_force
         self.signed = int(sign)
+        if self.num_bits == 4 and not self.per_channel and not self.is_weights and not self.signed:
+            self.signed = True
+            nncf_logger.warning("[INT4_I4] Forcing to be signed {}".format(self.signedness_to_force, log_module_name))
 
         abs_max = torch.max(torch.abs(max_values), torch.abs(min_values))
         SCALE_LOWER_THRESHOLD = 0.1
