@@ -51,8 +51,6 @@ from nncf.quantization.hessian_trace import HessianTraceEstimator
 from nncf.quantization.layers import QUANTIZATION_MODULES
 from nncf.quantization.layers import QuantizerConfig
 from nncf.quantization.layers import QuantizersSwitcher
-from nncf.quantization.precision_constraints import HardwareQuantizationConstraints
-from nncf.quantization.precision_init.base_init import WeightQuantizersHandler
 from nncf.quantization.precision_init.compression_ratio import CompressionRatioCalculator
 from nncf.quantization.precision_init.hawq_debug import HAWQDebugger
 from nncf.quantization.precision_init.hawq_init import BitwidthAssignmentMode
@@ -62,6 +60,7 @@ from nncf.quantization.precision_init.perturbations import PerturbationObserver
 from nncf.quantization.precision_init.perturbations import Perturbations
 from nncf.quantization.precision_init.traces_order import TracesOrder
 from nncf.quantization.precision_init.traces_order import TracesPerLayer
+from nncf.quantization.quantizer_setup import SingleConfigQuantizerSetup
 from nncf.structures import QuantizationPrecisionInitArgs
 from nncf.utils import get_all_modules_by_type
 from nncf.utils import safe_thread_call
@@ -601,40 +600,104 @@ def get_quantization_config_with_ignored_scope():
     return config
 
 
-@pytest.mark.parametrize(('config_creator', 'ref_values'), (
-        [
-            get_quantization_config_without_range_init,
-            (1.25, pytest.approx(1.42, abs=1e-2), (1, 2), (1, 4), (1, pytest.approx(1.8181, abs=1e-4)))
-        ],
-        [
-            get_quantization_config_with_ignored_scope,
-            (2, 1, (1, 2), (1, 4), (1, 1))
-        ]
-))
-def test_flops(config_creator, ref_values):
-    class ConvLinear(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.conv1 = create_conv(1, 1, 2, -1, -2)
-            self.fc = nn.Linear(3, 6)
+class RatioCalculatorTestDesc:
+    NAMES_OF_INSERTION_POINTS = [
+        'InsertionType.OPERATOR_POST_HOOK /nncf_model_input_0',
+        'InsertionType.NNCF_MODULE_PRE_OP ConvLinear/NNCFConv2d[conv1]',
+        'InsertionType.OPERATOR_POST_HOOK ConvLinear/NNCFConv2d[conv1]/conv2d_0',
+        'InsertionType.NNCF_MODULE_PRE_OP ConvLinear/NNCFLinear[fc]'
+    ]
 
-        def forward(self, x):
-            return self.fc(self.conv1(x))
+    def __init__(self, ref_ratio: float = 1):
+        self._bitwidth_sequence = [8] * len(self.NAMES_OF_INSERTION_POINTS)
+        self._config_factory = get_quantization_config_without_range_init
+        self._ignored_scopes = []
+        self.ref_ratio = ref_ratio
 
-    config = config_creator()
-    model, compression_ctrl = create_compressed_model_and_algo_for_test(ConvLinear(), config)
-    quantizers = compression_ctrl.weight_quantizers
+    def bitwidths(self, bitwidth_sequence=List[int]):
+        self._bitwidth_sequence = bitwidth_sequence
+        return self
 
-    handler = WeightQuantizersHandler(model, quantizers, HardwareQuantizationConstraints())
-    ratio_calculator = CompressionRatioCalculator(model, handler)
+    def ignore_fc(self):
+        self._ignored_scopes = ['ConvLinear/NNCFLinear[fc]']
+        return self
 
-    assert ratio_calculator.compression_ratio_for_bitwitdh_sequence([4, 8]) == ref_values[0]
-    assert ratio_calculator.compression_ratio_for_bitwitdh_sequence([8, 4]) == ref_values[1]
-    assert ratio_calculator.ratio_limits([4, 8]) == ref_values[2]
-    assert ratio_calculator.ratio_limits([2, 4, 8]) == ref_values[3]
-    constraints = HardwareQuantizationConstraints()
-    constraints.add(list(quantizers)[0], {8})
-    assert ratio_calculator.ratio_limits([2, 8], constraints) == ref_values[4]
+    def create_config(self):
+        config = self._config_factory()
+        if self._ignored_scopes:
+            config['compression']['ignored_scopes'] = self._ignored_scopes
+        return config
+
+    def apply_to_quantizer_setup(self, quantizer_setup: SingleConfigQuantizerSetup) -> SingleConfigQuantizerSetup:
+        for i, bitwidth in enumerate(self._bitwidth_sequence):
+            ip_name = self.NAMES_OF_INSERTION_POINTS[i]
+            quantization_points = quantizer_setup.quantization_points.values()
+            found_qp = list(filter(lambda qp: str(qp.insertion_point) == ip_name, quantization_points))
+            assert len(found_qp) == 1
+            found_qp[0].qconfig.num_bits = bitwidth
+        return quantizer_setup
+
+    def __str__(self):
+        is_ignored = 'with_FC_ignored' if self._ignored_scopes else 'all'
+        return '_'.join([is_ignored, *map(str, self._bitwidth_sequence)])
+
+
+class ConvLinear(nn.Module):
+    CONV_FLOPS = 72
+    LINEAR_FLOPS = 108
+
+    def __init__(self):
+        super().__init__()
+        self.conv1 = create_conv(1, 1, 2, -1, -2)
+        self.fc = nn.Linear(3, 6)
+
+    def forward(self, x):
+        return self.fc(self.conv1(x))
+
+
+CONV_FLOPS = ConvLinear.CONV_FLOPS
+LINEAR_FLOPS = ConvLinear.LINEAR_FLOPS
+MAX_BITS_COMPLEXITY = (CONV_FLOPS + LINEAR_FLOPS) * 8
+R48 = MAX_BITS_COMPLEXITY / (CONV_FLOPS * 4 + LINEAR_FLOPS * 8)
+R84 = MAX_BITS_COMPLEXITY / (CONV_FLOPS * 8 + LINEAR_FLOPS * 4)
+
+RATIO_CALCULATOR_TEST_DESCS = [
+    RatioCalculatorTestDesc(ref_ratio=2.0).bitwidths([4, 4, 4, 4]),
+    RatioCalculatorTestDesc(ref_ratio=R48).bitwidths([4, 4, 4, 8]),
+    RatioCalculatorTestDesc(ref_ratio=R48).bitwidths([4, 4, 8, 4]),
+    RatioCalculatorTestDesc(ref_ratio=R48).bitwidths([4, 4, 8, 8]),
+    RatioCalculatorTestDesc(ref_ratio=R84).bitwidths([4, 8, 4, 4]),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([4, 8, 4, 8]),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([4, 8, 8, 4]),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([4, 8, 8, 8]),
+    RatioCalculatorTestDesc(ref_ratio=R84).bitwidths([8, 4, 4, 4]),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([8, 4, 4, 8]),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([8, 4, 8, 4]),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([8, 4, 8, 8]),
+    RatioCalculatorTestDesc(ref_ratio=R84).bitwidths([8, 8, 4, 4]),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([8, 8, 4, 8]),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([8, 8, 8, 4]),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([8, 8, 8, 8]),
+    RatioCalculatorTestDesc(ref_ratio=2.0).bitwidths([4, 4]).ignore_fc(),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([4, 8]).ignore_fc(),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([8, 4]).ignore_fc(),
+    RatioCalculatorTestDesc(ref_ratio=1.0).bitwidths([8, 8]).ignore_fc(),
+]
+
+
+@pytest.mark.parametrize('desc', RATIO_CALCULATOR_TEST_DESCS, ids=map(str, RATIO_CALCULATOR_TEST_DESCS))
+def test_compression_ratio(desc):
+    config = desc.create_config()
+    model, ctrl = create_compressed_model_and_algo_for_test(ConvLinear(), config)
+
+    # pylint: disable=protected-access
+    quantizer_setup = ctrl._quantizer_setup
+    weight_qp_id_per_activation_qp_id = ctrl.groups_of_adjacent_quantizers.weight_qp_id_per_activation_qp_id
+    flops_per_module = model.get_flops_per_module()
+    ratio_calculator = CompressionRatioCalculator(flops_per_module, quantizer_setup, weight_qp_id_per_activation_qp_id)
+
+    quantizer_setup = desc.apply_to_quantizer_setup(quantizer_setup)
+    assert ratio_calculator.run_for_quantizer_setup(quantizer_setup) == desc.ref_ratio
 
 
 def test_staged_quantization_saves_enabled_quantizers_in_state_dict(tmp_path):

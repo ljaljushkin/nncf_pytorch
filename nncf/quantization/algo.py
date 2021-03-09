@@ -764,6 +764,7 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         self._groups_of_adjacent_quantizers = GroupsOfAdjacentQuantizers()  # type: GroupsOfAdjacentQuantizers
         self._setup_to_module_id_translation_dict = {}  # type: Dict[QuantizationPointId, QuantizerId]
         self.quantizer_setup_type = self.config.get('quantizer_setup_type')
+        self._final_quantizer_setup = SingleConfigQuantizerSetup()
         self.eval_ops_exec_ctx = []
         self._build_time_metric_infos = None
         self.hw_config = None
@@ -887,6 +888,7 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
     def _apply_to(self, target_model: NNCFNetwork) -> List[InsertionCommand]:
         target_model.register_compression_module_type(ExtraCompressionModuleType.ACTIVATION_QUANTIZER)
         single_config_quantizer_setup = self._get_quantizer_setup(target_model)
+        self._final_quantizer_setup = single_config_quantizer_setup
         minmax_values_for_range_init = {}
         if self.should_init:
             stats_for_range_init = self._get_statistics_for_final_range_init(target_model,
@@ -974,6 +976,7 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
                                       self._weight_quantizers,
                                       self._non_weight_quantizers,
                                       self._groups_of_adjacent_quantizers,
+                                      self._final_quantizer_setup,
                                       build_time_metric_info=self._build_time_metric_infos,
                                       build_time_range_init_params=self._range_init_params)
 
@@ -1342,6 +1345,7 @@ class QuantizationController(QuantizationControllerBase):
                  weight_quantizers: Dict[WeightQuantizerId, WeightQuantizerInfo],
                  non_weight_quantizers: Dict[NonWeightQuantizerId, NonWeightQuantizerInfo],
                  groups_of_adjacent_quantizers: GroupsOfAdjacentQuantizers,
+                 quantizer_setup: SingleConfigQuantizerSetup,
                  collect_compression_metrics: bool = True,
                  build_time_metric_info: NetworkQuantizationShareMetricBuildTimeInfo = None,
                  build_time_range_init_params: RangeInitParams = None):
@@ -1358,6 +1362,7 @@ class QuantizationController(QuantizationControllerBase):
         self.all_quantizations.update({k: v.quantizer_module_ref for k, v in self.non_weight_quantizers.items()})
         self._distributed = False
         self._groups_of_adjacent_quantizers = groups_of_adjacent_quantizers
+        self._quantizer_setup = quantizer_setup
 
         should_export_to_onnx_qdq = quantization_config.get("export_to_onnx_standard_ops",
                                                             False)
@@ -1826,7 +1831,7 @@ class ExperimentalQuantizationController(QuantizationController):
                  weight_quantizers: Dict[WeightQuantizerId, WeightQuantizerInfo],
                  non_weight_quantizers: Dict[NonWeightQuantizerId, NonWeightQuantizerInfo],
                  groups_of_adjacent_quantizers: GroupsOfAdjacentQuantizers,
-                 initial_quantizer_setup: SingleConfigQuantizerSetup,
+                 quantizer_setup: SingleConfigQuantizerSetup,
                  setup_to_module_id_translation_dict: Dict[QuantizationPointId, QuantizerId],
                  tensor_stats: Dict[InsertionPoint, Dict[ReductionShape, TensorStatistic]],
                  build_time_metric_info: NetworkQuantizationShareMetricBuildTimeInfo,
@@ -1839,11 +1844,11 @@ class ExperimentalQuantizationController(QuantizationController):
                          weight_quantizers=weight_quantizers,
                          non_weight_quantizers=non_weight_quantizers,
                          groups_of_adjacent_quantizers=groups_of_adjacent_quantizers,
+                         quantizer_setup=quantizer_setup,
                          collect_compression_metrics=True,
                          build_time_metric_info=build_time_metric_info)
         self._target_model_ref = target_model
         self._should_setup_adjust_pad_ops = should_setup_adjust_pad_ops
-        self._initial_quantizer_setup = initial_quantizer_setup
         self._tensor_stats = tensor_stats
         self.setup_to_module_id_translation_dict = setup_to_module_id_translation_dict
         self.module_id_to_qp_id_translation_dict = {}  # type: Dict[QuantizerId, Set[QuantizationPointId]]
@@ -1856,9 +1861,9 @@ class ExperimentalQuantizationController(QuantizationController):
 
     def get_quantizer_setup_for_current_state(self) -> SingleConfigQuantizerSetup:
         retval = SingleConfigQuantizerSetup()
-        retval.shared_input_operation_set_groups = self._initial_quantizer_setup.shared_input_operation_set_groups
-        retval.unified_scale_groups = self._initial_quantizer_setup.unified_scale_groups
-        for qp_id, qp in self._initial_quantizer_setup.quantization_points.items():
+        retval.shared_input_operation_set_groups = self._quantizer_setup.shared_input_operation_set_groups
+        retval.unified_scale_groups = self._quantizer_setup.unified_scale_groups
+        for qp_id, qp in self._quantizer_setup.quantization_points.items():
             quant_module_id = self.setup_to_module_id_translation_dict[qp_id]
             quant_module = self.all_quantizations[quant_module_id]
             qconfig = quant_module.get_quantizer_config()

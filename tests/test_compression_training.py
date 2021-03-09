@@ -201,7 +201,7 @@ def _params(request, tmp_path_factory, dataset_dir, weekly_models_path, enable_i
     if enable_imagenet:
         test_config['timeout'] = None
     if 'imagenet' in dataset_name and not enable_imagenet:
-        pytest.skip('ImageNet tests were intentionally skipped as it takes a lot of time')
+        pytest.skip('ImageNet tests were intentionally skipped_weight_qp_ids as it takes a lot of time')
     if args['weights']:
         weights_path = os.path.join(weekly_models_path, args['weights'])
         if not os.path.exists(weights_path):

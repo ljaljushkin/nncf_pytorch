@@ -243,8 +243,12 @@ class HAWQPrecisionInitializer(BasePrecisionInitializer):
         self._init_device = init_args.device
         if self._init_device is None:
             self._init_device = next(self._model.parameters()).device
-        self.flops_counter = CompressionRatioCalculator(self._model, self._quantizers_handler)
-        self._dump_hawq_data = params.dump_hawq_data
+        current_quantizer_setup = self._algo.get_quantizer_setup_for_current_state()
+        flops_per_module = self._model.get_flops_per_module()
+        self.compression_ratio_calculator = CompressionRatioCalculator(
+            flops_per_module, current_quantizer_setup,
+            self._groups_of_adjacent_quantizers.weight_qp_id_per_activation_qp_id)
+        self._dump_hawq_data = params.dump_hawq_data,
         self._original_qp_id_vs_quantizer_module_id_dict = deepcopy(algo.setup_to_module_id_translation_dict)
 
     def apply_init(self) -> SingleConfigQuantizerSetup:
@@ -279,7 +283,7 @@ class HAWQPrecisionInitializer(BasePrecisionInitializer):
                           ' with adjacent activation quantizers!', RuntimeWarning)
             return self._algo.get_quantizer_setup_for_current_state()
 
-        compression_ratio_per_qconfig = self.get_compression_ratio_per_qconfig(
+        compression_ratio_per_qconfig = self.get_compression_ratio_per_qconfig_sequence(
             weight_qconfig_sequences_in_trace_order,
             traces_order)
         min_ratio = min(compression_ratio_per_qconfig)
@@ -294,13 +298,14 @@ class HAWQPrecisionInitializer(BasePrecisionInitializer):
             weight_qconfig_sequences_in_trace_order, perturbations,
             traces_per_layer, self._init_device)
 
-        qconfig_index = self.choose_qconfig(metric_per_qconfig_sequence, compression_ratio_per_qconfig)
-        chosen_qconfig_sequence_in_traces_order = weight_qconfig_sequences_in_trace_order[qconfig_index]
+        qconfig_sequence_index = self.choose_qconfig_sequence(
+            metric_per_qconfig_sequence, compression_ratio_per_qconfig)
+        chosen_qconfig_sequence_in_traces_order = weight_qconfig_sequences_in_trace_order[qconfig_sequence_index]
         chosen_qconfig_sequence_in_execution_order = traces_order.get_execution_order_configs(
             chosen_qconfig_sequence_in_traces_order)
         bitwidth_sequence = [qconfig.num_bits for qconfig in chosen_qconfig_sequence_in_execution_order]
         nncf_logger.info('Chosen HAWQ bitwidth sequence with ratio={:.2f}, bitwidth per weightable layer={}'.format(
-            compression_ratio_per_qconfig[qconfig_index], bitwidth_sequence))
+            compression_ratio_per_qconfig[qconfig_sequence_index], bitwidth_sequence))
         nncf_logger.debug('Order of the weightable layers in the HAWQ bitwidth sequence (in descending order of average'
                           ' Hessian traces) ={}'.format(traces_order))
 
@@ -311,7 +316,8 @@ class HAWQPrecisionInitializer(BasePrecisionInitializer):
                                          perturbations,
                                          weight_observers, traces_per_layer, self._bitwidths)
             hawq_debugger.dump_metric_MB(metric_per_qconfig_sequence)
-            hawq_debugger.dump_metric_flops(metric_per_qconfig_sequence, compression_ratio_per_qconfig, qconfig_index)
+            hawq_debugger.dump_metric_flops(
+                metric_per_qconfig_sequence, compression_ratio_per_qconfig, qconfig_sequence_index)
             hawq_debugger.dump_avg_traces()
             hawq_debugger.dump_density_of_quantization_noise()
             hawq_debugger.dump_perturbations_ratio()
@@ -354,15 +360,14 @@ class HAWQPrecisionInitializer(BasePrecisionInitializer):
                 retval.replace(quantizer_id, filtered_qconfig_sequence)
         return retval
 
-    def get_compression_ratio_per_qconfig(self,
-                                          qconfig_sequences_in_trace_order: List[QConfigSequenceForHAWQToEvaluate],
-                                          traces_order: TracesOrder) -> List[float]:
-        skipped = self._quantizers_handler.get_skipped_weight_quantizers_per_id()
+    def get_compression_ratio_per_qconfig_sequence(self,
+                                                   qconfig_sequences_in_trace_order: List[
+                                                       QConfigSequenceForHAWQToEvaluate],
+                                                   traces_order: TracesOrder) -> List[float]:
         compression_ratio_per_qconfig = []
         for qconfig_sequence in qconfig_sequences_in_trace_order:
-            execution_order_qconfig_sequence = traces_order.get_execution_order_configs(qconfig_sequence)
-            bitwidth_sequence = [qconfig.num_bits for qconfig in execution_order_qconfig_sequence]
-            compression_ratio = self.flops_counter.compression_ratio_for_bitwitdh_sequence(bitwidth_sequence, skipped)
+            quantizer_setup = self.get_quantizer_setup_for_qconfig_sequence(qconfig_sequence, traces_order)
+            compression_ratio = self.compression_ratio_calculator.run_for_quantizer_setup(quantizer_setup)
             compression_ratio_per_qconfig.append(compression_ratio)
         return compression_ratio_per_qconfig
 
@@ -587,8 +592,8 @@ class HAWQPrecisionInitializer(BasePrecisionInitializer):
             metric_per_qconfig_sequence.append(hawq_metric)
         return metric_per_qconfig_sequence
 
-    def choose_qconfig(self, metric_per_qconfig_sequences: List[Tensor],
-                       compression_ratio_per_qconfig: List[float]) -> int:
+    def choose_qconfig_sequence(self, metric_per_qconfig_sequences: List[Tensor],
+                                compression_ratio_per_qconfig: List[float]) -> int:
         num_qconfig_sequences = len(metric_per_qconfig_sequences)
 
         sorted_compression_ratio_per_qconfig = sorted(compression_ratio_per_qconfig)
@@ -600,18 +605,18 @@ class HAWQPrecisionInitializer(BasePrecisionInitializer):
         indexes_to_check = [indexes_of_sorted_compression_ratio[i] for i in
                             range(boundary_index, num_qconfig_sequences)]
         best_metric = min(list(itemgetter(*indexes_to_check)(metric_per_qconfig_sequences)))
-        best_qconfig_index = metric_per_qconfig_sequences.index(best_metric)
-        return best_qconfig_index
+        best_qconfig_sequence_index = metric_per_qconfig_sequences.index(best_metric)
+        return best_qconfig_sequence_index
 
     def get_quantizer_setup_for_qconfig_sequence(self,
                                                  qconfig_sequence_in_traces_order: QConfigSequenceForHAWQToEvaluate,
                                                  traces_order: TracesOrder) -> SingleConfigQuantizerSetup:
-        qp_ids_in_trace_order = self._get_weight_qp_ids_in_trace_order(traces_order)
+        wqp_ids_in_trace_order = self._get_weight_qp_ids_in_trace_order(traces_order)
         ctrl = self._algo
 
         quantizer_setup_to_set = self._apply_qconfig_sequence_to_quantizer_setup(
             qconfig_sequence_in_traces_order,
-            qp_ids_in_trace_order,
+            wqp_ids_in_trace_order,
             ctrl.get_quantizer_setup_for_current_state())
         if quantizer_setup_to_set.shared_input_operation_set_groups:
             for group in quantizer_setup_to_set.shared_input_operation_set_groups:
