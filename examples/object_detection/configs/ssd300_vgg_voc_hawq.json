@@ -1,0 +1,123 @@
+{
+    "model": "ssd_vgg",
+    "batchnorm": true,
+    "input_info": {
+        "sample_size": [
+            8,
+            3,
+            300,
+            300
+        ]
+    },
+    "pretrained": true,
+    "num_classes": 21,
+    "dataset": "voc",
+    "preprocessing": {
+        "mean": [
+            0.406,
+            0.456,
+            0.485
+        ],
+        "std": [
+            0.255,
+            0.224,
+            0.229
+        ],
+        "normalize_coef": 255,
+        "rgb": true
+    },
+    "max_iter": 25000,
+    "batch_size": 64,
+    "workers": 8,
+    "test_interval": 500,
+    "iter_size": 1,
+    "save_freq": 5,
+    "epochs": 60,
+    "optimizer": {
+        "type": "Adam",
+        "base_lr": 1e-05,
+        "weight_decay": 0.0005,
+        "schedule_type": "multistep",
+        "steps": [
+            2
+        ]
+    },
+    "ssd_params": {
+        "clip": false,
+        "variance": [
+            0.1,
+            0.1,
+            0.2,
+            0.2
+        ],
+        "max_sizes": [
+            60,
+            111,
+            162,
+            213,
+            264,
+            315
+        ],
+        "min_sizes": [
+            30,
+            60,
+            111,
+            162,
+            213,
+            264
+        ],
+        "steps": [
+            8,
+            16,
+            32,
+            64,
+            100,
+            300
+        ],
+        "aspect_ratios": [
+            [
+                2
+            ],
+            [
+                2,
+                3
+            ],
+            [
+                2,
+                3
+            ],
+            [
+                2,
+                3
+            ],
+            [
+                2
+            ],
+            [
+                2
+            ]
+        ],
+        "flip": true,
+        "top_k": 200,
+        "loss_inference": false
+    },
+    "target_device": "VPU",
+    "compression": {
+        "algorithm": "quantization",
+        "initializer": {
+            "batchnorm_adaptation": {
+                "num_bn_adaptation_samples": 3500
+            },
+            "range": {
+                "type": "mean_min_max",
+                "num_init_samples": 1000
+            },
+            "precision": {
+                "type": "hawq",
+                "compression_ratio": 1.19,
+                "dump_init_precision_data": true,
+                "traces_per_layer_path": "/users/nlyalyus/Developer/sandbox/log-dir/ssd_vgg_voc_mixed_int/2021-03-24__13-17-32/hawq_dumps/avg_traces_per_layer"
+            }
+        }
+    }
+}

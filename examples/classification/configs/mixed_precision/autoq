@@ -1,0 +1,107 @@
+8 | (AQ) 1-/nncf_model_input_0|OUTPUT
+8 | (WQ) 2-MobileNetV2/Sequential[features]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 6-MobileNetV2/Sequential[features]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+4 <= 8 | (AQ) 6-MobileNetV2/adaptive_avg_pool2d_0|OUTPUT
+8 | (WQ) 7-MobileNetV2/Sequential[features]/InvertedResidual[1]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 11-MobileNetV2/Sequential[features]/InvertedResidual[1]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 12-MobileNetV2/Sequential[features]/InvertedResidual[1]/Sequential[conv]/NNCFConv2d[1]module_weight
+8 | (AQ) 15-MobileNetV2/Sequential[features]/InvertedResidual[1]/Sequential[conv]/BatchNorm2d[2]/batch_norm_0|OUTPUT
+8 | (WQ) 16-MobileNetV2/Sequential[features]/InvertedResidual[2]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 20-MobileNetV2/Sequential[features]/InvertedResidual[2]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 21-MobileNetV2/Sequential[features]/InvertedResidual[2]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+8 | (AQ) 25-MobileNetV2/Sequential[features]/InvertedResidual[2]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 26-MobileNetV2/Sequential[features]/InvertedResidual[2]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (AQ) 29-MobileNetV2/Sequential[features]/InvertedResidual[2]/Sequential[conv]/BatchNorm2d[3]/batch_norm_0|OUTPUT
+8 | (WQ) 30-MobileNetV2/Sequential[features]/InvertedResidual[3]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 34-MobileNetV2/Sequential[features]/InvertedResidual[3]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (AQ) 34-MobileNetV2/Sequential[features]/InvertedResidual[3]/__add___0|OUTPUT
+8 | (WQ) 35-MobileNetV2/Sequential[features]/InvertedResidual[3]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+8 | (AQ) 39-MobileNetV2/Sequential[features]/InvertedResidual[3]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 40-MobileNetV2/Sequential[features]/InvertedResidual[3]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (WQ) 46-MobileNetV2/Sequential[features]/InvertedResidual[4]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 50-MobileNetV2/Sequential[features]/InvertedResidual[4]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 51-MobileNetV2/Sequential[features]/InvertedResidual[4]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+8 | (AQ) 55-MobileNetV2/Sequential[features]/InvertedResidual[4]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 56-MobileNetV2/Sequential[features]/InvertedResidual[4]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (AQ) 59-MobileNetV2/Sequential[features]/InvertedResidual[4]/Sequential[conv]/BatchNorm2d[3]/batch_norm_0|OUTPUT
+8 | (WQ) 60-MobileNetV2/Sequential[features]/InvertedResidual[5]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 64-MobileNetV2/Sequential[features]/InvertedResidual[5]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (AQ) 64-MobileNetV2/Sequential[features]/InvertedResidual[5]/__add___0|OUTPUT
+8 | (WQ) 65-MobileNetV2/Sequential[features]/InvertedResidual[5]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+8 | (AQ) 69-MobileNetV2/Sequential[features]/InvertedResidual[5]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 70-MobileNetV2/Sequential[features]/InvertedResidual[5]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (WQ) 76-MobileNetV2/Sequential[features]/InvertedResidual[6]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 80-MobileNetV2/Sequential[features]/InvertedResidual[6]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (AQ) 80-MobileNetV2/Sequential[features]/InvertedResidual[6]/__add___0|OUTPUT
+8 | (WQ) 81-MobileNetV2/Sequential[features]/InvertedResidual[6]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+8 | (AQ) 85-MobileNetV2/Sequential[features]/InvertedResidual[6]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 86-MobileNetV2/Sequential[features]/InvertedResidual[6]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (WQ) 92-MobileNetV2/Sequential[features]/InvertedResidual[7]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 96-MobileNetV2/Sequential[features]/InvertedResidual[7]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 97-MobileNetV2/Sequential[features]/InvertedResidual[7]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+8 | (AQ) 101-MobileNetV2/Sequential[features]/InvertedResidual[7]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 102-MobileNetV2/Sequential[features]/InvertedResidual[7]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (AQ) 105-MobileNetV2/Sequential[features]/InvertedResidual[7]/Sequential[conv]/BatchNorm2d[3]/batch_norm_0|OUTPUT
+8 | (WQ) 106-MobileNetV2/Sequential[features]/InvertedResidual[8]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 110-MobileNetV2/Sequential[features]/InvertedResidual[8]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (AQ) 110-MobileNetV2/Sequential[features]/InvertedResidual[8]/__add___0|OUTPUT
+8 | (WQ) 111-MobileNetV2/Sequential[features]/InvertedResidual[8]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+8 | (AQ) 115-MobileNetV2/Sequential[features]/InvertedResidual[8]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 116-MobileNetV2/Sequential[features]/InvertedResidual[8]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (WQ) 122-MobileNetV2/Sequential[features]/InvertedResidual[9]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 126-MobileNetV2/Sequential[features]/InvertedResidual[9]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 127-MobileNetV2/Sequential[features]/InvertedResidual[9]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+4 <= 8 | (AQ) 131-MobileNetV2/Sequential[features]/InvertedResidual[9]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+4 | (WQ) 132-MobileNetV2/Sequential[features]/InvertedResidual[9]/Sequential[conv]/NNCFConv2d[2]module_weight
+4 <= 8 | (WQ) 138-MobileNetV2/Sequential[features]/InvertedResidual[10]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 142-MobileNetV2/Sequential[features]/InvertedResidual[10]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (AQ) 142-MobileNetV2/Sequential[features]/InvertedResidual[10]/__add___0|OUTPUT
+8 | (WQ) 143-MobileNetV2/Sequential[features]/InvertedResidual[10]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+4 <= 8 | (AQ) 147-MobileNetV2/Sequential[features]/InvertedResidual[10]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+4 | (WQ) 148-MobileNetV2/Sequential[features]/InvertedResidual[10]/Sequential[conv]/NNCFConv2d[2]module_weight
+4 | (AQ) 151-MobileNetV2/Sequential[features]/InvertedResidual[10]/Sequential[conv]/BatchNorm2d[3]/batch_norm_0|OUTPUT
+8 | (WQ) 154-MobileNetV2/Sequential[features]/InvertedResidual[11]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 158-MobileNetV2/Sequential[features]/InvertedResidual[11]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 159-MobileNetV2/Sequential[features]/InvertedResidual[11]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+4 <= 8 | (AQ) 163-MobileNetV2/Sequential[features]/InvertedResidual[11]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+4 | (WQ) 164-MobileNetV2/Sequential[features]/InvertedResidual[11]/Sequential[conv]/NNCFConv2d[2]module_weight
+4 | (AQ) 167-MobileNetV2/Sequential[features]/InvertedResidual[11]/Sequential[conv]/BatchNorm2d[3]/batch_norm_0|OUTPUT
+4 <= 8 | (WQ) 168-MobileNetV2/Sequential[features]/InvertedResidual[12]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 172-MobileNetV2/Sequential[features]/InvertedResidual[12]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (AQ) 172-MobileNetV2/Sequential[features]/InvertedResidual[12]/__add___0|OUTPUT
+8 | (WQ) 173-MobileNetV2/Sequential[features]/InvertedResidual[12]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+4 <= 8 | (AQ) 177-MobileNetV2/Sequential[features]/InvertedResidual[12]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+4 | (WQ) 178-MobileNetV2/Sequential[features]/InvertedResidual[12]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (WQ) 184-MobileNetV2/Sequential[features]/InvertedResidual[13]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 188-MobileNetV2/Sequential[features]/InvertedResidual[13]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (AQ) 188-MobileNetV2/Sequential[features]/InvertedResidual[13]/__add___0|OUTPUT
+8 | (WQ) 189-MobileNetV2/Sequential[features]/InvertedResidual[13]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+4 <= 8 | (AQ) 193-MobileNetV2/Sequential[features]/InvertedResidual[13]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+4 | (WQ) 194-MobileNetV2/Sequential[features]/InvertedResidual[13]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (WQ) 200-MobileNetV2/Sequential[features]/InvertedResidual[14]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 204-MobileNetV2/Sequential[features]/InvertedResidual[14]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 205-MobileNetV2/Sequential[features]/InvertedResidual[14]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+8 | (AQ) 209-MobileNetV2/Sequential[features]/InvertedResidual[14]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 210-MobileNetV2/Sequential[features]/InvertedResidual[14]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (AQ) 213-MobileNetV2/Sequential[features]/InvertedResidual[14]/Sequential[conv]/BatchNorm2d[3]/batch_norm_0|OUTPUT
+8 | (WQ) 214-MobileNetV2/Sequential[features]/InvertedResidual[15]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 218-MobileNetV2/Sequential[features]/InvertedResidual[15]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (AQ) 218-MobileNetV2/Sequential[features]/InvertedResidual[15]/__add___0|OUTPUT
+8 | (WQ) 219-MobileNetV2/Sequential[features]/InvertedResidual[15]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+8 | (AQ) 223-MobileNetV2/Sequential[features]/InvertedResidual[15]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 224-MobileNetV2/Sequential[features]/InvertedResidual[15]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (WQ) 230-MobileNetV2/Sequential[features]/InvertedResidual[16]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 234-MobileNetV2/Sequential[features]/InvertedResidual[16]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (AQ) 234-MobileNetV2/Sequential[features]/InvertedResidual[16]/__add___0|OUTPUT
+8 | (WQ) 235-MobileNetV2/Sequential[features]/InvertedResidual[16]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+8 | (AQ) 239-MobileNetV2/Sequential[features]/InvertedResidual[16]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 240-MobileNetV2/Sequential[features]/InvertedResidual[16]/Sequential[conv]/NNCFConv2d[2]module_weight
+8 | (WQ) 246-MobileNetV2/Sequential[features]/InvertedResidual[17]/Sequential[conv]/ConvBNReLU[0]/NNCFConv2d[0]module_weight
+8 | (AQ) 250-MobileNetV2/Sequential[features]/InvertedResidual[17]/Sequential[conv]/ConvBNReLU[0]/ReLU6[2]/hardtanh_0|OUTPUT
+8 | (WQ) 251-MobileNetV2/Sequential[features]/InvertedResidual[17]/Sequential[conv]/ConvBNReLU[1]/NNCFConv2d[0]module_weight
+4 <= 8 | (AQ) 255-MobileNetV2/Sequential[features]/InvertedResidual[17]/Sequential[conv]/ConvBNReLU[1]/ReLU6[2]/hardtanh_0|OUTPUT
+4 <= 8 | (WQ) 256-MobileNetV2/Sequential[features]/InvertedResidual[17]/Sequential[conv]/NNCFConv2d[2]module_weight
+4 <= 8 | (AQ) 259-MobileNetV2/Sequential[features]/InvertedResidual[17]/Sequential[conv]/BatchNorm2d[3]/batch_norm_0|OUTPUT
+4 <= 8 | (WQ) 260-MobileNetV2/Sequential[features]/ConvBNReLU[18]/NNCFConv2d[0]module_weight
+8 | (AQ) 264-MobileNetV2/Sequential[features]/ConvBNReLU[18]/ReLU6[2]/hardtanh_0|OUTPUT
+2 <= 4 | (WQ) 268-MobileNetV2/Sequential[classifier]/NNCFLinear[1]module_weight

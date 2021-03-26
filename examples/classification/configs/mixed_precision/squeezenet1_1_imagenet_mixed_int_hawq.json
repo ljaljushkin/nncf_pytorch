@@ -11,16 +11,17 @@
     },
     "num_classes": 1000,
     "batch_size": 256,
-    "optimizer": {
-        "base_lr": 0.00031,
-        "schedule_type": "plateau",
-        "type": "Adam",
-        "schedule_params": {
-            "threshold": 0.1,
-            "cooldown": 3
-        },
-        "weight_decay": 1e-05
-    },
+     "epochs": 10,
+//    "optimizer": {
+//        "base_lr": 0.00031,
+//        "schedule_type": "plateau",
+//        "type": "Adam",
+//        "schedule_params": {
+//            "threshold": 0.1,
+//            "cooldown": 3
+//        },
+//        "weight_decay": 1e-05
+//    },
     "target_device": "VPU",
     "compression": {
         "algorithm": "quantization",
@@ -28,11 +29,22 @@
             "precision": {
                 "type": "hawq",
                 "bits": [4, 8],
-                "compression_ratio": 1.5
+                "compression_ratio": 1.5,
+                "dump_init_precision_data": true,
+                "traces_per_layer_path": "/users/nlyalyus/Developer/sandbox/experiments/mixed/squeezenet-v1.1/2021-03-28__07-38-25_r1.5_min/hawq_dumps/avg_traces_per_layer"
             },
             "range": {
                 "type": "min_max"
             }
+        },
+        "params": {
+            "base_lr": 3.1e-4,
+            "base_wd": 1e-5,
+            "batch_multiplier": 1,
+            "activations_quant_start_epoch": 0,
+            "weights_quant_start_epoch": 0,
+            "lr_poly_drop_start_epoch": 0,
+            "lr_poly_drop_duration_epochs": 10
         }
     }
 }

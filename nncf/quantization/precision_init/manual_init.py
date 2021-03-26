@@ -13,9 +13,11 @@
 from typing import Dict
 from typing import List
 
+from nncf.common.utils.logger import logger as nncf_logger
 from nncf.quantization.precision_constraints import HardwareQuantizationConstraints
 from nncf.quantization.precision_init.base_init import BasePrecisionInitParams
 from nncf.quantization.precision_init.base_init import BasePrecisionInitializer
+from nncf.quantization.precision_init.compression_ratio import CompressionRatioCalculator
 from nncf.quantization.quantizer_setup import SingleConfigQuantizerSetup
 from nncf.structures import QuantizationPrecisionInitArgs
 
@@ -40,7 +42,13 @@ class ManualPrecisionInitializer(BasePrecisionInitializer):
                  params: ManualPrecisionInitParams,
                  hw_precision_constraints: HardwareQuantizationConstraints = None):
         super().__init__(algo, params, hw_precision_constraints)
+        current_quantizer_setup = self._algo.get_quantizer_setup_for_current_state()
+        flops_per_module = self._model.get_flops_per_module()
+        self._groups_of_adjacent_quantizers = algo.groups_of_adjacent_quantizers
         self._bitwidth_per_scope = params.bitwidth_per_scope
+        self._compression_ratio_calculator = CompressionRatioCalculator(
+            flops_per_module, current_quantizer_setup,
+            self._groups_of_adjacent_quantizers.weight_qp_id_per_activation_qp_id)
 
     def apply_init(self) -> SingleConfigQuantizerSetup:
         quantizer_setup = self._algo.get_quantizer_setup_for_current_state()
@@ -67,4 +75,5 @@ class ManualPrecisionInitializer(BasePrecisionInitializer):
                 raise ValueError(
                     'Could not find a quantization point at scope name `{}`, failed to assign bitwidth {} '
                     'to it'.format(scope_name, bitwidth))
+        nncf_logger.info('Compression ratio = {}'.format(self._compression_ratio_calculator.run_for_quantizer_setup(quantizer_setup)))
         return quantizer_setup

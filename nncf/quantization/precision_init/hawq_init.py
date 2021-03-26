@@ -602,6 +602,8 @@ class HAWQPrecisionInitializer(BasePrecisionInitializer):
         num_qconfig_sequences = len(metric_per_qconfig_sequences)
 
         sorted_compression_ratio_per_qconfig = sorted(compression_ratio_per_qconfig)
+        fmt = ', '.join(["{:.3f}"] * len(sorted_compression_ratio_per_qconfig))
+        nncf_logger.info('compression ratio of all considered configurations: ' + fmt.format(*sorted_compression_ratio_per_qconfig))
         indexes_of_sorted_compression_ratio = [x[0] for x in
                                                sorted(enumerate(compression_ratio_per_qconfig), reverse=False,
                                                       key=lambda x: x[1])]
@@ -661,11 +663,14 @@ class HAWQPrecisionInitializer(BasePrecisionInitializer):
             if activation_bitwidth_set.__len__() == 1:
                 target_bitwidth = activation_bitwidth_set.pop()
             elif intersection:
+                nncf_logger.info('!!!!!! inter {}'.format(intersection))
                 target_bitwidth = min(intersection)
             elif activation_bitwidth_set:
                 target_bitwidth = min(activation_bitwidth_set)
+                nncf_logger.info('!!!!!! activ {}'.format(activation_bitwidth_set))
             elif weight_bitwidth_set:
                 target_bitwidth = min(weight_bitwidth_set)
+                nncf_logger.info('!!!!!! weight {}'.format(weight_bitwidth_set))
             else:
                 continue
 

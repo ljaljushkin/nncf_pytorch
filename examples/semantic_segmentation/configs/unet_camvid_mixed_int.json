@@ -1,0 +1,68 @@
+{
+    "model": "unet",
+    "dataset": "camvid",
+    "preprocessing": {
+        "resize": {
+            "height": 368,
+            "width": 480
+        },
+        "normalize": {
+            "mean": [
+                0.39068785,
+                0.40521392,
+                0.41434407
+            ],
+            "std": [
+                0.29652068,
+                0.30514979,
+                0.30080369
+            ]
+        }
+    },
+    "input_info": {
+        "sample_size": [
+            1,
+            3,
+            368,
+            480
+        ]
+    },
+    "weighing": "mfb",
+    "optimizer": {
+        "type": "Adam",
+        "optimizer_params": {
+            "lr": 5e-05,
+            "weight_decay": 0.0002
+        },
+        "schedule_type": "step",
+        "step": 100,
+        "gamma": 0.1
+    },
+    "epochs": 150,
+    "workers": 6,
+    "model_params": {
+        "input_size_hw": [
+            368,
+            480
+        ]
+    },
+    "target_device": "VPU",
+    "compression": {
+        "algorithm": "quantization",
+        "initializer": {
+            "batchnorm_adaptation": {
+                "num_bn_adaptation_samples": 3500
+            },
+            "range": {
+                "type": "mean_min_max",
+                "num_init_samples": 1000
+            },
+            "precision": {
+                "type": "hawq",
+                "compression_ratio": 1.7,
+                "traces_per_layer_path": "/users/nlyalyus/Developer/sandbox/log-dir/unet_camvid_mixed_int/2021-03-25__03-57-20/hawq_dumps/avg_traces_per_layer",
+                "dump_init_precision_data": true,
+            }
+        }
+    }
+}
