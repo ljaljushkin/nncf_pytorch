@@ -24,13 +24,14 @@ from nncf.nncf_network import NNCFNetwork
 from nncf.sparsity.base_algo import BaseSparsityAlgoBuilder, BaseSparsityAlgoController, SparseModuleInfo
 from nncf.sparsity.layers import BinaryMask
 from nncf.sparsity.magnitude.functions import WEIGHT_IMPORTANCE_FUNCTIONS, calc_magnitude_binary_mask
-from nncf.sparsity.schedulers import SPARSITY_SCHEDULERS
+from nncf.common.sparsity.schedulers import SPARSITY_SCHEDULERS
 
 
 @COMPRESSION_ALGORITHMS.register('magnitude_sparsity')
 class MagnitudeSparsityBuilder(BaseSparsityAlgoBuilder):
     def create_weight_sparsifying_operation(self, module):
-        return BinaryMask(module.weight.size())
+        device = module.weight.device
+        return BinaryMask(module.weight.size()).to(device)
 
     def build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
         params = self.config.get("params", {})
@@ -59,10 +60,10 @@ class MagnitudeSparsityController(BaseSparsityAlgoController):
         self.set_sparsity_level(self.sparsity_init)
 
     def statistics(self, quickly_collected_only=False):
-        stats = super().statistics()
+        stats = super().statistics(quickly_collected_only)
         if self.sparsity_level_mode == 'global':
             stats['sparsity_threshold'] =\
-                 self._select_threshold(self.sparsity_rate_for_sparsified_modules, self.sparsified_module_info)
+                 self._select_threshold(self.sparsity_rate_for_sparsified_modules(), self.sparsified_module_info)
         else:
             table = Texttable()
             header = ["Name", "Per-layer sparsity threshold"]
@@ -72,7 +73,7 @@ class MagnitudeSparsityController(BaseSparsityAlgoController):
                 drow = {h: 0 for h in header}
                 drow["Name"] = minfo.module_name
                 drow['Per-layer sparsity threshold'] =\
-                     self._select_threshold(self.sparsity_rate_for_sparsified_modules, self.sparsified_module_info)
+                     self._select_threshold(self.sparsity_rate_for_sparsified_modules(minfo), [minfo])
                 row = [drow[h] for h in header]
                 data.append(row)
             table.add_rows(data)
