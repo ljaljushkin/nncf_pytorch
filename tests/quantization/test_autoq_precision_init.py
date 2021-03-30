@@ -18,6 +18,7 @@ import pytest
 import torch
 import torch.nn as nn
 import torch.utils.data
+from nncf.quantization.precision_init.autoq_init import AutoQPrecisionInitializer
 from random import random
 from torchvision.models import inception_v3
 from torchvision.models import mobilenet_v2
@@ -25,6 +26,9 @@ from torchvision.models import resnet50
 
 from nncf import register_default_init_args
 from nncf.module_operations import UpdatePaddingValue
+from nncf.quantization.algo import ExperimentalQuantizationController
+from nncf.quantization.precision_constraints import HardwareQuantizationConstraints
+from nncf.quantization.precision_init.autoq_init import AutoQPrecisionInitParams
 from nncf.utils import get_all_modules_by_type
 from tests.helpers import create_compressed_model_and_algo_for_test
 from tests.quantization.test_hawq_precision_init import BaseConfigBuilder
@@ -189,3 +193,10 @@ def test_can_broadcast_initialized_precisions_in_distributed_mode(tmp_path, runs
                                 join=True)
 
     assert not compare_multi_gpu_dump(config, tmp_path, get_path_to_bitwidth_dump)
+
+
+def test_debug_capabilities(mocker):
+    algo = mocker.MagicMock(spec=ExperimentalQuantizationController)
+    params = mocker.MagicMock(spec=AutoQPrecisionInitParams)
+    hw_precision_constraints = mocker.MagicMock(spec=HardwareQuantizationConstraints)
+    initializer = AutoQPrecisionInitializer(algo, params, hw_precision_constraints)
