@@ -127,7 +127,8 @@ def staged_quantization_main_worker(current_gpu, config):
 
     pretrained = is_pretrained_model_requested(config)
 
-    if config.to_onnx is not None:
+    # TODO: WA for loading checkpoint in manual mode
+    if config.to_onnx is None:
         assert pretrained or (resuming_checkpoint_path is not None)
     else:
         # Data loading code
