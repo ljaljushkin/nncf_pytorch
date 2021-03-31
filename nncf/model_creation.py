@@ -111,8 +111,8 @@ def create_compressed_model(model: Module, config: NNCFConfig,
                                    ignored_scopes=ignored_scopes,
                                    target_scopes=target_scopes,
                                    scopes_without_shape_matching=scopes_without_shape_matching)
-
-    should_init = resuming_state_dict is None
+    # TODO: a workaround to load the mixed-precision checkpoint
+    should_init = True # resuming_state_dict is None
     composite_builder = PTCompositeCompressionAlgorithmBuilder(config, should_init=should_init)
     composite_builder.apply_to(compressed_model)
 

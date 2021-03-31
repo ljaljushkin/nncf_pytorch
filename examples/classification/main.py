@@ -132,20 +132,21 @@ def main_worker(current_gpu, config: SampleConfig):
     nncf_config = config.nncf_config
     pretrained = is_pretrained_model_requested(config)
 
-    if config.to_onnx is not None:
-        assert pretrained or (resuming_checkpoint_path is not None)
-    else:
-        # Data loading code
-        train_dataset, val_dataset = create_datasets(config)
-        train_loader, train_sampler, val_loader, init_loader = create_data_loaders(config, train_dataset, val_dataset)
+    # TODO: WA for loading checkpoint in manual mode
+    # if config.to_onnx is None:
+    #     assert pretrained or (resuming_checkpoint_path is not None)
+    # else:
+    # Data loading code
+    train_dataset, val_dataset = create_datasets(config)
+    train_loader, train_sampler, val_loader, init_loader = create_data_loaders(config, train_dataset, val_dataset)
 
-        def autoq_eval_fn(model, eval_loader):
-            _, top5 = validate(eval_loader, model, criterion, config)
-            return top5
+    def autoq_eval_fn(model, eval_loader):
+        _, top5 = validate(eval_loader, model, criterion, config)
+        return top5
 
-        nncf_config = register_default_init_args(
-            nncf_config, init_loader, criterion, train_criterion_fn,
-            autoq_eval_fn, val_loader, config.device)
+    nncf_config = register_default_init_args(
+        nncf_config, init_loader, criterion, train_criterion_fn,
+        autoq_eval_fn, val_loader, config.device)
 
     # create model
     model = load_model(model_name,

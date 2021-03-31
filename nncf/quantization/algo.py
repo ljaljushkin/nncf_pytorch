@@ -1431,7 +1431,8 @@ class ExperimentalQuantizationBuilder(QuantizationBuilder):
                  tensor_stats_for_all_setup_variations: Dict[PTTargetPoint, Dict[ReductionShape, TensorStatistic]],
                  hw_config: HWConfig = None):
         should_init = bool(tensor_stats_for_all_setup_variations)
-        super().__init__(NNCFConfig(), should_init=should_init)
+        # TODO: WA for resuming MP checkpoint in manual mode
+        super().__init__(NNCFConfig(), should_init=False)
         self._quantizer_setup = quantizer_setup
         self._tensor_stats = tensor_stats_for_all_setup_variations
         self._should_setup_adjust_pad_ops = False
