@@ -221,13 +221,16 @@ class MemoryCostMetric(BaseMetric):
         self.stat = {}
 
     def collect(self):
+        AFQ_bits = sum(map(lambda x: 4 * np.prod(x.scale_shape), self._non_weight_quantizers))
         self.stat[self.SIZE_MEMORY_FP_WEIGHTS_STR] = 0
-        self.stat[self.SIZE_MEMORY_COMPRESSED_WEIGHTS_STR] = 0
+        self.stat[self.SIZE_MEMORY_COMPRESSED_WEIGHTS_STR] = AFQ_bits
         fp_num_bits = 32
         nncf_modules = self._compressed_model.get_nncf_modules()
 
         for scope_module, nncf_module in nncf_modules.items():
             count_el = np.prod(nncf_module.weight.shape)
+            if hasattr(nncf_module, 'bias'):
+                count_el += np.prod(nncf_module.bias.shape)
             self.stat[self.SIZE_MEMORY_FP_WEIGHTS_STR] += count_el * fp_num_bits
             status, quantizer = self._get_quantizer_for_scope(scope_module, self._weights_quantizers)
             if status > 0:
