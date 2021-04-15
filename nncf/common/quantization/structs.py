@@ -63,10 +63,6 @@ class QuantizerConfig:
         # except Exception as ex:
         #     raise RuntimeError('Failed to decode {} from str'.format(cls.__name__)) from ex
 
-    @classmethod
-    def from_dict(cls, json_dict: Dict) -> 'QuantizerConfig':
-        return cls(**json_dict)
-
     def is_valid_requantization_for(self, other: 'QuantizerConfig') -> bool:
         """
         Quantizer config A is a valid requantization for quantizer config B if A is more strict -

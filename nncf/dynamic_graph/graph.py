@@ -34,6 +34,7 @@ from nncf.dynamic_graph.graph_matching import get_edge_boundaries
 from nncf.dynamic_graph.graph_matching import search_all
 from nncf.dynamic_graph.trace_tensor import TensorMeta
 from nncf.dynamic_graph.trace_tensor import TracedTensor
+from nncf.json_serialization import register_serializable
 from nncf.layers import ITERATION_MODULES
 # pylint: disable=too-many-public-methods
 
@@ -95,6 +96,7 @@ class DefaultInputsMatcher(InputsMatcher):
         return True
 
 
+@register_serializable()
 class InputAgnosticOperationExecutionContext:
     def __init__(self, operator_name: str, scope_in_model: 'Scope', call_order: int):
         self.operator_name = operator_name
@@ -113,18 +115,10 @@ class InputAgnosticOperationExecutionContext:
     def __hash__(self):
         return hash((self.operator_name, self.scope_in_model, self.call_order))
 
-    @classmethod
-    def from_str(cls, s: str):
-        try:
-            scope_and_op, _, call_order_str = s.rpartition('_')
-            scope_str, _, op_name = scope_and_op.rpartition('/')
-
-            from nncf.dynamic_graph.context import Scope
-            return InputAgnosticOperationExecutionContext(op_name,
-                                                          Scope.from_str(scope_str),
-                                                          int(call_order_str))
-        except Exception as ex:
-            raise RuntimeError('Failed to decode {} from str'.format(cls.__name__)) from ex
+    def to_dict(self) -> Dict:
+        return {'operator_name': self.operator_name,
+                'scope_in_model': self.scope_in_model,
+                'call_order': self.call_order}
 
 
 class OperationExecutionContext:

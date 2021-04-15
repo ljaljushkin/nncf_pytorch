@@ -142,3 +142,36 @@ def test_enum():
     json_str = serialize(tt)
     print(json_str)
     assert tt == deserialize(json_str)
+
+
+def test_setup():
+    target_type = TargetType.OPERATOR_POST_HOOK
+    assert target_type == deserialize(serialize(target_type))
+
+    scope = Scope.from_str('MyConv/1[2]/3[4]/5')
+    assert scope == deserialize(serialize(scope))
+
+    ia_op_exec_context = InputAgnosticOperationExecutionContext(operator_name='MyConv',
+                                                                scope_in_model=scope,
+                                                                call_order=1)
+    assert ia_op_exec_context == deserialize(serialize(ia_op_exec_context))
+
+    pttp = PTTargetPoint(target_type,
+                         ia_op_exec_context=ia_op_exec_context,
+                         input_port_id=7)
+    assert pttp == deserialize(serialize(pttp))
+
+    qc = QuantizerConfig()
+    assert qc == deserialize(serialize(qc))
+
+    scqp = SingleConfigQuantizationPoint(pttp, qc, scopes_of_directly_quantized_operators=[scope])
+    assert scqp == deserialize(serialize(scqp))
+
+    scqs = SingleConfigQuantizerSetup()
+    scqs.quantization_points = {0: scqp, 1: scqp}
+    scqs.unified_scale_groups = {2: {0, 1}}
+    scqs.shared_input_operation_set_groups = {2: {0, 1}}
+    json_str = serialize(scqs)
+    print(json_str)
+    restored = deserialize(json_str)
+    assert scqs == restored

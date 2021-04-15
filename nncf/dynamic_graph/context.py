@@ -33,6 +33,7 @@ from nncf.dynamic_graph.graph import PTNNCFGraph, PTNNCFNode
 from nncf.dynamic_graph.graph import NNCFNode
 from nncf.dynamic_graph.trace_tensor import TensorMeta
 from nncf.dynamic_graph.version_agnostic_op_names import get_version_agnostic_name
+from nncf.json_serialization import register_serializable
 from nncf.layers import ITERATION_MODULES
 from nncf.dynamic_graph.graph import ModuleAttributes
 from nncf.utils import maybe_get_iterator
@@ -165,6 +166,7 @@ class ScopeElement:
         raise RuntimeError("Could not parse the scope element string")
 
 
+@register_serializable()
 class Scope:
     def __init__(self, scope_elements: List[ScopeElement] = None):
         if scope_elements is not None:
@@ -221,6 +223,13 @@ class Scope:
             if iter_scope in scope_name:
                 results.append(iter_scope)
         return results
+
+    def to_dict(self) -> Dict:
+        return {'scope': str(self)}
+
+    @staticmethod
+    def from_dict(json_dict: Dict) -> 'Scope':
+        return Scope.from_str(json_dict['scope'])
 
 
 class PreHookId:

@@ -1,4 +1,5 @@
 from typing import Callable
+from typing import Dict
 
 from nncf.common.graph.transformations.commands import TargetPoint
 from nncf.common.graph.transformations.commands import TargetType
@@ -6,8 +7,10 @@ from nncf.common.graph.transformations.commands import TransformationCommand
 from nncf.common.graph.transformations.commands import TransformationPriority
 from nncf.common.graph.transformations.commands import TransformationType
 from nncf.dynamic_graph.graph import InputAgnosticOperationExecutionContext
+from nncf.json_serialization import register_serializable
 
 
+@register_serializable()
 class PTTargetPoint(TargetPoint):
     _OPERATION_TYPES = [TargetType.PRE_LAYER_OPERATION,
                         TargetType.POST_LAYER_OPERATION,
@@ -53,6 +56,12 @@ class PTTargetPoint(TargetPoint):
 
     def __hash__(self):
         return hash(str(self))
+
+    def to_dict(self) -> Dict:
+        return {'target_type': self.target_type,
+                'ia_op_exec_context': self.ia_op_exec_context,
+                'module_scope': self.module_scope,
+                'input_port_id': self.input_port_id}
 
     # @classmethod
     # def from_str(cls, s: str):

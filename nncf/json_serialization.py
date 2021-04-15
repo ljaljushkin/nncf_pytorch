@@ -2,6 +2,8 @@ import inspect
 import json
 
 
+
+
 class Encoder(json.JSONEncoder):
     def default(self, obj):
         """ serialize an arbitrary object to json compatible one """
@@ -10,11 +12,10 @@ class Encoder(json.JSONEncoder):
         if registered_name is not None:
             return {'class_name': registered_name, 'dict': obj.to_dict()}
         if isinstance(obj, set):
-            return {'class_name': '__set__', 'items': list(obj)}
+            return {'class_name': '__set__', 'data': list(obj)}
         if isinstance(obj, tuple):
-            return {'class_name': '__tuple__', 'items': obj}
-        # if isinstance(obj, enum.Enum):
-        #     return obj.value
+            return {'class_name': '__tuple__', 'data': obj}
+
         # call default encoder for other types of objects, will throw an error if it's not JSON-serializable
         return json.JSONEncoder.default(self, obj)
 
@@ -27,16 +28,18 @@ def _decode_helper(obj):
     # TODO: expect dict always?
     if isinstance(obj, dict) and 'class_name' in obj:
         if obj['class_name'] == '__set__':
-            return set(obj['items'])
+            return set(obj['data'])
         elif obj['class_name'] == '__tuple__':
-            return tuple(obj['items'])
+            return tuple(obj['data'])
         elif 'dict' in obj:
             class_name = obj['class_name']
             json_dict = obj['dict']
             cls = get_registered_class(class_name)
             if cls is None:
                 raise ValueError('Unknown class for deserialization: {}'.format(class_name))
-            return cls.from_dict(json_dict)
+            if hasattr(cls, 'from_dict'):
+                return cls.from_dict(json_dict)
+            return cls(**json_dict)
         else:
             raise ValueError('Unexpected format!')
             pass
@@ -47,11 +50,9 @@ def _decode_helper(obj):
 def deserialize(json_string):
     obj_repr = json.loads(json_string, object_hook=_decode_helper)
     return obj_repr
-    # obj = deserialize(obj_repr)
-    # return obj
+
 
 # TODO: combine all methods to class
-
 SERIALIZABLE_CLASSES = {}
 SERIALIZABLE_CLASS_NAMES = {}
 
@@ -70,9 +71,8 @@ def register_serializable(name=None, prefix='PT'):
             raise ValueError('%s has already been registered to %s' %
                              (registered_name, SERIALIZABLE_CLASS_NAMES[cls]))
 
-        if inspect.isclass(cls) and (not hasattr(cls, 'from_dict') or not hasattr(cls, 'to_dict')):
-            raise ValueError(
-                'Cannot register a class that does not have a from_dict() and to_dict() method.')
+        if inspect.isclass(cls) and not hasattr(cls, 'to_dict'):
+            raise ValueError('Cannot register a class ({}) that does not have to_dict() method.'.format(class_name))
 
         SERIALIZABLE_CLASS_NAMES[cls] = registered_name
         SERIALIZABLE_CLASSES[registered_name] = cls
