@@ -6,14 +6,14 @@ PAD = 0
 
 class Seq2Seq(nn.Module):
     """
-    Generic Seq2Seq module, with an encoder and a decoder.
+    Generic Seq2Seq module, with an _encoder and a decoder.
     """
 
     def __init__(self, encoder=None, decoder=None, batch_first=False):
         """
         Constructor for the Seq2Seq module.
 
-        :param encoder: encoder module
+        :param encoder: _encoder module
         :param decoder: decoder module
         :param batch_first: if True the model uses (batch, seq, feature)
             tensors, if false the model uses (seq, batch, feature) tensors
@@ -25,7 +25,7 @@ class Seq2Seq(nn.Module):
 
     def encode(self, inputs, lengths):
         """
-        Applies the encoder to inputs with a given input sequence lengths.
+        Applies the _encoder to inputs with a given input sequence lengths.
 
         :param inputs: tensor with inputs (batch, seq_len) if 'batch_first'
             else (seq_len, batch)
@@ -35,11 +35,11 @@ class Seq2Seq(nn.Module):
 
     def decode(self, inputs, context, inference=False):
         """
-        Applies the decoder to inputs, given the context from the encoder.
+        Applies the decoder to inputs, given the context from the _encoder.
 
         :param inputs: tensor with inputs (batch, seq_len) if 'batch_first'
             else (seq_len, batch)
-        :param context: context from the encoder
+        :param context: context from the _encoder
         :param inference: if True inference mode, if False training mode
         """
         return self.decoder(inputs, context, inference)
@@ -51,7 +51,7 @@ class Seq2Seq(nn.Module):
         inference with beam search decoding.
 
         :param inputs: tensor with inputs to the decoder
-        :param context: context from the encoder
+        :param context: context from the _encoder
         :param beam_size: beam size for the generator
 
         returns: (words, logprobs, scores, new_context)

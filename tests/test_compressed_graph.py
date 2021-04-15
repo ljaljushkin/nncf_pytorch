@@ -384,7 +384,7 @@ def test_gnmt_quantization(_case_config):
         }
     ]
     config["compression"].update({
-        "ignored_scopes": ["GNMT/ResidualRecurrentEncoder[encoder]/Embedding[embedder]",
+        "ignored_scopes": ["GNMT/ResidualRecurrentEncoder[_encoder]/Embedding[embedder]",
                            "GNMT/ResidualRecurrentDecoder[decoder]/Embedding[embedder]"]})
 
     compressed_model = NNCFNetwork(model,

@@ -505,7 +505,7 @@ class ENet(nn.Module):
     Keyword arguments:
     - num_classes (int): the number of classes to segment.
     - encoder_relu (bool, optional): When ``True`` ReLU is used as the
-    activation function in the encoder blocks/layers; otherwise, PReLU
+    activation function in the _encoder blocks/layers; otherwise, PReLU
     is used. Default: False.
     - decoder_relu (bool, optional): When ``True`` ReLU is used as the
     activation function in the decoder blocks/layers; otherwise, PReLU
@@ -518,7 +518,7 @@ class ENet(nn.Module):
 
         self.initial_block = InitialBlock(3, 16, padding=1, relu=encoder_relu)
 
-        # Stage 1 - Encoder
+        # Stage 1 - _Encoder
         self.downsample1_0 = DownsamplingBottleneck(
             16,
             64,
@@ -535,7 +535,7 @@ class ENet(nn.Module):
         self.regular1_4 = RegularBottleneck(
             64, padding=1, dropout_prob=0.01, relu=encoder_relu)
 
-        # Stage 2 - Encoder
+        # Stage 2 - _Encoder
         self.downsample2_0 = DownsamplingBottleneck(
             64,
             128,
@@ -570,7 +570,7 @@ class ENet(nn.Module):
         self.dilated2_8 = RegularBottleneck(
             128, dilation=16, padding=16, dropout_prob=0.1, relu=encoder_relu)
 
-        # Stage 3 - Encoder
+        # Stage 3 - _Encoder
         self.regular3_0 = RegularBottleneck(
             128, padding=1, dropout_prob=0.1, relu=encoder_relu)
         self.dilated3_1 = RegularBottleneck(
@@ -624,14 +624,14 @@ class ENet(nn.Module):
         # Initial block
         x = self.initial_block(x)
 
-        # Stage 1 - Encoder
+        # Stage 1 - _Encoder
         x, max_indices1_0 = self.downsample1_0(x)
         x = self.regular1_1(x)
         x = self.regular1_2(x)
         x = self.regular1_3(x)
         x = self.regular1_4(x)
 
-        # Stage 2 - Encoder
+        # Stage 2 - _Encoder
         x, max_indices2_0 = self.downsample2_0(x)
         x = self.regular2_1(x)
         x = self.dilated2_2(x)
@@ -642,7 +642,7 @@ class ENet(nn.Module):
         x = self.asymmetric2_7(x)
         x = self.dilated2_8(x)
 
-        # Stage 3 - Encoder
+        # Stage 3 - _Encoder
         x = self.regular3_0(x)
         x = self.dilated3_1(x)
         x = self.asymmetric3_2(x)

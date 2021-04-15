@@ -34,7 +34,7 @@ from nncf.dynamic_graph.graph_matching import get_edge_boundaries
 from nncf.dynamic_graph.graph_matching import search_all
 from nncf.dynamic_graph.trace_tensor import TensorMeta
 from nncf.dynamic_graph.trace_tensor import TracedTensor
-from nncf.json_serialization import register_serializable
+from nncf.json_serialization import PT_SERIALIZABLE_CLASSES
 from nncf.layers import ITERATION_MODULES
 # pylint: disable=too-many-public-methods
 
@@ -96,7 +96,7 @@ class DefaultInputsMatcher(InputsMatcher):
         return True
 
 
-@register_serializable()
+@PT_SERIALIZABLE_CLASSES.register()
 class InputAgnosticOperationExecutionContext:
     def __init__(self, operator_name: str, scope_in_model: 'Scope', call_order: int):
         self.operator_name = operator_name

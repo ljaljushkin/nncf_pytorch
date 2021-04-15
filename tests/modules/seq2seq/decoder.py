@@ -19,7 +19,7 @@ class RecurrentAttention(nn.Module):
         Constructor for the RecurrentAttention.
 
         :param input_size: number of features in input tensor
-        :param context_size: number of features in output from encoder
+        :param context_size: number of features in output from _encoder
         :param hidden_size: internal hidden size
         :param num_layers: number of layers in LSTM
         :param batch_first: if True the model uses (batch,seq,feature) tensors,
@@ -44,8 +44,8 @@ class RecurrentAttention(nn.Module):
 
         :param inputs: tensor with inputs
         :param hidden: hidden state for LSTM layer
-        :param context: context tensor from encoder
-        :param context_len: vector of encoder sequence lengths
+        :param context: context tensor from _encoder
+        :param context_len: vector of _encoder sequence lengths
 
         :returns (rnn_outputs, hidden, attn_output, attn_scores)
         """
@@ -188,7 +188,7 @@ class ResidualRecurrentDecoder(nn.Module):
         Execute the decoder.
 
         :param inputs: tensor with inputs to the decoder
-        :param context: state of encoder, encoder sequence lengths and hidden
+        :param context: state of _encoder, _encoder sequence lengths and hidden
             state of decoder's LSTM layers
         :param inference: if True stores and repackages hidden state
         """

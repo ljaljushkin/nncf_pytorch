@@ -12,7 +12,7 @@ from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.common.utils.registry import Registry
 from nncf.dynamic_graph.transformations.commands import PTTargetPoint
-from nncf.json_serialization import register_serializable
+from nncf.json_serialization import PT_SERIALIZABLE_CLASSES
 from nncf.nncf_network import NNCFNetwork
 from nncf.quantization.layers import QuantizerConfig
 from nncf.tensor_statistics.collectors import ReductionShape
@@ -44,7 +44,7 @@ class QuantizationPointBase:
         return self.__dict__ == other.__dict__
 
 
-@register_serializable()
+@PT_SERIALIZABLE_CLASSES.register()
 class SingleConfigQuantizationPoint(QuantizationPointBase):
     # TODO: can it be avoided?
     # @staticmethod
@@ -244,7 +244,7 @@ BUILDER_STATES = Registry('states', add_name_as_attr=True)
 
 
 @BUILDER_STATES.register('quantization')
-@register_serializable()
+@PT_SERIALIZABLE_CLASSES.register()
 class SingleConfigQuantizerSetup(QuantizerSetupBase):
     def __init__(self):
         super().__init__()

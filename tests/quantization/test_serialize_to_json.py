@@ -13,9 +13,8 @@ from nncf.common.quantization.structs import QuantizerConfig
 from nncf.dynamic_graph.context import Scope
 from nncf.dynamic_graph.graph import InputAgnosticOperationExecutionContext
 from nncf.dynamic_graph.transformations.commands import PTTargetPoint
-# from nncf.json_serialization import JSONSerializable
-from nncf.json_serialization import deserialize
-from nncf.json_serialization import serialize
+from nncf.json_serialization import JSONSerializer
+from nncf.json_serialization import PT_SERIALIZABLE_CLASSES
 from nncf.quantization.quantizer_setup import SingleConfigQuantizationPoint
 from nncf.quantization.quantizer_setup import SingleConfigQuantizerSetup
 from tests.helpers import MockModel
@@ -59,10 +58,10 @@ def test_json_dump(tmp_path):
 
     with open(tmp_path / 'data.json', 'w') as fw:
         # if 0:
-        #     json.dump(scqs, fw, cls=Encoder, sort_keys=True, indent=4)
+        #     json.dump(scqs, fw, cls=_Encoder, sort_keys=True, indent=4)
         #     json.dump(scqs, fw)
         # elif 0:
-        #     scqs_str = json.dumps(scqs, sort_keys=True, indent=4, cls=Encoder)
+        #     scqs_str = json.dumps(scqs, sort_keys=True, indent=4, cls=_Encoder)
         #     print(scqs_str)
         #     fw.write(scqs_str)
         # else:
@@ -145,33 +144,31 @@ def test_enum():
 
 
 def test_setup():
+    s = JSONSerializer(PT_SERIALIZABLE_CLASSES)
     target_type = TargetType.OPERATOR_POST_HOOK
-    assert target_type == deserialize(serialize(target_type))
+    assert target_type == s.deserialize(s.serialize(target_type))
 
     scope = Scope.from_str('MyConv/1[2]/3[4]/5')
-    assert scope == deserialize(serialize(scope))
+    assert scope == s.deserialize(s.serialize(scope))
 
     ia_op_exec_context = InputAgnosticOperationExecutionContext(operator_name='MyConv',
                                                                 scope_in_model=scope,
                                                                 call_order=1)
-    assert ia_op_exec_context == deserialize(serialize(ia_op_exec_context))
+    assert ia_op_exec_context == s.deserialize(s.serialize(ia_op_exec_context))
 
     pttp = PTTargetPoint(target_type,
                          ia_op_exec_context=ia_op_exec_context,
                          input_port_id=7)
-    assert pttp == deserialize(serialize(pttp))
+    assert pttp == s.deserialize(s.serialize(pttp))
 
     qc = QuantizerConfig()
-    assert qc == deserialize(serialize(qc))
+    assert qc == s.deserialize(s.serialize(qc))
 
     scqp = SingleConfigQuantizationPoint(pttp, qc, scopes_of_directly_quantized_operators=[scope])
-    assert scqp == deserialize(serialize(scqp))
+    assert scqp == s.deserialize(s.serialize(scqp))
 
     scqs = SingleConfigQuantizerSetup()
     scqs.quantization_points = {0: scqp, 1: scqp}
     scqs.unified_scale_groups = {2: {0, 1}}
     scqs.shared_input_operation_set_groups = {2: {0, 1}}
-    json_str = serialize(scqs)
-    print(json_str)
-    restored = deserialize(json_str)
-    assert scqs == restored
+    assert scqs == s.deserialize(s.serialize(scqs))

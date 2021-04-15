@@ -26,7 +26,10 @@ from nncf.compression_method_api import PTCompressionAlgorithmController
 from nncf.compression_method_api import PTCompressionLoss
 from nncf.dynamic_graph.transformations.layout import PTTransformationLayout
 from nncf.hw_config import HWConfigType, HW_CONFIG_TYPE_TARGET_DEVICE_MAP
-from nncf.json_serialization import register_serializable
+from nncf.json_serialization import COMMON_SERIALIZABLE_CLASSES
+from nncf.json_serialization import CommonSerializableClasses
+from nncf.json_serialization import PT_SERIALIZABLE_CLASSES
+from nncf.json_serialization import TF_SERIALIZABLE_CLASSES
 from nncf.nncf_network import NNCFNetwork
 from nncf.nncf_network import PTModelTransformer
 from nncf.pruning.base_algo import BasePruningAlgoController
@@ -49,9 +52,9 @@ class CompositeControllerState():
     pass
 
 
-# TODO: should be config
-# @register_serializable()
-class CompositeBuilderState():
+# TODO: should be config as well
+@COMMON_SERIALIZABLE_CLASSES.register()
+class CompositeBuilderState:
     def __init__(self, algo_name_vs_state_map):
         self.algo_name_vs_state_map = algo_name_vs_state_map
 

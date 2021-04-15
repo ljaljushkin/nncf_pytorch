@@ -2,98 +2,113 @@ import inspect
 import json
 
 
+class SerializableClassesRegistry:
+    def __init__(self):
+        self._serializable_classes = {}
+        self._serializable_class_names = {}
+
+    def register(self, name=None):
+        def decorator(cls):
+            class_name = name if name is not None else cls.__name__
+
+            if class_name in self._serializable_class_names:
+                raise ValueError(
+                    '%s has already been registered to %s'.format(class_name, self._serializable_classes[class_name]))
+
+            if cls in self._serializable_class_names:
+                raise ValueError('%s has already been registered to %s' %
+                                 (class_name, self._serializable_class_names[cls]))
+
+            if inspect.isclass(cls) and not hasattr(cls, 'to_dict'):
+                raise ValueError('Cannot register a class ({}) that does not have to_dict() method.'.format(class_name))
+
+            self._serializable_class_names[cls] = class_name
+            self._serializable_classes[class_name] = cls
+
+            return cls
+
+        return decorator
+
+    def get_registered_class(self, class_name):
+        result = None
+        if class_name in self._serializable_classes:
+            result = self._serializable_classes[class_name]
+        return result
+
+    def get_registered_class_name(self, serializable_cls):
+        result = None
+        if serializable_cls in self._serializable_class_names:
+            result = self._serializable_class_names[serializable_cls]
+        return result
 
 
-class Encoder(json.JSONEncoder):
-    def default(self, obj):
-        """ serialize an arbitrary object to json compatible one """
-        cls = obj.__class__
-        registered_name = get_registered_class_name(cls)
-        if registered_name is not None:
-            return {'class_name': registered_name, 'dict': obj.to_dict()}
-        if isinstance(obj, set):
-            return {'class_name': '__set__', 'data': list(obj)}
-        if isinstance(obj, tuple):
-            return {'class_name': '__tuple__', 'data': obj}
-
-        # call default encoder for other types of objects, will throw an error if it's not JSON-serializable
-        return json.JSONEncoder.default(self, obj)
+class CommonSerializableClasses:
+    @staticmethod
+    def register(name=None):
+        return TF_SERIALIZABLE_CLASSES.register(name)(PT_SERIALIZABLE_CLASSES.register(name))
 
 
-def serialize(obj) -> str:
-    return json.dumps(obj, sort_keys=True, indent=4, cls=Encoder)
+COMMON_SERIALIZABLE_CLASSES = CommonSerializableClasses
+
+PT_SERIALIZABLE_CLASSES = SerializableClassesRegistry()
+TF_SERIALIZABLE_CLASSES = SerializableClassesRegistry()
 
 
-def _decode_helper(obj):
-    # TODO: expect dict always?
-    if isinstance(obj, dict) and 'class_name' in obj:
-        if obj['class_name'] == '__set__':
-            return set(obj['data'])
-        elif obj['class_name'] == '__tuple__':
-            return tuple(obj['data'])
-        elif 'dict' in obj:
-            class_name = obj['class_name']
-            json_dict = obj['dict']
-            cls = get_registered_class(class_name)
-            if cls is None:
-                raise ValueError('Unknown class for deserialization: {}'.format(class_name))
-            if hasattr(cls, 'from_dict'):
-                return cls.from_dict(json_dict)
-            return cls(**json_dict)
-        else:
-            raise ValueError('Unexpected format!')
-            pass
+class JSONSerializer:
+    def __init__(self, serializable_classes: SerializableClassesRegistry):
+        self._serializable_classes = serializable_classes
+        self._encoder = self._Encoder(serializable_classes, indent=4, sort_keys=True)
+        self._decoder = self._Decoder(serializable_classes)
 
-    return obj
+    def serialize(self, obj) -> str:
+        return self._encoder.encode(obj)
 
+    def deserialize(self, json_string):
+        return self._decoder.decode(json_string)
 
-def deserialize(json_string):
-    obj_repr = json.loads(json_string, object_hook=_decode_helper)
-    return obj_repr
+    class _Decoder(json.JSONDecoder):
+        def __init__(self, serializable_classes: SerializableClassesRegistry, *args, **kwargs):
+            super().__init__(object_hook=self._object_hook, *args, **kwargs)
+            self._serializable_classes = serializable_classes
 
+        def _object_hook(self, obj):
+            # TODO: expect dict always?
+            if isinstance(obj, dict) and 'class_name' in obj:
+                if obj['class_name'] == '__set__':
+                    return set(obj['data'])
+                elif obj['class_name'] == '__tuple__':
+                    return tuple(obj['data'])
+                elif 'dict' in obj:
+                    class_name = obj['class_name']
+                    json_dict = obj['dict']
+                    serializable_cls = self._serializable_classes.get_registered_class(class_name)
+                    if serializable_cls is None:
+                        raise ValueError('Unknown class for deserialization: {}'.format(class_name))
+                    if hasattr(serializable_cls, 'from_dict'):
+                        return serializable_cls.from_dict(json_dict)
+                    return serializable_cls(**json_dict)
+                else:
+                    raise ValueError('Unexpected format!')
+            return obj
 
-# TODO: combine all methods to class
-SERIALIZABLE_CLASSES = {}
-SERIALIZABLE_CLASS_NAMES = {}
+    class _Encoder(json.JSONEncoder):
+        def __init__(self, serializable_classes: SerializableClassesRegistry, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._serializable_classes = serializable_classes
 
+        def default(self, obj):
+            """ serialize an arbitrary object to json compatible one """
+            cls = obj.__class__
+            registered_name = self._serializable_classes.get_registered_class_name(cls)
+            if registered_name is not None:
+                return {'class_name': registered_name, 'dict': obj.to_dict()}
+            if isinstance(obj, set):
+                return {'class_name': '__set__', 'data': list(obj)}
+            if isinstance(obj, tuple):
+                return {'class_name': '__tuple__', 'data': obj}
 
-def register_serializable(name=None, prefix='PT'):
-    def decorator(cls):
-        class_name = name if name is not None else cls.__name__
-        registered_name = prefix + ':' + class_name
-
-        if registered_name in SERIALIZABLE_CLASSES:
-            raise ValueError(
-                '%s has already been registered to %s' %
-                (registered_name, SERIALIZABLE_CLASSES[registered_name]))
-
-        if cls in SERIALIZABLE_CLASS_NAMES:
-            raise ValueError('%s has already been registered to %s' %
-                             (registered_name, SERIALIZABLE_CLASS_NAMES[cls]))
-
-        if inspect.isclass(cls) and not hasattr(cls, 'to_dict'):
-            raise ValueError('Cannot register a class ({}) that does not have to_dict() method.'.format(class_name))
-
-        SERIALIZABLE_CLASS_NAMES[cls] = registered_name
-        SERIALIZABLE_CLASSES[registered_name] = cls
-
-        return cls
-
-    return decorator
-
-
-def get_registered_class(class_name):
-    result = None
-    if class_name in SERIALIZABLE_CLASSES:
-        result = SERIALIZABLE_CLASSES[class_name]
-    return result
-
-
-def get_registered_class_name(cls):
-    result = None
-    if cls in SERIALIZABLE_CLASS_NAMES:
-        result = SERIALIZABLE_CLASS_NAMES[cls]
-    return result
+            # call default _encoder for other types of objects, will throw an error if it's not JSON-serializable
+            return json.JSONEncoder.default(self, obj)
 
 # def deserialize(obj_repr):
 #     if (not isinstance(obj_repr, dict)) or ('class_name' not in obj_repr) or ('dict' not in obj_repr):

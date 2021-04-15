@@ -17,12 +17,12 @@ class GNMT(Seq2Seq):
 
         :param vocab_size: size of vocabulary (number of tokens)
         :param hidden_size: internal hidden size of the model
-        :param num_layers: number of layers, applies to both encoder and
+        :param num_layers: number of layers, applies to both _encoder and
             decoder
-        :param dropout: probability of dropout (in encoder and decoder)
+        :param dropout: probability of dropout (in _encoder and decoder)
         :param batch_first: if True the model uses (batch,seq,feature) tensors,
             if false the model uses (seq, batch, feature)
-        :param share_embedding: if True embeddings are shared between encoder
+        :param share_embedding: if True embeddings are shared between _encoder
             and decoder
         """
 

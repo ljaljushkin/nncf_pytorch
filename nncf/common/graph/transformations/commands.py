@@ -15,7 +15,7 @@ from typing import Any
 from typing import Dict
 
 from nncf.common.utils.ordered_enum import OrderedEnum
-from nncf.json_serialization import register_serializable
+from nncf.json_serialization import PT_SERIALIZABLE_CLASSES
 
 
 class TransformationPriority(OrderedEnum):
@@ -41,7 +41,7 @@ class TransformationPriority(OrderedEnum):
     QUANTIZATION_PRIORITY = 11
 
 
-@register_serializable()
+@PT_SERIALIZABLE_CLASSES.register()
 class TargetType(OrderedEnum):
     """
     Describes the types of locations in the model that can be modified using NNCF

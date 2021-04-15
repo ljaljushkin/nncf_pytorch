@@ -7,10 +7,10 @@ from nncf.common.graph.transformations.commands import TransformationCommand
 from nncf.common.graph.transformations.commands import TransformationPriority
 from nncf.common.graph.transformations.commands import TransformationType
 from nncf.dynamic_graph.graph import InputAgnosticOperationExecutionContext
-from nncf.json_serialization import register_serializable
+from nncf.json_serialization import PT_SERIALIZABLE_CLASSES
 
 
-@register_serializable()
+@PT_SERIALIZABLE_CLASSES.register()
 class PTTargetPoint(TargetPoint):
     _OPERATION_TYPES = [TargetType.PRE_LAYER_OPERATION,
                         TargetType.POST_LAYER_OPERATION,

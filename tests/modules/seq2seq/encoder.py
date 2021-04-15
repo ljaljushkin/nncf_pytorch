@@ -7,7 +7,7 @@ from tests.modules.seq2seq.seq2seq_base import PAD
 
 class ResidualRecurrentEncoder(nn.Module):
     """
-    Encoder with Embedding, LSTM layers, residual connections and optional
+    _Encoder with Embedding, LSTM layers, residual connections and optional
     dropout.
 
     The first LSTM layer is bidirectional and uses variable sequence length
@@ -62,7 +62,7 @@ class ResidualRecurrentEncoder(nn.Module):
 
     def forward(self, inputs, lengths):
         """
-        Execute the encoder.
+        Execute the _encoder.
 
         :param inputs: tensor with indices from the vocabulary
         :param lengths: vector with sequence lengths (excluding padding)

@@ -3,7 +3,7 @@ from copy import deepcopy
 from enum import Enum
 from typing import Dict, List, Optional
 
-from nncf.json_serialization import register_serializable
+from nncf.json_serialization import PT_SERIALIZABLE_CLASSES
 
 
 class QuantizationMode:
@@ -11,7 +11,7 @@ class QuantizationMode:
     ASYMMETRIC = "asymmetric"
 
 
-@register_serializable()
+@PT_SERIALIZABLE_CLASSES.register()
 class QuantizerConfig:
     """
     A generic, framework-agnostic information on a configuration of a quantizer for abstract reasoning
