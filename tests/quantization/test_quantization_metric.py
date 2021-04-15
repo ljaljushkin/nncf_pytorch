@@ -79,7 +79,7 @@ NETWORK_QUANTIZATION_SHARE_METRIC_TEST_CASES = [
 def network_quantization_share_metric_test_struct(request):
     return request.param
 
-# pylint: disable=redefined-outer-name
+# pylint: disable=redefined-outer-reg_name
 def test_network_quantization_share_metric(network_quantization_share_metric_test_struct):
     config = get_basic_quantization_config()
     config['compression']['initializer'].update(network_quantization_share_metric_test_struct.initializers)
@@ -140,7 +140,7 @@ MEMORY_COST_METRIC_TEST_CASES = [
 def memory_cost_metric_test_struct(request):
     return request.param
 
-# pylint: disable=redefined-outer-name
+# pylint: disable=redefined-outer-reg_name
 def test_memory_cost_metric(memory_cost_metric_test_struct):
     config = get_basic_quantization_config()
     config['compression']['initializer'].update(memory_cost_metric_test_struct.initializers)
@@ -182,7 +182,7 @@ SHARE_EDGES_QUANTIZED_DATA_PATH_TEST_CASES = [
 def share_edges_quantized_data_path_test_struct(request):
     return request.param
 
-# pylint: disable=redefined-outer-name
+# pylint: disable=redefined-outer-reg_name
 def test_share_edges_quantized_data_path(share_edges_quantized_data_path_test_struct):
     config = get_basic_quantization_config()
     config['compression']["ignored_scopes"] = share_edges_quantized_data_path_test_struct.ignored_scopes

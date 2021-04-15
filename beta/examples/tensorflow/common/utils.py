@@ -102,7 +102,7 @@ def configure_logging(sample_logger, config):
     sample_logger.addHandler(training_pipeline_log_file_handler)
 
     nncf_log_file_handler = logging.FileHandler(osp.join(config.log_dir, NNCF_LOG_FILE_NAME))
-    nncf_log_file_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    nncf_log_file_handler.setFormatter(logging.Formatter("%(levelname)s:%(reg_name)s:%(message)s"))
     nncf_logger.addHandler(nncf_log_file_handler)
 
 
@@ -154,7 +154,7 @@ class SummaryWriter:
 
         Arguments:
             log_dir: the model folder path
-            name: the summary subfolder name
+            name: the summary subfolder reg_name
         """
         self.writer = tf.summary.create_file_writer(os.path.join(log_dir, name)) # pylint: disable=E1101
 

@@ -25,7 +25,7 @@ YOLOV4_CONFIG = SampleConfig({
     "model_params": {
         "architecture": {
             "backbone": {
-                "name": "darknet"
+                "reg_name": "darknet"
             },
         },
         "num_classes": 80,

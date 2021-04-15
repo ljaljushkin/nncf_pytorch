@@ -113,15 +113,18 @@ class InputAgnosticOperationExecutionContext:
     def __hash__(self):
         return hash((self.operator_name, self.scope_in_model, self.call_order))
 
-    @staticmethod
-    def from_str(s: str):
-        scope_and_op, _, call_order_str = s.rpartition('_')
-        scope_str, _, op_name = scope_and_op.rpartition('/')
+    @classmethod
+    def from_str(cls, s: str):
+        try:
+            scope_and_op, _, call_order_str = s.rpartition('_')
+            scope_str, _, op_name = scope_and_op.rpartition('/')
 
-        from nncf.dynamic_graph.context import Scope
-        return InputAgnosticOperationExecutionContext(op_name,
-                                                      Scope.from_str(scope_str),
-                                                      int(call_order_str))
+            from nncf.dynamic_graph.context import Scope
+            return InputAgnosticOperationExecutionContext(op_name,
+                                                          Scope.from_str(scope_str),
+                                                          int(call_order_str))
+        except Exception as ex:
+            raise RuntimeError('Failed to decode {} from str'.format(cls.__name__)) from ex
 
 
 class OperationExecutionContext:
@@ -521,7 +524,7 @@ class PTNNCFGraph(NNCFGraph):
                                            module_attrs)
 
         from nncf.dynamic_graph.input_wrapping import MODEL_INPUT_OP_NAME, MODEL_OUTPUT_OP_NAME
-        if node.op_exec_context.operator_name == MODEL_INPUT_OP_NAME:  # TODO: refactorable model input node name
+        if node.op_exec_context.operator_name == MODEL_INPUT_OP_NAME:  # TODO: refactorable model input node reg_name
             self._input_nncf_nodes.append(node)
 
         if node.op_exec_context.operator_name == MODEL_OUTPUT_OP_NAME:

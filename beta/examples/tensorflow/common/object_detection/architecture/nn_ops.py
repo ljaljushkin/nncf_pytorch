@@ -42,7 +42,7 @@ class NormActivation(tf.keras.layers.Layer):
             the batch normalization layer.
           activation: 'string', the type of the activation layer. Currently support
             `relu` and `swish`.
-          name: `str` name for the operation.
+          name: `str` reg_name for the operation.
         """
         super().__init__(trainable=trainable)
 

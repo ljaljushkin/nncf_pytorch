@@ -24,29 +24,11 @@ import torch
 from nncf.common.utils.logger import logger as nncf_logger
 
 
-def load_state(model: torch.nn.Module, state_dict_to_load: dict, is_resume: bool = False) -> int:
-    """
-    Used to load a checkpoint containing a compressed model into an NNCFNetwork object, but can
-    be used for any PyTorch module as well. Will do matching of state_dict_to_load parameters to
-    the model's state_dict parameters while discarding irrelevant prefixes added during wrapping
-    in NNCFNetwork or DataParallel/DistributedDataParallel objects, and load the matched parameters
-    from the state_dict_to_load into the model's state dict.
-    :param model: The target module for the state_dict_to_load to be loaded to.
-    :param state_dict_to_load: A state dict containing the parameters to be loaded into the model.
-    :param is_resume: Determines the behavior when the function cannot do a successful parameter match
-    when loading. If True, the function will raise an exception if it cannot match the state_dict_to_load
-    parameters to the model's parameters (i.e. if some parameters required by model are missing in
-    state_dict_to_load, or if state_dict_to_load has parameters that could not be matched to model parameters,
-    or if the shape of parameters is not matching). If False, the exception won't be raised.
-    Usually is_resume is specified as False when loading uncompressed model's weights into the model with
-    compression algorithms already applied, and as True when loading a compressed model's weights into the model
-    with compression algorithms applied to evaluate the model.
-    :return: The number of state_dict_to_load entries successfully matched and loaded into model.
-    """
-
-    if 'state_dict' in state_dict_to_load:
-        state_dict_to_load = state_dict_to_load['state_dict']
-    model_state_dict = model.state_dict()
+def load_state(model: torch.nn.Module, state_dict_to_load: dict, is_resume: bool = False,
+               state_dict_to_match: dict = None) -> int:
+    model_state_dict = state_dict_to_match
+    if state_dict_to_match is None:
+        model_state_dict = model.state_dict()
 
     key_matcher = KeyMatcher(is_resume, state_dict_to_load, model_state_dict)
     new_dict = key_matcher.run()

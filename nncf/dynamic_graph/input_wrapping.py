@@ -91,7 +91,7 @@ class InputInfoWrapManager:
         return bound_model_params.args, bound_model_params.kwargs
 
 
-# Access via _original op because by this moment the nncf_model_input name will already be wrapped by wrap_operator
+# Access via _original op because by this moment the nncf_model_input reg_name will already be wrapped by wrap_operator
 # and its __name__ attribute changed correspondingly.
 # pylint:disable=protected-access
 MODEL_INPUT_OP_NAME = nncf_model_input._original_op.__name__

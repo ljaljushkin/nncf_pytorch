@@ -10,6 +10,9 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
+from typing import Any
+from typing import Union
+
 import functools
 import inspect
 import operator
@@ -25,6 +28,8 @@ from typing import TypeVar
 
 import networkx as nx
 import torch
+
+# from nncf.composite_compression import CompositeBuilderState
 from nncf.dynamic_graph.trace_tensor import TracedTensor
 
 from nncf.common.graph.graph import NNCFGraph
@@ -389,6 +394,11 @@ class PTInsertionPoint:
 
 @ignore_scope
 class NNCFNetwork(nn.Module, PostGraphBuildActing):
+    def state_dict(self, destination=None, prefix='', keep_vars=False) -> Dict[str, Union[torch.Tensor, Any]]:
+        return {'model_state': super().state_dict(),
+                'builder_state': self.composite_builder_state.serialize(),
+                'controller_state': self.composite_controller_state.serialize()}
+
     def __init__(self, module, input_infos: List[ModelInputInfo],
                  dummy_forward_fn=None, wrap_inputs_fn=None, scopes_without_shape_matching=None,
                  ignored_scopes=None, target_scopes=None, reset: bool = False, wrap_outputs_fn=None):
@@ -457,6 +467,10 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
             self._compressed_context.add_node_comparators(scopes_without_shape_matching,
                                                           ShapeIgnoringTensorMetaComparator())
         self._load_listener = None
+        self.composite_builder_state = None  # type: CompositeBuilderState
+        self.composite_controller_state = None  # type: CompositeControllerState
+
+
 
     @debuggable_forward
     def forward(self, *args, **kwargs):

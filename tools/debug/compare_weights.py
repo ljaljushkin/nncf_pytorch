@@ -26,8 +26,8 @@ from tools.debug.common import save_dump, register_print_hooks, load_torch_model
 
 
 argparser = argparse.ArgumentParser()
-argparser.add_argument("-m", "--model", help="input IR name", required=True)
-argparser.add_argument("--bin", help="Input *.bin file name")
+argparser.add_argument("-m", "--model", help="input IR reg_name", required=True)
+argparser.add_argument("--bin", help="Input *.bin file reg_name")
 argparser.add_argument("-o", "--output-dir", help="Output directory to dump weights", required=True)
 argparser.add_argument("-c", "--config", type=str, default='config.json', help="Model's config", required=True)
 argparser.add_argument("-n", "--num-layers", type=int, default=-1,
@@ -113,9 +113,9 @@ def get_ignored_layers(model_xml, num_layers=1):
     ignored_layers = []
     all_supported = [l for l in ir_tree.iter("layer") if l.get("type") == ("Convolution", "FullyConnected")]
     if num_layers > 0:
-        ignored_layers += [layer.get("name") for layer in all_supported[num_layers:]]
+        ignored_layers += [layer.get("reg_name") for layer in all_supported[num_layers:]]
     all_bns = [l for l in ir_tree.iter("layer") if l.get("type") == "ScaleShift"]
-    ignored_layers += [bn.get("name") for bn in all_bns]
+    ignored_layers += [bn.get("reg_name") for bn in all_bns]
     return ignored_layers
 
 

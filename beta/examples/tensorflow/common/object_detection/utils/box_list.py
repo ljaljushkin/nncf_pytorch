@@ -122,7 +122,7 @@ class BoxList:
         Updates the field of a box_list with a given value.
 
         Args:
-          field: (string) name of the field to set value.
+          field: (string) reg_name of the field to set value.
           value: the value to assign to the field.
 
         Raises:
@@ -136,7 +136,7 @@ class BoxList:
         """Computes the center coordinates, height and width of the boxes.
 
         Args:
-          scope: name scope of the function.
+          scope: reg_name scope of the function.
 
         Returns:
           a list of 4 1-D tensors [ycenter, xcenter, height, width].
@@ -156,7 +156,7 @@ class BoxList:
         """Transpose the coordinate representation in a boxlist.
 
         Args:
-          scope: name scope of the function.
+          scope: reg_name scope of the function.
         """
         if not scope:
             scope = 'transpose_coordinates'

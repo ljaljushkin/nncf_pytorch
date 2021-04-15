@@ -49,7 +49,7 @@ class CamVid(data.Dataset):
     # Images extension
     img_extension = '.png'
 
-    # Default encoding for pixel value, class name, and class color
+    # Default encoding for pixel value, class reg_name, and class color
     color_encoding = OrderedDict([
         ('sky', (128, 128, 128)),
         ('building', (128, 0, 0)),

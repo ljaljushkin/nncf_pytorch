@@ -1760,7 +1760,7 @@ class QuantizerPropagationSolver:
 
 
     def get_operator_quantization_traits_map(self) -> Dict[OperatorMetatype, QuantizationTrait]:
-        # TODO: ensure that there are no name collisions between ops in different torch subpackages with the same name
+        # TODO: ensure that there are no reg_name collisions between ops in different torch subpackages with the same reg_name
         retval = {}
         if self._hw_config is None:
             for op_meta in OPERATOR_METATYPES.registry_dict.values():
@@ -1788,7 +1788,7 @@ class QuantizerPropagationSolver:
     @staticmethod
     def _get_trait_for_op_meta_not_specified_in_hw_config(op_meta: OperatorMetatype) -> QuantizationTrait:
         if not op_meta.hw_config_names:
-            # The metatype might not have an associated name in the config
+            # The metatype might not have an associated reg_name in the config
             # namespace (yet) - use default trait
             for default_trait, meta_list in DEFAULT_QUANT_TRAIT_TO_OP_DICT.items():
                 if op_meta in meta_list:
@@ -1801,14 +1801,14 @@ class QuantizerPropagationSolver:
                 #                    "quantization trait and the HW config entry is not given for it - "
                 #                    "cannot determine how to quantize it!".format(op_meta))
         else:
-            # There IS a valid HW config name for the metatype, but it is deliberately not specified
+            # There IS a valid HW config reg_name for the metatype, but it is deliberately not specified
             # in the config, which means that it should execute in FP32
             trait = QuantizationTrait.NON_QUANTIZABLE
 
         return trait
 
     def _get_operator_qconfigs_map(self) -> Dict[OperatorMetatype, List[QuantizerConfig]]:
-        # TODO: ensure that there are no name collisions between ops in different torch subpackages with the same name
+        # TODO: ensure that there are no reg_name collisions between ops in different torch subpackages with the same reg_name
         retval = {}
         if self._hw_config is None:
             for op_meta in OPERATOR_METATYPES.registry_dict.values():

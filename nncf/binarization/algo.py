@@ -166,12 +166,12 @@ class BinarizationController(QuantizationControllerBase):
                 ops_bin += ops
 
         table = Texttable()
-        header = ["Layer name", "Layer type", "Binarized", "MAC count", "MAC share"]
+        header = ["Layer reg_name", "Layer type", "Binarized", "MAC count", "MAC share"]
         table_data = [header]
 
         for layer_name, (layer_type, ops, is_binarized) in ops_dict.items():
             drow = {h: 0 for h in header}
-            drow["Layer name"] = layer_name
+            drow["Layer reg_name"] = layer_name
             drow["Layer type"] = layer_type
             drow["Binarized"] = 'Y' if is_binarized else 'N'
             drow["MAC count"] = "{:.3f}G".format(ops * 1e-9)

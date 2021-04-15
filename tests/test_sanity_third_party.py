@@ -11,7 +11,7 @@
  limitations under the License.
 """
 
-# pylint:disable=no-name-in-module
+# pylint:disable=no-reg_name-in-module
 import os
 import pytest
 import sys
@@ -44,7 +44,7 @@ def temp_folder(tmp_path_factory):
             "venv": str(tmp_path_factory.mktemp("venv", False))}
 
 
-# pylint:disable=redefined-outer-name
+# pylint:disable=redefined-outer-reg_name
 class TestTransformers:
     @pytest.fixture(autouse=True)
     def setup(self, temp_folder):

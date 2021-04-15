@@ -36,7 +36,7 @@ def get_common_argument_parser():
         choices=['train', 'test'],
         default='train',
         help=("train: performs training and validation; test: tests the model"
-              "found in \"--save_dir\" with name \"--name\" on the validation split of \"--dataset\"; "))
+              "found in \"--save_dir\" with reg_name \"--reg_name\" on the validation split of \"--dataset\"; "))
 
     parser.add_argument('--metrics-dump', type=str, help='Name of metrics collecting .json file')
     model_init_mode = parser.add_mutually_exclusive_group()

@@ -262,6 +262,7 @@ class CompressionAlgorithmBuilder:
     """
 
     def __init__(self, config: NNCFConfig, should_init: bool = True):
+        self.state = None  # type: JSONSerializable
         """
         Initializes internal state of the compression algorithm builder
 

@@ -20,6 +20,6 @@ logger.propagate = False
 if not logger.hasHandlers():
     logger.setLevel(logging.INFO)
     hdl = logging.StreamHandler(stream=sys.stdout)
-    hdl.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    hdl.setFormatter(logging.Formatter("%(levelname)s:%(reg_name)s:%(message)s"))
     hdl.setLevel(logging.INFO)
     logger.addHandler(hdl)

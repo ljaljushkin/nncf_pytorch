@@ -649,7 +649,7 @@ def range_init_call_count_test_struct(request):
     return request.param
 
 
-# pylint:disable=redefined-outer-name
+# pylint:disable=redefined-outer-reg_name
 def test_per_layer_range_init_collectors_are_called_the_required_number_of_times(range_init_call_count_test_struct,
                                                                                  mocker):
     config = create_config()

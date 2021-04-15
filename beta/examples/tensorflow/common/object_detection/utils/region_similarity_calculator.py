@@ -22,7 +22,7 @@ def area(boxlist, scope=None):
 
     Args:
       boxlist: BoxList holding N boxes
-      scope: name scope.
+      scope: reg_name scope.
 
     Returns:
       a tensor with shape [N] representing box areas.
@@ -40,7 +40,7 @@ def intersection(boxlist1, boxlist2, scope=None):
     Args:
       boxlist1: BoxList holding N boxes
       boxlist2: BoxList holding M boxes
-      scope: name scope.
+      scope: reg_name scope.
 
     Returns:
       a tensor with shape [N, M] representing pairwise intersections
@@ -65,7 +65,7 @@ def iou(boxlist1, boxlist2, scope=None):
     Args:
       boxlist1: BoxList holding N boxes
       boxlist2: BoxList holding M boxes
-      scope: name scope.
+      scope: reg_name scope.
 
     Returns:
       a tensor with shape [N, M] representing pairwise iou scores.
@@ -99,7 +99,7 @@ class RegionSimilarityCalculator:
         Args:
           boxlist1: BoxList holding N boxes.
           boxlist2: BoxList holding M boxes.
-          scope: Op scope name. Defaults to 'Compare' if None.
+          scope: Op scope reg_name. Defaults to 'Compare' if None.
 
         Returns:
           a (float32) tensor of shape [N, M] with pairwise similarity score.

@@ -302,7 +302,7 @@ class TracingContext:
     def get_caller_context(self, operator_type: str) -> InputAgnosticOperationExecutionContext:
         """
         Designed to work in the following way - for each scope the context will track the number of the calls to the
-        operators with the name operator_type (call_order). The counter values are preserved until reset by a
+        operators with the reg_name operator_type (call_order). The counter values are preserved until reset by a
         corresponding member function of the context, which must be called after each model iteration - this is
         usually handled inside NNCF. This mechanism allows to discern between multiple function calls inside the same
         module that would each require their own instance of compression layers - for instance, multiple `relu`

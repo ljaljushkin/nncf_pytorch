@@ -16,6 +16,9 @@
 This package defines the API for the NNCF compression methods so that the user could
 extend the existing algorithms.
 """
+import json
+from typing import Any
+
 import numpy
 from copy import copy
 from functools import partial
@@ -23,7 +26,7 @@ from typing import List, Tuple, Optional, TypeVar
 
 import torch
 from torch import nn
-
+from abc import ABC, abstractmethod
 from nncf.config import NNCFConfig
 from nncf.dynamic_graph.graph_builder import create_mock_tensor
 from nncf.dynamic_graph.transformations.layout import PTTransformationLayout
@@ -256,7 +259,7 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
     def _nncf_module_types_to_compress(self) -> List[str]:
         """
         Return list of NNCF module types which should be compressed by specific algorithm.
-        As name of algorithm used self._registered_name that set by decorator @nncf.registry_module.
+        As reg_name of algorithm used self.registered_name that set by decorator @nncf.registry_module.
         :return: List of names of modules
         """
         filtered_nncf_module_names_list = list()

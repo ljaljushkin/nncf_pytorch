@@ -3,7 +3,7 @@
     "config": {
         /* Quantization algorithm configurations */
         "quantization": {
-            "q8": { // Alias name for set of hyperparameters
+            "q8": { // Alias reg_name for set of hyperparameters
                 "bits": 8, // Number of quantization bits
                 "mode": [  // Quantization mode in order of priority, the first mode has higher priority
                     "symmetric",
@@ -18,7 +18,7 @@
                     "perchannel"
                 ]
             },
-            "q8_sym_tnr_-128_127": { // Alias name for set of hyperparameters
+            "q8_sym_tnr_-128_127": { // Alias reg_name for set of hyperparameters
                 "bits": 8, // Number of quantization bits
                 "mode": "symmetric", // Quantization mode
                 "granularity": "pertensor", // Granularity: one scale for output tensor

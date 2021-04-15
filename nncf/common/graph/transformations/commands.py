@@ -12,8 +12,10 @@
 """
 
 from typing import Any
+from typing import Dict
 
 from nncf.common.utils.ordered_enum import OrderedEnum
+from nncf.json_serialization import register_serializable
 
 
 class TransformationPriority(OrderedEnum):
@@ -39,6 +41,7 @@ class TransformationPriority(OrderedEnum):
     QUANTIZATION_PRIORITY = 11
 
 
+@register_serializable()
 class TargetType(OrderedEnum):
     """
     Describes the types of locations in the model that can be modified using NNCF
@@ -78,6 +81,13 @@ class TargetType(OrderedEnum):
     OPERATOR_PRE_HOOK = 6
     OPERATOR_POST_HOOK = 7
 
+    def to_dict(self) -> Dict:
+        return {'name': self.name}
+
+    @staticmethod
+    def from_dict(json_dict: Dict) -> 'TargetType':
+        return TargetType[json_dict['name']]
+
 
 class TransformationType(OrderedEnum):
     """
@@ -90,6 +100,7 @@ class TransformationType(OrderedEnum):
     INSERT = 0
     MULTI_INSERT = 1
     REMOVE = 2
+
 
 class TargetPoint:
     """

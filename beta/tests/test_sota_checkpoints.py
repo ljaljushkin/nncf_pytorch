@@ -336,7 +336,7 @@ class TestSotaCheckpoints:
                     if 'yolo_v4' in model_name and dataset_type == 'tfrecords':
                         continue
 
-                    # Change model name to keep dataset version
+                    # Change model reg_name to keep dataset version
                     model_name_with_datatype = model_name + '_' + dataset_type
                     param_list.append(EvalRunParamsStruct(config_name_=config_name,
                                                           reference_=reference,

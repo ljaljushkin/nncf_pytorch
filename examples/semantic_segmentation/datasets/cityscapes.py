@@ -56,7 +56,7 @@ class Cityscapes(data.Dataset):
     new_classes = (0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 3, 4, 5, 0, 0, 0, 6, 0, 7,
                    8, 9, 10, 11, 12, 13, 14, 15, 16, 0, 0, 17, 18, 19, 0)
 
-    # Default encoding for pixel value, class name, and class color
+    # Default encoding for pixel value, class reg_name, and class color
     color_encoding = OrderedDict([
         ('unlabeled', (0, 0, 0)),
         ('road', (128, 64, 128)),

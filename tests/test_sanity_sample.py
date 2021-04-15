@@ -27,7 +27,7 @@ import pytest
 import tempfile
 import torch
 
-# pylint: disable=redefined-outer-name
+# pylint: disable=redefined-outer-reg_name
 from examples.common.optimizer import get_default_weight_decay
 from examples.common.sample_config import SampleConfig
 from examples.common.utils import get_name, is_staged_quantization

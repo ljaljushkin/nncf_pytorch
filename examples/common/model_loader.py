@@ -42,7 +42,7 @@ def load_model(model, pretrained=True, num_classes=1000, model_params=None,
         load_model_fn = partial(custom_models.__dict__[model], num_classes=num_classes, pretrained=pretrained,
                                 **model_params)
     else:
-        raise Exception("Undefined model name")
+        raise Exception("Undefined model reg_name")
     loaded_model = safe_thread_call(load_model_fn)
     if not pretrained and weights_path is not None:
         sd = torch.load(weights_path, map_location='cpu', pickle_module=restricted_pickle_module)

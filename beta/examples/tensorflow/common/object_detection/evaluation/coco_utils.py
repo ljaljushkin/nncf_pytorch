@@ -182,7 +182,7 @@ def convert_groundtruths_to_coco_dataset(groundtruths, label_map=None):
               masks depending on which one is available.
           - masks: a list of numpy arrays of string of shape [batch_size, K],
       label_map: (optional) a dictionary that defines items from the category id
-        to the category name. If `None`, collect the category mappping from the
+        to the category reg_name. If `None`, collect the category mappping from the
         `groundtruths`.
 
     Returns:
@@ -234,7 +234,7 @@ def convert_groundtruths_to_coco_dataset(groundtruths, label_map=None):
         ann['id'] = i + 1
 
     if label_map:
-        gt_categories = [{'id': i, 'name': label_map[i]} for i in label_map]
+        gt_categories = [{'id': i, 'reg_name': label_map[i]} for i in label_map]
     else:
         category_ids = [gt['category_id'] for gt in gt_annotations]
         gt_categories = [{'id': i} for i in set(category_ids)]

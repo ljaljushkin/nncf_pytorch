@@ -199,7 +199,7 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
                 matches self._positive_fraction. It cannot be None is is_static is True.
             labels: boolean tensor of shape [N] denoting positive(=True) and negative
                 (=False) examples.
-            scope: name scope.
+            scope: reg_name scope.
 
         Returns:
             sampled_idx_indicator: boolean tensor of shape [N], True for entries which

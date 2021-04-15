@@ -37,7 +37,7 @@ def _restore_baseline_weights(keras_model, checkpoint_path):
 
     assignment_map = {}
     for v in keras_model.variables:
-        var_name = v.name[v.name.find('/') + 1:] # Skip parent name
+        var_name = v.name[v.name.find('/') + 1:] # Skip parent reg_name
 
         match_names = []
         for x in checkpoint_names:

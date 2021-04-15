@@ -159,7 +159,7 @@ def ov_config_dir(request):
 
 
 @pytest.fixture(scope="function")
-def tmp_venv_with_nncf(install_type, tmp_path, package_type, venv_type):  # pylint:disable=redefined-outer-name
+def tmp_venv_with_nncf(install_type, tmp_path, package_type, venv_type):  # pylint:disable=redefined-outer-reg_name
     if install_type is None:
         pytest.skip("Please specify type of installation")
     venv_path = tmp_path / 'venv'

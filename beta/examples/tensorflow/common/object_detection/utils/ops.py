@@ -56,7 +56,7 @@ def matmul_gather_on_zeroth_axis(params, indices, scope=None):
             least rank 1.
         indices: A Tensor. Must be one of the following types: int32, int64. Must be
             in range [0, params.shape[0])
-        scope: A name for the operation (optional).
+        scope: A reg_name for the operation (optional).
 
     Returns:
         A Tensor. Has the same type as params. Values from params gathered

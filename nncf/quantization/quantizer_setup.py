@@ -1,3 +1,4 @@
+from abc import abstractmethod
 from collections import Counter
 from copy import deepcopy
 from typing import Dict
@@ -6,8 +7,10 @@ from typing import Optional
 from typing import Set
 from typing import Tuple
 
+
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.utils.logger import logger as nncf_logger
+from nncf.common.utils.registry import Registry
 from nncf.dynamic_graph.transformations.commands import PTTargetPoint
 from nncf.nncf_network import NNCFNetwork
 from nncf.quantization.layers import QuantizerConfig
@@ -15,6 +18,7 @@ from nncf.tensor_statistics.collectors import ReductionShape
 from nncf.tensor_statistics.statistics import MinMaxTensorStatistic
 from nncf.tensor_statistics.statistics import TensorStatistic
 from nncf.utils import get_scale_shape
+from nncf.dynamic_graph.context import Scope
 
 QuantizationPointId = int
 
@@ -40,6 +44,22 @@ class QuantizationPointBase:
 
 
 class SingleConfigQuantizationPoint(QuantizationPointBase):
+    def to_dict(self) -> Dict:
+        return {
+            'insertion_point': self.insertion_point,
+            'qconfig': self.qconfig,
+            'scopes_of_directly_quantized_operators': self.scopes_of_directly_quantized_operators
+        }
+
+    # TODO: can it be avoided?
+    # @staticmethod
+    # @abstractmethod
+    # def from_dict(cls, json_dict: Dict) -> 'SingleConfigQuantizationPoint':
+    #     insertion_point = PTTargetPoint.deserialize(loaded_json['insertion_point'])
+    #     qconfig = QuantizerConfig.deserialize(loaded_json['qconfig'])
+    #     scopes_of_directly_quantized_operators = list(map(Scope.from_str, loaded_json['scopes_of_directly_quantized_operators']))
+    #     return SingleConfigQuantizationPoint(insertion_point, qconfig, scopes_of_directly_quantized_operators)
+
     def __init__(self, insertion_point: PTTargetPoint, qconfig: QuantizerConfig,
                  scopes_of_directly_quantized_operators: List['Scope']):
         super().__init__(insertion_point, scopes_of_directly_quantized_operators)
@@ -218,10 +238,20 @@ class QuantizerSetupBase:
                _compare_unified_scale_groups(self, other) and _compare_unified_scale_groups(self, other)
 
 
+BUILDER_STATES = Registry('states', add_name_as_attr=True)
+
+
+@BUILDER_STATES.register('quantization')
 class SingleConfigQuantizerSetup(QuantizerSetupBase):
     def __init__(self):
         super().__init__()
         self.quantization_points = {}  # type: Dict[QuantizationPointId, SingleConfigQuantizationPoint]
+
+    def __eq__(self, other):
+        return all(
+            map(lambda x: x[0] == x[1], zip(self.quantization_points.values(), other.quantization_points.values()))) \
+               and self.unified_scale_groups == other.unified_scale_groups \
+               and self.shared_input_operation_set_groups == other.shared_input_operation_set_groups
 
     def get_minmax_values(self,
                           tensor_statistics: Dict[PTTargetPoint, Dict[ReductionShape, TensorStatistic]],
@@ -248,6 +278,28 @@ class SingleConfigQuantizerSetup(QuantizerSetupBase):
                 minmax_stat = MinMaxTensorStatistic.from_stat(tensor_statistics[ip][scale_shape])
                 retval[qp_id] = minmax_stat
         return retval
+
+    def to_dict(self):
+        return {'quantization_points': self.quantization_points,
+                'unified_scale_groups': self.unified_scale_groups,
+                'shared_input_operation_set_groups': self.shared_input_operation_set_groups}
+
+    # @staticmethod
+    # def _deserialize(loaded_json: Dict) -> 'SingleConfigQuantizerSetup':
+    #     def decode_qp(pair):
+    #         qp_id, qp_dict = pair
+    #         return int(qp_id), SingleConfigQuantizationPoint.deserialize(qp_dict)
+    #
+    #     def list2set(pair):
+    #         i, list_qp_id = pair
+    #         return int(i), set(list_qp_id)
+    #
+    #     qps = dict(map(decode_qp, loaded_json['quantization_points'].items()))
+    #     setup = SingleConfigQuantizerSetup()
+    #     setup.quantization_points = qps
+    #     setup.unified_scale_groups = dict(map(list2set, loaded_json['unified_scale_groups'].items()))
+    #     setup.shared_input_operation_set_groups = dict(map(list2set, loaded_json['shared_input_operation_set_groups'].items()))
+    #     return setup
 
 
 class MultiConfigQuantizerSetup(QuantizerSetupBase):

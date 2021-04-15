@@ -27,7 +27,7 @@ RETINANET_CONFIG = SampleConfig({
     "model_params": {
         "architecture": {
             "backbone": {
-                "name": "resnet",
+                "reg_name": "resnet",
                 "params": {
                     "depth": 50
                 }

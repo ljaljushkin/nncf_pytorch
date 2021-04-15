@@ -189,7 +189,7 @@ class Matcher:
         Args:
           similarity_matrix: Float tensor of shape [N, M] with pairwise similarity
             where higher value means more similar.
-          scope: Op scope name. Defaults to 'Match' if None.
+          scope: Op scope reg_name. Defaults to 'Match' if None.
           **params: Additional keyword arguments for specific implementations of the
             Matcher.
 

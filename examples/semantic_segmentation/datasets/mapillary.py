@@ -46,7 +46,7 @@ class Mapillary(data.Dataset):
     img_extension = '.jpg'
     label_extension = '.png'
 
-    # Default encoding for pixel value, class name, and class color
+    # Default encoding for pixel value, class reg_name, and class color
     # For Mapillary, the color values for classes below are the same
     # as for Cityscapes, although the class names are not the same.
     # Reusing Cityscapes names here.

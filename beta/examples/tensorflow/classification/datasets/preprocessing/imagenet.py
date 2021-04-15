@@ -33,7 +33,7 @@ def get_model_normalize_fn(model_name: str,
     """
     Returns a function that normalizes the input image for a specific model.
 
-    :param model_name: model name
+    :param model_name: model reg_name
     :param means: values to subtract from each channel.
     :param stddev: values to divide from each channel.
     :return: a function that normalizes the input image
@@ -177,7 +177,7 @@ def imagenet_preprocess_image(image: tf.Tensor,
     :param dtype: the dtype to convert the images to.
     :param means: values to subtract from each channel.
     :param stddev: values to divide from each channel.
-    :param model_name: model name.
+    :param model_name: model reg_name.
     :return: a preprocessed image.
     """
     normalize_fn = get_model_normalize_fn(model_name, means, stddev)

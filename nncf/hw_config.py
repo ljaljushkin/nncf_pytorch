@@ -207,7 +207,7 @@ class HWConfig(list):
 
             metatypes = get_metatypes_by_hw_config_name(hw_config_op_name)
             if not metatypes:
-                warnings.warn("Operation name {} in HW config is not registered in NNCF under any supported operation "
+                warnings.warn("Operation reg_name {} in HW config is not registered in NNCF under any supported operation "
                               "metatype - will be ignored".format(hw_config_op_name))
 
             if self.QUANTIZATION_ALGORITHM_NAME in op_dict:
@@ -241,7 +241,7 @@ class HWConfig(list):
                     metatypes = get_metatypes_by_hw_config_name(hw_config_op_name)
                     if not metatypes:
                         warnings.warn(
-                            "Operation name {} in HW config is not registered in NNCF under any supported "
+                            "Operation reg_name {} in HW config is not registered in NNCF under any supported "
                             "operation metatype - will be ignored".format(hw_config_op_name))
                     result.update(metatypes)
         return result

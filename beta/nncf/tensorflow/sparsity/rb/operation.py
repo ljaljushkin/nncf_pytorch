@@ -28,7 +28,7 @@ from beta.nncf.tensorflow.layers.wrapper import NNCFWrapper
 class RBSparsifyingWeight(NNCFOperation):
     def __init__(self, name: str, eps: float = 1e-6):
         """
-        :param name: Model scope unique operation name.
+        :param name: Model scope unique operation reg_name.
         :param eps: Minimum value and the gap from the maximum value
             in the mask.
         """

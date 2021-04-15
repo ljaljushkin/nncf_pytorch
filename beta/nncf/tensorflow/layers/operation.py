@@ -30,7 +30,7 @@ class NNCFOperation:
         """
         Initializes internal NNCF operation state
 
-        :param name: unique operation name in algorithm scope.
+        :param name: unique operation reg_name in algorithm scope.
         """
         self._call_pre_hooks = OrderedDict()
         self._name = name
@@ -48,9 +48,9 @@ class NNCFOperation:
         :param input_shape: shape of the input
         :param input_type: type of the input identifies that inputs are layer weights
                            or inputs of the layer
-        :param name: operation name
+        :param name: operation reg_name
         :param layer: NNCF Wrapper layer, where the operation is registered
-        :return: weights dictionary {weight name: weight value}
+        :return: weights dictionary {weight reg_name: weight value}
         """
 
     def call(self, inputs, weights, training):
@@ -88,7 +88,7 @@ class NNCFOperation:
         return self.call(inputs, *args[1:], **kwargs)
 
     def get_config(self):
-        return {'name': self._name}
+        return {'reg_name': self._name}
 
     @classmethod
     def from_config(cls, config):

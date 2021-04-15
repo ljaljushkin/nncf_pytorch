@@ -77,7 +77,7 @@ def get_basic_quantization_config(quantization_type='symmetric', input_sample_si
     return config
 
 
-# pylint:disable=redefined-outer-name
+# pylint:disable=redefined-outer-reg_name
 def get_basic_quantization_config_with_hw_config_type(hw_config_type, input_sample_size):
     config = get_empty_config(input_sample_sizes=input_sample_size)
     config["target_device"] = hw_config_type
@@ -804,7 +804,7 @@ def hw_config_type(request):
 @pytest.mark.parametrize(
     "desc", TEST_HW_MODELS_DESC, ids=[m.model_name for m in TEST_HW_MODELS_DESC]
 )
-# pylint:disable=redefined-outer-name
+# pylint:disable=redefined-outer-reg_name
 def test_compressed_graph_models_hw(desc, hw_config_type):
     model = desc.model_builder()
     config = get_basic_quantization_config_with_hw_config_type(hw_config_type.value,

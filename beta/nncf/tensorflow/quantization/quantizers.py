@@ -56,7 +56,7 @@ class Quantizer(NNCFOperation):
         """
         Initializes internal NNCF quantization operation state.
 
-        :param name: Unique operation name in algorithm scope.
+        :param name: Unique operation reg_name in algorithm scope.
         """
         super().__init__(name)
         self.enabled = True
@@ -113,7 +113,7 @@ class Quantizer(NNCFOperation):
         :param input_shape: Shape of the input.
         :param input_type: Type of the input identifies that inputs are layer weights
             or inputs of the layer.
-        :param input_name: Input name.
+        :param input_name: Input reg_name.
         :param layer: Layer, where the Quantizer is registered.
         """
         self._pre_processing_fn, self._post_processing_fn = \
@@ -143,7 +143,7 @@ class Quantizer(NNCFOperation):
             if switch_counter > 1:
                 raise NotImplementedError(
                     'Quntizer could not transform input to apply per-channel quantization: '
-                    'input shape {}, input type {}, input name {}, channel_axes {} '
+                    'input shape {}, input type {}, input reg_name {}, channel_axes {} '
                     'from layer {}'.format(
                         input_shape, input_type, input_name, channel_axes, layer.name))
             forward_params = {'shape': new_shape}
@@ -304,7 +304,7 @@ class SymmetricQuantizer(Quantizer):
         }
         config = {
             'quantizer_spec': qspec_dict,
-            'name': self.name,
+            'reg_name': self.name,
         }
         return config
 
@@ -317,7 +317,7 @@ class SymmetricQuantizer(Quantizer):
                                 narrow_range=qspec_dict['narrow_range'],
                                 half_range=qspec_dict['half_range'],
                                 per_channel=qspec_dict['per_channel'])
-        name = config['name']
+        name = config['reg_name']
         return cls(name, qspec)
 
 
@@ -393,7 +393,7 @@ class AsymmetricQuantizer(Quantizer):
         }
         config = {
             'quantizer_spec': qspec_dict,
-            'name': self.name,
+            'reg_name': self.name,
         }
         return config
 
@@ -406,5 +406,5 @@ class AsymmetricQuantizer(Quantizer):
                                 narrow_range=qspec_dict['narrow_range'],
                                 half_range=qspec_dict['half_range'],
                                 per_channel=qspec_dict['per_channel'])
-        name = config['name']
+        name = config['reg_name']
         return cls(name, qspec)

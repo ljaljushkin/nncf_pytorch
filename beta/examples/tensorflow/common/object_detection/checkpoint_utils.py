@@ -21,15 +21,15 @@ def _build_assignment_map(keras_model, prefix='', skip_variables_regex=None, var
     """Compute an assignment mapping for loading older checkpoints into a Keras
 
     model. Variable names are remapped from the original TPUEstimator model to
-    the new Keras name.
+    the new Keras reg_name.
 
     Args:
       keras_model: tf.keras.Model object to provide variables to assign.
-      prefix: prefix in the variable name to be remove for alignment with names in
+      prefix: prefix in the variable reg_name to be remove for alignment with names in
         the checkpoint.
       skip_variables_regex: regular expression to math the names of variables that
         do not need to be assign.
-      var_to_shape_map: variable name to shape mapping from the checkpoint.
+      var_to_shape_map: variable reg_name to shape mapping from the checkpoint.
 
     Returns:
       The variable assignment map.
@@ -57,7 +57,7 @@ def _build_assignment_map(keras_model, prefix='', skip_variables_regex=None, var
             assignment_map[var_name] = var
             continue
 
-        # Match name with variables in the checkpoint.
+        # Match reg_name with variables in the checkpoint.
         match_names = []
         for x in checkpoint_names:
             if x.endswith(var_name):
@@ -69,7 +69,7 @@ def _build_assignment_map(keras_model, prefix='', skip_variables_regex=None, var
                 checkpoint_names.remove(match_names[0])
                 assignment_map[match_names[0]] = var
             else:
-                logger.info('Error not found var name: %s', var_name)
+                logger.info('Error not found var reg_name: %s', var_name)
         except Exception as ex:
             logger.info('Error removing the match_name: %s', match_names)
             logger.info('Exception: %s', ex)
@@ -92,7 +92,7 @@ def make_restore_checkpoint_fn(checkpoint_path, prefix='', skip_regex=None):
       checkpoint_path: path of the checkpoint folder or file.
         Example 1: '/path/to/model_dir/'
         Example 2: '/path/to/model.ckpt-22500'
-      prefix: prefix in the variable name to be remove for alignment with names in
+      prefix: prefix in the variable reg_name to be remove for alignment with names in
         the checkpoint.
       skip_regex: regular expression to math the names of variables that do not
         need to be assign.

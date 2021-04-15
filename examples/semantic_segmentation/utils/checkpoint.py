@@ -19,7 +19,7 @@ from nncf.checkpoint_loading import load_state
 
 
 def save_checkpoint(model, optimizer, epoch, miou, compression_level, compression_scheduler, config):
-    """Saves the model in a specified directory with a specified name.save
+    """Saves the model in a specified directory with a specified reg_name.save
 
     Keyword arguments:
     - model (``nn.Module``): The model to save.
@@ -55,13 +55,13 @@ def save_checkpoint(model, optimizer, epoch, miou, compression_level, compressio
 
 
 def load_checkpoint(model, model_path, device_name, optimizer=None, compression_scheduler=None):
-    """Loads the model from a specified directory with a specified name
+    """Loads the model from a specified directory with a specified reg_name
 
     Keyword arguments:
     - model (``nn.Module``): The stored model state is copied to this model
     instance.
     - model_path: The model filename.
-    - device_name: Device name for the model to be loaded into.
+    - device_name: Device reg_name for the model to be loaded into.
     - is_ddp: If true, model will be treated as a DistributedDataParallel instance
               and the actual model will be loaded into model.module
     - optimizer (``torch.optim``): The stored optimizer state is copied to this

@@ -52,7 +52,7 @@ def draw_dot(context):
              fontname=graph_theme["font_name"])
 
     for node in graph.nodes:
-        dot.node(graph.nodes[node]['name'])
+        dot.node(graph.nodes[node]['reg_name'])
         for child in graph.successors(node):
             dot.edge(node, child)
     return dot

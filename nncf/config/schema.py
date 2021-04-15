@@ -752,7 +752,7 @@ def validate_single_compression_algo_schema(single_compression_algo_dict: Dict):
     algo_name = single_compression_algo_dict["algorithm"]
     if algo_name not in REF_VS_ALGO_SCHEMA:
         raise jsonschema.ValidationError(
-            "Incorrect algorithm name - must be one of ({})".format(", ".join(REF_VS_ALGO_SCHEMA.keys())))
+            "Incorrect algorithm reg_name - must be one of ({})".format(", ".join(REF_VS_ALGO_SCHEMA.keys())))
     try:
         jsonschema.validate(single_compression_algo_dict, schema=REF_VS_ALGO_SCHEMA[algo_name])
     except Exception as e:

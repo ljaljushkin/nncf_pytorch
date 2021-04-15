@@ -27,8 +27,8 @@ def getExecNet(plugin, net):
 
 
 argparser = argparse.ArgumentParser()
-argparser.add_argument("-m", "--model", help="input IR name", required=True)
-argparser.add_argument("--bin", help="Input *.bin file name")
+argparser.add_argument("-m", "--model", help="input IR reg_name", required=True)
+argparser.add_argument("--bin", help="Input *.bin file reg_name")
 argparser.add_argument("-o", "--output-dir", help="Output directory to dump weights", required=True)
 argparser.add_argument("-c", "--config", type=str, help="Model's config", required=True)
 argparser.add_argument("--cuda", help="inference PyTorch model on CUDA", action='store_true')

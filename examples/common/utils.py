@@ -157,7 +157,7 @@ def configure_logging(sample_logger, config):
     sample_logger.addHandler(training_pipeline_log_file_handler)
 
     nncf_log_file_handler = logging.FileHandler(osp.join(config.log_dir, NNCF_LOG_FILE_NAME))
-    nncf_log_file_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    nncf_log_file_handler.setFormatter(logging.Formatter("%(levelname)s:%(reg_name)s:%(message)s"))
     from nncf.common.utils.logger import logger as nncf_logger
     nncf_logger.addHandler(nncf_log_file_handler)
 

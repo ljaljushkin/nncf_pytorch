@@ -133,7 +133,7 @@ class BaseDatasetBuilder(ABC):
                 config=self._config, is_train=self._is_train
             )
         else:
-            raise ValueError('Unknown dataset name: {}'.format(self._dataset_name))
+            raise ValueError('Unknown dataset reg_name: {}'.format(self._dataset_name))
 
         dataset = self._dataset_loader.as_dataset()
 

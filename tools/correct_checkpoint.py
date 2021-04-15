@@ -54,7 +54,7 @@ def main(argv):
     parser = ArgumentParser()
     parser.add_argument('-i', '--input-model', help='Path to input model file', required=True)
     parser.add_argument('-o', '--output-model', help='Path to output model file', required=True)
-    parser.add_argument('-n', '--name', help='Name of model', choices=[INCEPTION_NAME, RESNET_NAME, MOBILENET_NAME],
+    parser.add_argument('-n', '--reg_name', help='Name of model', choices=[INCEPTION_NAME, RESNET_NAME, MOBILENET_NAME],
                         required=True)
     args = parser.parse_args(args=argv)
 

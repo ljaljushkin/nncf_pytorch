@@ -133,7 +133,7 @@ _ORIG_JIT_SCRIPT = None
 def patch_torch_jit_script():
     # This import statement is required, otherwise we get a
     # "RuntimeError: undefined value torch" inside the real torch.jit.script
-    # pylint:disable=unused-import,redefined-outer-name,reimported
+    # pylint:disable=unused-import,redefined-outer-reg_name,reimported
     import torch
 
     orig = getattr(torch.jit, "script")

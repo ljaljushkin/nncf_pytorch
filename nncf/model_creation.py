@@ -16,6 +16,7 @@ from typing import Callable, Any, Tuple, Dict
 from torch.nn import Module
 
 from nncf.checkpoint_loading import load_state
+from nncf.composite_compression import CompositeBuilderState
 from nncf.composite_compression import PTCompositeCompressionAlgorithmBuilder
 from nncf.compression_method_api import PTCompressionAlgorithmController
 from nncf.config import NNCFConfig
@@ -116,8 +117,13 @@ def create_compressed_model(model: Module, config: NNCFConfig,
 
     should_init = resuming_state_dict is None
     composite_builder = PTCompositeCompressionAlgorithmBuilder(config, should_init=should_init)
+    composite_builder.state = CompositeBuilderState.deserialize(resuming_state_dict['builder_state'])
     composite_builder.apply_to(compressed_model)
+    compressed_model.composite_builder_state = composite_builder.state
 
+    # save builder state to start from scratch with compression
+    with open(osp.join(config.get("log_dir", "."), "builder_state.json"), 'w') as f:
+        f.write(composite_builder.state)
     compression_ctrl = composite_builder.build_controller(compressed_model)
 
     # Required to ensure that the model leaving create_compressed_model has correct compressed graph.
@@ -126,7 +132,8 @@ def create_compressed_model(model: Module, config: NNCFConfig,
 
     try:
         if resuming_state_dict is not None:
-            load_state(compressed_model, resuming_state_dict, is_resume=True)
+            load_state(compressed_model, resuming_state_dict['model_state'], is_resume=True,
+                       state_dict_to_match=compressed_model.state_dict()['model_state'])
     finally:
         if dump_graphs and is_main_process() and composite_builder:
             if dummy_forward_fn is None:

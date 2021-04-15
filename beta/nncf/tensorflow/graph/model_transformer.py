@@ -110,8 +110,8 @@ class TFModelTransformer(ModelTransformer):
 
     def _find_layer_config(self, layer_name):
         for idx, layer in enumerate(self._model_config['layers']):
-            layer_name_ = layer['name'] if is_functional_model(self._model) \
-                else layer['config']['name']
+            layer_name_ = layer['reg_name'] if is_functional_model(self._model) \
+                else layer['config']['reg_name']
             if layer_name_ == layer_name:
                 return idx, layer
         return None, None
@@ -194,7 +194,7 @@ class TFModelTransformer(ModelTransformer):
 
         def find_weights_operation(operations, name):
             for op in operations:
-                if op['config']['name'] == name:
+                if op['config']['reg_name'] == name:
                     return op
             return None
 
@@ -221,10 +221,10 @@ class TFModelTransformer(ModelTransformer):
         self._replace_config(layer_name, replace_layer_config)
 
     def _replace_config(self, layer_name, replace_layer_config):
-        replace_layer_name = replace_layer_config['config']['name']
+        replace_layer_name = replace_layer_config['config']['reg_name']
         if is_functional_model(self._model):
-            if 'name' not in replace_layer_config:
-                replace_layer_config['name'] = replace_layer_name
+            if 'reg_name' not in replace_layer_config:
+                replace_layer_config['reg_name'] = replace_layer_name
             self._replace_functional(layer_name, replace_layer_config)
         else:
             self._replace_sequential(layer_name, replace_layer_config)
@@ -232,7 +232,7 @@ class TFModelTransformer(ModelTransformer):
         self._update_layer_mapping(layer_name, replace_layer_name)
 
     def _replace_functional(self, layer_name, replace_layer_config):
-        replace_layer_name = replace_layer_config['name']
+        replace_layer_name = replace_layer_config['reg_name']
         for layer in self._model_config['layers']:
             for inbound_node in layer['inbound_nodes']:
                 self._process_replacement(inbound_node, layer_name, replace_layer_name)
@@ -254,7 +254,7 @@ class TFModelTransformer(ModelTransformer):
         for layer in layers:
             config = tf.keras.utils.serialize_keras_object(layer)
             if functional_model:
-                config['name'] = config['config']['name']
+                config['reg_name'] = config['config']['reg_name']
                 config['inbound_nodes'] = [[[layer_name, instance_index, out_port, {}]]]
             layer_configs.append(config)
 
@@ -266,7 +266,7 @@ class TFModelTransformer(ModelTransformer):
 
     def _insert_layer_after_functional(self, layer_name, instance_index, layer_config):
         layer_out_ports = set()
-        replace_layer_name = layer_config['name']
+        replace_layer_name = layer_config['reg_name']
         for layer in self._model_config['layers']:
             for inbound_node in layer['inbound_nodes']:
                 self._process_insertion_after(inbound_node, layer_name, instance_index,

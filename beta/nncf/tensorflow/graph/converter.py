@@ -94,7 +94,7 @@ def _get_nxmodel_from_sequential(model):
     producer_layer = None
     model_config = model.get_config()
     for layer in model_config['layers']:
-        layer_name = layer['config']['name']
+        layer_name = layer['config']['reg_name']
         layer_type = _get_layer_type(layer)
         layer_dtype = _get_layer_dtype(layer)
         data_format = layer['config'].get('data_format')
@@ -177,7 +177,7 @@ def _prepare_raw_nodes(model: tf.keras.Model) -> Dict:
     model_config = model.get_config()
     raw_nodes = Dict()
     for layer in model_config['layers']:
-        layer_name = layer['name']
+        layer_name = layer['reg_name']
         layer_type = _get_layer_type(layer)
         layer_dtype = _get_layer_dtype(layer)
         data_format = layer['config'].get('data_format')
@@ -237,7 +237,7 @@ def _update_graph_with_raw_nodes(graph: Union[nx.DiGraph, NNCFGraph],
             graph.add_node(node_name, **attributes)
 
     for layer in model_config['layers']:
-        layer_name = layer['name']
+        layer_name = layer['reg_name']
         for i, inbound_nodes in enumerate(layer['inbound_nodes']):
             is_shared = raw_nodes[layer_name][i]['is_shared']
             node_full_name = get_expanded_node_name(layer_name, i, is_shared=is_shared)
@@ -254,7 +254,7 @@ def _get_nncf_graph_from_sequential(model: tf.keras.Model) -> NNCFGraph:
     producer_layer = None
     model_config = model.get_config()
     for layer in model_config['layers']:
-        layer_name = layer['config']['name']
+        layer_name = layer['config']['reg_name']
         layer_type = _get_layer_type(layer)
         layer_dtype = _get_layer_dtype(layer)
         data_format = layer['config'].get('data_format')

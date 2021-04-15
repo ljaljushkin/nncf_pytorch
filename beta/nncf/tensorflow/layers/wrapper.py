@@ -44,8 +44,8 @@ class NNCFWrapper(tf.keras.layers.Wrapper):
                 'You passed an instance of type: {input}.'.format(
                     input=layer.__class__.__name__))
 
-        if 'name' not in kwargs:
-            kwargs['name'] = '{}_{}'.format('nncf_wrapper', layer.name)
+        if 'reg_name' not in kwargs:
+            kwargs['reg_name'] = '{}_{}'.format('nncf_wrapper', layer.name)
 
         super().__init__(layer, **kwargs)
         self._track_trackable(layer, name='layer')

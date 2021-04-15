@@ -9,18 +9,23 @@ from nncf.dynamic_graph.graph import InputAgnosticOperationExecutionContext
 
 
 class PTTargetPoint(TargetPoint):
+    _OPERATION_TYPES = [TargetType.PRE_LAYER_OPERATION,
+                        TargetType.POST_LAYER_OPERATION,
+                        TargetType.OPERATION_WITH_WEIGHTS]
+    _HOOK_TYPES = [TargetType.OPERATOR_PRE_HOOK,
+                   TargetType.OPERATOR_POST_HOOK]
+
     def __init__(self, target_type: TargetType, *,
                  ia_op_exec_context: InputAgnosticOperationExecutionContext = None,
                  module_scope: 'Scope' = None,
                  input_port_id: int = None):
         super().__init__(target_type)
         self.target_type = target_type
-        if self.target_type in [TargetType.PRE_LAYER_OPERATION, TargetType.POST_LAYER_OPERATION,
-                                TargetType.OPERATION_WITH_WEIGHTS]:
+        if self.target_type in self._OPERATION_TYPES:
             if module_scope is None:
                 raise ValueError("Should specify module scope for module pre- and post-op insertion points!")
 
-        elif self.target_type in [TargetType.OPERATOR_PRE_HOOK, TargetType.OPERATOR_POST_HOOK]:
+        elif self.target_type in self._HOOK_TYPES:
             if ia_op_exec_context is None:
                 raise ValueError("Should specify an operator's InputAgnosticOperationExecutionContext "
                                  "for operator pre- and post-hook insertion points!")
@@ -38,10 +43,9 @@ class PTTargetPoint(TargetPoint):
     def __str__(self):
         prefix = str(self.target_type)
         retval = prefix
-        if self.target_type in [TargetType.PRE_LAYER_OPERATION, TargetType.POST_LAYER_OPERATION,
-                                TargetType.OPERATION_WITH_WEIGHTS]:
+        if self.target_type in self._OPERATION_TYPES:
             retval += " {}".format(self.module_scope)
-        elif self.target_type in [TargetType.OPERATOR_PRE_HOOK, TargetType.OPERATOR_POST_HOOK]:
+        elif self.target_type in self._HOOK_TYPES:
             if self.input_port_id is not None:
                 retval += " {}".format(self.input_port_id)
             retval += " " + str(self.ia_op_exec_context)
@@ -49,6 +53,21 @@ class PTTargetPoint(TargetPoint):
 
     def __hash__(self):
         return hash(str(self))
+
+    # @classmethod
+    # def from_str(cls, s: str):
+    #     try:
+    #         target_type_str, input_port_id, point_location = s.split(' ')
+    #         target_type = TargetType.from_str(target_type_str)
+    #         kwargs = {'input_port_id': int(input_port_id)}
+    #         if target_type in cls._OPERATION_TYPES:
+    #             from nncf.dynamic_graph.context import Scope
+    #             kwargs['module_scope'] = Scope.from_str(point_location)
+    #         if target_type in cls._HOOK_TYPES:
+    #             kwargs['ia_op_exec_context'] = InputAgnosticOperationExecutionContext.from_str(point_location)
+    #         return PTTargetPoint(target_type, **kwargs)
+    #     except Exception as ex:
+    #         raise RuntimeError('Failed to decode {} from str'.format(cls.__name__)) from ex
 
 
 class PTInsertionCommand(TransformationCommand):

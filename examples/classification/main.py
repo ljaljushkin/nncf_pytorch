@@ -35,6 +35,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision.datasets import CIFAR10, CIFAR100
 from torchvision.models import InceptionOutputs
 
+from examples.common import restricted_pickle_module
 from examples.common.argparser import get_common_argument_parser
 from examples.common.example_logger import logger
 from examples.common.execution import ExecutionMode, get_execution_mode, \
@@ -157,7 +158,13 @@ def main_worker(current_gpu, config: SampleConfig):
     model.to(config.device)
 
     resuming_model_sd, resuming_checkpoint = load_resuming_checkpoint(resuming_checkpoint_path)
-    compression_ctrl, model = create_compressed_model(model, nncf_config, resuming_state_dict=resuming_model_sd)
+
+    builder_state_path = config.get('builder_state', None)
+    builder_state = torch.load(builder_state_path, map_location='cpu', pickle_module=restricted_pickle_module) if builder_state_path else None
+
+    compression_ctrl, model = create_compressed_model(model, nncf_config,
+                                                      resuming_state_dict=resuming_model_sd,
+                                                      builder_state=builder_state)
 
     if config.to_onnx:
         compression_ctrl.export_model(config.to_onnx)
@@ -506,6 +513,7 @@ def validate(val_loader, model, criterion, config):
             config.tb.add_scalar("val/top5", top5.avg, len(val_loader) * config.get('cur_epoch', 0))
             config.mlflow.safe_call('log_metric', "val/loss", float(losses.avg), config.get('cur_epoch', 0))
             config.mlflow.safe_call('log_metric', "val/top1", float(top1.avg), config.get('cur_epoch', 0))
+            config.mlflow.safe_call('log_metric', "val/top5", float(top5.avg), config.get('cur_epoch', 0))
             config.mlflow.safe_call('log_metric', "val/top5", float(top5.avg), config.get('cur_epoch', 0))
 
         logger.info(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}\n'.format(top1=top1, top5=top5))

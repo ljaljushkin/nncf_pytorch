@@ -226,7 +226,7 @@ class Resnet:
           blocks: `int` number of blocks contained in the layer.
           strides: `int` stride to use for the first convolution of the layer. If
             greater than 1, this layer will downsample the input.
-          name: `str`name for the Tensor output of the block layer.
+          name: `str`reg_name for the Tensor output of the block layer.
           is_training: `bool` if True, the model is in training mode.
 
         Returns:

@@ -11,6 +11,7 @@
  limitations under the License.
 """
 
+from typing import Dict
 from typing import TypeVar
 
 import torch.nn
@@ -25,9 +26,11 @@ from nncf.compression_method_api import PTCompressionAlgorithmController
 from nncf.compression_method_api import PTCompressionLoss
 from nncf.dynamic_graph.transformations.layout import PTTransformationLayout
 from nncf.hw_config import HWConfigType, HW_CONFIG_TYPE_TARGET_DEVICE_MAP
+from nncf.json_serialization import register_serializable
 from nncf.nncf_network import NNCFNetwork
 from nncf.nncf_network import PTModelTransformer
 from nncf.pruning.base_algo import BasePruningAlgoController
+from nncf.quantization.quantizer_setup import BUILDER_STATES
 
 ModelType = TypeVar('ModelType')
 
@@ -40,6 +43,28 @@ class PTCompositeCompressionLoss(CompositeCompressionLoss, PTCompressionLoss):
     @property
     def child_losses(self) -> torch.nn.ModuleList:
         return self._child_losses
+
+
+class CompositeControllerState():
+    pass
+
+
+# TODO: should be config
+# @register_serializable()
+class CompositeBuilderState():
+    def __init__(self, algo_name_vs_state_map):
+        self.algo_name_vs_state_map = algo_name_vs_state_map
+
+    def to_dict(self):
+        return self.algo_name_vs_state_map
+
+    @staticmethod
+    def from_dict(loaded_json: Dict) -> 'CompositeBuilderState':
+        algo_name_vs_state_map = {}
+        for name, serialized_state in loaded_json.items():
+            state = BUILDER_STATES.get(name).deserialize(serialized_state)
+            algo_name_vs_state_map[name] = state
+        return CompositeBuilderState(algo_name_vs_state_map)
 
 
 class PTCompositeCompressionAlgorithmBuilder(
@@ -76,9 +101,27 @@ class PTCompositeCompressionAlgorithmBuilder(
         return bool(self.child_builders)
 
     def apply_to(self, target_model: NNCFNetwork) -> NNCFNetwork:
+        if self.state is not None:
+            # load deserialized states
+            algo_name_vs_state_map = self.state.algo_name_vs_state_map
+            for builder in self.child_builders:
+                algo_name = self._registered_name.replace('_', ' ')
+                if algo_name in algo_name_vs_state_map:
+                    builder.state = algo_name_vs_state_map[algo_name]
+
         layout = self.get_transformation_layout(target_model)
         transformer = PTModelTransformer(target_model, layout)
         transformed_model = transformer.transform()
+
+        # collect new states from all builders
+        algo_name_vs_state_map = {}
+        for builder in self.child_builders:
+            if builder.state is not None:
+                algo_name = self._registered_name.replace('_', ' ')
+                algo_name_vs_state_map[algo_name] = builder.state
+        self.state = CompositeBuilderState(algo_name_vs_state_map)
+
+        transformed_model.composite_builder_state = self.state
         return transformed_model
 
     def build_controller(self, model: ModelType) -> 'PTCompositeCompressionAlgorithmController':

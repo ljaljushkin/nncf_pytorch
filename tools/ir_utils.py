@@ -70,7 +70,7 @@ def get_ss_weight_shape(layer, input_shape, output_shape):
 
 
 def extract_params(buffer, all_parameters, layer, get_weight_shape_fn):
-    layer_name = layer.get("name")
+    layer_name = layer.get("reg_name")
     precision = np.float32 if layer.get("precision").lower() == 'fp32' else np.float16
     weight = layer.find("blobs/weights")
     biases = layer.find("blobs/biases")
