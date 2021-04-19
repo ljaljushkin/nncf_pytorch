@@ -30,6 +30,7 @@ import networkx as nx
 import torch
 
 # from nncf.composite_compression import CompositeBuilderState
+from nncf.composite_compression import CompositeBuilderState
 from nncf.dynamic_graph.trace_tensor import TracedTensor
 
 from nncf.common.graph.graph import NNCFGraph
@@ -402,6 +403,9 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
     def __init__(self, module, input_infos: List[ModelInputInfo],
                  dummy_forward_fn=None, wrap_inputs_fn=None, scopes_without_shape_matching=None,
                  ignored_scopes=None, target_scopes=None, reset: bool = False, wrap_outputs_fn=None):
+        self.composite_builder_state = None  # type: CompositeBuilderState
+        self.composite_controller_state = None  # type: CompositeControllerState
+
         super().__init__()
         self._set_nncf_wrapped_model(module)
         self._forward_signature = inspect.signature(module.forward)
@@ -467,8 +471,6 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
             self._compressed_context.add_node_comparators(scopes_without_shape_matching,
                                                           ShapeIgnoringTensorMetaComparator())
         self._load_listener = None
-        self.composite_builder_state = None  # type: CompositeBuilderState
-        self.composite_controller_state = None  # type: CompositeControllerState
 
 
 

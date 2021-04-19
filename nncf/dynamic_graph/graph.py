@@ -98,6 +98,11 @@ class DefaultInputsMatcher(InputsMatcher):
 
 @PT_SERIALIZABLE_CLASSES.register()
 class InputAgnosticOperationExecutionContext:
+    def to_dict(self) -> Dict:
+        return {'operator_name': self.operator_name,
+                'scope_in_model': self.scope_in_model,
+                'call_order': self.call_order}
+
     def __init__(self, operator_name: str, scope_in_model: 'Scope', call_order: int):
         self.operator_name = operator_name
         self.scope_in_model = scope_in_model
@@ -114,11 +119,6 @@ class InputAgnosticOperationExecutionContext:
 
     def __hash__(self):
         return hash((self.operator_name, self.scope_in_model, self.call_order))
-
-    def to_dict(self) -> Dict:
-        return {'operator_name': self.operator_name,
-                'scope_in_model': self.scope_in_model,
-                'call_order': self.call_order}
 
 
 class OperationExecutionContext:

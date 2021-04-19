@@ -63,21 +63,6 @@ class PTTargetPoint(TargetPoint):
                 'module_scope': self.module_scope,
                 'input_port_id': self.input_port_id}
 
-    # @classmethod
-    # def from_str(cls, s: str):
-    #     try:
-    #         target_type_str, input_port_id, point_location = s.split(' ')
-    #         target_type = TargetType.from_str(target_type_str)
-    #         kwargs = {'input_port_id': int(input_port_id)}
-    #         if target_type in cls._OPERATION_TYPES:
-    #             from nncf.dynamic_graph.context import Scope
-    #             kwargs['module_scope'] = Scope.from_str(point_location)
-    #         if target_type in cls._HOOK_TYPES:
-    #             kwargs['ia_op_exec_context'] = InputAgnosticOperationExecutionContext.from_str(point_location)
-    #         return PTTargetPoint(target_type, **kwargs)
-    #     except Exception as ex:
-    #         raise RuntimeError('Failed to decode {} from str'.format(cls.__name__)) from ex
-
 
 class PTInsertionCommand(TransformationCommand):
     def __init__(self, point: PTTargetPoint, fn: Callable,

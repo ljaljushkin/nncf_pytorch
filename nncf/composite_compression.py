@@ -27,9 +27,6 @@ from nncf.compression_method_api import PTCompressionLoss
 from nncf.dynamic_graph.transformations.layout import PTTransformationLayout
 from nncf.hw_config import HWConfigType, HW_CONFIG_TYPE_TARGET_DEVICE_MAP
 from nncf.json_serialization import COMMON_SERIALIZABLE_CLASSES
-from nncf.json_serialization import CommonSerializableClasses
-from nncf.json_serialization import PT_SERIALIZABLE_CLASSES
-from nncf.json_serialization import TF_SERIALIZABLE_CLASSES
 from nncf.nncf_network import NNCFNetwork
 from nncf.nncf_network import PTModelTransformer
 from nncf.pruning.base_algo import BasePruningAlgoController
@@ -55,19 +52,13 @@ class CompositeControllerState():
 # TODO: should be config as well
 @COMMON_SERIALIZABLE_CLASSES.register()
 class CompositeBuilderState:
-    def __init__(self, algo_name_vs_state_map):
+    def __init__(self, algo_name_vs_state_map, config):
         self.algo_name_vs_state_map = algo_name_vs_state_map
+        self.config = config
 
     def to_dict(self):
-        return self.algo_name_vs_state_map
-
-    @staticmethod
-    def from_dict(loaded_json: Dict) -> 'CompositeBuilderState':
-        algo_name_vs_state_map = {}
-        for name, serialized_state in loaded_json.items():
-            state = BUILDER_STATES.get(name).deserialize(serialized_state)
-            algo_name_vs_state_map[name] = state
-        return CompositeBuilderState(algo_name_vs_state_map)
+        return {'algo_name_vs_state_map': self.algo_name_vs_state_map,
+                'config': self.config}
 
 
 class PTCompositeCompressionAlgorithmBuilder(

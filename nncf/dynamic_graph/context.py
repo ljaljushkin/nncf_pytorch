@@ -168,6 +168,13 @@ class ScopeElement:
 
 @PT_SERIALIZABLE_CLASSES.register()
 class Scope:
+    def to_dict(self) -> Dict:
+        return {'scope': str(self)}
+
+    @staticmethod
+    def from_dict(json_dict: Dict) -> 'Scope':
+        return Scope.from_str(json_dict['scope'])
+
     def __init__(self, scope_elements: List[ScopeElement] = None):
         if scope_elements is not None:
             self.scope_elements = scope_elements
@@ -224,12 +231,7 @@ class Scope:
                 results.append(iter_scope)
         return results
 
-    def to_dict(self) -> Dict:
-        return {'scope': str(self)}
 
-    @staticmethod
-    def from_dict(json_dict: Dict) -> 'Scope':
-        return Scope.from_str(json_dict['scope'])
 
 
 class PreHookId:

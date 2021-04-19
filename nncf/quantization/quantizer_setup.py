@@ -46,14 +46,12 @@ class QuantizationPointBase:
 
 @PT_SERIALIZABLE_CLASSES.register()
 class SingleConfigQuantizationPoint(QuantizationPointBase):
-    # TODO: can it be avoided?
-    # @staticmethod
-    # @abstractmethod
-    # def from_dict(cls, json_dict: Dict) -> 'SingleConfigQuantizationPoint':
-    #     insertion_point = PTTargetPoint.deserialize(loaded_json['insertion_point'])
-    #     qconfig = QuantizerConfig.deserialize(loaded_json['qconfig'])
-    #     scopes_of_directly_quantized_operators = list(map(Scope.from_str, loaded_json['scopes_of_directly_quantized_operators']))
-    #     return SingleConfigQuantizationPoint(insertion_point, qconfig, scopes_of_directly_quantized_operators)
+    def to_dict(self) -> Dict:
+        return {
+            'insertion_point': self.insertion_point,
+            'qconfig': self.qconfig,
+            'scopes_of_directly_quantized_operators': self.scopes_of_directly_quantized_operators
+        }
 
     def __init__(self, insertion_point: PTTargetPoint, qconfig: QuantizerConfig,
                  scopes_of_directly_quantized_operators: List['Scope']):
@@ -68,12 +66,7 @@ class SingleConfigQuantizationPoint(QuantizationPointBase):
             input_shape,
             is_weights=self.is_weight_quantization_point(), per_channel=self.qconfig.per_channel))]
 
-    def to_dict(self) -> Dict:
-        return {
-            'insertion_point': self.insertion_point,
-            'qconfig': self.qconfig,
-            'scopes_of_directly_quantized_operators': self.scopes_of_directly_quantized_operators
-        }
+
 
 
 class MultiConfigQuantizationPoint(QuantizationPointBase):
@@ -246,6 +239,25 @@ BUILDER_STATES = Registry('states', add_name_as_attr=True)
 @BUILDER_STATES.register('quantization')
 @PT_SERIALIZABLE_CLASSES.register()
 class SingleConfigQuantizerSetup(QuantizerSetupBase):
+    def to_dict(self) -> Dict:
+        return {'quantization_points': self.quantization_points,
+                'unified_scale_groups': self.unified_scale_groups,
+                'shared_input_operation_set_groups': self.shared_input_operation_set_groups}
+
+    @staticmethod
+    def from_dict(loaded_json: Dict) -> 'SingleConfigQuantizerSetup':
+        setup = SingleConfigQuantizerSetup()
+
+        def key2int(pair):
+            qp_id, qp_dict = pair
+            return int(qp_id), qp_dict
+
+        setup.quantization_points = dict(map(key2int, loaded_json['quantization_points'].items()))
+        setup.unified_scale_groups = dict(map(key2int, loaded_json['unified_scale_groups'].items()))
+        shared_input_operation_set_groups = loaded_json['shared_input_operation_set_groups']
+        setup.shared_input_operation_set_groups = dict(map(key2int, shared_input_operation_set_groups.items()))
+        return setup
+
     def __init__(self):
         super().__init__()
         self.quantization_points = {}  # type: Dict[QuantizationPointId, SingleConfigQuantizationPoint]
@@ -282,24 +294,7 @@ class SingleConfigQuantizerSetup(QuantizerSetupBase):
                 retval[qp_id] = minmax_stat
         return retval
 
-    def to_dict(self) -> Dict:
-        return {'quantization_points': self.quantization_points,
-                'unified_scale_groups': self.unified_scale_groups,
-                'shared_input_operation_set_groups': self.shared_input_operation_set_groups}
 
-    @staticmethod
-    def from_dict(loaded_json: Dict) -> 'SingleConfigQuantizerSetup':
-        setup = SingleConfigQuantizerSetup()
-
-        def key2int(pair):
-            qp_id, qp_dict = pair
-            return int(qp_id), qp_dict
-
-        setup.quantization_points = dict(map(key2int, loaded_json['quantization_points'].items()))
-        setup.unified_scale_groups = dict(map(key2int, loaded_json['unified_scale_groups'].items()))
-        shared_input_operation_set_groups = loaded_json['shared_input_operation_set_groups']
-        setup.shared_input_operation_set_groups = dict(map(key2int, shared_input_operation_set_groups.items()))
-        return setup
 
 
 class MultiConfigQuantizerSetup(QuantizerSetupBase):

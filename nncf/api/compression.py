@@ -256,13 +256,14 @@ class CompressionAlgorithmController:
 
 
 class CompressionAlgorithmBuilder:
-    """
-    Determines which modifications should be made to the original model in
-    order to enable algorithm-specific compression during fine-tuning.
-    """
-
     def __init__(self, config: NNCFConfig, should_init: bool = True):
-        self.state = None  # type: JSONSerializable
+        self.state = None
+        """
+        Determines which modifications should be made to the original model in
+        order to enable algorithm-specific compression during fine-tuning.
+        """
+
+
         """
         Initializes internal state of the compression algorithm builder
 

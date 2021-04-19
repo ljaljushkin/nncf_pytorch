@@ -42,14 +42,6 @@ class SerializableClassesRegistry:
         return result
 
 
-class CommonSerializableClasses:
-    @staticmethod
-    def register(name=None):
-        return TF_SERIALIZABLE_CLASSES.register(name)(PT_SERIALIZABLE_CLASSES.register(name))
-
-
-COMMON_SERIALIZABLE_CLASSES = CommonSerializableClasses
-
 PT_SERIALIZABLE_CLASSES = SerializableClassesRegistry()
 TF_SERIALIZABLE_CLASSES = SerializableClassesRegistry()
 
@@ -72,7 +64,6 @@ class JSONSerializer:
             self._serializable_classes = serializable_classes
 
         def _object_hook(self, obj):
-            # TODO: expect dict always?
             if isinstance(obj, dict) and 'class_name' in obj:
                 if obj['class_name'] == '__set__':
                     return set(obj['data'])
@@ -110,6 +101,41 @@ class JSONSerializer:
             # call default _encoder for other types of objects, will throw an error if it's not JSON-serializable
             return json.JSONEncoder.default(self, obj)
 
+class CommonSerializableClasses:
+    @staticmethod
+    def register(name=None):
+        return TF_SERIALIZABLE_CLASSES.register(name)(PT_SERIALIZABLE_CLASSES.register(name))
+
+
+COMMON_SERIALIZABLE_CLASSES = CommonSerializableClasses
+#
+# class JSONHelper:
+#     @staticmethod
+#     @abstractmethod
+#     def to_json_type(obj):
+#         pass
+#
+#
+#     def from_json_type(cls, json_type):
+#         pass
+# # TODO: register encode/decoder helpers for built_in types
+#   BUILT_IN_SERIALIZERS.register(type='set')
+#   if get_built_in_name(obj) in BUILT_IN_SERIALIZERS:
+#       BUILT_IN_SERIALIZERS.get().encode()
+#
+# class SetSerializer(JSONHelper):
+#     @staticmethod
+#     def to_dict(obj):
+#         if isinstance(obj, set):
+#             return {'class_name': '__set__', 'data': list(obj)}
+#
+#     def from_dict(cls, obj):
+#         if obj['class_name'] == '__set__':
+#             return set(obj['data'])
+#
+# class TupleSerializer(JSONHelper):
+#     return tuple(_decode_helper(i) for i in obj['items']
+#
 # def deserialize(obj_repr):
 #     if (not isinstance(obj_repr, dict)) or ('class_name' not in obj_repr) or ('dict' not in obj_repr):
 #         raise ValueError('Improper format: ' + str(obj_repr))
@@ -128,8 +154,8 @@ class JSONSerializer:
 #         json_dict[key] = deserialized_objects[key]
 #
 #     return cls.from_config(json_dict)
-
-
+#
+#
 # @classmethod
 # def deserialize(cls, loaded_json: Any):
 #     try:
@@ -137,8 +163,8 @@ class JSONSerializer:
 #         cls._deserialize(loaded_json)
 #     except Exception as ex:
 #         raise RuntimeError('Failed to deserialize {} from the loaded json'.format(cls.__name__)) from ex
-
-
+#
+#
 # class JSONSerializable(ABC):
 #     # TODO: should be outside to not overcomplicate subclasses
 #
@@ -188,27 +214,5 @@ class JSONSerializer:
 #         :param: json_dict: A Python dictionary - the output of to_dict
 #         :return instance of the object """
 #         return cls(**json_dict)
-
-# class JSONEncodeHelper:
-#     @staticmethod
-#     @abstractmethod
-#     def to_json_type(obj):
-#         pass
 #
 #
-#     def from_json_type(cls, json_type):
-#         pass
-# TODO: register encode/decoder helpers for built_in types
-#   BUILT_IN_SERIALIZERS.register(type='set')
-#   if get_built_in_name(obj) in BUILT_IN_SERIALIZERS:
-#       BUILT_IN_SERIALIZERS.get().encode()
-# class SetSerializer(JSONEncodeHelper):
-#     @staticmethod
-#     def to_json_type(obj):
-#         return list(obj)
-#
-#     def from_json_type(cls, json_type):
-#         pass
-#
-# class TupleSerializer(JSONEncodeHelper):
-#     return tuple(_decode_helper(i) for i in obj['items']

@@ -129,20 +129,6 @@ def test_load_pickle():
 #             pass
 
 
-def test_simple():
-    qc = QuantizerConfig()
-    json_str = serialize(qc)
-    print(json_str)
-    assert qc == deserialize(json_str)
-
-
-def test_enum():
-    tt = TargetType.OPERATOR_POST_HOOK
-    json_str = serialize(tt)
-    print(json_str)
-    assert tt == deserialize(json_str)
-
-
 def test_setup():
     s = JSONSerializer(PT_SERIALIZABLE_CLASSES)
     target_type = TargetType.OPERATOR_POST_HOOK
@@ -171,4 +157,5 @@ def test_setup():
     scqs.quantization_points = {0: scqp, 1: scqp}
     scqs.unified_scale_groups = {2: {0, 1}}
     scqs.shared_input_operation_set_groups = {2: {0, 1}}
+    print(s.serialize(scqs))
     assert scqs == s.deserialize(s.serialize(scqs))

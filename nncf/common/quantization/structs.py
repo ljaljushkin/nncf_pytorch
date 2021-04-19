@@ -13,6 +13,15 @@ class QuantizationMode:
 
 @PT_SERIALIZABLE_CLASSES.register()
 class QuantizerConfig:
+    def to_dict(self) -> Dict:
+        return {'num_bits': self.num_bits,
+                'mode': self.mode,
+                'signedness_to_force': self.signedness_to_force,
+                'per_channel': self.per_channel}
+
+
+
+
     """
     A generic, framework-agnostic information on a configuration of a quantizer for abstract reasoning
     and determination of a quantizer setup scheme for a given model.
@@ -48,20 +57,8 @@ class QuantizerConfig:
     def __hash__(self):
         return hash(str(self))
 
-    def to_dict(self) -> Dict:
-        return {'num_bits': self.num_bits,
-                'mode': self.mode,
-                'signedness_to_force': self.signedness_to_force,
-                'per_channel': self.per_channel}
-        # try:
-        #     space_separated = s.split(' ')
-        #     num_bits, mode, signedness, per_channel = map(lambda x: x.split(':')[1], space_separated)
-        #     mode = QuantizationMode.SYMMETRIC if mode == 'S' else mode == QuantizationMode.ASYMMETRIC
-        #     signedness = None if signedness == 'ANY' else (True if signedness == 'S' else False)
-        #     per_channel = True if per_channel == 'Y' else False
-        #     return QuantizerConfig(int(num_bits), mode, signedness, per_channel)
-        # except Exception as ex:
-        #     raise RuntimeError('Failed to decode {} from str'.format(cls.__name__)) from ex
+
+
 
     def is_valid_requantization_for(self, other: 'QuantizerConfig') -> bool:
         """
