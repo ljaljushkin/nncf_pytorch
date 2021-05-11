@@ -39,18 +39,29 @@ class UpdateParameter(BaseOp):
         super().__init__(op)
         self._param_name = param_name
 
-    def __call__(self, module, _):
+    def __call__(self, module, inputs):
         if not hasattr(module, self._param_name):
             raise TypeError('{} should have {} attribute'.format(type(module), self._param_name))
 
         value = getattr(module, self._param_name)
-        result = super().__call__(value)
+        result = super().__call__(value, *inputs)
         setattr(module, self._param_name, result)
 
 
 class UpdateWeight(UpdateParameter):
     def __init__(self, op):
         super().__init__("weight", op)
+
+
+# TODO: or just extend UpdateWeight
+# class UpdateWeightByUsingInputs(UpdateWeight):
+#     def __call__(self, module, inputs):
+#         if not hasattr(module, self._param_name):
+#             raise TypeError('{} should have {} attribute'.format(type(module), self._param_name))
+#
+#         weight = getattr(module, self._param_name)
+#         result = super().__call__(weight, inputs)
+#         setattr(module, self._param_name, result)
 
 
 class UpdatePaddingValue(UpdateParameter):

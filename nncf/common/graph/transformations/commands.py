@@ -75,6 +75,8 @@ class TargetType(OrderedEnum):
     PRE_LAYER_OPERATION = 3
     POST_LAYER_OPERATION = 4
     OPERATION_WITH_WEIGHTS = 5
+    # TODO: UpdateWeightByUsingInputs ??? or just extend UpdateWeights
+    OPERATION_WITH_WEIGHTS_AND_INPUTS = 8
     OPERATOR_PRE_HOOK = 6
     OPERATOR_POST_HOOK = 7
 
