@@ -53,14 +53,15 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
         layout = PTTransformationLayout()
-        commands = self._elastic_width(target_model)
+        # commands = self._elastic_width(target_model)
+        commands = self._elastic_kernel(target_model)
         for command in commands:
             layout.register(command)
         return layout
 
     def create_elastic_kernel_operation(self, module, scope):
         device = module.weight.device
-        return ElasticConv2DKernelOp(module.in_channels, module.out_channels, scope).to(device)
+        return ElasticConv2DKernelOp(module.kernel_size[0], scope).to(device)
 
     def create_elastic_width_operation(self, module, scope):
         device = module.weight.device
@@ -134,3 +135,16 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
     def compression_level(self) -> CompressionLevel:
         return CompressionLevel.FULL
+
+    def progressive_shrinking(self, stage, phase):
+        pass
+        # 1. Check stage and phase. More info needed. Config.
+
+        # 2. sample random subnetwork based on stage and base
+
+        # 3. train / finetune network stage / phase
+        #   train
+        #       train one epoch
+        #       validate
+
+

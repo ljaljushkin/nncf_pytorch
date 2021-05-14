@@ -10,12 +10,13 @@ from nncf.nas.bootstrapNAS.ofa_utils import sub_filter_start_end
 
 @COMPRESSION_MODULES.register() # TODO: Remove?
 class ElasticConv2DKernelOp(nn.Module):
-    def __init__(self, kernel_size_list, scope):
+    def __init__(self, max_kernel_size, scope):
         super().__init__()
         self.scope = scope
-        self.kernel_size_list = kernel_size_list
-        self.stride = stride
-        self.dilation = dilation
+        # Create kernel_size_list based on max module kernel size
+        self.kernel_size_list = self.generate_kernel_size_list(max_kernel_size)
+        # self.stride = stride
+        # self.dilation = dilation
 
         self._ks_set = list(set(self.kernel_size_list))
         self._ks_set.sort()
@@ -31,6 +32,14 @@ class ElasticConv2DKernelOp(nn.Module):
             self.register_parameter(name, param)
 
         self.active_kernel_size = max(self.kernel_size_list)
+
+    def generate_kernel_size_list(self, max_kernel_size):
+        kernel = max_kernel_size # padding needed?
+        ks_list = []
+        while kernel > 1:
+            ks_list.append(kernel)
+            kernel -= 2
+        return ks_list
 
     def get_active_filter(self, in_channel, kernel_size, weight):
         out_channel = in_channel
@@ -61,7 +70,7 @@ class ElasticConv2DKernelOp(nn.Module):
             filters = start_filter
         return filters
 
-    def set_active_elastic_kernel(self, kernel_size):
+    def set_active_kernel_size(self, kernel_size):
         nncf_logger.info('set active elastic_kernel={} for scope={}'.format(kernel_size, self.
 
             scope))
