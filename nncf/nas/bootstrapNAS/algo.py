@@ -137,7 +137,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         return CompressionLevel.FULL
 
     def progressive_shrinking(self, stage, phase):
-        pass
+        if stage == 'elastic_kernel':
+            pass
         # 1. Check stage and phase. More info needed. Config.
 
         # 2. sample random subnetwork based on stage and base

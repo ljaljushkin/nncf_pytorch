@@ -128,6 +128,12 @@ def test_elastic_kernel():
     output = dummy_forward(compressed_model)
     print(output.shape)
 
+    # This should raise an exception
+    for op in compression_ctrl.elastic_kernel_ops:
+        op.set_active_kernel_size(9)
+    output = dummy_forward(compressed_model)
+    print(output.shape)
+
 
 if __name__ == '__main__':
     test_elastic_kernel()

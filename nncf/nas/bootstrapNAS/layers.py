@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from nncf.layer_utils import COMPRESSION_MODULES
 from nncf.common.utils.logger import logger as nncf_logger
 
-from nncf.nas.bootstrapNAS.ofa_utils import sub_filter_start_end
+from nncf.nas.bootstrapNAS.ofa_utils import sub_filter_start_end, get_same_padding
 
 @COMPRESSION_MODULES.register() # TODO: Remove?
 class ElasticConv2DKernelOp(nn.Module):
@@ -83,7 +83,10 @@ class ElasticConv2DKernelOp(nn.Module):
         kernel_size = self.active_kernel_size
         in_channels = inputs.size(1)
         filters =self.get_active_filter(in_channels, kernel_size, weight).contiguous()
-        # padding = get_same_padding(kernel_size)
+        padding = get_same_padding(kernel_size)
+
+        # Nikolay, what is the best way to adjust the padding.
+
         return filters
 
 @COMPRESSION_MODULES.register() # TODO: Remove?
