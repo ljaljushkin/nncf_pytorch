@@ -108,3 +108,18 @@ class ElasticConv2DWidthOp(nn.Module):
     def forward(self, weight, inputs):
         in_channels = inputs.size(1)
         return weight[:self.active_out_channels, :in_channels, :, :].contiguous()
+
+
+@COMPRESSION_MODULES.register() # TODO: Remove?
+class ElasticBatchNorm(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def bn_forward(self, feature_dim, weight):
+        if self.num_features == feature_dim:
+            return weight
+        # TODO
+
+    def forward(self, weight, inputs):
+        feature_dim = input.size(1)
+        return self.bn_forward(feature_dim, weight)
