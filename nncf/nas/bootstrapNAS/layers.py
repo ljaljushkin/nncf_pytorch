@@ -121,5 +121,5 @@ class ElasticBatchNorm(nn.Module):
         # TODO
 
     def forward(self, weight, inputs):
-        feature_dim = input.size(1)
+        feature_dim = inputs.size(1)
         return self.bn_forward(feature_dim, weight)
