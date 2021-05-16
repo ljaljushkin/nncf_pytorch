@@ -11,11 +11,6 @@
  limitations under the License.
 """
 from collections import OrderedDict
-from typing import List, Callable
-
-import torch
-from texttable import Texttable
-from torch import nn
 
 from nncf.algo_selector import COMPRESSION_ALGORITHMS, ZeroCompressionLoss
 from nncf.api.compression import CompressionLevel
@@ -28,14 +23,13 @@ from nncf.compression_method_api import PTCompressionAlgorithmBuilder
 from nncf.compression_method_api import PTCompressionAlgorithmController
 from nncf.config import NNCFConfig
 from nncf.graph.transformations.layout import PTTransformationLayout
-from nncf.layers import NNCFConv2d
-from nncf.module_operations import UpdateInputs
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.graph.transformations.commands import PTTargetPoint
 from nncf.graph.transformations.commands import PTInsertionCommand
 from nncf.nncf_network import NNCFNetwork
+from nncf.module_operations import UpdatePaddingValue
 
-from nncf.nas.bootstrapNAS.layers import ElasticConv2DWidthOp, ElasticConv2DKernelOp
+from nncf.nas.bootstrapNAS.layers import ElasticConv2DWidthOp, ElasticConv2DKernelOp, ElasticKernelPaddingAdjustment
 
 @COMPRESSION_ALGORITHMS.register('bootstrapNAS')
 class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
@@ -53,7 +47,6 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
         layout = PTTransformationLayout()
-        # commands = self._elastic_width(target_model)
         commands = self._elastic_kernel(target_model)
         for command in commands:
             layout.register(command)
@@ -71,14 +64,14 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         graph = target_model.get_original_graph()
         device = next(target_model.parameters()).device
         insertion_commands = []
+        pad_commands = []
         conv2d_nodes = graph.get_nodes_by_types(['conv2d'])
         for node in conv2d_nodes:
             module_scope = node.ia_op_exec_context.scope_in_model
             module = target_model.get_module_by_scope(module_scope)
             module_scope_str = str(module_scope)
             nncf_logger.info("Adding Dynamic Layer in scope: {}".format(module_scope_str))
-            operation = self.create_elastic_kernel_operation(module, module_scope_str)
-            self.elastic_kernel_ops.append(operation)
+            operation = self.create_elastic_kernel_operation(module, module_scope)
             hook = operation.to(device)
             insertion_commands.append(
                 PTInsertionCommand(
@@ -87,6 +80,16 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
                     hook
                 )
             )
+            # Padding
+            ap = ElasticKernelPaddingAdjustment(operation)
+            pad_op = UpdatePaddingValue(ap).to(device)
+            insertion_point = PTTargetPoint(target_type=TargetType.PRE_LAYER_OPERATION,
+                                            module_scope=module_scope)
+            nncf_logger.warning('Padding will be adjusted for {}'.format(module_scope_str))
+            pad_commands.append(PTInsertionCommand(insertion_point, pad_op, TransformationPriority.DEFAULT_PRIORITY))
+            self.elastic_kernel_ops.append(operation)
+        if pad_commands:
+            insertion_commands += pad_commands
         return insertion_commands
 
 

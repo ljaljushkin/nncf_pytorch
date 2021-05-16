@@ -6,11 +6,11 @@ import torch.nn.functional as F
 from nncf.layer_utils import COMPRESSION_MODULES
 from nncf.common.utils.logger import logger as nncf_logger
 
-from nncf.nas.bootstrapNAS.ofa_utils import sub_filter_start_end, get_same_padding
+from nncf.nas.bootstrapNAS.ofa_layers_utils import sub_filter_start_end
 
 @COMPRESSION_MODULES.register() # TODO: Remove?
 class ElasticConv2DKernelOp(nn.Module):
-    def __init__(self, max_kernel_size, scope):
+    def __init__(self, max_kernel_size, scope): #, module_w):
         super().__init__()
         self.scope = scope
         # Create kernel_size_list based on max module kernel size
@@ -34,7 +34,8 @@ class ElasticConv2DKernelOp(nn.Module):
         self.active_kernel_size = max(self.kernel_size_list)
 
     def generate_kernel_size_list(self, max_kernel_size):
-        kernel = max_kernel_size # padding needed?
+        assert max_kernel_size % 2 > 0, 'kernel size should be odd number'
+        kernel = max_kernel_size
         ks_list = []
         while kernel > 1:
             ks_list.append(kernel)
@@ -70,10 +71,11 @@ class ElasticConv2DKernelOp(nn.Module):
             filters = start_filter
         return filters
 
-    def set_active_kernel_size(self, kernel_size):
+    def set_active_kernel_size(self,  kernel_size):
         nncf_logger.info('set active elastic_kernel={} for scope={}'.format(kernel_size, self.
 
             scope))
+        assert kernel_size % 2 > 0, 'kernel size should be odd number'
         if kernel_size not in self.kernel_size_list:
             raise ValueError(
                 'invalid kernel size to set. Should be a number in {}'.format(self.kernel_size_list))
@@ -83,11 +85,20 @@ class ElasticConv2DKernelOp(nn.Module):
         kernel_size = self.active_kernel_size
         in_channels = inputs.size(1)
         filters =self.get_active_filter(in_channels, kernel_size, weight).contiguous()
-        padding = get_same_padding(kernel_size)
-
-        # Nikolay, what is the best way to adjust the padding.
 
         return filters
+
+class ElasticKernelPaddingAdjustment:
+    def __init__(self, elastic_kernel_op: ElasticConv2DKernelOp) :
+        self._elastic_kernel_op = elastic_kernel_op
+        self._is_enabled = True
+
+    def __call__(self, previous_padding_value, _) -> torch.Tensor:
+        if self._is_enabled:
+            pad_v = self._elastic_kernel_op.active_kernel_size // 2
+            return torch.tensor([pad_v])
+        else:
+            return previous_padding_value
 
 @COMPRESSION_MODULES.register() # TODO: Remove?
 class ElasticConv2DWidthOp(nn.Module):
