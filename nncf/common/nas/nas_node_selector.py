@@ -9,4 +9,5 @@ class BootstrapNASNodeSelector:
         pass
 
     def get_all_conv2d(self, graph: NNCFGraph) -> list:
+        pass
 
