@@ -85,8 +85,7 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
                 PTInsertionCommand(
                     PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS,
                     module_scope=module_scope),
-                    hook,
-                    TransformationPriority.PRUNING_PRIORITY
+                    hook
                 )
             )
             # Padding
