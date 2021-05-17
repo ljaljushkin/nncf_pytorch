@@ -29,7 +29,7 @@ from nncf.graph.transformations.commands import PTInsertionCommand
 from nncf.nncf_network import NNCFNetwork
 from nncf.module_operations import UpdatePaddingValue
 
-from nncf.nas.bootstrapNAS.layers import ElasticConv2DWidthOp, ElasticConv2DKernelOp, ElasticKernelPaddingAdjustment
+from nncf.nas.bootstrapNAS.layers import ElasticConv2DWidthOp, ElasticConv2DKernelOp, ElasticKernelPaddingAdjustment, ElasticBatchNormOp
 
 @COMPRESSION_ALGORITHMS.register('bootstrapNAS')
 class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
@@ -56,6 +56,10 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         device = module.weight.device
         return ElasticConv2DKernelOp(module.kernel_size[0], scope).to(device)
 
+    def create_elastic_bn_operation(self, module, scope):
+        device = module.weight.device
+        return ElasticBatchNormOp(module.num_features, scope).to(device)
+
     def create_elastic_width_operation(self, module, scope):
         device = module.weight.device
         return ElasticConv2DWidthOp(module.in_channels, module.out_channels, scope).to(device)
@@ -66,11 +70,14 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         insertion_commands = []
         pad_commands = []
         conv2d_nodes = graph.get_nodes_by_types(['conv2d'])
+        conv2d_elastic_ids = []
         for node in conv2d_nodes:
             module_scope = node.ia_op_exec_context.scope_in_model
             module = target_model.get_module_by_scope(module_scope)
             module_scope_str = str(module_scope)
-            nncf_logger.info("Adding Dynamic Layer in scope: {}".format(module_scope_str))
+            if module.kernel_size[0] <= 3:
+                continue
+            nncf_logger.info("Adding Dynamic Conv2D Layer in scope: {}".format(module_scope_str))
             operation = self.create_elastic_kernel_operation(module, module_scope)
             hook = operation.to(device)
             insertion_commands.append(
@@ -88,8 +95,27 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
             nncf_logger.warning('Padding will be adjusted for {}'.format(module_scope_str))
             pad_commands.append(PTInsertionCommand(insertion_point, pad_op, TransformationPriority.DEFAULT_PRIORITY))
             self.elastic_kernel_ops.append(operation)
+            conv2d_elastic_ids.append(node.node_id+1)
         if pad_commands:
             insertion_commands += pad_commands
+        # BatchNorm
+        bn_nodes = graph.get_nodes_by_types(['batch_norm'])
+        for node in bn_nodes:
+            if node.node_id in conv2d_elastic_ids:
+                module_scope = node.ia_op_exec_context.scope_in_model
+                module = target_model.get_module_by_scope(module_scope)
+                module_scope_str = str(module_scope)
+                nncf_logger.info("Adding Dynamic BatchNorm Layer in scope: {}".format(module_scope_str))
+                operation = self.create_elastic_bn_operation(module, module_scope)
+                hook = operation.to(device)
+                insertion_commands.append(
+                    PTInsertionCommand(
+                        PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS,
+                                      module_scope=module_scope),
+                        hook
+                    )
+                )
+
         return insertion_commands
 
 

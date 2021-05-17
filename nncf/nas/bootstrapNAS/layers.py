@@ -122,14 +122,16 @@ class ElasticConv2DWidthOp(nn.Module):
 
 
 @COMPRESSION_MODULES.register() # TODO: Remove?
-class ElasticBatchNorm(nn.Module):
-    def __init__(self):
+class ElasticBatchNormOp(nn.Module):
+    def __init__(self, num_features, scope):
         super().__init__()
+        self.num_features = num_features
 
     def bn_forward(self, feature_dim, weight):
         if self.num_features == feature_dim:
             return weight
-        # TODO
+        # TODO running_mean, running_var, bias, training, track_running_stats.
+        return weight[:feature_dim]
 
     def forward(self, weight, inputs):
         feature_dim = inputs.size(1)
