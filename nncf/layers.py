@@ -12,12 +12,12 @@
 """
 import math
 import numbers
+import warnings
 from typing import Optional
 from typing import Tuple
 
 import torch
 import torch.nn.functional as F
-import warnings
 from torch import nn
 from torch.nn import init
 from torch.nn.utils.rnn import PackedSequence
@@ -97,14 +97,25 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
 
     def _conv_forward(self, input_, weight, padding_value, padding):
         self.get_padding_value_ref().data.fill_(padding_value.item())
+
+        def _reverse_repeat_tuple(t, n):
+            r"""Reverse the order of `t` and repeat each element for `n` times.
+
+            This can be used to translate padding arg used by Conv and Pooling modules
+            to the ones used by `F.pad`.
+            """
+            return tuple(x for x in reversed(t) for _ in range(n))
+
+        reversed_padding_repeated_twice = _reverse_repeat_tuple(self.padding, 2)
+
         if self.padding_mode != 'zeros':
-            return F.conv2d(F.pad(input_, self._reversed_padding_repeated_twice, mode=self.padding_mode,
+            return F.conv2d(F.pad(input_, reversed_padding_repeated_twice, mode=self.padding_mode,
                                   value=self.get_padding_value_ref().item()),
                             weight, self.bias, self.stride,
                             (0, 0), self.dilation, self.groups)
         if not self.get_padding_value_ref():
             return F.conv2d(input_, weight, self.bias, self.stride, padding, self.dilation, self.groups)
-        return F.conv2d(F.pad(input_, self._reversed_padding_repeated_twice, value=self.get_padding_value_ref().item()),
+        return F.conv2d(F.pad(input_, reversed_padding_repeated_twice, value=self.get_padding_value_ref().item()),
                         weight, self.bias, self.stride,
                         (0, 0), self.dilation, self.groups)
 
