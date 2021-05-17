@@ -92,9 +92,10 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
     def _custom_forward_fn(self, input_):
         proxy_padding_value = getattr(self, NNCF_PADDING_VALUE_ATTR_NAME)  # hack to get value from ProxyModule
         proxy_weight = self.weight
-        return self._conv_forward(input_, proxy_weight, proxy_padding_value)
+        proxy_padding = self.padding
+        return self._conv_forward(input_, proxy_weight, proxy_padding_value, proxy_padding)
 
-    def _conv_forward(self, input_, weight, padding_value):
+    def _conv_forward(self, input_, weight, padding_value, padding):
         self.get_padding_value_ref().data.fill_(padding_value.item())
         if self.padding_mode != 'zeros':
             return F.conv2d(F.pad(input_, self._reversed_padding_repeated_twice, mode=self.padding_mode,
@@ -102,7 +103,7 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
                             weight, self.bias, self.stride,
                             (0, 0), self.dilation, self.groups)
         if not self.get_padding_value_ref():
-            return F.conv2d(input_, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+            return F.conv2d(input_, weight, self.bias, self.stride, padding, self.dilation, self.groups)
         return F.conv2d(F.pad(input_, self._reversed_padding_repeated_twice, value=self.get_padding_value_ref().item()),
                         weight, self.bias, self.stride,
                         (0, 0), self.dilation, self.groups)
