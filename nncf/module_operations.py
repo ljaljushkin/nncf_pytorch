@@ -39,12 +39,12 @@ class UpdateParameter(BaseOp):
         super().__init__(op)
         self._param_name = param_name
 
-    def __call__(self, module, _):
+    def __call__(self, module, inputs):
         if not hasattr(module, self._param_name):
             raise TypeError('{} should have {} attribute'.format(type(module), self._param_name))
 
         value = getattr(module, self._param_name)
-        result = super().__call__(value)
+        result = super().__call__(value, *inputs)
         setattr(module, self._param_name, result)
 
 
@@ -56,3 +56,9 @@ class UpdateWeight(UpdateParameter):
 class UpdatePaddingValue(UpdateParameter):
     def __init__(self, op):
         super().__init__(NNCF_PADDING_VALUE_ATTR_NAME, op)
+
+
+class UpdatePadding(UpdateParameter):
+    def __init__(self, op):
+        super().__init__("padding", op)
+

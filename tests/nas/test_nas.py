@@ -13,10 +13,11 @@
 
 from nncf.dynamic_graph.graph_tracer import create_dummy_forward_fn
 from nncf.dynamic_graph.graph_tracer import create_input_infos
-from nncf.nncf_network import NNCFNetwork
 from nncf.nas.bootstrapNAS.algo import BootstrapNASBuilder
+from nncf.nncf_network import NNCFNetwork
 from tests.helpers import BasicConvTestModel
 from tests.helpers import get_empty_config
+
 
 def test_elastic_width():
     # TODO: RuntimeError: running_mean should contain 3 elements not 64, should properly handle Conv + BatchNorm
@@ -61,8 +62,9 @@ def test_elastic_width():
     # optimizer.zero_grad()
     # loss.backward()
 
+
 def test_elastic_kernel():
-    config = get_empty_config(input_sample_sizes=[1,30,30,7])
+    config = get_empty_config(input_sample_sizes=[1, 30, 30, 7])
     model = BasicConvTestModel(in_channels=30, out_channels=20, kernel_size=7)
 
     input_info_list = create_input_infos(config)
@@ -77,24 +79,22 @@ def test_elastic_kernel():
 
     print("Kernel size 7")
     output = dummy_forward(compressed_model)
-    print(output.shape)
+    assert list(output.shape) == [1, 20, 30, 7]
 
     for op in compression_ctrl.elastic_kernel_ops:
         op.set_active_kernel_size(5)
     output = dummy_forward(compressed_model)
-    print(output.shape)
+    assert list(output.shape) == [1, 20, 30, 7]
 
     for op in compression_ctrl.elastic_kernel_ops:
         op.set_active_kernel_size(3)
     output = dummy_forward(compressed_model)
-    print(output.shape)
+    assert list(output.shape) == [1, 20, 30, 7]
 
     # This should raise an exception
     # for op in compression_ctrl.elastic_kernel_ops:
     #     op.set_active_kernel_size(9)
     # output = dummy_forward(compressed_model)
-
-
 
 
 if __name__ == '__main__':

@@ -93,12 +93,12 @@ class ElasticKernelPaddingAdjustment:
         self._elastic_kernel_op = elastic_kernel_op
         self._is_enabled = True
 
-    def __call__(self, previous_padding_value, _) -> torch.Tensor:
+    def __call__(self, previous_padding, _) -> int:
         if self._is_enabled:
             pad_v = self._elastic_kernel_op.active_kernel_size // 2
-            return torch.tensor([pad_v])
+            return pad_v
         else:
-            return previous_padding_value
+            return previous_padding
 
 @COMPRESSION_MODULES.register() # TODO: Remove?
 class ElasticConv2DWidthOp(nn.Module):

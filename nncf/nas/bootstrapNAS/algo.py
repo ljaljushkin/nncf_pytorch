@@ -26,6 +26,7 @@ from nncf.graph.transformations.layout import PTTransformationLayout
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.graph.transformations.commands import PTTargetPoint
 from nncf.graph.transformations.commands import PTInsertionCommand
+from nncf.module_operations import UpdatePadding
 from nncf.nncf_network import NNCFNetwork
 from nncf.module_operations import UpdatePaddingValue
 
@@ -89,7 +90,7 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
             )
             # Padding
             ap = ElasticKernelPaddingAdjustment(operation)
-            pad_op = UpdatePaddingValue(ap).to(device)
+            pad_op = UpdatePadding(ap).to(device)
             insertion_point = PTTargetPoint(target_type=TargetType.PRE_LAYER_OPERATION,
                                             module_scope=module_scope)
             nncf_logger.warning('Padding will be adjusted for {}'.format(module_scope_str))
