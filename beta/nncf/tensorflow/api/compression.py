@@ -10,15 +10,18 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-from abc import ABC, abstractmethod
-from typing import Optional, TypeVar, Dict
-
 import json
+from abc import ABC
+from abc import abstractmethod
+from typing import Dict
+from typing import Optional
+from typing import TypeVar
+
 import tensorflow as tf
 
+from beta.nncf.tensorflow.graph.model_transformer import TFModelTransformer
 from nncf.api.compression import CompressionAlgorithmBuilder
 from nncf.common.compression import BaseCompressionAlgorithmController
-from beta.nncf.tensorflow.graph.model_transformer import TFModelTransformer
 
 ModelType = TypeVar('ModelType')
 DatasetType = TypeVar('DatasetType')
@@ -96,6 +99,19 @@ class TFCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
     Determines which modifications should be made to the original model in
     order to enable algorithm-specific compression during fine-tuning.
     """
+
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a JSON-compatible dictionary containing a state of the object
+        """
+        return {}
+
+    def load_state(self, state: Dict[str, object]):
+        """
+        Initializes object from the state
+        :param state: Output of `get_state()` method.
+        """
+        pass
 
     def apply_to(self, model: ModelType) -> ModelType:
         """

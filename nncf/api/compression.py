@@ -10,8 +10,14 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, TypeVar, List, Tuple
+from abc import ABC
+from abc import abstractmethod
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Tuple
+from typing import TypeVar
 
 from nncf import NNCFConfig
 from nncf.common.graph.transformations.layout import TransformationLayout
@@ -328,4 +334,17 @@ class CompressionAlgorithmBuilder(ABC):
         :param model: The original uncompressed model.
         :return: The instance of the `TransformationLayout` class containing
             a list of algorithm-specific modifications.
+        """
+
+    @abstractmethod
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a JSON-compatible dictionary containing a state of the object
+        """
+
+    @abstractmethod
+    def load_state(self, state: Dict[str, object]):
+        """
+        Initializes object from the state
+        :param state: Output of `get_state()` method.
         """

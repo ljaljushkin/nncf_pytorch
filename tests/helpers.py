@@ -187,7 +187,7 @@ class LeNet(nn.Module):
 
 
 def get_empty_config(model_size=4, input_sample_sizes: Union[Tuple[List[int]], List[int]] = None,
-                     input_info: Dict = None):
+                     input_info: Dict = None) -> NNCFConfig:
     if input_sample_sizes is None:
         input_sample_sizes = [1, 1, 4, 4]
 
@@ -243,13 +243,14 @@ def check_greater(test: List[TensorType], reference: List[TensorType], rtol=1e-4
     compare_tensor_lists(test, reference, lambda x, y: (x > y).all())
 
 
-def create_compressed_model_and_algo_for_test(model: Module, config: NNCFConfig,
+def create_compressed_model_and_algo_for_test(model: Module, config: NNCFConfig=None,
                                               dummy_forward_fn: Callable[[Module], Any] = None,
                                               wrap_inputs_fn: Callable[[Tuple, Dict], Tuple[Tuple, Dict]] = None,
                                               resuming_state_dict: dict = None) \
         -> Tuple[NNCFNetwork, PTCompressionAlgorithmController]:
-    assert isinstance(config, NNCFConfig)
-    NNCFConfig.validate(config)
+    if config is not None:
+        assert isinstance(config, NNCFConfig)
+        NNCFConfig.validate(config)
     algo, model = create_compressed_model(model, config, dump_graphs=False, dummy_forward_fn=dummy_forward_fn,
                                           wrap_inputs_fn=wrap_inputs_fn,
                                           resuming_state_dict=resuming_state_dict)
