@@ -10,14 +10,20 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-from typing import List, Optional
+from typing import List
+from typing import Optional
 
 import pytest
 
-from nncf.common.sparsity.schedulers import PolynomialSparsityScheduler, ExponentialSparsityScheduler, \
-    AdaptiveSparsityScheduler, MultiStepSparsityScheduler
-from tests.helpers import BasicConvTestModel, get_empty_config, create_compressed_model_and_algo_for_test, \
-    MockModel
+from nncf.common.sparsity.schedulers import AdaptiveSparsityScheduler
+from nncf.common.sparsity.schedulers import ExponentialSparsityScheduler
+from nncf.common.sparsity.schedulers import MultiStepSparsityScheduler
+from nncf.common.sparsity.schedulers import PolynomialSparsityScheduler
+from nncf.nncf_network import NNCFNetwork
+from tests.helpers import BasicConvTestModel
+from tests.helpers import MockModel
+from tests.helpers import create_compressed_model_and_algo_for_test
+from tests.helpers import get_empty_config
 
 
 @pytest.mark.parametrize('algo',
@@ -28,8 +34,6 @@ from tests.helpers import BasicConvTestModel, get_empty_config, create_compresse
                              ('exponential', ExponentialSparsityScheduler),
                              ('multistep', MultiStepSparsityScheduler)
                          ))
-
-
 def test_can_choose_scheduler(algo, schedule_type, scheduler_class):
     config = get_empty_config()
     config['compression'] = {'algorithm': algo, "params": {"schedule": schedule_type}}
@@ -67,12 +71,21 @@ def get_multistep_params():
     }
 
 
+def test_can_handle_not_set_compression_ctrl(mocker):
+    config = get_empty_config()
+    config['compression'] = {'algorithm': 'rb_sparsity'}
+    model, _ = create_compressed_model_and_algo_for_test(MockModel(), config)
+    model_state = model.state_dict()
+    del model_state[NNCFNetwork.CONTROLLER_STATE_ATTR]
+    mocker.patch('nncf.nncf_network.NNCFNetwork.set_controller')
+    _ = create_compressed_model_and_algo_for_test(MockModel(), config, resuming_state_dict=model_state)
+
+
 @pytest.mark.parametrize('algo',
                          ('magnitude_sparsity', 'rb_sparsity'))
 class TestSparseModules:
     def test_can_create_sparse_scheduler__with_defaults(self, algo):
         config = get_empty_config()
-
         config['compression'] = {'algorithm': algo, "params": {"schedule": 'polynomial'}}
         _, compression_ctrl = create_compressed_model_and_algo_for_test(MockModel(), config)
         scheduler = compression_ctrl.scheduler
@@ -80,6 +93,32 @@ class TestSparseModules:
         assert scheduler.target_level == 0.5
         assert scheduler.target_epoch == 90
         assert scheduler.freeze_epoch == 100
+
+    def test_compression_ctrl_state(self, algo):
+        config = get_empty_config()
+        config['compression'] = {'algorithm': algo, "params": {"schedule": 'polynomial'}}
+        model, ctrl = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config)
+
+        assert ctrl.scheduler.current_step == -1
+        assert ctrl.scheduler.current_epoch == -1
+
+        # Test get state
+        ctrl.scheduler.current_step = 100
+        ctrl.scheduler.current_epoch = 5
+        model_state = model.state_dict()
+        ctrl_state_saved = NNCFNetwork.get_compression_state(model_state, NNCFNetwork.CONTROLLER_STATE_ATTR)
+        assert ctrl_state_saved == ctrl.get_state()
+        assert ctrl_state_saved == {'current_step': 100, 'current_epoch': 5}
+
+        # Test load state
+        model, ctrl = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config,
+                                                                resuming_state_dict=model_state)
+        assert ctrl.scheduler.current_step == 100
+        assert ctrl.scheduler.current_epoch == 5
+        model_state = model.state_dict()
+        ctrl_state_loaded = NNCFNetwork.get_compression_state(model_state, NNCFNetwork.CONTROLLER_STATE_ATTR)
+        assert ctrl_state_loaded == ctrl.get_state()
+        assert ctrl_state_loaded == ctrl_state_saved
 
     @pytest.mark.parametrize(('schedule', 'get_params', 'ref_levels'),
                              (('polynomial', get_poly_params, [0.2, 0.4, 0.6, 0.6, 0.6, 0.6]),
@@ -102,7 +141,7 @@ class TestSparseModules:
 
         for m in compression_ctrl.sparsified_module_info:
             if hasattr(m.operand, "frozen"):
-                assert  m.operand.frozen
+                assert m.operand.frozen
 
 
 @pytest.fixture(name="magnitude_algo_mock")
@@ -223,6 +262,7 @@ class TestPolynomialSparsityScheduler:
                                                         scheduler, mock,
                                                         ref_level_sequence)
 
+
 @pytest.fixture(name="rb_algo_mock")
 def rb_algo_mock_(mocker):
     class MockSparsityAlgo:
@@ -234,6 +274,7 @@ def rb_algo_mock_(mocker):
             self.loss.current_sparsity = 0.3
 
     return MockSparsityAlgo()
+
 
 class TestAdaptiveSparsityScheduler:
     @staticmethod
@@ -289,7 +330,7 @@ class TestCompressionController:
 
 
 @pytest.mark.parametrize('scheduler_cls', [PolynomialSparsityScheduler, ExponentialSparsityScheduler,
-                         MultiStepSparsityScheduler, AdaptiveSparsityScheduler],
+                                           MultiStepSparsityScheduler, AdaptiveSparsityScheduler],
                          ids=['Polynomial', 'Exponential', 'Multistep', 'Adaptive'])
 def test_scheduler_get_state(scheduler_cls):
     args = (TestCompressionController(), {'sparsity_init': 0.3, 'update_per_optimizer_step': True, 'patience': 2})

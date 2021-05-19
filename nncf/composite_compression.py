@@ -10,25 +10,25 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
+from copy import deepcopy
 from typing import Dict
 from typing import TypeVar
+from typing import Union
 
 import torch.nn
-from copy import deepcopy
 
 from nncf.api.composite_compression import CompositeCompressionAlgorithmBuilder
 from nncf.api.composite_compression import CompositeCompressionAlgorithmController
 from nncf.api.composite_compression import CompositeCompressionLoss
+from nncf.common.hardware.config import HWConfigType
+from nncf.common.hardware.config import HW_CONFIG_TYPE_TARGET_DEVICE_MAP
 from nncf.compression_method_api import PTCompressionAlgorithmBuilder
 from nncf.compression_method_api import PTCompressionAlgorithmController
 from nncf.compression_method_api import PTCompressionLoss
 from nncf.graph.transformations.layout import PTTransformationLayout
-from nncf.common.hardware.config import HW_CONFIG_TYPE_TARGET_DEVICE_MAP
-from nncf.common.hardware.config import HWConfigType
 from nncf.nncf_network import NNCFNetwork
 from nncf.nncf_network import PTModelTransformer
 from nncf.pruning.base_algo import BasePruningAlgoController
-
 
 ModelType = TypeVar('ModelType')
 
@@ -49,7 +49,7 @@ class PTCompositeCompressionAlgorithmBuilder(
     CONFIG_STATE_ATTR = 'config'
 
     def __init__(self, config: 'NNCFConfig', should_init: bool = True,
-                 should_init_per_builder: Dict[str, bool] = None):
+                 should_init_per_builder: Dict[str, bool] = None, builder_state: Dict[str, object] = None):
         from nncf import NNCFConfig
         from nncf.model_creation import get_compression_algorithm
 
@@ -89,6 +89,9 @@ class PTCompositeCompressionAlgorithmBuilder(
                 self._child_builders.append(
                     compression_algorithm_class(algo_config, should_init=should_init))
 
+        if builder_state:
+            self.load_state(builder_state)
+
     def __bool__(self):
         return bool(self.child_builders)
 
@@ -96,6 +99,7 @@ class PTCompositeCompressionAlgorithmBuilder(
         layout = self.get_transformation_layout(target_model)
         transformer = PTModelTransformer(target_model, layout)
         transformed_model = transformer.transform()
+        target_model.set_compression_state(self.get_state())
         return transformed_model
 
     def get_state(self) -> Dict[str, object]:
@@ -124,7 +128,8 @@ class PTCompositeCompressionAlgorithmBuilder(
                 if algo_name in algo_name_vs_state_map:
                     builder.load_state(algo_name_vs_state_map[algo_name])
 
-    def build_controller(self, model: ModelType) -> 'PTCompositeCompressionAlgorithmController':
+    def build_controller(self, model: ModelType) -> Union['PTCompressionAlgorithmController',
+                                                          'PTCompositeCompressionAlgorithmController']:
         """
         Builds `PTCompositeCompressionAlgorithmController` to handle the additional
         modules, parameters, and hooks inserted into the model to enable
@@ -135,10 +140,13 @@ class PTCompositeCompressionAlgorithmBuilder(
         :return: The instance of the `PTCompositeCompressionAlgorithmController`.
         """
         if len(self._child_builders) == 1:
-            return self._child_builders[0].build_controller(model)
+            ctrl = self._child_builders[0].build_controller(model)
+            model.set_controller(ctrl)
+            return ctrl
         composite_ctrl = PTCompositeCompressionAlgorithmController(model)
         for builder in self.child_builders:
             composite_ctrl.add(builder.build_controller(model))
+        model.set_controller(composite_ctrl)
         return composite_ctrl
 
     def get_transformation_layout(self, model: ModelType) -> PTTransformationLayout:

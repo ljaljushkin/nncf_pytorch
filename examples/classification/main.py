@@ -252,7 +252,6 @@ def train(config, compression_ctrl, model, criterion, criterion_fn, lr_scheduler
                 'compression_level': compression_level,
                 'acc1': acc1,
                 'optimizer': optimizer.state_dict(),
-                'scheduler': compression_ctrl.scheduler.get_state()
             }
 
             torch.save(checkpoint, checkpoint_path)

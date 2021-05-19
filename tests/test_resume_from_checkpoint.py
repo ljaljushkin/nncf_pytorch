@@ -178,8 +178,8 @@ def test_load_state_interoperability(_algos, _model_wrapper, is_resume):
     compressed_model_resume, _ = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config_resume)
     # WA to match all parameters on external call of load_state. Otherwise builder state may not match because of
     # different config in checkpoint and saved on model creation (e.g. rb-sparsity section replaced by const sparsity)
-    builder_state = compressed_model_resume.get_builder_state(saved_model_state)
-    compressed_model_resume.set_builder_state(builder_state)
+    builder_state = compressed_model_resume.get_compression_state(saved_model_state)
+    compressed_model_resume.set_compression_state(builder_state)
 
     model_resume = _model_wrapper['resume_model'](compressed_model_resume)
 

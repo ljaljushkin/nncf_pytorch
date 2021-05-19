@@ -357,7 +357,6 @@ def train(net, compression_ctrl, train_data_loader, test_data_loader, criterion,
                     'state_dict': net.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'iter': iteration,
-                    'scheduler': compression_ctrl.scheduler.get_state(),
                     'compression_level': compression_level,
                 }, str(checkpoint_file_path))
                 make_additional_checkpoints(checkpoint_file_path,

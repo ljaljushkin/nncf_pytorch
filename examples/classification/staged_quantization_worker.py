@@ -263,7 +263,6 @@ def train_staged(config, compression_ctrl, model, criterion, criterion_fn, optim
                 'best_acc1': best_acc1,
                 'compression_level': compression_level,
                 'optimizer': optimizer.state_dict(),
-                'compression_scheduler': compression_ctrl.scheduler.get_state(),
                 'optimizer_scheduler': optimizer_scheduler.state_dict()
             }
 

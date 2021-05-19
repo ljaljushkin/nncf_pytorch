@@ -18,8 +18,8 @@ from typing import Dict
 from typing import List
 from typing import Tuple
 
-from torch.nn import Module
 from torch.distributed import barrier
+from torch.nn import Module
 
 from nncf.algo_selector import COMPRESSION_ALGORITHMS
 from nncf.checkpoint_loading import load_state
@@ -33,11 +33,8 @@ from nncf.dynamic_graph.graph_tracer import create_dummy_forward_fn
 from nncf.dynamic_graph.graph_tracer import create_input_infos
 from nncf.graph.graph_builder import GraphBuilder
 from nncf.nncf_network import NNCFNetwork
-from nncf.utils import is_main_process
 from nncf.utils import is_dist_avail_and_initialized
-from nncf.algo_selector import COMPRESSION_ALGORITHMS
-
-from nncf.common.utils.logger import logger
+from nncf.utils import is_main_process
 
 
 def get_compression_algorithm(config):
@@ -103,12 +100,12 @@ def create_compressed_model(model: Module,
     # As a consequence, no need to care about spoiling BN statistics, as there're disabled in eval mode.
     model.eval()
 
-    builder_state = NNCFNetwork.get_builder_state(resuming_state_dict)
+    # TODO: simplify???
+    builder_state = NNCFNetwork.get_compression_state(resuming_state_dict)
     is_strict = True
     should_init_per_builder = None
     if builder_state:
         saved_config = NNCFConfig.from_dict(builder_state[PTCompositeCompressionAlgorithmBuilder.CONFIG_STATE_ATTR])
-        # TODO: simplify???
         if config is None:
             config = saved_config
         else:
@@ -148,13 +145,11 @@ def create_compressed_model(model: Module,
                                    scopes_without_shape_matching=scopes_without_shape_matching)
 
     should_init = resuming_state_dict is None
-
-    composite_builder = PTCompositeCompressionAlgorithmBuilder(config, should_init, should_init_per_builder)
-    if builder_state:
-        composite_builder.load_state(builder_state)
-
+    composite_builder = PTCompositeCompressionAlgorithmBuilder(config,
+                                                               should_init,
+                                                               should_init_per_builder,
+                                                               builder_state)
     composite_builder.apply_to(compressed_model)
-    compressed_model.set_builder_state(composite_builder.get_state())
     compression_ctrl = composite_builder.build_controller(compressed_model)
 
     # Required to ensure that the model leaving create_compressed_model has correct compressed graph.
@@ -163,6 +158,7 @@ def create_compressed_model(model: Module,
 
     try:
         if resuming_state_dict is not None:
+            # ignore builder state because it has been already loaded
             load_state(compressed_model, resuming_state_dict, is_resume=is_strict,
                        keys_to_ignore=[NNCFNetwork.BUILDER_STATE_ATTR])
     finally:

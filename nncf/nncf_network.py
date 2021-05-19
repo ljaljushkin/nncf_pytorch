@@ -23,9 +23,11 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 from typing import TypeVar
+from typing import Union
 
 import networkx as nx
 import torch
+from torch import Tensor
 from torch import nn
 
 from nncf.checkpoint_loading import OPTIONAL_PARAMETERS_REGISTRY
@@ -302,7 +304,6 @@ class InsertionPointGraph(nx.DiGraph):
 
         return merged_ip_graph
 
-
     @staticmethod
     def get_pre_hook_node_key(node_key: str, in_port_id: int = 0) -> str:
         return InsertionPointGraph.PRE_HOOK_ID_PREFIX + str(in_port_id) + ' ' + node_key
@@ -342,7 +343,6 @@ class InsertionPointGraph(nx.DiGraph):
 
     def get_input_insertion_points(self) -> List[PTTargetPoint]:
         return self._input_ips
-
 
 
 class PTInsertionType(OrderedEnum):
@@ -455,7 +455,8 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
 
         self._compressed_context = TracingContext()
 
-        self._dummy_forward_fn = self._get_dummy_forward_fn_for_graph_building(with_input_tracing=False, with_output_tracing=False)
+        self._dummy_forward_fn = self._get_dummy_forward_fn_for_graph_building(with_input_tracing=False,
+                                                                               with_output_tracing=False)
         self._in_user_dummy_forward = False
 
         self._compressed_context.add_node_comparators([MODEL_INPUT_OP_NAME], ShapeIgnoringTensorMetaComparator())
@@ -464,8 +465,10 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
             self._compressed_context.add_node_comparators(scopes_without_shape_matching,
                                                           ShapeIgnoringTensorMetaComparator())
         self._load_listener = None
-        # to load old checkpoints without builder state through load_state(..., strict=True)
+        # to load old checkpoints without builder and controller states through load_state(..., strict=True)
         OPTIONAL_PARAMETERS_REGISTRY.register(self.BUILDER_STATE_ATTR)
+        OPTIONAL_PARAMETERS_REGISTRY.register(self.CONTROLLER_STATE_ATTR)
+        self._compression_controller = None
 
     @debuggable_forward
     def forward(self, *args, **kwargs):
@@ -482,33 +485,68 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
             retval = self._wrap_outputs_fn(retval)
         return retval
 
+    def state_dict(self, *args, **kwargs):
+        """
+        Overrides Module's state_dict to update actual state of the controller before collecting the NNCFNetwork's state
+        """
+        if self._compression_controller:
+            ctrl_state = self._compression_controller.get_state()
+            self.set_compression_state(ctrl_state, state_attr=self.CONTROLLER_STATE_ATTR)
+        return super().state_dict(*args, **kwargs)
+
+    def load_state_dict(self, state_dict: Union[Dict[str, Tensor], Dict[str, Tensor]], **kwargs):
+        """
+        Overrides Module's load_state_dict to apply loaded controller state
+        """
+        result = super().load_state_dict(state_dict, **kwargs)
+        ctrl_state_tensor = state_dict.get(self.CONTROLLER_STATE_ATTR)
+        if ctrl_state_tensor is not None:
+            ctrl_state = self._decode_state(ctrl_state_tensor.byte())
+            if self._compression_controller:
+                self._compression_controller.load_state(ctrl_state)
+        return result
+
     @staticmethod
-    def _decode_state(encoded_state: torch.ByteTensor) -> Dict:
+    def _decode_state(encoded_state: torch.ByteTensor) -> Dict[str, object]:
         state_bytes = bytes(encoded_state)
         state_str = state_bytes.decode('utf-8')
         return json.loads(state_str)
 
     @staticmethod
-    def _encode_state(state: Dict) -> torch.ByteTensor:
+    def _encode_state(state: Dict[str, object]) -> torch.ByteTensor:
         state_str = json.dumps(state)
         state_bytes = state_str.encode('utf-8')
         return torch.ByteTensor(list(state_bytes))
 
     @classmethod
-    def get_builder_state(cls, model_state_dict: Dict[str, torch.Tensor]) -> Dict:
+    def get_compression_state(cls, model_state_dict: Dict[str, torch.Tensor],
+                              state_attr=BUILDER_STATE_ATTR) -> Dict[str, object]:
+        """
+        Decodes compression state (builder or controller) from the result of NNCFNetwork.state_dict() while discarding
+        irrelevant prefixes added during wrapping DataParallel/DistributedDataParallel objects
+        """
         if model_state_dict:
-            builder_state_tensor = model_state_dict.get(cls.BUILDER_STATE_ATTR)
+            builder_state_tensor = model_state_dict.get(state_attr)
             if builder_state_tensor is None:
                 # handle DP and DDP
-                builder_state_tensor = model_state_dict.get('module.' + cls.BUILDER_STATE_ATTR)
+                builder_state_tensor = model_state_dict.get('module.' + state_attr)
             if builder_state_tensor is not None:
                 return cls._decode_state(builder_state_tensor.byte())
         return {}
 
-    def set_builder_state(self, builder_state: Dict):
+    def set_compression_state(self, compression_state: Dict[str, object], state_attr=BUILDER_STATE_ATTR):
+        """
+        Encodes compression state (builder or controller) state to a tensor and adds it as a buffer to NNCFNetwork
+        """
         device = next(iter(self.parameters())).device
-        builder_state_tensor = self._encode_state(builder_state).to(device)
-        self.register_buffer(self.BUILDER_STATE_ATTR, builder_state_tensor)
+        builder_state_tensor = self._encode_state(compression_state).to(device)
+        self.register_buffer(state_attr, builder_state_tensor)
+
+    def set_controller(self, controller: 'CompositeCompressionAlgorithmController'):
+        """
+        Saves the controller to get its actual state on getting NNCFNetwork's state
+        """
+        self._compression_controller = controller
 
     def _strip_traced_tensors(self, args: Tuple, kwargs: Dict) -> Tuple[Tuple, Dict]:
         """
@@ -516,6 +554,7 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
             through NNCF's forward once and got turned into TracedTensors by reference access.
         """
         is_traced_tensor_predicate = lambda x: isinstance(x, TracedTensor)
+
         def strip_fn(tensor: TracedTensor) -> torch.Tensor:
             if hasattr(torch.Tensor, 'as_subclass'):
                 return torch.Tensor.as_subclass(tensor, torch.Tensor)
@@ -525,7 +564,6 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
         args = objwalk(args, is_traced_tensor_predicate, strip_fn)
         kwargs = objwalk(kwargs, is_traced_tensor_predicate, strip_fn)
         return args, kwargs
-
 
     # Cannnot use property syntax here, otherwise the wrapped module will end up
     # being twice in the same checkpoint with different prefixes
@@ -541,9 +579,9 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
         from nncf.utils import save_module_state, load_module_state
         saved_state = save_module_state(self)
         model_copy = NNCFNetwork(self.get_nncf_wrapped_model(), self.input_infos,
-                    self._user_dummy_forward_fn, self._wrap_inputs_fn,
-                    self.scopes_without_shape_matching, self.ignored_scopes, self.target_scopes,
-                    reset=True)
+                                 self._user_dummy_forward_fn, self._wrap_inputs_fn,
+                                 self.scopes_without_shape_matching, self.ignored_scopes, self.target_scopes,
+                                 reset=True)
         load_module_state(model_copy, saved_state)
         return model_copy
 
@@ -617,7 +655,6 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
             return retval
 
         return wrapped_user_dummy_forward_fn
-
 
     def _replace_modules_by_nncf_modules(self, device, eval_only_ops_exec_ctx: List[str] = None,
                                          reset: bool = False):
