@@ -16,24 +16,29 @@
 This package defines the API for the NNCF compression methods so that the user could
 extend the existing algorithms.
 """
-import numpy
-from typing import List, Tuple, TypeVar, Dict
+from typing import Dict
+from typing import List
+from typing import Tuple
+from typing import TypeVar
 
+import numpy
 import torch
 from torch import nn
 
+from nncf.api.compression import CompressionAlgorithmBuilder
+from nncf.api.compression import CompressionLoss
+from nncf.common.compression import BaseCompressionAlgorithmController
+from nncf.common.utils.logger import logger as nncf_logger
+from nncf.common.utils.registry import Registry
 from nncf.config import NNCFConfig
 from nncf.graph.transformations.layout import PTTransformationLayout
 from nncf.initialization import DataLoaderBNAdaptationRunner
-from nncf.layers import NNCF_MODULES_DICT, NNCF_WRAPPED_USER_MODULES_DICT
-from nncf.common.utils.logger import logger as nncf_logger
-from nncf.common.compression import BaseCompressionAlgorithmController
+from nncf.layers import NNCF_MODULES_DICT
+from nncf.layers import NNCF_WRAPPED_USER_MODULES_DICT
 from nncf.nncf_network import NNCFNetwork
 from nncf.nncf_network import PTModelTransformer
 from nncf.structures import BNAdaptationInitArgs
 from nncf.utils import should_consider_scope
-from nncf.api.compression import CompressionAlgorithmBuilder
-from nncf.api.compression import CompressionLoss
 
 ModelType = TypeVar('ModelType')
 
@@ -96,7 +101,6 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
     into the original uncompressed model in order to enable algorithm-specific compression.
     Hosts entities that are to be used during the training process, such as compression scheduler and
     compression loss."""
-
 
     def distributed(self):
         """
@@ -176,9 +180,6 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
     order to enable algorithm-specific compression during fine-tuning. Operates
     on an NNCFNetwork object wrapping a target PyTorch model (torch.nn.Module).
     """
-
-    _registered_name: str = None  # Attribute will set by COMPRESSION_ALGORITHMS registry
-
     def __init__(self, config: NNCFConfig, should_init: bool = True):
         """
         Arguments:
@@ -247,22 +248,25 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
                                    f'Frozen Layers:\n'
                                    f'{scopes_to_print}')
 
-
     def _should_consider_scope(self, scope_str: str) -> bool:
         return should_consider_scope(scope_str, self.target_scopes, self.ignored_scopes)
 
     def _nncf_module_types_to_compress(self) -> List[str]:
         """
         Return list of NNCF module types which should be compressed by specific algorithm.
-        As name of algorithm used self._registered_name that set by decorator @nncf.registry_module.
+        As name of algorithm used the value set by decorator @Registry.register() or default one.
         :return: List of names of modules
         """
         filtered_nncf_module_names_list = list()
         for module in list(NNCF_MODULES_DICT) + list(NNCF_WRAPPED_USER_MODULES_DICT.values()):
-            if self._registered_name not in module.ignored_algorithms:
+            if self.registered_name not in module.ignored_algorithms:
                 filtered_nncf_module_names_list.append(module.__name__)
         return filtered_nncf_module_names_list
 
     def _are_frozen_layers_allowed(self) -> Tuple[bool, str]:
-        algo_name = self._registered_name.replace('_', ' ')
+        algo_name = self.registered_name.replace('_', ' ')
         return False, f'Frozen layers are not allowed for {algo_name}'
+
+    @property
+    def registered_name(self) -> str:
+        return getattr(self, Registry.REGISTERED_NAME_ATTR, 'NOT_REGISTERED_' + self.__class__.__name__)

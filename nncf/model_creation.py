@@ -44,7 +44,6 @@ def get_compression_algorithm(config):
 
 
 def create_compressed_model(model: Module,
-                            # TODO: API change - become a default parameter
                             config: NNCFConfig = None,
                             resuming_state_dict: dict = None,
                             dummy_forward_fn: Callable[[Module], Any] = None,
@@ -100,10 +99,10 @@ def create_compressed_model(model: Module,
     # As a consequence, no need to care about spoiling BN statistics, as there're disabled in eval mode.
     model.eval()
 
-    # TODO: simplify???
-    builder_state = NNCFNetwork.get_compression_state(resuming_state_dict)
     is_strict = True
     should_init_per_builder = None
+
+    builder_state = NNCFNetwork.get_compression_state(resuming_state_dict)
     if builder_state:
         saved_config = NNCFConfig.from_dict(builder_state[PTCompositeCompressionAlgorithmBuilder.CONFIG_STATE_ATTR])
         if config is None:
@@ -111,7 +110,6 @@ def create_compressed_model(model: Module,
         else:
             should_init_per_builder, is_strict = _match_configs(config, saved_config)
     elif config is None:
-        # TODO: proper release version
         raise ValueError("No config to create compressed model. At can be specified as an argument to the "
                          "create_compressed_model or can be loaded from the resuming checkpoint, which was created "
                          "with NNCF release > 1.7.1")
@@ -158,7 +156,7 @@ def create_compressed_model(model: Module,
 
     try:
         if resuming_state_dict is not None:
-            # ignore builder state because it has been already loaded
+            # ignore builder state because it has been already loaded on creation of builder
             load_state(compressed_model, resuming_state_dict, is_resume=is_strict,
                        keys_to_ignore=[NNCFNetwork.BUILDER_STATE_ATTR])
     finally:

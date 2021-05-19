@@ -110,8 +110,7 @@ class PTCompositeCompressionAlgorithmBuilder(
         for builder in self.child_builders:
             builder_state = builder.get_state()
             if builder_state:
-                # TODO: introduce name?
-                algo_name = builder._registered_name.replace('_', ' ')
+                algo_name = builder.registered_name.replace('_', ' ')
                 algo_name_vs_state_map[algo_name] = builder_state
         return {self.CONFIG_STATE_ATTR: dict(self.config.items()),
                 self._ALGO_NAME_VS_STATE_MAP_STATE_ATTR:  algo_name_vs_state_map}
@@ -124,7 +123,7 @@ class PTCompositeCompressionAlgorithmBuilder(
         algo_name_vs_state_map = state[self._ALGO_NAME_VS_STATE_MAP_STATE_ATTR]
         if algo_name_vs_state_map:
             for builder in self.child_builders:
-                algo_name = builder._registered_name.replace('_', ' ')
+                algo_name = builder.registered_name.replace('_', ' ')
                 if algo_name in algo_name_vs_state_map:
                     builder.load_state(algo_name_vs_state_map[algo_name])
 
