@@ -77,6 +77,7 @@ class TargetType(OrderedEnum):
     OPERATION_WITH_WEIGHTS = 5
     OPERATOR_PRE_HOOK = 6
     OPERATOR_POST_HOOK = 7
+    OPERATION_WITH_BN_PARAMS = 8
 
 
 class TransformationType(OrderedEnum):

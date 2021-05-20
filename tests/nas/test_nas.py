@@ -15,26 +15,19 @@ from nncf.dynamic_graph.graph_tracer import create_dummy_forward_fn
 from nncf.dynamic_graph.graph_tracer import create_input_infos
 from nncf.nas.bootstrapNAS.algo import BootstrapNASBuilder
 from nncf.nncf_network import NNCFNetwork
+from tests import test_models
 from tests.helpers import BasicConvTestModel
 from tests.helpers import get_empty_config
 
 
 def test_elastic_width():
-    # TODO: RuntimeError: running_mean should contain 3 elements not 64, should properly handle Conv + BatchNorm
-    # config = get_empty_config(input_sample_sizes=[1, 3, 32, 32])
-
-    # model = test_models.ResNet18()
-    # num_classes = model.linear.out_features
-    config = get_empty_config()
-    model = BasicConvTestModel()
-    # num_classes = 1
-    # criterion = nn.MSELoss()
-    # targets = torch.randn([num_classes])
+    config = get_empty_config(input_sample_sizes=[1, 3, 32, 32])
+    model = test_models.ResNet18()
     input_info_list = create_input_infos(config)
     dummy_forward = create_dummy_forward_fn(input_info_list)
 
     compressed_model = NNCFNetwork(model, input_infos=input_info_list)
-    composite_builder = BootstrapNASBuilder(config)
+    composite_builder = BootstrapNASBuilder(config, is_elastic_width=True)
     composite_builder.apply_to(compressed_model)
     compression_ctrl = composite_builder.build_controller(compressed_model)
 
@@ -45,22 +38,41 @@ def test_elastic_width():
     #                                   train_iteration_fn)
 
     # activate subnet-1
-    for op in compression_ctrl.elastic_width_ops:
-        op.set_active_out_channels(3)
+    num_filters_per_scope = {
+        'ResNet/NNCFConv2d[conv1]': 10,  # 64,
+        'ResNet/Sequential[layer1]/BasicBlock[0]/NNCFConv2d[conv1]': 10,  # 64
+        'ResNet/Sequential[layer1]/BasicBlock[0]/NNCFConv2d[conv2]': 10,  # 64
+        'ResNet/Sequential[layer1]/BasicBlock[1]/NNCFConv2d[conv1]': 10,  # 64
+        'ResNet/Sequential[layer1]/BasicBlock[1]/NNCFConv2d[conv2]': 10,  # 64
+        'ResNet/Sequential[layer2]/BasicBlock[0]/NNCFConv2d[conv1]': 10,  # 128
+        'ResNet/Sequential[layer2]/BasicBlock[0]/NNCFConv2d[conv2]': 10,  # 128
+        'ResNet/Sequential[layer2]/BasicBlock[0]/Sequential[shortcut]/NNCFConv2d[0]': 10,  # 128
+        'ResNet/Sequential[layer2]/BasicBlock[1]/NNCFConv2d[conv1]': 10,  # 128
+        'ResNet/Sequential[layer2]/BasicBlock[1]/NNCFConv2d[conv2]': 10,  # 128
+        'ResNet/Sequential[layer3]/BasicBlock[0]/NNCFConv2d[conv1]': 256,
+        'ResNet/Sequential[layer3]/BasicBlock[0]/NNCFConv2d[conv2]': 256,
+        'ResNet/Sequential[layer3]/BasicBlock[0]/Sequential[shortcut]/NNCFConv2d[0]': 256,
+        'ResNet/Sequential[layer3]/BasicBlock[1]/NNCFConv2d[conv1]': 256,
+        'ResNet/Sequential[layer3]/BasicBlock[1]/NNCFConv2d[conv2]': 256,
+        'ResNet/Sequential[layer4]/BasicBlock[0]/NNCFConv2d[conv1]': 512,
+        'ResNet/Sequential[layer4]/BasicBlock[0]/NNCFConv2d[conv2]': 512,
+        'ResNet/Sequential[layer4]/BasicBlock[0]/Sequential[shortcut]/NNCFConv2d[0]': 512,
+        'ResNet/Sequential[layer4]/BasicBlock[1]/NNCFConv2d[conv1]': 512,
+        'ResNet/Sequential[layer4]/BasicBlock[1]/NNCFConv2d[conv2]': 512
+    }
+    for scope, num_filters in num_filters_per_scope.items():
+        op = compression_ctrl.scope_vs_elastic_width_op_map[scope]
+        op.set_active_out_channels(num_filters)
+
     output = dummy_forward(compressed_model)
-    print(output.shape)
-    # optimizer.zero_grad()
-    # loss = criterion(outputs, targets)
-    # loss.backward()
+    assert list(output.shape) == [1, 10]
 
     # activate subnet-2
-    for op in compression_ctrl.elastic_width_ops:
-        op.set_active_out_channels(7)
+    for scope in list(num_filters_per_scope.keys())[:-5]:
+        op = compression_ctrl.scope_vs_elastic_width_op_map[scope]
+        op.set_active_out_channels(10)
     output = dummy_forward(compressed_model)
-    print(output.shape)
-    # loss = criterion(outputs, targets)
-    # optimizer.zero_grad()
-    # loss.backward()
+    assert list(output.shape) == [1, 10]
 
 
 def test_elastic_kernel():
@@ -71,7 +83,7 @@ def test_elastic_kernel():
     dummy_forward = create_dummy_forward_fn(input_info_list)
 
     compressed_model = NNCFNetwork(model, input_infos=input_info_list)
-    composite_builder = BootstrapNASBuilder(config)
+    composite_builder = BootstrapNASBuilder(config, is_elastic_kernel=True)
     composite_builder.apply_to(compressed_model)
     compression_ctrl = composite_builder.build_controller(compressed_model)
 
@@ -95,7 +107,3 @@ def test_elastic_kernel():
     # for op in compression_ctrl.elastic_kernel_ops:
     #     op.set_active_kernel_size(9)
     # output = dummy_forward(compressed_model)
-
-
-if __name__ == '__main__':
-    test_elastic_kernel()

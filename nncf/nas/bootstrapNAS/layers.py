@@ -1,16 +1,16 @@
 import torch
 import torch.nn as nn
-from torch.nn.parameter import Parameter
 import torch.nn.functional as F
+from torch.nn.parameter import Parameter
 
-from nncf.layer_utils import COMPRESSION_MODULES
 from nncf.common.utils.logger import logger as nncf_logger
-
+from nncf.layer_utils import COMPRESSION_MODULES
 from nncf.nas.bootstrapNAS.ofa_layers_utils import sub_filter_start_end
 
-@COMPRESSION_MODULES.register() # TODO: Remove?
+
+@COMPRESSION_MODULES.register()  # TODO: Remove?
 class ElasticConv2DKernelOp(nn.Module):
-    def __init__(self, max_kernel_size, scope): #, module_w):
+    def __init__(self, max_kernel_size, scope):  # , module_w):
         super().__init__()
         self.scope = scope
         # Create kernel_size_list based on max module kernel size
@@ -71,10 +71,8 @@ class ElasticConv2DKernelOp(nn.Module):
             filters = start_filter
         return filters
 
-    def set_active_kernel_size(self,  kernel_size):
-        nncf_logger.info('set active elastic_kernel={} for scope={}'.format(kernel_size, self.
-
-            scope))
+    def set_active_kernel_size(self, kernel_size):
+        nncf_logger.info('set active elastic_kernel={} for scope={}'.format(kernel_size, self.scope))
         assert kernel_size % 2 > 0, 'kernel size should be odd number'
         if kernel_size not in self.kernel_size_list:
             raise ValueError(
@@ -84,12 +82,12 @@ class ElasticConv2DKernelOp(nn.Module):
     def forward(self, weight, inputs):
         kernel_size = self.active_kernel_size
         in_channels = inputs.size(1)
-        filters =self.get_active_filter(in_channels, kernel_size, weight).contiguous()
-
+        filters = self.get_active_filter(in_channels, kernel_size, weight).contiguous()
         return filters
 
+
 class ElasticKernelPaddingAdjustment:
-    def __init__(self, elastic_kernel_op: ElasticConv2DKernelOp) :
+    def __init__(self, elastic_kernel_op: ElasticConv2DKernelOp):
         self._elastic_kernel_op = elastic_kernel_op
         self._is_enabled = True
 
@@ -100,39 +98,43 @@ class ElasticKernelPaddingAdjustment:
         else:
             return previous_padding
 
-@COMPRESSION_MODULES.register() # TODO: Remove?
+
+@COMPRESSION_MODULES.register()  # TODO: Remove?
 class ElasticConv2DWidthOp(nn.Module):
     def __init__(self, max_in_channels, max_out_channels, scope):
         super().__init__()
         self.max_in_channels = max_in_channels
         self.scope = scope
         self.max_out_channels = max_out_channels
-        self.active_out_channels = self.max_in_channels
+        self.active_out_channels = self.max_out_channels
 
     def set_active_out_channels(self, num_channels):
-        nncf_logger.info('set active out channels={} for scope={}'.format(num_channels, self.scope))
         if 0 > num_channels > self.max_out_channels:
             raise ValueError(
-                'invalid number of output channels to set. Should be within [{}, {}]'.format(0, self.max_in_channels))
+                'invalid number of output channels to set. Should be within [{}, {}]'.format(0, self.max_out_channels))
         self.active_out_channels = num_channels
 
     def forward(self, weight, inputs):
+        nncf_logger.info('Conv2d with active number of out channels={} in scope={}'.format(self.active_out_channels,
+                                                                                           self.scope))
         in_channels = inputs.size(1)
         return weight[:self.active_out_channels, :in_channels, :, :].contiguous()
 
 
-@COMPRESSION_MODULES.register() # TODO: Remove?
+@COMPRESSION_MODULES.register()  # TODO: Remove?
 class ElasticBatchNormOp(nn.Module):
     def __init__(self, num_features, scope):
         super().__init__()
         self.num_features = num_features
+        self.scope = scope
 
-    def bn_forward(self, feature_dim, weight):
+    def bn_forward(self, feature_dim, **bn_params):
+        nncf_logger.info('BN with active num_features={} in scope={}'.format(feature_dim, self.scope))
         if self.num_features == feature_dim:
-            return weight
-        # TODO running_mean, running_var, bias, training, track_running_stats.
-        return weight[:feature_dim]
+            return list(bn_params.values())
+        # TODO: training, track_running_stats.
+        return [param[:feature_dim] for param in bn_params.values()]
 
-    def forward(self, weight, inputs):
+    def forward(self, inputs, **bn_params):
         feature_dim = inputs.size(1)
-        return self.bn_forward(feature_dim, weight)
+        return self.bn_forward(feature_dim, **bn_params)

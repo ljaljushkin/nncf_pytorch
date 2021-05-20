@@ -16,7 +16,7 @@ class PTTargetPoint(TargetPoint):
         super().__init__(target_type)
         self.target_type = target_type
         if self.target_type in [TargetType.PRE_LAYER_OPERATION, TargetType.POST_LAYER_OPERATION,
-                                TargetType.OPERATION_WITH_WEIGHTS]:
+                                TargetType.OPERATION_WITH_WEIGHTS, TargetType.OPERATION_WITH_BN_PARAMS]:
             if module_scope is None:
                 raise ValueError("Should specify module scope for module pre- and post-op insertion points!")
 
@@ -39,7 +39,7 @@ class PTTargetPoint(TargetPoint):
         prefix = str(self.target_type)
         retval = prefix
         if self.target_type in [TargetType.PRE_LAYER_OPERATION, TargetType.POST_LAYER_OPERATION,
-                                TargetType.OPERATION_WITH_WEIGHTS]:
+                                TargetType.OPERATION_WITH_WEIGHTS, TargetType.OPERATION_WITH_BN_PARAMS]:
             retval += " {}".format(self.module_scope)
         elif self.target_type in [TargetType.OPERATOR_PRE_HOOK, TargetType.OPERATOR_POST_HOOK]:
             if self.input_port_id is not None:
