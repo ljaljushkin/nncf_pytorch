@@ -10,6 +10,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
+from typing import List
 
 import torch.nn as nn
 
@@ -25,8 +26,8 @@ class BaseOp(nn.Module):
     def operand(self):
         return self.op
 
-    def forward(self, *inputs):
-        return self.op(*inputs)
+    def forward(self, *inputs, **kwargs):
+        return self.op(*inputs, **kwargs)
 
 
 class UpdateInputs(BaseOp):
@@ -62,3 +63,25 @@ class UpdatePadding(UpdateParameter):
     def __init__(self, op):
         super().__init__("padding", op)
 
+
+class UpdateParameterList(BaseOp):
+    def __init__(self, param_names: List[str], op):
+        super().__init__(op)
+        self._param_names = param_names
+
+    def __call__(self, module, inputs):
+        param_values = []
+        for param_name in self._param_names:
+            if not hasattr(module, param_name):
+                raise TypeError('{} should have {} attribute'.format(type(module), param_name))
+            param_values.append(getattr(module, param_name))
+        updated_kwargs = dict(zip(self._param_names, param_values))
+        updated_values = super().__call__(*inputs, **updated_kwargs)
+
+        for param_name, updated_value in zip(self._param_names, updated_values):
+            setattr(module, param_name, updated_value)
+
+
+class UpdateBatchNormParams(UpdateParameterList):
+    def __init__(self, op):
+        super().__init__(["weight", "bias", "running_mean", "running_var"], op)

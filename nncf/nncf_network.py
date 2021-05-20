@@ -61,6 +61,7 @@ from nncf.graph.transformations.commands import PTInsertionCommand
 from nncf.graph.transformations.commands import PTTargetPoint
 from nncf.layers import NNCF_MODULES
 from nncf.layers import NNCF_WRAPPED_USER_MODULES_DICT
+from nncf.module_operations import UpdateBatchNormParams
 from nncf.module_operations import UpdateWeight
 from nncf.quantization.layers import QUANTIZATION_MODULES
 from nncf.utils import compute_FLOPs_hook
@@ -362,6 +363,7 @@ class PTInsertionPoint:
         TargetType.PRE_LAYER_OPERATION: PTInsertionType.NNCF_MODULE_PRE_OP,
         TargetType.POST_LAYER_OPERATION: PTInsertionType.NNCF_MODULE_POST_OP,
         TargetType.OPERATION_WITH_WEIGHTS: PTInsertionType.NNCF_MODULE_PRE_OP,
+        TargetType.OPERATION_WITH_BN_PARAMS: PTInsertionType.NNCF_MODULE_PRE_OP,
         TargetType.OPERATOR_PRE_HOOK: PTInsertionType.OPERATOR_PRE_HOOK,
         TargetType.OPERATOR_POST_HOOK: PTInsertionType.OPERATOR_POST_HOOK
     }
@@ -841,6 +843,8 @@ class PTModelTransformer(ModelTransformer):
             fn = transformation_command.fn
             if target_point.type is TargetType.OPERATION_WITH_WEIGHTS:
                 fn = UpdateWeight(fn)
+            if target_point.type is TargetType.OPERATION_WITH_BN_PARAMS:
+                fn = UpdateBatchNormParams(fn)
             tup = (fn, transformation_command.priority)
             if pt_ip not in fns_grouped_by_points:
                 fns_grouped_by_points[pt_ip] = [tup]

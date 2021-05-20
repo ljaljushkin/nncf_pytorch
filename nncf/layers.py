@@ -50,6 +50,19 @@ class NNCFConv1d(_NNCFModuleMixin, nn.Conv1d):
         return nncf_conv
 
 
+class NNCFBatchNorm2d(_NNCFModuleMixin, nn.BatchNorm2d):
+    op_func_name = "batch_norm_2d"
+
+    @staticmethod
+    def from_module(module):
+        assert module.__class__.__name__ == nn.BatchNorm2d.__name__
+        nncf_bn = NNCFBatchNorm2d(
+            module.num_features, module.eps, module.momentum, module.affine, module.track_running_stats
+        )
+        dict_update(nncf_bn.__dict__, module.__dict__)
+        return nncf_bn
+
+
 NNCF_PADDING_VALUE_ATTR_NAME = 'nncf_padding_value'
 OPTIONAL_PARAMETERS_REGISTRY.register(NNCF_PADDING_VALUE_ATTR_NAME)
 
@@ -222,7 +235,8 @@ NNCF_MODULES_DICT = {
     NNCFConvTranspose2d: nn.ConvTranspose2d,
     NNCFConvTranspose3d: nn.ConvTranspose3d,
     NNCFEmbedding: nn.Embedding,
-    NNCFEmbeddingBag: nn.EmbeddingBag
+    NNCFEmbeddingBag: nn.EmbeddingBag,
+    NNCFBatchNorm2d: nn.BatchNorm2d
 }
 
 NNCF_MODULES_MAP = {k.__name__: v.__name__ for k, v in NNCF_MODULES_DICT.items()}
