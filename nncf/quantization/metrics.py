@@ -1,14 +1,18 @@
-import numpy as np
-import networkx as nx
-from copy import deepcopy
-
-from texttable import Texttable
 from collections import deque
+from copy import deepcopy
+from typing import Dict
 
-from nncf.quantization.layers import SymmetricQuantizer
-from nncf.nncf_network import NNCFNetwork, PTNNCFGraph
+import networkx as nx
+import numpy as np
+from texttable import Texttable
+
 from nncf.dynamic_graph.transform_graph import is_nncf_module
-from nncf.quantization.quantizer_propagation import DEFAULT_QUANT_TRAIT_TO_OP_DICT, QuantizationTrait
+from nncf.nncf_network import NNCFNetwork
+from nncf.nncf_network import PTNNCFGraph
+from nncf.quantization.layers import SymmetricQuantizer
+from nncf.quantization.quantizer_propagation import DEFAULT_QUANT_TRAIT_TO_OP_DICT
+from nncf.quantization.quantizer_propagation import QuantizationTrait
+
 
 class BaseMetric:
     def __init__(self):
@@ -20,11 +24,29 @@ class BaseMetric:
     def get_metric_table(self):
         pass
 
+
 class NetworkQuantizationShareMetricBuildTimeInfo:
     def __init__(self, num_potential_quantized_activations: int,
                  num_potential_quantized_weights: int):
         self.num_potential_quantized_activations = num_potential_quantized_activations
         self.num_potential_quantized_weights = num_potential_quantized_weights
+
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a JSON-compatible dictionary containing a state of the object
+        """
+        return {
+            'num_potential_quantized_activations': self.num_potential_quantized_activations,
+            'num_potential_quantized_weights': self.num_potential_quantized_weights
+        }
+
+    @classmethod
+    def from_state(cls, state: Dict[str, object]) -> 'NetworkQuantizationShareMetricBuildTimeInfo':
+        """
+        Creates the object from its state
+        :param state: Output of `get_state()` method.
+        """
+        return cls(**state)
 
 
 class NetworkQuantizationShareMetric(BaseMetric):
@@ -74,13 +96,8 @@ class NetworkQuantizationShareMetric(BaseMetric):
         self.params_bits_stat = set()
         self.num_placed_weight_quantizers = len(self.weights_quantizers)
         self.num_placed_activation_quantizers = len(self.non_weights_quantizers)
-        # TODO: probably resolve it earlier?
-        if build_time_info is None:
-            self.num_potential_quantized_weights = self.num_placed_weight_quantizers
-            self.num_potential_quantized_activations = self.num_placed_activation_quantizers
-        else:
-            self.num_potential_quantized_weights = build_time_info.num_potential_quantized_weights
-            self.num_potential_quantized_activations = build_time_info.num_potential_quantized_activations
+        self.num_potential_quantized_weights = build_time_info.num_potential_quantized_weights
+        self.num_potential_quantized_activations = build_time_info.num_potential_quantized_activations
 
         self.num_all_potential_quantizer = self.num_potential_quantized_weights +\
              self.num_potential_quantized_activations

@@ -20,6 +20,7 @@ from pathlib import Path
 from string import Template
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Set
 from typing import Tuple
 
@@ -459,6 +460,9 @@ class PropagationBasedQuantizerSetupGenerator(QuantizerSetupGeneratorBase):
 
 @COMPRESSION_ALGORITHMS.register('quantization')
 class QuantizationBuilder(PTCompressionAlgorithmBuilder):
+    _BUILD_TIME_METRIC_INFOS_STATE_ATTR = 'build_time_metric_infos'
+    _QUANTIZER_SETUP_STATE_ATTR = 'quantizer_setup'
+
     def __init__(self, config, should_init: bool = True):
         super().__init__(config, should_init)
         self._debug_interface = QuantizationDebugInterface() if is_debug() else None
@@ -468,7 +472,7 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         self._groups_of_adjacent_quantizers = GroupsOfAdjacentQuantizers()  # type: GroupsOfAdjacentQuantizers
         self._setup_to_module_id_translation_dict = {}  # type: Dict[QuantizationPointId, QuantizerId]
         self.eval_ops_exec_ctx = []
-        self._build_time_metric_infos = None
+        self._build_time_metric_infos = None  # type: Optional[NetworkQuantizationShareMetricBuildTimeInfo]
         self.hw_config = None
 
         # can be False to disable setting of adjust padding operations on precision init, because it may add unnecessary
@@ -494,21 +498,31 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
             self._use_logarithm_scale_per_group[quantizer_group] = params_dict.get('logarithm_scale', False)
 
         self._disable_saturation_fix = self.config.get('disable_saturation_fix', False)
-        # JSON-compatible dictionary that represents compression setup
-        self._quantizer_setup_state = {}  # type: Dict[str, object]
+        self._single_config_quantizer_setup = None  # type: Optional[SingleConfigQuantizerSetup]
 
     def get_state(self) -> Dict[str, object]:
         """
         Returns a JSON-compatible dictionary containing a state of the object
         """
-        return self._quantizer_setup_state
+        build_time_metric_infos_state = {}
+        if self._build_time_metric_infos:
+            build_time_metric_infos_state = self._build_time_metric_infos.get_state()
+        quantizer_setup_state = {}
+        if self._single_config_quantizer_setup:
+            quantizer_setup_state = self._single_config_quantizer_setup.get_state()
+        return {
+            self._QUANTIZER_SETUP_STATE_ATTR: quantizer_setup_state,
+            self._BUILD_TIME_METRIC_INFOS_STATE_ATTR: build_time_metric_infos_state
+        }
 
-    def load_state(self, state: Dict[str, object]):
+    def load_state(self, state: Dict):
         """
         Initializes object from the state
         :param state: Output of `get_state()` method.
         """
-        self._quantizer_setup_state = state
+        self._single_config_quantizer_setup = SingleConfigQuantizerSetup.from_state(state[self._QUANTIZER_SETUP_STATE_ATTR])
+        self._build_time_metric_infos = NetworkQuantizationShareMetricBuildTimeInfo.from_state(
+            state[self._BUILD_TIME_METRIC_INFOS_STATE_ATTR])
 
     def _parse_init_params(self):
         init_config = self.config.get('initializer', {})
@@ -606,21 +620,18 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
         target_model.register_compression_module_type(ExtraCompressionModuleType.EXTERNAL_QUANTIZER)
-        if self._quantizer_setup_state:
-            single_config_quantizer_setup = SingleConfigQuantizerSetup.from_state(self._quantizer_setup_state)
-        else:
-            single_config_quantizer_setup = self._get_quantizer_setup(target_model)
-            self._quantizer_setup_state = single_config_quantizer_setup.get_state()
+        if self._single_config_quantizer_setup is None:
+            self._single_config_quantizer_setup = self._get_quantizer_setup(target_model)
 
         minmax_values_for_range_init = {}
         if is_main_process() and self.should_init:
             stats_for_range_init = self._get_statistics_for_final_range_init(target_model,
-                                                                             single_config_quantizer_setup,
+                                                                             self._single_config_quantizer_setup,
                                                                              self._range_init_params)
-            minmax_values_for_range_init = single_config_quantizer_setup.get_minmax_values(stats_for_range_init,
-                                                                                           target_model)
+            minmax_values_for_range_init = self._single_config_quantizer_setup.get_minmax_values(stats_for_range_init,
+                                                                                                 target_model)
         insertion_commands, setup_to_module_id_translation_dict = \
-            self._build_insertion_commands_list_for_quantizer_setup(single_config_quantizer_setup,
+            self._build_insertion_commands_list_for_quantizer_setup(self._single_config_quantizer_setup,
                                                                     target_model,
                                                                     minmax_values_for_range_init)
 
@@ -632,7 +643,8 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         all_quantizations = {}
         all_quantizations.update({k: v.quantizer_module_ref for k, v in self._weight_quantizers.items()})
         all_quantizations.update({k: v.quantizer_module_ref for k, v in self._non_weight_quantizers.items()})
-        self._groups_of_adjacent_quantizers.parse_from_quantizer_setup(all_quantizations, single_config_quantizer_setup,
+        self._groups_of_adjacent_quantizers.parse_from_quantizer_setup(all_quantizations,
+                                                                       self._single_config_quantizer_setup,
                                                                        setup_to_module_id_translation_dict)
 
         # NOTE: Order of activations must be the same to correctly broadcast parameters (e.g. scales) in distributed
@@ -691,8 +703,6 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
                                                                   self._range_init_params,
                                                                   self._debug_interface)
         single_config_quantizer_setup = setup_generator.generate_setup()
-        # TODO: how to initialize in case of loading it from setup_state?
-        #  should be part of setup?
         self._build_time_metric_infos = setup_generator.get_build_time_metric_infos()
         return single_config_quantizer_setup
 
