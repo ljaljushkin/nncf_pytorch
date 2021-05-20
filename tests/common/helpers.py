@@ -11,15 +11,11 @@
  limitations under the License.
 """
 
-from contextlib import contextmanager
-from pathlib import Path
-
-
-@contextmanager
-def safe_open(file: Path, *args, **kwargs):
-    # For security reasons, should not follow symlinks. Use .resolve() on any Path
-    # objects before passing them here.
-    if file.is_symlink():
-        raise RuntimeError("File {} is a symbolic link, aborting.".format(str(file)))
-    with open(str(file), *args, **kwargs) as f:
-        yield f
+def get_cli_dict_args(args):
+    cli_args = dict()
+    for key, val in args.items():
+        cli_key = '--{}'.format(str(key))
+        cli_args[cli_key] = None
+        if val is not None:
+            cli_args[cli_key] = str(val)
+    return cli_args
