@@ -89,10 +89,6 @@ def test_can_resume_with_algo_mixing(mocker):
         m.assert_called()
     desc.check_precision_init(compression_ctrl.child_ctrls[1])
 
-# TODO:
-#  checkpoint without builder state_dict can be loaded
-#  create model without config with old checkpoint -> value error
-
 QUANTIZATION = 'quantization'
 SPARSITY_TYPES = ['magnitude', 'rb', 'const']
 SPARSITY_ALGOS = {'_'.join([type, 'sparsity']) for type in SPARSITY_TYPES}  # 3S
@@ -171,20 +167,24 @@ def test_load_state_interoperability(_algos, _model_wrapper, is_resume):
     compressed_model_save, _ = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config_save)
     model_save = _model_wrapper['save_model'](compressed_model_save)
     saved_model_state = model_save.state_dict()
-    ref_num_loaded = len(saved_model_state)
+    ref_num_loaded = len(saved_model_state) - 2  # builder and controller states
 
     config_resume = get_empty_config()
     config_resume['compression'] = [{'algorithm': algo} for algo in _algos['load_algos']]
     compressed_model_resume, _ = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config_resume)
-    # WA to match all parameters on external call of load_state. Otherwise builder state may not match because of
-    # different config in checkpoint and saved on model creation (e.g. rb-sparsity section replaced by const sparsity)
-    builder_state = compressed_model_resume.get_compression_state(saved_model_state)
-    compressed_model_resume.set_compression_state(builder_state)
-
     model_resume = _model_wrapper['resume_model'](compressed_model_resume)
 
     if not is_resume or (is_resume and _algos['is_resume_ok']):
-        act_num_loaded = load_state(model_resume, saved_model_state, is_resume)
+        # Need to ignore compression state attributes to match all parameters on external call of load_state.
+        # Otherwise builder state may not match because of different config in checkpoint and saved on model creation
+        # (e.g. rb-sparsity section replaced by const sparsity)
+        # Controller state may not match because of different scheduler states in algo mixing case
+        # (e.g.) const sparsity <-> magnitude
+        # For the user it will be loaded in the right places inside create_compressed_model from resuming_checkpoint
+        # argument
+        from nncf.nncf_network import NNCFNetwork
+        act_num_loaded = load_state(model_resume, saved_model_state, is_resume,
+                                    keys_to_ignore=[NNCFNetwork.BUILDER_STATE_ATTR, NNCFNetwork.CONTROLLER_STATE_ATTR])
 
         if ('magnitude_sparsity' in _algos['load_algos'] or 'const_sparsity' in _algos['load_algos']) \
             and 'rb_sparsity' in _algos['save_algos']:

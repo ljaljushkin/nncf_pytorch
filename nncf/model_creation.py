@@ -102,7 +102,7 @@ def create_compressed_model(model: Module,
     is_strict = True
     should_init_per_builder = None
 
-    builder_state = NNCFNetwork.get_compression_state(resuming_state_dict)
+    builder_state = NNCFNetwork.get_compression_state(resuming_state_dict, state_attr=NNCFNetwork.BUILDER_STATE_ATTR)
     if builder_state:
         saved_config = NNCFConfig.from_dict(builder_state[PTCompositeCompressionAlgorithmBuilder.CONFIG_STATE_ATTR])
         if config is None:
@@ -157,8 +157,13 @@ def create_compressed_model(model: Module,
     try:
         if resuming_state_dict is not None:
             # ignore builder state because it has been already loaded on creation of builder
+            # and ignore controller state since it should be loaded directly to ctrl
             load_state(compressed_model, resuming_state_dict, is_resume=is_strict,
-                       keys_to_ignore=[NNCFNetwork.BUILDER_STATE_ATTR])
+                       keys_to_ignore=[NNCFNetwork.BUILDER_STATE_ATTR, NNCFNetwork.CONTROLLER_STATE_ATTR])
+            ctrl_state = NNCFNetwork.get_compression_state(resuming_state_dict,
+                                                           state_attr=NNCFNetwork.CONTROLLER_STATE_ATTR)
+            if is_strict and ctrl_state:
+                compression_ctrl.load_state(ctrl_state)
     finally:
         if dump_graphs and is_main_process() and composite_builder:
             if dummy_forward_fn is None:
@@ -279,7 +284,8 @@ def _match_configs(loaded_config: NNCFConfig, saved_config: NNCFConfig) -> Tuple
                     'Failed to resume algorithm {} with config different from one with which the algorithm was '
                     'originally created and saved to checkpoint'.format(algo_name))
             if has_init:
-                nncf_logger.warning('{} is not going to be initialized, since it\'s resumed from checkpoint'.format(algo_name))
+                nncf_logger.warning(
+                    '{} is not going to be initialized, since it\'s resumed from checkpoint'.format(algo_name))
             matched = True
         if matched:
             # CHECKPOINT                -> CREATE                      - STS       - INIT              - STRICT

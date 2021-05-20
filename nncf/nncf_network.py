@@ -390,8 +390,8 @@ class PTInsertionPoint:
 
 @ignore_scope
 class NNCFNetwork(nn.Module, PostGraphBuildActing):
-    BUILDER_STATE_ATTR = '_builder_state'
-    CONTROLLER_STATE_ATTR = '_controller_state'
+    BUILDER_STATE_ATTR = '_nncf_builder_state'
+    CONTROLLER_STATE_ATTR = '_nncf_controller_state'
 
     def __init__(self, module, input_infos: List[ModelInputInfo],
                  dummy_forward_fn=None, wrap_inputs_fn=None, scopes_without_shape_matching=None,
@@ -526,12 +526,12 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
         irrelevant prefixes added during wrapping DataParallel/DistributedDataParallel objects
         """
         if model_state_dict:
-            builder_state_tensor = model_state_dict.get(state_attr)
-            if builder_state_tensor is None:
+            state_tensor = model_state_dict.get(state_attr)
+            if state_tensor is None:
                 # handle DP and DDP
-                builder_state_tensor = model_state_dict.get('module.' + state_attr)
-            if builder_state_tensor is not None:
-                return cls._decode_state(builder_state_tensor.byte())
+                state_tensor = model_state_dict.get('module.' + state_attr)
+            if state_tensor is not None:
+                return cls._decode_state(state_tensor.byte())
         return {}
 
     def set_compression_state(self, compression_state: Dict[str, object], state_attr=BUILDER_STATE_ATTR):
@@ -539,8 +539,8 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
         Encodes compression state (builder or controller) state to a tensor and adds it as a buffer to NNCFNetwork
         """
         device = next(iter(self.parameters())).device
-        builder_state_tensor = self._encode_state(compression_state).to(device)
-        self.register_buffer(state_attr, builder_state_tensor)
+        state_tensor = self._encode_state(compression_state).to(device)
+        self.register_buffer(state_attr, state_tensor)
 
     def set_controller(self, controller: 'CompositeCompressionAlgorithmController'):
         """
