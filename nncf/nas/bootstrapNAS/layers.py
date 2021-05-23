@@ -7,10 +7,22 @@ from nncf.common.utils.logger import logger as nncf_logger
 from nncf.layer_utils import COMPRESSION_MODULES
 from nncf.nas.bootstrapNAS.ofa_layers_utils import sub_filter_start_end
 
+@COMPRESSION_MODULES.register()
+class ElasticBypassOp(nn.Module):
+    def __init__(self, scope):
+        super().__init__()
+        self.scope = scope
+        self._is_active = False
 
-@COMPRESSION_MODULES.register()  # TODO: Remove?
+    def activate_bypass(self, activate=False):
+        self._is_active = activate
+
+    def forward(self, weight, inputs):
+        pass
+
+@COMPRESSION_MODULES.register() # TODO: Remove?
 class ElasticConv2DKernelOp(nn.Module):
-    def __init__(self, max_kernel_size, scope):  # , module_w):
+    def __init__(self, max_kernel_size, scope): #, module_w):
         super().__init__()
         self.scope = scope
         # Create kernel_size_list based on max module kernel size
@@ -47,10 +59,8 @@ class ElasticConv2DKernelOp(nn.Module):
         max_kernel_size = max(self.kernel_size_list)
 
         start, end = sub_filter_start_end(max_kernel_size, kernel_size)
-        # filters = self.weight[:out_channel, :in_channel, start:end, start:end]
         filters = weight[:out_channel, :in_channel, start:end, start:end]
         if kernel_size < max_kernel_size:
-            # start_filter = self.weight[:out_channel, :in_channel, :, :]  # start with max kernel
             start_filter = weight[:out_channel, :in_channel, :, :]  # start with max kernel
             for i in range(len(self._ks_set) - 1, 0, -1):
                 src_ks = self._ks_set[i]
@@ -107,8 +117,20 @@ class ElasticConv2DWidthOp(nn.Module):
         self.scope = scope
         self.max_out_channels = max_out_channels
         self.active_out_channels = self.max_out_channels
+        # TODO: Add granularity for width changes from config
+        self.width_list = self.generate_width_list(self.max_out_channels)
+
+    def generate_width_list(self, max_out_channels):
+        assert max_out_channels > 32, 'Max out channels should be greater than 32'
+        width = 32*(max_out_channels // 32)
+        width_list = []
+        while width >= 32:
+            width_list.append(width)
+            width -= 32
+        return width_list
 
     def set_active_out_channels(self, num_channels):
+        nncf_logger.info('set active out channels={} for scope={}'.format(num_channels, self.scope))
         if 0 > num_channels > self.max_out_channels:
             raise ValueError(
                 'invalid number of output channels to set. Should be within [{}, {}]'.format(0, self.max_out_channels))
