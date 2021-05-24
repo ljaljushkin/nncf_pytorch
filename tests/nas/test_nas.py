@@ -18,15 +18,16 @@ from nncf.nncf_network import NNCFNetwork
 from tests import test_models
 from tests.helpers import BasicConvTestModel
 from tests.helpers import get_empty_config
+from tests.nas.test_nas_helpers import VGG11_K7
 
 __all__ = [
-    'test_elastic_width', 'test_elastic_kernel', 'test_activate_subnet',
+    'test_elastic_width', 'test_elastic_width_vgg11_k7', 'test_elastic_kernel', 'test_elastic_kernel_bn', 'test_activate_subnet',
 ]
 
 def _test_model(model_name, is_elastic_kernel=False, is_elastic_width=False):
     models = {
         'resnet18': [test_models.ResNet18, [1, 3, 32, 32]],
-        # 'test_elasticity': [TestElasticityModel, [1, 3, 32, 32]] #TODO
+        'vgg11_k7': [VGG11_K7, [1, 3, 32, 32]]
     }
     model = models[model_name][0]()  # test_models.ResNet18()
     config = get_empty_config(input_sample_sizes= models[model_name][1]) #[1, 3, 32, 32])
@@ -80,6 +81,27 @@ def test_elastic_width():
     output = dummy_forward(compressed_model)
     assert list(output.shape) == [1, 10]
 
+def test_elastic_width_vgg11_k7():
+    compressed_model, compression_ctrl, dummy_forward = _test_model('vgg11_k7',
+                                                                    is_elastic_width=True)  # _restnet18_test_model()
+
+    # activate subnet-1
+    num_filters_per_scope = {
+        'VGG11_K7/Sequential[features]/NNCFConv2d[22]': 32,  #
+    }
+    for scope, num_filters in num_filters_per_scope.items():
+        op = compression_ctrl.scope_vs_elastic_width_op_map[scope]
+        op.set_active_out_channels(num_filters)
+
+    output = dummy_forward(compressed_model)
+    assert list(output.shape) == [1, 10]
+
+    # activate subnet-2
+    for scope in list(num_filters_per_scope.keys())[:-5]:
+        op = compression_ctrl.scope_vs_elastic_width_op_map[scope]
+        op.set_active_out_channels(32)
+    output = dummy_forward(compressed_model)
+    assert list(output.shape) == [1, 10]
 
 def test_elastic_kernel():
     config = get_empty_config(input_sample_sizes=[1, 30, 30, 7])
@@ -112,20 +134,29 @@ def test_elastic_kernel():
     #     op.set_active_kernel_size(9)
     # output = dummy_forward(compressed_model)
 
-    # TODO: Finish helper
-    # compressed_model, compression_ctrl, dummy_forward = _test_model('test_elasticity', is_elastic_kernel=True)
-    #
-    # print("Kernel size 7")
-    # output = dummy_forward(compressed_model)
-    # assert list(output.shape) == [1, 20, 30, 7]
+def test_elastic_kernel_bn():
+    compressed_model, compression_ctrl, dummy_forward = _test_model('vgg11_k7',
+                                                                    is_elastic_kernel=True)  # _restnet18_test_model()
+    print(compressed_model)
+    print("Kernel size 7")
+    output = dummy_forward(compressed_model)
+    print(output)
+    assert list(output.shape) == [1, 20, 30, 7]
 
-    # for op in compression_ctrl.elastic_kernel_ops:
-    #     op.set_active_kernel_size(3)
-    # output = dummy_forward(compressed_model)
-    # assert list(output.shape) == [1, 20, 30, 7]
+    for op in compression_ctrl.elastic_kernel_ops:
+        op.set_active_kernel_size(5)
+    output = dummy_forward(compressed_model)
+    assert list(output.shape) == [1, 20, 30, 7]
+
+    for op in compression_ctrl.elastic_kernel_ops:
+        op.set_active_kernel_size(3)
+    output = dummy_forward(compressed_model)
+    assert list(output.shape) == [1, 20, 30, 7]
 
 def test_activate_subnet():
     compressed_model, compression_ctrl, dummy_forward = _test_model('resnet18', is_elastic_width=True)
     subnet_config = {'width': [64]}
     compression_ctrl.set_active_subnet(subnet_config)
-    # TODO: Test
+    output = dummy_forward(compressed_model)
+    assert list(output.shape) == [1, 10]
+
