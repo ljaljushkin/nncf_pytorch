@@ -19,36 +19,42 @@ from tests import test_models
 from tests.helpers import BasicConvTestModel
 from tests.helpers import get_empty_config
 
+__all__ = [
+    'test_elastic_width', 'test_elastic_kernel', 'test_activate_subnet',
+]
 
-def test_elastic_width():
-    config = get_empty_config(input_sample_sizes=[1, 3, 32, 32])
-    model = test_models.ResNet18()
+def _test_model(model_name, is_elastic_kernel=False, is_elastic_width=False):
+    models = {
+        'resnet18': [test_models.ResNet18, [1, 3, 32, 32]],
+        # 'test_elasticity': [TestElasticityModel, [1, 3, 32, 32]] #TODO
+    }
+    model = models[model_name][0]()  # test_models.ResNet18()
+    config = get_empty_config(input_sample_sizes= models[model_name][1]) #[1, 3, 32, 32])
     input_info_list = create_input_infos(config)
     dummy_forward = create_dummy_forward_fn(input_info_list)
 
     compressed_model = NNCFNetwork(model, input_infos=input_info_list)
-    composite_builder = BootstrapNASBuilder(config, is_elastic_width=True)
+    composite_builder = BootstrapNASBuilder(config, is_elastic_kernel=is_elastic_kernel, is_elastic_width=is_elastic_width)
     composite_builder.apply_to(compressed_model)
     compression_ctrl = composite_builder.build_controller(compressed_model)
 
-    # final_subnet = BootstrapNASSearch(compressed_model, compression_ctrl,
-    #                                   train_data_loader,
-    #                                   criterion_fn,
-    # or
-    #                                   train_iteration_fn)
+    return compressed_model, compression_ctrl, dummy_forward
+
+def test_elastic_width():
+    compressed_model, compression_ctrl, dummy_forward = _test_model('resnet18', is_elastic_width=True) #_restnet18_test_model()
 
     # activate subnet-1
     num_filters_per_scope = {
-        'ResNet/NNCFConv2d[conv1]': 10,  # 64,
-        'ResNet/Sequential[layer1]/BasicBlock[0]/NNCFConv2d[conv1]': 10,  # 64
-        'ResNet/Sequential[layer1]/BasicBlock[0]/NNCFConv2d[conv2]': 10,  # 64
-        'ResNet/Sequential[layer1]/BasicBlock[1]/NNCFConv2d[conv1]': 10,  # 64
-        'ResNet/Sequential[layer1]/BasicBlock[1]/NNCFConv2d[conv2]': 10,  # 64
-        'ResNet/Sequential[layer2]/BasicBlock[0]/NNCFConv2d[conv1]': 10,  # 128
-        'ResNet/Sequential[layer2]/BasicBlock[0]/NNCFConv2d[conv2]': 10,  # 128
-        'ResNet/Sequential[layer2]/BasicBlock[0]/Sequential[shortcut]/NNCFConv2d[0]': 10,  # 128
-        'ResNet/Sequential[layer2]/BasicBlock[1]/NNCFConv2d[conv1]': 10,  # 128
-        'ResNet/Sequential[layer2]/BasicBlock[1]/NNCFConv2d[conv2]': 10,  # 128
+        'ResNet/NNCFConv2d[conv1]': 32,  # 64,
+        'ResNet/Sequential[layer1]/BasicBlock[0]/NNCFConv2d[conv1]': 32,  # 64
+        'ResNet/Sequential[layer1]/BasicBlock[0]/NNCFConv2d[conv2]': 32,  # 64
+        'ResNet/Sequential[layer1]/BasicBlock[1]/NNCFConv2d[conv1]': 32,  # 64
+        'ResNet/Sequential[layer1]/BasicBlock[1]/NNCFConv2d[conv2]': 32,  # 64
+        'ResNet/Sequential[layer2]/BasicBlock[0]/NNCFConv2d[conv1]': 64,  # 128
+        'ResNet/Sequential[layer2]/BasicBlock[0]/NNCFConv2d[conv2]': 64,  # 128
+        'ResNet/Sequential[layer2]/BasicBlock[0]/Sequential[shortcut]/NNCFConv2d[0]': 64,  # 128
+        'ResNet/Sequential[layer2]/BasicBlock[1]/NNCFConv2d[conv1]': 64,  # 128
+        'ResNet/Sequential[layer2]/BasicBlock[1]/NNCFConv2d[conv2]': 64,  # 128
         'ResNet/Sequential[layer3]/BasicBlock[0]/NNCFConv2d[conv1]': 256,
         'ResNet/Sequential[layer3]/BasicBlock[0]/NNCFConv2d[conv2]': 256,
         'ResNet/Sequential[layer3]/BasicBlock[0]/Sequential[shortcut]/NNCFConv2d[0]': 256,
@@ -70,7 +76,7 @@ def test_elastic_width():
     # activate subnet-2
     for scope in list(num_filters_per_scope.keys())[:-5]:
         op = compression_ctrl.scope_vs_elastic_width_op_map[scope]
-        op.set_active_out_channels(10)
+        op.set_active_out_channels(32)
     output = dummy_forward(compressed_model)
     assert list(output.shape) == [1, 10]
 
@@ -86,8 +92,6 @@ def test_elastic_kernel():
     composite_builder = BootstrapNASBuilder(config, is_elastic_kernel=True)
     composite_builder.apply_to(compressed_model)
     compression_ctrl = composite_builder.build_controller(compressed_model)
-
-    print(compressed_model)
 
     print("Kernel size 7")
     output = dummy_forward(compressed_model)
@@ -107,3 +111,21 @@ def test_elastic_kernel():
     # for op in compression_ctrl.elastic_kernel_ops:
     #     op.set_active_kernel_size(9)
     # output = dummy_forward(compressed_model)
+
+    # TODO: Finish helper
+    # compressed_model, compression_ctrl, dummy_forward = _test_model('test_elasticity', is_elastic_kernel=True)
+    #
+    # print("Kernel size 7")
+    # output = dummy_forward(compressed_model)
+    # assert list(output.shape) == [1, 20, 30, 7]
+
+    # for op in compression_ctrl.elastic_kernel_ops:
+    #     op.set_active_kernel_size(3)
+    # output = dummy_forward(compressed_model)
+    # assert list(output.shape) == [1, 20, 30, 7]
+
+def test_activate_subnet():
+    compressed_model, compression_ctrl, dummy_forward = _test_model('resnet18', is_elastic_width=True)
+    subnet_config = {'width': [64]}
+    compression_ctrl.set_active_subnet(subnet_config)
+    # TODO: Test
