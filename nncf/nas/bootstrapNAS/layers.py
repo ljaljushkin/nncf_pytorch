@@ -134,6 +134,9 @@ class ElasticConv2DWidthOp(nn.Module):
         if 0 > num_channels > self.max_out_channels:
             raise ValueError(
                 'invalid number of output channels to set. Should be within [{}, {}]'.format(0, self.max_out_channels))
+        if num_channels not in self.width_list:
+            raise ValueError(
+                'invalid number of output channels to set. Should be a number in {}'.format(self.width_list))
         self.active_out_channels = num_channels
 
     def forward(self, weight, inputs):
@@ -160,3 +163,9 @@ class ElasticBatchNormOp(nn.Module):
     def forward(self, inputs, **bn_params):
         feature_dim = inputs.size(1)
         return self.bn_forward(feature_dim, **bn_params)
+
+@COMPRESSION_MODULES.register()  # TODO: Remove?
+class ElasticLinear(nn.Module):
+    def __init__(self, max_in_features, max_out_features, scope, bias=True):
+        pass
+    #TODO
