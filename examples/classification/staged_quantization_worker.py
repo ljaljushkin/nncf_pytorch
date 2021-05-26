@@ -24,6 +24,7 @@ import torch.utils.data
 import torch.utils.data.distributed
 from torchvision.models import InceptionOutputs
 
+from nncf.common.utils.tensorboard import prepare_for_tensorboard
 from examples.classification.main import create_data_loaders, validate, AverageMeter, accuracy, get_lr, \
     create_datasets, inception_criterion_fn
 from examples.common.example_logger import logger
@@ -31,13 +32,13 @@ from examples.common.execution import ExecutionMode, prepare_model_for_execution
 from examples.common.model_loader import NNCF_CHECKPOINT_ATTR
 from examples.common.model_loader import load_model
 from examples.common.utils import configure_logging, print_args, make_additional_checkpoints, get_name, \
-    print_statistics, is_pretrained_model_requested, log_common_mlflow_params, SafeMLFLow, configure_device
-from nncf.binarization.algo import BinarizationController
-from nncf.api.compression import CompressionLevel
-from nncf.initialization import register_default_init_args, default_criterion_fn
-from nncf.model_creation import create_compressed_model
-from nncf.quantization.algo import QuantizationController
-from nncf.utils import is_main_process
+    is_pretrained_model_requested, log_common_mlflow_params, SafeMLFLow, configure_device
+from nncf.torch.binarization.algo import BinarizationController
+from nncf.api.compression import CompressionStage
+from nncf.torch.initialization import register_default_init_args, default_criterion_fn
+from nncf.torch.model_creation import create_compressed_model
+from nncf.torch.quantization.algo import QuantizationController
+from nncf.torch.utils import is_main_process
 from examples.classification.common import set_seed, load_resuming_checkpoint
 
 
@@ -202,7 +203,8 @@ def staged_quantization_main_worker(current_gpu, config):
         cudnn.benchmark = True
 
     if is_main_process():
-        print_statistics(compression_ctrl.statistics())
+        statistics = compression_ctrl.statistics()
+        logger.info(statistics.to_str())
 
     if config.mode.lower() == 'test':
         validate(val_loader, model, criterion, config)
@@ -216,7 +218,7 @@ def staged_quantization_main_worker(current_gpu, config):
 
 def train_staged(config, compression_ctrl, model, criterion, criterion_fn, optimizer_scheduler, model_name, optimizer,
                  train_loader, train_sampler, val_loader, kd_loss_calculator, batch_multiplier, best_acc1=0):
-    best_compression_level = CompressionLevel.NONE
+    best_compression_stage = CompressionStage.UNCOMPRESSED
     for epoch in range(config.start_epoch, config.epochs):
         # update compression scheduler state at the start of the epoch
         compression_ctrl.scheduler.epoch_step()
@@ -229,27 +231,27 @@ def train_staged(config, compression_ctrl, model, criterion, criterion_fn, optim
                            optimizer_scheduler, kd_loss_calculator, compression_ctrl, epoch, config)
 
         # compute compression algo statistics
-        stats = compression_ctrl.statistics()
+        statistics = compression_ctrl.statistics()
 
         acc1 = best_acc1
         if epoch % config.test_every_n_epochs == 0:
             # evaluate on validation set
             acc1, _ = validate(val_loader, model, criterion, config)
 
-        compression_level = compression_ctrl.compression_level()
-        # remember best acc@1, considering compression level. If current acc@1 less then the best acc@1, checkpoint
-        # still can be best if current compression level is bigger then best one. Compression levels in ascending
-        # order: NONE, PARTIAL, FULL.
-        is_best_by_accuracy = acc1 > best_acc1 and compression_level == best_compression_level
-        is_best = is_best_by_accuracy or compression_level > best_compression_level
+        compression_stage = compression_ctrl.compression_stage()
+        # remember best acc@1, considering compression stage. If current acc@1 less then the best acc@1, checkpoint
+        # still can be best if current compression stage is larger than the best one. Compression stages in ascending
+        # order: UNCOMPRESSED, PARTIALLY_COMPRESSED, FULLY_COMPRESSED.
+        is_best_by_accuracy = acc1 > best_acc1 and compression_stage == best_compression_stage
+        is_best = is_best_by_accuracy or compression_stage > best_compression_stage
         best_acc1 = max(acc1, best_acc1)
-        best_compression_level = max(compression_level, best_compression_level)
+        best_compression_stage = max(compression_stage, best_compression_stage)
 
         # statistics (e.g. portion of the enabled quantizers) is related to the finished epoch,
         # hence printing should happen before epoch_step, which may inform about state of the next epoch (e.g. next
         # portion of enabled quantizers)
         if is_main_process():
-            print_statistics(stats)
+            logger.info(statistics.to_str())
 
         optimizer_scheduler.epoch_step()
 
@@ -261,7 +263,7 @@ def train_staged(config, compression_ctrl, model, criterion, criterion_fn, optim
                 NNCF_CHECKPOINT_ATTR: compression_ctrl.get_nncf_checkpoint(),
                 'original_model_state_dict': kd_loss_calculator.original_model.state_dict(),
                 'best_acc1': best_acc1,
-                'compression_level': compression_level,
+                'compression_stage': compression_stage,
                 'optimizer': optimizer.state_dict(),
                 'optimizer_scheduler': optimizer_scheduler.state_dict()
             }
@@ -269,10 +271,9 @@ def train_staged(config, compression_ctrl, model, criterion, criterion_fn, optim
             torch.save(checkpoint, checkpoint_path)
             make_additional_checkpoints(checkpoint_path, is_best, epoch + 1, config)
 
-            for key, value in stats.items():
-                if isinstance(value, (int, float)):
-                    config.mlflow.safe_call('log_metric', 'compression/statistics/{0}'.format(key), value, epoch)
-                    config.tb.add_scalar("compression/statistics/{0}".format(key), value, len(train_loader) * epoch)
+            for key, value in prepare_for_tensorboard(statistics).items():
+                config.mlflow.safe_call('log_metric', 'compression/statistics/{0}'.format(key), value, epoch)
+                config.tb.add_scalar("compression/statistics/{0}".format(key), value, len(train_loader) * epoch)
 
 
 def train_epoch_staged(train_loader, batch_multiplier, model, criterion, criterion_fn, optimizer,
@@ -362,9 +363,9 @@ def train_epoch_staged(train_loader, batch_multiplier, model, criterion, criteri
             config.tb.add_scalar("train/top1", top1.avg, i + global_step)
             config.tb.add_scalar("train/top5", top5.avg, i + global_step)
 
-            for stat_name, stat_value in compression_ctrl.statistics(quickly_collected_only=True).items():
-                if isinstance(stat_value, (int, float)):
-                    config.tb.add_scalar('train/statistics/{}'.format(stat_name), stat_value, i + global_step)
+            statistics = compression_ctrl.statistics(quickly_collected_only=True)
+            for stat_name, stat_value in prepare_for_tensorboard(statistics).items():
+                config.tb.add_scalar('train/statistics/{}'.format(stat_name), stat_value, i + global_step)
 
 
 def get_wd(optimizer):

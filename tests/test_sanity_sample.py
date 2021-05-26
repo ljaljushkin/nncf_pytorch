@@ -14,12 +14,8 @@
 import json
 import os
 import shlex
-import signal
-import subprocess
 import sys
 import tempfile
-import threading
-import time
 from enum import Enum
 from enum import auto
 from pathlib import Path
@@ -33,7 +29,7 @@ from examples.common.optimizer import get_default_weight_decay
 from examples.common.sample_config import SampleConfig
 from examples.common.utils import get_name
 from examples.common.utils import is_staged_quantization
-from nncf.api.compression import CompressionLevel
+from nncf.api.compression import CompressionStage
 from nncf.common.hardware.config import HWConfigType
 from nncf.common.quantization.structs import QuantizerConfig
 from nncf.config import NNCFConfig
@@ -41,82 +37,9 @@ from pytest_dependency import depends
 from tests.conftest import EXAMPLES_DIR
 from tests.conftest import PROJECT_ROOT
 from tests.conftest import TEST_ROOT
+from tests.helpers import Command
 
 NUM_DEVICES = torch.cuda.device_count() if torch.cuda.is_available() else 1
-
-class Command:
-    def __init__(self, cmd, path=None):
-        self.cmd = cmd
-        self.process = None
-        self.exec_time = -1
-        self.output = []  # store output here
-        self.kwargs = {}
-        self.timeout = False
-        self.path = path
-
-        # set system/version dependent "start_new_session" analogs
-        if sys.platform == "win32":
-            self.kwargs.update(creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-        elif sys.version_info < (3, 2):  # assume posix
-            self.kwargs.update(preexec_fn=os.setsid)
-        else:  # Python 3.2+ and Unix
-            self.kwargs.update(start_new_session=True)
-
-    def kill_process_tree(self, pid):
-        try:
-            if sys.platform != "win32":
-                os.killpg(pid, signal.SIGKILL)
-            else:
-                subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)])
-        except OSError as err:
-            print(err)
-
-    def run(self, timeout=3600, assert_returncode_zero=True):
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()  # See runs_subprocess_in_precommit for more info on why this is needed
-
-        def target():
-            start_time = time.time()
-            self.process = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True,
-                                            bufsize=1, cwd=self.path, **self.kwargs)
-            self.timeout = False
-
-            self.output = []
-            for line in self.process.stdout:
-                line = line.decode('utf-8')
-                self.output.append(line)
-                sys.stdout.write(line)
-
-            sys.stdout.flush()
-            self.process.stdout.close()
-
-            self.process.wait()
-            self.exec_time = time.time() - start_time
-
-        thread = threading.Thread(target=target)
-        thread.start()
-
-        thread.join(timeout)
-        if thread.is_alive():
-            try:
-                print("Error: process taking too long to complete--terminating" + ", [ " + self.cmd + " ]")
-                self.kill_process_tree(self.process.pid)
-                self.exec_time = timeout
-                self.timeout = True
-                thread.join()
-            except OSError as e:
-                print(self.process.pid, "Exception when try to kill task by PID, " + e.strerror)
-                raise
-        returncode = self.process.wait()
-        print("Process returncode = " + str(returncode))
-        if assert_returncode_zero:
-            assert returncode == 0, "Process exited with a non-zero exit code {}; output:{}".format(
-                returncode,
-                "".join(self.output))
-        return returncode
-
-    def get_execution_time(self):
-        return self.exec_time
 
 
 class ConfigFactory:
@@ -305,10 +228,10 @@ def test_pretrained_model_train(config, tmp_path, multiprocessing_distributed, c
     last_checkpoint_path = os.path.join(checkpoint_save_dir, get_name(config_factory.config) + "_last.pth")
     assert os.path.exists(last_checkpoint_path)
     if 'compression' in config['nncf_config']:
-        allowed_compression_levels = (CompressionLevel.FULL, CompressionLevel.PARTIAL)
+        allowed_compression_stages = (CompressionStage.FULLY_COMPRESSED, CompressionStage.PARTIALLY_COMPRESSED)
     else:
-        allowed_compression_levels = (CompressionLevel.NONE,)
-    assert torch.load(last_checkpoint_path)['compression_level'] in allowed_compression_levels
+        allowed_compression_stages = (CompressionStage.UNCOMPRESSED,)
+    assert torch.load(last_checkpoint_path)['compression_stage'] in allowed_compression_stages
 
 
 def depends_on_pretrained_train(request, test_case_id: str, current_multiprocessing_distributed: bool):
@@ -389,10 +312,10 @@ def test_resume(request, config, tmp_path, multiprocessing_distributed, case_com
     last_checkpoint_path = os.path.join(checkpoint_save_dir, get_name(config_factory.config) + "_last.pth")
     assert os.path.exists(last_checkpoint_path)
     if 'compression' in config['nncf_config']:
-        allowed_compression_levels = (CompressionLevel.FULL, CompressionLevel.PARTIAL)
+        allowed_compression_stages = (CompressionStage.FULLY_COMPRESSED, CompressionStage.PARTIALLY_COMPRESSED)
     else:
-        allowed_compression_levels = (CompressionLevel.NONE,)
-    assert torch.load(last_checkpoint_path)['compression_level'] in allowed_compression_levels
+        allowed_compression_stages = (CompressionStage.UNCOMPRESSED,)
+    assert torch.load(last_checkpoint_path)['compression_stage'] in allowed_compression_stages
 
 
 @pytest.mark.dependency()
@@ -480,12 +403,10 @@ def test_cpu_only_mode_produces_cpu_only_model(config, tmp_path, mocker):
     command_line = " ".join(arg_list)
     if config["sample_type"] == "classification":
         import examples.classification.main as sample
-        mocked_printing = mocker.patch('examples.classification.main.print_statistics')
         if is_staged_quantization(config['nncf_config']):
             mocker.patch("examples.classification.staged_quantization_worker.train_epoch_staged")
             mocker.patch("examples.classification.staged_quantization_worker.validate")
             import examples.classification.staged_quantization_worker as staged_worker
-            mocked_printing = mocker.patch('examples.classification.staged_quantization_worker.print_statistics')
             staged_worker.validate.return_value = (0, 0)
         else:
             mocker.patch("examples.classification.main.train_epoch")
@@ -493,21 +414,14 @@ def test_cpu_only_mode_produces_cpu_only_model(config, tmp_path, mocker):
             sample.validate.return_value = (0, 0)
     elif config["sample_type"] == "semantic_segmentation":
         import examples.semantic_segmentation.main as sample
-        mocked_printing = mocker.patch('examples.semantic_segmentation.main.print_statistics')
         import examples.semantic_segmentation.train
         mocker.spy(examples.semantic_segmentation.train.Train, "__init__")
     elif config["sample_type"] == "object_detection":
         import examples.object_detection.main as sample
         mocker.spy(sample, "train")
-        mocked_printing = mocker.patch('examples.object_detection.main.print_statistics')
 
 
     sample.main(shlex.split(command_line))
-
-    if not config["sample_type"] == "object_detection":
-        assert mocked_printing.call_count == 2
-    else:
-        assert mocked_printing.call_count == 3
 
     # pylint: disable=no-member
     if config["sample_type"] == "classification":
@@ -642,9 +556,9 @@ class HAWQDescriptor(TestCaseDescriptor):
         return super().__str__() + '_hawq' + bs
 
     def setup_spy(self, mocker):
-        from nncf.quantization.init_precision import HAWQPrecisionInitializer
+        from nncf.torch.quantization.init_precision import HAWQPrecisionInitializer
         self.get_qsetup_spy = mocker.spy(HAWQPrecisionInitializer, "get_quantizer_setup_for_qconfig_sequence")
-        from nncf.quantization.hessian_trace import HessianTraceEstimator
+        from nncf.torch.quantization.hessian_trace import HessianTraceEstimator
         self.hessian_trace_estimator_spy = mocker.spy(HessianTraceEstimator, "__init__")
 
     def validate_spy(self):
@@ -686,7 +600,7 @@ class AutoQDescriptor(TestCaseDescriptor):
         return super().__str__() + '_autoq' + sr + dd
 
     def setup_spy(self, mocker):
-        from nncf.quantization.algo import QuantizationBuilder
+        from nncf.torch.quantization.algo import QuantizationBuilder
         self.builder_spy = mocker.spy(QuantizationBuilder, 'build_controller')
 
     def validate_spy(self):

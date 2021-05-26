@@ -280,7 +280,7 @@ index ad17a53..719e9bc 100644
                              replace_ImageToTensor)
  from mmdet.utils import get_root_logger
 
-+from nncf.utils import get_all_modules
++from nncf.torch.utils import get_all_modules
 +from mmdet.core.nncf import wrap_nncf_model
 +
 
@@ -397,7 +397,7 @@ new file mode 100644
 index 0000000..d6b3887
 --- /dev/null
 +++ b/mmdet/core/nncf/hooks.py
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,16 @@
 +from texttable import Texttable
 +from mmcv.runner.hooks.hook import Hook
 +
@@ -413,15 +413,7 @@ index 0000000..d6b3887
 +        self.compression_ctrl.scheduler.epoch_step()
 +
 +    def before_run(self, runner):
-+        runner.logger.info(get_printable_stats(self.compression_ctrl.statistics()))
-+
-+
-+def get_printable_stats(stats):
-+    for key, val in stats.items():
-+        if isinstance(val, Texttable):
-+            return '{}\n{}'.format(key, val.draw())
-+        else:
-+            return '{}: {}'.format(key, val)
++        runner.logger.info(self.compression_ctrl.statistics().to_str())
 diff --git a/mmdet/core/nncf/utils.py b/mmdet/core/nncf/utils.py
 new file mode 100644
 index 0000000..c903a55
@@ -432,8 +424,8 @@ index 0000000..c903a55
 +from collections import OrderedDict
 +
 +import torch
-+from nncf.initialization import InitializingDataLoader
-+from nncf.structures import QuantizationRangeInitArgs
++from nncf.torch.initialization import InitializingDataLoader
++from nncf.torch.structures import QuantizationRangeInitArgs
 +
 +from nncf import NNCFConfig
 +from nncf import load_state
@@ -541,7 +533,7 @@ index a5bb413..48332a8 100644
  import torch.nn as nn
  from mmcv.cnn import normal_init
  from mmcv.runner import force_fp32
-+from nncf.dynamic_graph.context import no_nncf_trace
++from nncf.torch.dynamic_graph.context import no_nncf_trace
 
  from mmdet.core import (anchor_inside_flags, build_anchor_generator,
                          build_assigner, build_bbox_coder, build_sampler,
@@ -553,7 +545,7 @@ index de11e4a..0fcdc4d 100644
  from abc import ABCMeta, abstractmethod
 
  import torch.nn as nn
-+from nncf.dynamic_graph.context import no_nncf_trace
++from nncf.torch.dynamic_graph.context import no_nncf_trace
 
 
  class BaseDenseHead(nn.Module, metaclass=ABCMeta):
@@ -625,7 +617,7 @@ index 0cba3cd..d41b158 100644
  from mmdet.core import mask_target
  from mmdet.models.builder import HEADS, build_loss
 
-+from nncf.dynamic_graph.context import no_nncf_trace
++from nncf.torch.dynamic_graph.context import no_nncf_trace
 +
  BYTES_PER_FLOAT = 4
  # TODO: This memory limit may be too much or too little. It would be better to
@@ -654,7 +646,7 @@ index c530f2a..30d98a4 100644
 +++ b/mmdet/models/roi_heads/standard_roi_head.py
 @@ -1,4 +1,5 @@
  import torch
-+from nncf.dynamic_graph.context import no_nncf_trace
++from nncf.torch.dynamic_graph.context import no_nncf_trace
 
  from mmdet.core import bbox2result, bbox2roi, build_assigner, build_sampler
  from ..builder import HEADS, build_head, build_roi_extractor

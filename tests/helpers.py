@@ -22,7 +22,6 @@ from typing import TypeVar
 import onnx
 import numpy as np
 import torch
-import pytest
 
 from copy import deepcopy
 from onnx import numpy_helper
@@ -32,16 +31,17 @@ from torch.nn import Module
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 
-from nncf.composite_compression import PTCompositeCompressionAlgorithmBuilder
-from nncf.compression_method_api import PTCompressionAlgorithmController
+from nncf.torch.composite_compression import PTCompositeCompressionAlgorithmBuilder
+from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 from nncf.config import NNCFConfig
-from nncf.dynamic_graph.context import Scope
-from nncf.dynamic_graph.graph_tracer import create_input_infos
-from nncf.initialization import register_default_init_args
-from nncf.layers import NNCF_MODULES_MAP
-from nncf.model_creation import create_compressed_model
-from nncf.nncf_network import NNCFNetwork
-from nncf.utils import get_all_modules_by_type
+from nncf.torch.dynamic_graph.context import Scope
+from nncf.torch.dynamic_graph.graph_tracer import create_input_infos
+from nncf.torch.initialization import register_default_init_args
+from nncf.torch.layers import NNCF_MODULES_MAP
+from nncf.torch.model_creation import create_compressed_model
+from nncf.torch.nncf_network import NNCFNetwork
+from nncf.torch.utils import get_all_modules_by_type
+from tests.common.command import Command as BaseCommand
 
 TensorType = TypeVar('TensorType', bound=Union[torch.Tensor, np.ndarray])
 
@@ -216,31 +216,35 @@ def to_numpy(tensor: TensorType) -> np.ndarray:
 
 
 def compare_tensor_lists(test: List[TensorType], reference: List[TensorType],
-                         compare_fn: Callable[[np.ndarray, np.ndarray], bool]):
+                         assert_fn: Callable[[np.ndarray, np.ndarray], bool]):
     assert len(test) == len(reference)
 
-    for i, (x, y) in enumerate(zip(test, reference)):
+    for x, y in zip(test, reference):
         x = to_numpy(x)
         y = to_numpy(y)
-        assert compare_fn(x, y), f'i={i}'
+        assert_fn(x, y)
 
 
 def check_equal(test: List[TensorType], reference: List[TensorType], rtol: float = 1e-1):
-    compare_tensor_lists(test, reference, lambda x, y: x == pytest.approx(y, rel=rtol))
+    compare_tensor_lists(test, reference,
+                         lambda x, y: np.testing.assert_allclose(x, y, rtol=rtol))
 
 
 def check_not_equal(test: List[TensorType], reference: List[TensorType], rtol: float = 1e-4):
-    compare_tensor_lists(test, reference, lambda x, y: x != pytest.approx(y, rel=rtol))
+    compare_tensor_lists(test, reference,
+                         lambda x, y: np.testing.assert_raises(AssertionError,
+                                                               np.testing.assert_allclose, x, y, rtol=rtol))
 
 
 def check_less(test: List[TensorType], reference: List[TensorType], rtol=1e-4):
     check_not_equal(test, reference, rtol=rtol)
-    compare_tensor_lists(test, reference, lambda x, y: (x < y).all())
+    compare_tensor_lists(test, reference, np.testing.assert_array_less)
 
 
 def check_greater(test: List[TensorType], reference: List[TensorType], rtol=1e-4):
     check_not_equal(test, reference, rtol=rtol)
-    compare_tensor_lists(test, reference, lambda x, y: (x > y).all())
+    compare_tensor_lists(test, reference,
+                         lambda x, y: np.testing.assert_raises(AssertionError, np.testing.assert_array_less, x, y))
 
 
 def create_compressed_model_and_algo_for_test(model: Module, config: NNCFConfig=None,
@@ -388,3 +392,10 @@ def get_all_inputs_for_graph_node(node: onnx.NodeProto, graph: onnx.GraphProto) 
             retval[input_] = numpy_helper.to_array(val.t)
 
     return retval
+
+
+class Command(BaseCommand):
+    def run(self, timeout=3600, assert_returncode_zero=True):
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()  # See runs_subprocess_in_precommit for more info on why this is needed
+        return super().run(timeout, assert_returncode_zero)

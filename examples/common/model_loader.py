@@ -18,10 +18,10 @@ from functools import partial
 
 import examples.common.models as custom_models
 import examples.common.restricted_pickle_module as restricted_pickle_module
-from examples.classification.models.mobilenet_v2_32x32 import MobileNetV2For32x32
 from examples.common.example_logger import logger
 from nncf import load_state
-from nncf.utils import safe_thread_call
+from nncf.torch.utils import safe_thread_call
+from examples.classification.models.mobilenet_v2_32x32 import MobileNetV2For32x32
 
 
 def load_model(model, pretrained=True, num_classes=1000, model_params=None,

@@ -55,6 +55,8 @@ from nncf.common.pruning.utils import get_cluster_next_nodes
 from nncf.common.pruning.utils import get_conv_in_out_channels
 from nncf.common.pruning.utils import get_rounded_pruned_element_number
 from nncf.common.utils.logger import logger as nncf_logger
+from nncf.common.pruning.statistics import FilterPruningStatistics
+from nncf.common.statistics import NNCFStatistics
 
 
 @TF_COMPRESSION_ALGORITHMS.register('filter_pruning')
@@ -131,12 +133,13 @@ class FilterPruningController(BasePruningAlgoController):
     def loss(self) -> CompressionLoss:
         return self._loss
 
-    def statistics(self, quickly_collected_only=False):
-        stats = super().statistics(quickly_collected_only)
-        stats['pruning_rate'] = self.pruning_rate
-        stats['FLOPS pruning level'] = 1 - self.current_flops / self.full_flops
-        stats['FLOPS current / full'] = f"{self.current_flops} / {self.full_flops}"
-        return stats
+    def statistics(self, quickly_collected_only: bool = False) -> NNCFStatistics:
+        model_statistics = self._calculate_pruned_model_stats()
+        stats = FilterPruningStatistics(model_statistics, self.full_flops, self.current_flops)
+
+        nncf_stats = NNCFStatistics()
+        nncf_stats.register('filter_pruning', stats)
+        return nncf_stats
 
     def freeze(self):
         self.frozen = True
@@ -193,8 +196,8 @@ class FilterPruningController(BasePruningAlgoController):
                 if not is_valid_shape(in_shape) or not is_valid_shape(out_shape):
                     raise RuntimeError(f'Input/output shape is not defined for layer `{layer.name}` ')
 
-                self._layers_in_shapes[layer_.name] = in_shape
-                self._layers_out_shapes[layer_.name] = out_shape
+                self._layers_in_shapes[layer.name] = in_shape
+                self._layers_out_shapes[layer.name] = out_shape
 
             elif type(layer_).__name__ in LINEAR_LAYERS:
                 in_shape = layer.get_input_shape_at(0)[1:]
@@ -203,8 +206,8 @@ class FilterPruningController(BasePruningAlgoController):
                 if not is_valid_shape(in_shape) or not is_valid_shape(out_shape):
                     raise RuntimeError(f'Input/output shape is not defined for layer `{layer.name}` ')
 
-                self._layers_in_shapes[layer_.name] = in_shape
-                self._layers_out_shapes[layer_.name] = out_shape
+                self._layers_in_shapes[layer.name] = in_shape
+                self._layers_out_shapes[layer.name] = out_shape
 
         self._nodes_flops = count_flops_for_nodes(self._original_graph,
                                                   self._layers_in_shapes,
@@ -246,7 +249,7 @@ class FilterPruningController(BasePruningAlgoController):
         nncf_sorted_nodes = self._original_graph.topological_sort()
         for layer in wrapped_layers:
             nncf_node = [n for n in nncf_sorted_nodes
-                         if layer.layer.name == get_original_name(n.node_name)][0]
+                         if layer.name == get_original_name(n.node_name)][0]
             if nncf_node.data['output_mask'] is not None:
                 self._set_operation_masks([layer], nncf_node.data['output_mask'])
 
@@ -291,7 +294,7 @@ class FilterPruningController(BasePruningAlgoController):
         nncf_sorted_nodes = self._original_graph.topological_sort()
         for layer in wrapped_layers:
             nncf_node = [n for n in nncf_sorted_nodes
-                         if layer.layer.name == get_original_name(n.node_name)][0]
+                         if layer.name == get_original_name(n.node_name)][0]
             if nncf_node.data['output_mask'] is not None:
                 self._set_operation_masks([layer], nncf_node.data['output_mask'])
 
@@ -309,7 +312,7 @@ class FilterPruningController(BasePruningAlgoController):
         nncf_sorted_nodes = self._original_graph.topological_sort()
         for layer in wrapped_layers:
             nncf_node = [n for n in nncf_sorted_nodes
-                         if layer.layer.name == get_original_name(n.node_name)][0]
+                         if layer.name == get_original_name(n.node_name)][0]
             nncf_node.data['output_mask'] = tf.ones(get_filters_num(layer))
 
         # 1. Calculate importances for all groups of filters. Initialize masks.
@@ -366,7 +369,7 @@ class FilterPruningController(BasePruningAlgoController):
                 nncf_sorted_nodes = self._original_graph.topological_sort()
                 for layer in wrapped_layers:
                     nncf_node = [n for n in nncf_sorted_nodes
-                                 if layer.layer.name == get_original_name(n.node_name)][0]
+                                 if layer.name == get_original_name(n.node_name)][0]
                     if nncf_node.data['output_mask'] is not None:
                         self._set_operation_masks([layer], nncf_node.data['output_mask'])
                 return
@@ -429,14 +432,14 @@ class FilterPruningController(BasePruningAlgoController):
         group_layer_names = [node.layer_name for node in group.nodes]
         group_filters_num = tf.constant([get_filters_num(wrapped_layer)
                                          for wrapped_layer in wrapped_layers
-                                         if wrapped_layer.layer.name in group_layer_names])
+                                         if wrapped_layer.name in group_layer_names])
         filters_num = group_filters_num[0]
         assert tf.reduce_all(group_filters_num == filters_num)
 
         cumulative_filters_importance = tf.zeros(filters_num)
         # Calculate cumulative importance for all filters in this group
         for minfo in group.nodes:
-            layer = [layer for layer in wrapped_layers if layer.layer.name == minfo.layer_name][0]
+            layer = [layer for layer in wrapped_layers if layer.name == minfo.layer_name][0]
             filters_importance = self._layer_filter_importance(layer)
             cumulative_filters_importance += filters_importance
 

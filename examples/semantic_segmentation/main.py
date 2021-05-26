@@ -27,6 +27,7 @@ import torchvision.transforms as T
 from examples.common.sample_config import create_sample_config
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
+from nncf.common.utils.tensorboard import prepare_for_tensorboard
 import examples.semantic_segmentation.utils.data as data_utils
 import examples.semantic_segmentation.utils.loss_funcs as loss_funcs
 import examples.semantic_segmentation.utils.transforms as JT
@@ -34,19 +35,19 @@ from examples.common.argparser import get_common_argument_parser
 from examples.common.example_logger import logger
 from examples.common.execution import get_execution_mode, \
     prepare_model_for_execution, start_worker
-from nncf.api.compression import CompressionLevel
-from nncf.initialization import register_default_init_args
+from nncf.api.compression import CompressionStage
+from nncf.torch.initialization import register_default_init_args
 from examples.common.model_loader import load_model, load_checkpoints_from_path
 from examples.common.optimizer import make_optimizer
 from examples.common.utils import configure_logging, configure_paths, make_additional_checkpoints, print_args, \
-    write_metrics, print_statistics, is_pretrained_model_requested, log_common_mlflow_params, SafeMLFLow, \
+    write_metrics, is_pretrained_model_requested, log_common_mlflow_params, SafeMLFLow, \
     configure_device
 from examples.semantic_segmentation.metric import IoU
 from examples.semantic_segmentation.test import Test
 from examples.semantic_segmentation.train import Train
 from examples.semantic_segmentation.utils.checkpoint import save_checkpoint
 from nncf import create_compressed_model
-from nncf.utils import is_main_process
+from nncf.torch.utils import is_main_process
 
 
 def get_arguments_parser():
@@ -303,7 +304,7 @@ def train(model, model_without_dp, compression_ctrl, train_loader, val_loader, c
     metric = IoU(len(class_encoding), ignore_index=ignore_index)
 
     best_miou = -1
-    best_compression_level = CompressionLevel.NONE
+    best_compression_stage = CompressionStage.UNCOMPRESSED
     # Optionally resume from a checkpoint
     if resuming_checkpoint is not None:
         if optimizer is not None:
@@ -344,9 +345,9 @@ def train(model, model_without_dp, compression_ctrl, train_loader, val_loader, c
             config.tb.add_scalar("train/learning_rate", optimizer.param_groups[0]['lr'], epoch)
             config.tb.add_scalar("train/compression_loss", compression_ctrl.loss(), epoch)
 
-            for key, value in compression_ctrl.statistics(quickly_collected_only=True).items():
-                if isinstance(value, (int, float)):
-                    config.tb.add_scalar("compression/statistics/{0}".format(key), value, epoch)
+            statistics = compression_ctrl.statistics(quickly_collected_only=True)
+            for key, value in prepare_for_tensorboard(statistics).items():
+                config.tb.add_scalar("compression/statistics/{0}".format(key), value, epoch)
 
         if (epoch + 1) % config.save_freq == 0 or epoch + 1 == config.epochs:
             logger.info(">>>> [Epoch: {0:d}] Validation".format(epoch))
@@ -362,12 +363,12 @@ def train(model, model_without_dp, compression_ctrl, train_loader, val_loader, c
                 for i, (key, class_iou) in enumerate(zip(class_encoding.keys(), iou)):
                     config.tb.add_scalar("{}/mIoU_Cls{}_{}".format(config.dataset, i, key), class_iou, epoch)
 
-            compression_level = compression_ctrl.compression_level()
-            is_best_by_miou = miou > best_miou and compression_level == best_compression_level
-            is_best = is_best_by_miou or compression_level > best_compression_level
+            compression_stage = compression_ctrl.compression_stage()
+            is_best_by_miou = miou > best_miou and compression_stage == best_compression_stage
+            is_best = is_best_by_miou or compression_stage > best_compression_stage
             if is_best:
                 best_miou = miou
-            best_compression_level = max(compression_level, best_compression_level)
+            best_compression_stage = max(compression_stage, best_compression_stage)
 
             if config.metrics_dump is not None:
                 write_metrics(best_miou, config.metrics_dump)
@@ -385,10 +386,11 @@ def train(model, model_without_dp, compression_ctrl, train_loader, val_loader, c
             if is_main_process():
                 checkpoint_path = save_checkpoint(compression_ctrl,
                                                   optimizer, epoch, best_miou,
-                                                  compression_level, config)
+                                                  compression_stage, config)
 
                 make_additional_checkpoints(checkpoint_path, is_best, epoch, config)
-                print_statistics(compression_ctrl.statistics())
+                statistics = compression_ctrl.statistics()
+                logger.info(statistics.to_str())
 
     return model
 
@@ -522,7 +524,8 @@ def main_worker(current_gpu, config):
         logger.info("Saved to {}".format(config.to_onnx))
         return
     if is_main_process():
-        print_statistics(compression_ctrl.statistics())
+        statistics = compression_ctrl.statistics()
+        logger.info(statistics.to_str())
 
     if config.mode.lower() == 'test':
         logger.info(model)

@@ -16,11 +16,11 @@ import torch
 from copy import deepcopy
 from pytest import approx
 
-from nncf.api.compression import CompressionLevel
-from nncf.module_operations import UpdateWeight
-from nncf.sparsity.layers import BinaryMask
-from nncf.sparsity.magnitude.algo import MagnitudeSparsityController
-from nncf.sparsity.magnitude.functions import normed_magnitude
+from nncf.api.compression import CompressionStage
+from nncf.torch.module_operations import UpdateWeight
+from nncf.torch.sparsity.layers import BinaryMask
+from nncf.torch.sparsity.magnitude.algo import MagnitudeSparsityController
+from nncf.torch.sparsity.magnitude.functions import normed_magnitude
 from tests.quantization.test_functions import check_equal
 from tests.sparsity.const.test_algo import ref_mask_2, ref_mask_1
 from tests.sparsity.magnitude.test_helpers import MagnitudeTestModel, get_basic_magnitude_sparsity_config
@@ -43,8 +43,9 @@ def test_can_create_magnitude_sparse_algo__with_defaults():
 
     i = 0
 
-    stats = compression_ctrl.statistics()
-    assert stats["sparsity_threshold"] == approx(0.24, 0.1)
+    nncf_stats = compression_ctrl.statistics()
+    for layer_info in nncf_stats.magnitude_sparsity.thresholds:
+        assert layer_info.threshold == approx(0.24, 0.1)
     # pylint: disable=protected-access
     assert isinstance(compression_ctrl._weight_importance_fn, type(normed_magnitude))
 
@@ -77,8 +78,9 @@ def test_magnitude_sparse_algo_sets_threshold(weight_importance, sparsity_level,
     if sparsity_level:
         compression_ctrl.set_sparsity_level(sparsity_level)
 
-    stats = compression_ctrl.statistics()
-    assert stats["sparsity_threshold"] == pytest.approx(threshold, 0.01)
+    nncf_stats = compression_ctrl.statistics()
+    for layer_info in nncf_stats.magnitude_sparsity.thresholds:
+        assert layer_info.threshold == pytest.approx(threshold, 0.01)
 
 
 def test_can_not_set_sparsity_more_than_one_for_magnitude_sparse_algo():
@@ -232,7 +234,7 @@ def test_create_magnitude_algo_with_local_sparsity_mode():
     config = get_empty_config()
     config['compression'] = {'algorithm': "magnitude_sparsity", "params": {"sparsity_level_setting_mode": 'local'}}
     _, compression_ctrl = create_compressed_model_and_algo_for_test(MockModel(), config)
-    assert compression_ctrl.compression_level() == CompressionLevel.FULL
+    assert compression_ctrl.compression_stage() == CompressionStage.FULLY_COMPRESSED
 
 def test_magnitude_algo_can_calculate_correct_stats_for_local_mode():
     module_name_conv1 = 'MagnitudeTestModel/NNCFConv2d[conv1]'
@@ -248,15 +250,14 @@ def test_magnitude_algo_can_calculate_correct_stats_for_local_mode():
     compression_ctrl.set_sparsity_level(0.5, sparse_info_conv1[0])
 
     compression_ctrl.set_sparsity_level(0.3, sparse_info_conv2[0])
-    stats = compression_ctrl.statistics()
+    nncf_stats = compression_ctrl.statistics()
 
-    # sparsity threshold for module_name_conv1
-    # pylint: disable=protected-access
-    assert pytest.approx(float(stats['sparsity_thresholds']._rows[0][1])) == 0.334
+    expected = [(module_name_conv1, 0.3344823), (module_name_conv2, 0.2191864)]
+    for idx, layer_info in enumerate(nncf_stats.magnitude_sparsity.thresholds):
+        expected_name, expected_threshold = expected[idx]
+        assert layer_info.name == expected_name
+        assert pytest.approx(layer_info.threshold) == expected_threshold
 
-    # sparsity threshold for module_name_conv2
-    # pylint: disable=protected-access
-    assert pytest.approx(float(stats['sparsity_thresholds']._rows[1][1])) == 0.219
 
 def test_magnitude_algo_can_calculate_sparsity_rate_for_one_sparsified_module():
     module_name_conv1 = 'MagnitudeTestModel/NNCFConv2d[conv1]'

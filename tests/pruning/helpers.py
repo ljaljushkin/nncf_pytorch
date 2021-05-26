@@ -12,7 +12,7 @@
 """
 
 import torch
-from nncf.dynamic_graph.context import Scope
+from nncf.torch.dynamic_graph.context import Scope
 from torch import nn
 
 from nncf.config import NNCFConfig
@@ -234,7 +234,7 @@ class BigPruningTestModel(nn.Module):
         x = self.up(x)
         x = self.relu(x)
         x = self.conv3(x)
-        x = x.view(1, -1)
+        # x = x.view(1, -1)
         return x
 
 

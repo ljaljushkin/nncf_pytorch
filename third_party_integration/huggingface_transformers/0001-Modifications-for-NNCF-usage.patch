@@ -48,8 +48,8 @@ index d9465c37..9da9d30f 100644
  
 -logger = logging.getLogger(__name__)
 +from nncf import NNCFConfig
-+from nncf.structures import QuantizationRangeInitArgs
-+from nncf.initialization import InitializingDataLoader
++from nncf.torch.structures import QuantizationRangeInitArgs
++from nncf.torch.initialization import InitializingDataLoader
 +from transformers.trainer import get_train_dataloader_for_init
  
 +logger = logging.getLogger(__name__)
@@ -160,11 +160,12 @@ diff --git a/examples/question-answering/run_squad.py b/examples/question-answer
 index 2bd4e90f..2b1a60e8 100644
 --- a/examples/question-answering/run_squad.py
 +++ b/examples/question-answering/run_squad.py
-@@ -25,9 +25,11 @@ import timeit
+@@ -25,9 +25,12 @@ import timeit
  
  import numpy as np
  import torch
-+from nncf.structures import QuantizationRangeInitArgs
++from nncf.torch.structures import QuantizationRangeInitArgs
++from nncf.common.utils.tensorboard import prepare_for_tensorboard
  from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
  from torch.utils.data.distributed import DistributedSampler
  from tqdm import tqdm, trange
@@ -177,7 +178,7 @@ index 2bd4e90f..2b1a60e8 100644
      from tensorboardX import SummaryWriter
  
 +from nncf import NNCFConfig
-+from nncf.initialization import InitializingDataLoader
++from nncf.torch.initialization import InitializingDataLoader
  
  logger = logging.getLogger(__name__)
  
@@ -253,17 +254,16 @@ index 2bd4e90f..2b1a60e8 100644
                  model.zero_grad()
                  global_step += 1
  
-@@ -237,12 +257,20 @@ def train(args, train_dataset, model, tokenizer):
+@@ -237,12 +257,19 @@ def train(args, train_dataset, model, tokenizer):
                      tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                      logging_loss = tr_loss
  
 +                    if compression_ctrl is not None:
 +                        tb_writer.add_scalar("compression_loss", compression_loss.item())
 +                        compression_stats = compression_ctrl.statistics()
-+                        for key, value in compression_stats.items():
-+                            if isinstance(value, (int, float)):
-+                                tb_writer.add_scalar("compression/statistics/{0}".format(key), value,
-+                                                     global_step)
++                        for key, value in prepare_for_tensorboard(compression_stats).items():
++                            tb_writer.add_scalar("compression/statistics/{0}".format(key), value,
++                                                 global_step)
 +
                  # Save model checkpoint
                  if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
@@ -433,8 +433,8 @@ index cf9b765a..957cdba2 100644
  
  import numpy as np
 +from nncf import NNCFConfig
-+from nncf.structures import QuantizationRangeInitArgs
-+from nncf.initialization import InitializingDataLoader
++from nncf.torch.structures import QuantizationRangeInitArgs
++from nncf.torch.initialization import InitializingDataLoader
  
  from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer, EvalPrediction, GlueDataset
  from transformers import GlueDataTrainingArguments as DataTrainingArguments
@@ -504,11 +504,12 @@ diff --git a/examples/text-classification/run_xnli.py b/examples/text-classifica
 index c1db6fa3..ca44bd1c 100644
 --- a/examples/text-classification/run_xnli.py
 +++ b/examples/text-classification/run_xnli.py
-@@ -25,8 +25,11 @@ import random
+@@ -25,8 +25,12 @@ import random
  
  import numpy as np
  import torch
-+from nncf.structures import QuantizationRangeInitArgs
++from nncf.torch.structures import QuantizationRangeInitArgs
++from nncf.common.utils.tensorboard import prepare_for_tensorboard
  from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
  from torch.utils.data.distributed import DistributedSampler
 +from torch import onnx
@@ -521,7 +522,7 @@ index c1db6fa3..ca44bd1c 100644
      from tensorboardX import SummaryWriter
  
 +from nncf import NNCFConfig
-+from nncf.initialization import InitializingDataLoader
++from nncf.torch.initialization import InitializingDataLoader
  
  logger = logging.getLogger(__name__)
  
@@ -599,17 +600,16 @@ index c1db6fa3..ca44bd1c 100644
                  global_step += 1
  
                  if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
-@@ -202,13 +224,21 @@ def train(args, train_dataset, model, tokenizer):
+@@ -202,13 +224,20 @@ def train(args, train_dataset, model, tokenizer):
                      tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                      logging_loss = tr_loss
  
 +                    if compression_ctrl is not None:
 +                        tb_writer.add_scalar("compression_loss", compression_loss.item())
 +                        compression_stats = compression_ctrl.statistics()
-+                        for key, value in compression_stats.items():
-+                            if isinstance(value, (int, float)):
-+                                tb_writer.add_scalar("compression/statistics/{0}".format(key), value,
-+                                                     global_step)
++                        for key, value in prepare_for_tensorboard(compression_stats).items():
++                            tb_writer.add_scalar("compression/statistics/{0}".format(key), value,
++                                                 global_step)
 +
                  if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
                      # Save model checkpoint
@@ -1221,11 +1221,12 @@ diff --git a/src/transformers/trainer.py b/src/transformers/trainer.py
 index 067f793d..f9ccb762 100644
 --- a/src/transformers/trainer.py
 +++ b/src/transformers/trainer.py
-@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+@@ -10,6 +10,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
  
  import numpy as np
  import torch
-+from nncf.compression_method_api import PTCompressionAlgorithmController
++from nncf.torch.compression_method_api import PTCompressionAlgorithmController
++from nncf.common.utils.tensorboard import prepare_for_tensorboard
  from packaging import version
  from torch import nn
  from torch.utils.data.dataloader import DataLoader
@@ -1295,16 +1296,15 @@ index 067f793d..f9ccb762 100644
                      self.global_step += 1
                      self.epoch = epoch + (step + 1) / len(epoch_iterator)
  
-@@ -531,6 +545,13 @@ class Trainer:
+@@ -531,6 +545,12 @@ class Trainer:
                          )
                          logging_loss = tr_loss
  
 +                        if self.compression_ctrl is not None:
 +                            logs["compression_loss"] = self.compression_ctrl.loss()
 +                            compression_stats = self.compression_ctrl.statistics()
-+                            for key, value in compression_stats.items():
-+                                if isinstance(value, (int, float)):
-+                                    logs["compression/statistics/{0}".format(key)] = value
++                            for key, value in prepare_for_tensorboard(compression_stats).items():
++                                logs["compression/statistics/{0}".format(key)] = value
 +
                          self._log(logs)
  
