@@ -246,21 +246,21 @@ def check_greater(test: List[TensorType], reference: List[TensorType], rtol=1e-4
 def create_compressed_model_and_algo_for_test(model: Module, config: NNCFConfig=None,
                                               dummy_forward_fn: Callable[[Module], Any] = None,
                                               wrap_inputs_fn: Callable[[Tuple, Dict], Tuple[Tuple, Dict]] = None,
-                                              resuming_state_dict: dict = None) \
+                                              nncf_checkpoint: dict = None) \
         -> Tuple[NNCFNetwork, PTCompressionAlgorithmController]:
     if config is not None:
         assert isinstance(config, NNCFConfig)
         NNCFConfig.validate(config)
     algo, model = create_compressed_model(model, config, dump_graphs=False, dummy_forward_fn=dummy_forward_fn,
                                           wrap_inputs_fn=wrap_inputs_fn,
-                                          resuming_state_dict=resuming_state_dict)
+                                          nncf_checkpoint=nncf_checkpoint)
     return model, algo
 
 
 def create_nncf_model_and_algo_builder(model: Module, config: NNCFConfig,
                                        dummy_forward_fn: Callable[[Module], Any] = None,
                                        wrap_inputs_fn: Callable[[Tuple, Dict], Tuple[Tuple, Dict]] = None,
-                                       resuming_state_dict: dict = None):
+                                       nncf_checkpoint: dict = None):
     assert isinstance(config, NNCFConfig)
     NNCFConfig.validate(config)
     input_info_list = create_input_infos(config)
@@ -275,7 +275,7 @@ def create_nncf_model_and_algo_builder(model: Module, config: NNCFConfig,
                                    target_scopes=target_scopes,
                                    scopes_without_shape_matching=scopes_without_shape_matching)
 
-    should_init = resuming_state_dict is None
+    should_init = nncf_checkpoint is None
     composite_builder = PTCompositeCompressionAlgorithmBuilder(config, should_init=should_init)
     return compressed_model, composite_builder
 

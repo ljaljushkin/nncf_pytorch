@@ -17,11 +17,11 @@ import torchvision.models
 from functools import partial
 
 import examples.common.models as custom_models
-from examples.common.example_logger import logger
 import examples.common.restricted_pickle_module as restricted_pickle_module
+from examples.classification.models.mobilenet_v2_32x32 import MobileNetV2For32x32
+from examples.common.example_logger import logger
 from nncf import load_state
 from nncf.utils import safe_thread_call
-from examples.classification.models.mobilenet_v2_32x32 import MobileNetV2For32x32
 
 
 def load_model(model, pretrained=True, num_classes=1000, model_params=None,
@@ -53,14 +53,24 @@ def load_model(model, pretrained=True, num_classes=1000, model_params=None,
     return loaded_model
 
 
-def load_resuming_model_state_dict_and_checkpoint_from_path(resuming_checkpoint_path):
+LEGACY_NNCF_CHECKPOINT_ATTR = 'state_dict'
+NNCF_CHECKPOINT_ATTR = 'nncf_checkpoint'
+
+
+def load_checkpoints_from_path(resuming_checkpoint_path):
     logger.info('Resuming from checkpoint {}...'.format(resuming_checkpoint_path))
     resuming_checkpoint = torch.load(resuming_checkpoint_path, map_location='cpu',
                                      pickle_module=restricted_pickle_module)
     # use checkpoint itself in case only the state dict was saved,
-    # i.e. the checkpoint was created with `torch.save(module.state_dict())`
-    resuming_model_state_dict = resuming_checkpoint.get('state_dict', resuming_checkpoint)
-    return resuming_model_state_dict, resuming_checkpoint
+    # i.e. the checkpoint was created with `torch.save(ctrl.get_nncf_checkpoint()) or using legacy api
+    # torch.save(model.state_dict)`
+
+    legacy_nncf_checkpoint = resuming_checkpoint.get(LEGACY_NNCF_CHECKPOINT_ATTR)
+    if legacy_nncf_checkpoint is not None:
+        return legacy_nncf_checkpoint, resuming_checkpoint
+
+    nncf_checkpoint = resuming_checkpoint.get(NNCF_CHECKPOINT_ATTR, resuming_checkpoint)
+    return nncf_checkpoint, resuming_checkpoint
 
 
 def load_resuming_checkpoint(resuming_checkpoint_path: str):

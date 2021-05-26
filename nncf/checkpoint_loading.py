@@ -336,9 +336,10 @@ class KeyMatcher:
                           'params.', category=DeprecationWarning)
         ignored_keys = normalized_model_keys.ignored_orig_keys + normalized_keys_to_load.ignored_orig_keys
         self._processed_keys.extend_keys(ignored_keys, ProcessedKeyStatus.SKIPPED)
-        ignored_keys_str = '\n'.join(set(ignored_keys))
-        nncf_logger.warning("The following parameters were skipped from matching checkpoint's keys:\n{}"
-                            .format(ignored_keys_str))
+        if ignored_keys:
+            ignored_keys_str = '\n'.join(set(ignored_keys))
+            nncf_logger.warning("The following parameters were skipped from matching checkpoint's keys:\n{}"
+                                .format(ignored_keys_str))
 
         for normalized_key_to_load in normalized_keys_to_load:
             key_to_load = normalized_keys_to_load.get_orig_key(normalized_key_to_load)

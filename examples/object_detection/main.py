@@ -21,7 +21,8 @@ import torch
 import torch.utils.data as data
 
 from examples.common import restricted_pickle_module
-from examples.common.model_loader import load_resuming_model_state_dict_and_checkpoint_from_path
+from examples.common.model_loader import NNCF_CHECKPOINT_ATTR
+from examples.common.model_loader import load_checkpoints_from_path
 from examples.common.sample_config import create_sample_config, SampleConfig
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
@@ -157,7 +158,7 @@ def main_worker(current_gpu, config):
 
     resuming_model_sd = None
     if resuming_checkpoint_path is not None:
-        resuming_model_sd, resuming_checkpoint = load_resuming_model_state_dict_and_checkpoint_from_path(
+        resuming_model_sd, resuming_checkpoint = load_checkpoints_from_path(
             resuming_checkpoint_path)
 
     compression_ctrl, net = create_model(config, resuming_model_sd)
@@ -354,7 +355,7 @@ def train(net, compression_ctrl, train_data_loader, test_data_loader, criterion,
 
                 checkpoint_file_path = osp.join(config.checkpoint_save_dir, "{}_last.pth".format(get_name(config)))
                 torch.save({
-                    'state_dict': net.state_dict(),
+                    NNCF_CHECKPOINT_ATTR: compression_ctrl.get_nncf_checkpoint(),
                     'optimizer': optimizer.state_dict(),
                     'iter': iteration,
                     'compression_level': compression_level,

@@ -520,7 +520,8 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         Initializes object from the state
         :param state: Output of `get_state()` method.
         """
-        self._single_config_quantizer_setup = SingleConfigQuantizerSetup.from_state(state[self._QUANTIZER_SETUP_STATE_ATTR])
+        quantizer_setup_state = state[self._QUANTIZER_SETUP_STATE_ATTR]
+        self._single_config_quantizer_setup = SingleConfigQuantizerSetup.from_state(quantizer_setup_state)
         self._build_time_metric_infos = NetworkQuantizationShareMetricBuildTimeInfo.from_state(
             state[self._BUILD_TIME_METRIC_INFOS_STATE_ATTR])
 

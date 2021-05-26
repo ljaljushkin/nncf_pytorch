@@ -27,6 +27,7 @@ from torch import nn
 
 from nncf.api.compression import CompressionAlgorithmBuilder
 from nncf.api.compression import CompressionLoss
+from nncf.checkpoint_loading import OPTIONAL_PARAMETERS_REGISTRY
 from nncf.common.compression import BaseCompressionAlgorithmController
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.common.utils.registry import Registry
@@ -102,6 +103,10 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
     Hosts entities that are to be used during the training process, such as compression scheduler and
     compression loss."""
 
+    BUILDER_STATE_ATTR = '_nncf_builder_state'
+    CONTROLLER_STATE_ATTR = '_nncf_controller_state'
+    MODEL_STATE_ATTR = '_nncf_model_state'
+
     def distributed(self):
         """
         Should be called when distributed training with multiple training processes
@@ -110,13 +115,15 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
         should be made inside this function.
         """
 
-    def load_state(self, state: Dict[str, object]) -> None:
+    def load_state(self, state: Dict) -> None:
         """
         Loads the compression controller state.
 
         :param state: Output of `get_state()` method.
         """
-        self.scheduler.load_state(state)
+        algo_key = self._get_algo_key()
+        if algo_key in state:
+            self.scheduler.load_state(state[algo_key])
 
     def get_state(self) -> Dict[str, object]:
         """
@@ -124,7 +131,39 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
 
         :return: The compression controller state.
         """
-        return self.scheduler.get_state()
+        algo_key_vs_state_map = {}
+        ctrl_state = self.scheduler.get_state()
+        if ctrl_state:
+            algo_key = self._get_algo_key()
+            algo_key_vs_state_map[algo_key] = ctrl_state
+        return algo_key_vs_state_map
+
+    def _nncf_checkpoint_helper(self, ctrl_state: Dict[str, object]):
+        """
+        Forms compression checkpoint containing controller, builder and model states. It's common for composite and
+        ordinary compression controller class.
+        :param ctrl_state: state of the controller
+        """
+        model_state = self.model.state_dict()
+        builder_state = self.model.builder_state
+        return {
+            self.CONTROLLER_STATE_ATTR: ctrl_state,
+            self.BUILDER_STATE_ATTR: builder_state,
+            self.MODEL_STATE_ATTR: model_state
+        }
+
+    def get_nncf_checkpoint(self) -> Dict[str, object]:
+        """
+        Returns entire compression state - a NNCF checkpoint, containing nncf_network state (with state of the builder)
+         and composite controller state, containing the state of all children controllers.
+         This checkpoint can be used to resume compression via nncf_checkpoint  of create_compressed_model
+         met
+        :return: The entire compression state.
+        """
+        return self._nncf_checkpoint_helper(self.get_state())
+
+    def _get_algo_key(self):
+        return self.__class__.__name__
 
     def statistics(self, quickly_collected_only=False):
         """
@@ -240,8 +279,8 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
             is_allowed, reason = self._are_frozen_layers_allowed()
             if is_allowed:
                 nncf_logger.warning('{}, compressing them without tuning weights.\n'
-                               'Frozen layers:\n'
-                               '{}'.format(reason, scopes_to_print))
+                                    'Frozen layers:\n'
+                                    '{}'.format(reason, scopes_to_print))
             else:
                 raise RuntimeError(f'{reason}.\n'
                                    f'Please unfreeze them or put into the Ignored Scope.\n'

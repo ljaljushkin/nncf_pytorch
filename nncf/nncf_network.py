@@ -10,12 +10,8 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-import functools
 import inspect
-import json
-import operator
 from collections import OrderedDict
-from copy import deepcopy
 from enum import Enum
 from typing import Callable
 from typing import Dict
@@ -23,11 +19,12 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 from typing import TypeVar
-from typing import Union
 
+import functools
 import networkx as nx
+import operator
 import torch
-from torch import Tensor
+from copy import deepcopy
 from torch import nn
 
 from nncf.checkpoint_loading import OPTIONAL_PARAMETERS_REGISTRY
@@ -390,8 +387,8 @@ class PTInsertionPoint:
 
 @ignore_scope
 class NNCFNetwork(nn.Module, PostGraphBuildActing):
-    BUILDER_STATE_ATTR = '_nncf_builder_state'
-    CONTROLLER_STATE_ATTR = '_nncf_controller_state'
+    MODEL_STATE_VERSION_ATTR = '_nncf_model_state_version'
+    MODEL_STATE_VERSION = 1
 
     def __init__(self, module, input_infos: List[ModelInputInfo],
                  dummy_forward_fn=None, wrap_inputs_fn=None, scopes_without_shape_matching=None,
@@ -464,11 +461,10 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
         if self.scopes_without_shape_matching:
             self._compressed_context.add_node_comparators(scopes_without_shape_matching,
                                                           ShapeIgnoringTensorMetaComparator())
-        self._load_listener = None
-        # to load old checkpoints without builder and controller states through load_state(..., strict=True)
-        OPTIONAL_PARAMETERS_REGISTRY.register(self.BUILDER_STATE_ATTR)
-        OPTIONAL_PARAMETERS_REGISTRY.register(self.CONTROLLER_STATE_ATTR)
-        self._compression_controller = None
+        self.builder_state = None
+        self.register_buffer(self.MODEL_STATE_VERSION_ATTR, torch.IntTensor([self.MODEL_STATE_VERSION]).to(device))
+        # to load old checkpoints without state version parameter in a strict mode
+        OPTIONAL_PARAMETERS_REGISTRY.register(self.MODEL_STATE_VERSION_ATTR)
 
     @debuggable_forward
     def forward(self, *args, **kwargs):
@@ -485,68 +481,21 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
             retval = self._wrap_outputs_fn(retval)
         return retval
 
-    def state_dict(self, *args, **kwargs):
-        """
-        Overrides Module's state_dict to update actual state of the controller before collecting the NNCFNetwork's state
-        """
-        if self._compression_controller:
-            ctrl_state = self._compression_controller.get_state()
-            self.set_compression_state(ctrl_state, state_attr=self.CONTROLLER_STATE_ATTR)
-        return super().state_dict(*args, **kwargs)
-
-    def load_state_dict(self, state_dict: Union[Dict[str, Tensor], Dict[str, Tensor]], **kwargs):
-        """
-        Overrides Module's load_state_dict to apply loaded controller state
-        """
-        result = super().load_state_dict(state_dict, **kwargs)
-        ctrl_state_tensor = state_dict.get(self.CONTROLLER_STATE_ATTR)
-        if ctrl_state_tensor is not None:
-            ctrl_state = self._decode_state(ctrl_state_tensor.byte())
-            if self._compression_controller:
-                self._compression_controller.load_state(ctrl_state)
-        return result
-
-    @staticmethod
-    def _decode_state(encoded_state: torch.ByteTensor) -> Dict[str, object]:
-        state_bytes = bytes(encoded_state)
-        state_str = state_bytes.decode('utf-8')
-        return json.loads(state_str)
-
-    @staticmethod
-    def _encode_state(state: Dict[str, object]) -> torch.ByteTensor:
-        state_str = json.dumps(state)
-        state_bytes = state_str.encode('utf-8')
-        return torch.ByteTensor(list(state_bytes))
-
     @classmethod
-    def get_compression_state(cls, model_state_dict: Dict[str, torch.Tensor],
-                              state_attr=BUILDER_STATE_ATTR) -> Dict[str, object]:
+    def get_state_version(cls, model_state_dict: Dict[str, torch.Tensor]) -> Optional[int]:
         """
-        Decodes compression state (builder or controller) from the result of NNCFNetwork.state_dict() while discarding
-        irrelevant prefixes added during wrapping DataParallel/DistributedDataParallel objects
+        Parses version of the model state by discarding irrelevant prefixes added during wrapping by DataParallel or
+        DistributedDataParallel.
+        :return: version of NNCFNetwork state in integer format or None if it fails to parse the version
         """
         if model_state_dict:
-            state_tensor = model_state_dict.get(state_attr)
+            state_tensor = model_state_dict.get(cls.MODEL_STATE_VERSION_ATTR)
             if state_tensor is None:
                 # handle DP and DDP
-                state_tensor = model_state_dict.get('module.' + state_attr)
+                state_tensor = model_state_dict.get('module.' + cls.MODEL_STATE_VERSION_ATTR)
             if state_tensor is not None:
-                return cls._decode_state(state_tensor.byte())
-        return {}
-
-    def set_compression_state(self, compression_state: Dict[str, object], state_attr=BUILDER_STATE_ATTR):
-        """
-        Encodes compression state (builder or controller) state to a tensor and adds it as a buffer to NNCFNetwork
-        """
-        device = next(iter(self.parameters())).device
-        state_tensor = self._encode_state(compression_state).to(device)
-        self.register_buffer(state_attr, state_tensor)
-
-    def set_controller(self, controller: 'CompositeCompressionAlgorithmController'):
-        """
-        Saves the controller to get its actual state on getting NNCFNetwork's state
-        """
-        self._compression_controller = controller
+                return state_tensor.item()
+        return None
 
     def _strip_traced_tensors(self, args: Tuple, kwargs: Dict) -> Tuple[Tuple, Dict]:
         """

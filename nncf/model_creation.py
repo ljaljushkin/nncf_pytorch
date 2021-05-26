@@ -10,7 +10,6 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-from copy import deepcopy
 from os import path as osp
 from typing import Any
 from typing import Callable
@@ -18,14 +17,16 @@ from typing import Dict
 from typing import List
 from typing import Tuple
 
+import warnings
+from copy import deepcopy
 from torch.distributed import barrier
 from torch.nn import Module
 
 from nncf.algo_selector import COMPRESSION_ALGORITHMS
 from nncf.checkpoint_loading import load_state
-from nncf.common.utils.logger import logger
 from nncf.common.utils.logger import logger as nncf_logger
-from nncf.composite_compression import PTCompositeCompressionAlgorithmBuilder
+from nncf.composite_compression import PTCompositeCompressionAlgorithmBuilder as CompositeBuilder
+from nncf.composite_compression import PTCompositeCompressionAlgorithmController as CompositeController
 from nncf.compression_method_api import PTCompressionAlgorithmController
 from nncf.config import NNCFConfig
 from nncf.debug import set_debug_log_dir
@@ -39,13 +40,13 @@ from nncf.utils import is_main_process
 
 def get_compression_algorithm(config):
     algorithm_key = config.get('algorithm', 'NoCompressionAlgorithmBuilder')
-    logger.info("Creating compression algorithm: {}".format(algorithm_key))
+    nncf_logger.info("Creating compression algorithm: {}".format(algorithm_key))
     return COMPRESSION_ALGORITHMS.get(algorithm_key)
 
 
 def create_compressed_model(model: Module,
                             config: NNCFConfig = None,
-                            resuming_state_dict: dict = None,
+                            nncf_checkpoint: dict = None,
                             dummy_forward_fn: Callable[[Module], Any] = None,
                             wrap_inputs_fn: Callable[[Tuple, Dict], Tuple[Tuple, Dict]] = None,
                             wrap_outputs_fn: Callable[[Tuple, Dict], Tuple[Tuple, Dict]] = None,
@@ -59,8 +60,8 @@ def create_compressed_model(model: Module,
     source.
     :param config: A configuration object used to determine the exact compression modifications to be applied
     to the model
-    :param resuming_state_dict: A PyTorch state dict object to load (strictly) into the compressed model after
-    building.
+    :param nncf_checkpoint: An entire compression state to unambiguously restore the compressed model. Includes builder,
+    controller and model states.
     :param dummy_forward_fn: if supplied, will be used instead of a *forward* function call to build
     the internal graph representation via tracing. Specifying this is useful when the original training pipeline
     has special formats of data loader output or has additional *forward* arguments other than input tensors.
@@ -91,28 +92,49 @@ def create_compressed_model(model: Module,
                          "building, then the wrap_inputs_fn parameter MUST also be specified and be consistent with "
                          "the input wrapping done in dummy_forward_fn.")
 
-    if config is None and resuming_state_dict is None:
+    if config is None and nncf_checkpoint is None:
         raise ValueError("Config and resuming checkpoint can not be empty at the same time.")
+
+    is_strict = True
+    should_init_per_builder = None
+    builder_state = None
+    model_state = None
+    ctrl_state = None
+    if nncf_checkpoint is not None:
+        is_new_checkpoint_format = CompositeController.MODEL_STATE_ATTR in nncf_checkpoint
+        model_state = nncf_checkpoint.get(CompositeController.MODEL_STATE_ATTR, nncf_checkpoint)
+
+        if not is_new_checkpoint_format:
+            new_format_notice = 'It does not have builder and controller state to unambiguously restore compression ' \
+                                'setup (e.g. location of compression modules in the graph and their parameters). ' \
+                                'Checkpoint should be saved not by calling \'state_dict\' method of the compressed ' \
+                                'model, but by \'get_checkpoint\' method of the compression controller.'
+            # currently exact version number is not necessary. It's supposed to be used in the future.
+            # But presence of this attribute ensures new format of the resuming state dict.
+            is_model_state_in_new_format = NNCFNetwork.get_state_version(model_state)
+            if is_model_state_in_new_format:
+                raise ValueError('Invalid checkpoint format. {}'.format(new_format_notice))
+
+            if config is None:
+                raise ValueError("Config should be specified!")
+
+            warnings.warn('Legacy NNCF-enabled .pth checkpoint has been loaded! {} '
+                          'This checkpoint will be loaded; update your checkpoint file by saving this model\'s'
+                          'checkpoint file again.'.format(new_format_notice), category=DeprecationWarning)
+
+        else:
+            ctrl_state = nncf_checkpoint.get(CompositeController.CONTROLLER_STATE_ATTR)
+            builder_state = nncf_checkpoint.get(CompositeController.BUILDER_STATE_ATTR)
+            saved_config = NNCFConfig.from_dict(builder_state[CompositeBuilder.CONFIG_STATE_ATTR])
+            if config is None:
+                config = saved_config
+            else:
+                should_init_per_builder, is_strict = _match_configs(config, saved_config)
 
     # Compress model that will be deployed for the inference on target device. No need to compress parts of the
     # model that are used on training stage only (e.g. AuxLogits of Inception-v3 model) or unused modules with weights.
     # As a consequence, no need to care about spoiling BN statistics, as there're disabled in eval mode.
     model.eval()
-
-    is_strict = True
-    should_init_per_builder = None
-
-    builder_state = NNCFNetwork.get_compression_state(resuming_state_dict, state_attr=NNCFNetwork.BUILDER_STATE_ATTR)
-    if builder_state:
-        saved_config = NNCFConfig.from_dict(builder_state[PTCompositeCompressionAlgorithmBuilder.CONFIG_STATE_ATTR])
-        if config is None:
-            config = saved_config
-        else:
-            should_init_per_builder, is_strict = _match_configs(config, saved_config)
-    elif config is None:
-        raise ValueError("No config to create compressed model. At can be specified as an argument to the "
-                         "create_compressed_model or can be loaded from the resuming checkpoint, which was created "
-                         "with NNCF release > 1.7.1")
 
     if dump_graphs:
         if dummy_forward_fn is None:
@@ -142,11 +164,10 @@ def create_compressed_model(model: Module,
                                    target_scopes=target_scopes,
                                    scopes_without_shape_matching=scopes_without_shape_matching)
 
-    should_init = resuming_state_dict is None
-    composite_builder = PTCompositeCompressionAlgorithmBuilder(config,
-                                                               should_init,
-                                                               should_init_per_builder,
-                                                               builder_state)
+    should_init = nncf_checkpoint is None
+    composite_builder = CompositeBuilder(config, should_init, should_init_per_builder)
+    if builder_state:
+        composite_builder.load_state(builder_state)
     composite_builder.apply_to(compressed_model)
     compression_ctrl = composite_builder.build_controller(compressed_model)
 
@@ -155,15 +176,10 @@ def create_compressed_model(model: Module,
     compressed_model.rebuild_graph()
 
     try:
-        if resuming_state_dict is not None:
-            # ignore builder state because it has been already loaded on creation of builder
-            # and ignore controller state since it should be loaded directly to ctrl
-            load_state(compressed_model, resuming_state_dict, is_resume=is_strict,
-                       keys_to_ignore=[NNCFNetwork.BUILDER_STATE_ATTR, NNCFNetwork.CONTROLLER_STATE_ATTR])
-            ctrl_state = NNCFNetwork.get_compression_state(resuming_state_dict,
-                                                           state_attr=NNCFNetwork.CONTROLLER_STATE_ATTR)
-            if is_strict and ctrl_state:
-                compression_ctrl.load_state(ctrl_state)
+        if model_state is not None:
+            load_state(compressed_model, model_state, is_resume=is_strict)
+        if ctrl_state:
+            compression_ctrl.load_state(ctrl_state)
     finally:
         if dump_graphs and is_main_process() and composite_builder:
             if dummy_forward_fn is None:
@@ -184,8 +200,8 @@ def create_compressed_model(model: Module,
         # Exception can be raised during running barrier
         # if the backend not in the supported list https://pytorch.org/docs/stable/distributed.html
         except RuntimeError as err:
-            logger.warning(err)
-            logger.warning(
+            nncf_logger.warning(err)
+            nncf_logger.warning(
                 "NNCF continues work, while does not guarantee that "
                 "the processes will finish model's compression at the same time. "
                 "If your training pipeline demands the processes be synchronized, please, "

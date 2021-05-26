@@ -48,17 +48,17 @@ def test_can_resume_with_manual_init(mocker, desc, _nncf_caplog):
     config = register_default_init_args(config, train_loader=create_ones_mock_dataloader(config))
     all_spies = desc.setup_init_spies(mocker)
 
-    model, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), config)
+    _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), config)
     desc.check_precision_init(compression_ctrl)
 
     for m in all_spies:
         m.assert_called()
         m.reset_mock()
 
-    resuming_state_dict = model.state_dict()
+    nncf_checkpoint = compression_ctrl.get_nncf_checkpoint()
 
     _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), config_to_resume,
-                                                                    resuming_state_dict=resuming_state_dict)
+                                                                    nncf_checkpoint=nncf_checkpoint)
 
     if config_to_resume is not None and config_to_resume['compression']['initializer']:
         assert 'is not going to be initialized' in _nncf_caplog.text
@@ -78,12 +78,12 @@ def test_can_resume_with_algo_mixing(mocker):
     quantization_section = config['compression']
     config['compression'] = [{'algorithm': 'const_sparsity'}, quantization_section]
 
-    model, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), sparsity_config)
-    resuming_state_dict = model.state_dict()
+    _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), sparsity_config)
+    nncf_checkpoint = compression_ctrl.get_nncf_checkpoint()
 
     config = register_default_init_args(config, train_loader=create_ones_mock_dataloader(config))
     _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), config,
-                                                                    resuming_state_dict=resuming_state_dict)
+                                                                    nncf_checkpoint=nncf_checkpoint)
 
     for m in all_quantization_init_spies:
         m.assert_called()
@@ -167,7 +167,7 @@ def test_load_state_interoperability(_algos, _model_wrapper, is_resume):
     compressed_model_save, _ = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config_save)
     model_save = _model_wrapper['save_model'](compressed_model_save)
     saved_model_state = model_save.state_dict()
-    ref_num_loaded = len(saved_model_state) - 2  # builder and controller states
+    ref_num_loaded = len(saved_model_state)
 
     config_resume = get_empty_config()
     config_resume['compression'] = [{'algorithm': algo} for algo in _algos['load_algos']]
@@ -175,16 +175,7 @@ def test_load_state_interoperability(_algos, _model_wrapper, is_resume):
     model_resume = _model_wrapper['resume_model'](compressed_model_resume)
 
     if not is_resume or (is_resume and _algos['is_resume_ok']):
-        # Need to ignore compression state attributes to match all parameters on external call of load_state.
-        # Otherwise builder state may not match because of different config in checkpoint and saved on model creation
-        # (e.g. rb-sparsity section replaced by const sparsity)
-        # Controller state may not match because of different scheduler states in algo mixing case
-        # (e.g.) const sparsity <-> magnitude
-        # For the user it will be loaded in the right places inside create_compressed_model from resuming_checkpoint
-        # argument
-        from nncf.nncf_network import NNCFNetwork
-        act_num_loaded = load_state(model_resume, saved_model_state, is_resume,
-                                    keys_to_ignore=[NNCFNetwork.BUILDER_STATE_ATTR, NNCFNetwork.CONTROLLER_STATE_ATTR])
+        act_num_loaded = load_state(model_resume, saved_model_state, is_resume)
 
         if ('magnitude_sparsity' in _algos['load_algos'] or 'const_sparsity' in _algos['load_algos']) \
             and 'rb_sparsity' in _algos['save_algos']:
@@ -244,10 +235,9 @@ def test_load_state__with_resume_checkpoint(_resume_algos, _model_wrapper, mocke
     config_save['compression'] = [{'algorithm': algo} for algo in _resume_algos['save_algos'] if algo != 'EMPTY']
     orig_model = BasicConvTestModel()
     num_model_params = len(orig_model.state_dict())
-    compressed_model_save, _ = create_compressed_model_and_algo_for_test(orig_model, config_save)
-    model_save = _model_wrapper['save_model'](compressed_model_save)
-    saved_model_state = model_save.state_dict()
-    ref_num_loaded = _resume_algos['ref_num_compression_params'] + num_model_params + 1  # padding_value
+    _, compressed_ctrl_save = create_compressed_model_and_algo_for_test(orig_model, config_save)
+    saved_checkpoint = compressed_ctrl_save.get_nncf_checkpoint()
+    ref_num_loaded = _resume_algos['ref_num_compression_params'] + num_model_params + 2  # padding_value + version
 
     config_resume = get_empty_config()
     config_resume['compression'] = [{'algorithm': algo} for algo in _resume_algos['load_algos'] if algo != 'EMPTY']
@@ -255,9 +245,9 @@ def test_load_state__with_resume_checkpoint(_resume_algos, _model_wrapper, mocke
     key_matcher_run_spy = mocker.spy(KeyMatcher, 'run')
 
     if _resume_algos['is_resume_ok']:
-        compressed_model_resume, _ = create_compressed_model_and_algo_for_test(BasicConvTestModel(),
-                                                                               config_resume,
-                                                                               resuming_state_dict=saved_model_state)
+        create_compressed_model_and_algo_for_test(BasicConvTestModel(),
+                                                  config_resume,
+                                                  nncf_checkpoint=saved_checkpoint)
 
         key_matcher_run_spy.assert_called_once()
         act_num_loaded = len(key_matcher_run_spy.spy_return)
@@ -267,7 +257,7 @@ def test_load_state__with_resume_checkpoint(_resume_algos, _model_wrapper, mocke
         with pytest.raises(RuntimeError):
             create_compressed_model_and_algo_for_test(BasicConvTestModel(),
                                                       config_resume,
-                                                      resuming_state_dict=saved_model_state)
+                                                      nncf_checkpoint=saved_checkpoint)
 
 
 LIST_ALGOS = [None, QUANTIZATION]

@@ -15,14 +15,15 @@ import os
 import torch
 
 from examples.common import restricted_pickle_module
+from examples.common.model_loader import NNCF_CHECKPOINT_ATTR
 from nncf.checkpoint_loading import load_state
 
 
-def save_checkpoint(model, optimizer, epoch, miou, compression_level, compression_scheduler, config):
+def save_checkpoint(compression_ctrl, optimizer, epoch, miou, compression_level, config):
     """Saves the model in a specified directory with a specified name.save
 
     Keyword arguments:
-    - model (``nn.Module``): The model to save.
+    - compression_ctrl (``PTCompressionAlgorithmController``): The controller containing compression state to save.
     - optimizer (``torch.optim``): The optimizer state to save.
     - epoch (``int``): The current epoch for the model.
     - miou (``float``): The mean IoU obtained by the model.
@@ -46,9 +47,8 @@ def save_checkpoint(model, optimizer, epoch, miou, compression_level, compressio
         'epoch': epoch,
         'miou': miou,
         'compression_level': compression_level,
-        'state_dict': model.state_dict(),
-        'optimizer': optimizer.state_dict(),
-        'scheduler': compression_scheduler.get_state()
+        NNCF_CHECKPOINT_ATTR: compression_ctrl.get_nncf_checkpoint(),
+        'optimizer': optimizer.state_dict()
     }
     torch.save(checkpoint, checkpoint_path)
     return checkpoint_path

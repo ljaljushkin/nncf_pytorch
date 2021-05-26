@@ -95,10 +95,6 @@ def test_logarithm_scale_parameter(logarithm_scale_setting_1, logarithm_scale_se
                                                quantization_type=quantization_type))
 
             sd0 = model0.state_dict()
-            # WA to match all parameters on external call of load_state. Otherwise builder state may not match because
-            # of different config in checkpoint and saved on model creation
-            builder_state = model0.get_compression_state(sd0)
-            model1.set_compression_state(builder_state)
             model1.load_state_dict(sd0)
             sd1 = model1.state_dict()
 

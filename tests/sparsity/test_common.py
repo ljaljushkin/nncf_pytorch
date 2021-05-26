@@ -19,7 +19,7 @@ from nncf.common.sparsity.schedulers import AdaptiveSparsityScheduler
 from nncf.common.sparsity.schedulers import ExponentialSparsityScheduler
 from nncf.common.sparsity.schedulers import MultiStepSparsityScheduler
 from nncf.common.sparsity.schedulers import PolynomialSparsityScheduler
-from nncf.nncf_network import NNCFNetwork
+from nncf.compression_method_api import PTCompressionAlgorithmController
 from tests.helpers import BasicConvTestModel
 from tests.helpers import MockModel
 from tests.helpers import create_compressed_model_and_algo_for_test
@@ -71,16 +71,6 @@ def get_multistep_params():
     }
 
 
-def test_can_handle_not_set_compression_ctrl(mocker):
-    config = get_empty_config()
-    config['compression'] = {'algorithm': 'rb_sparsity'}
-    model, _ = create_compressed_model_and_algo_for_test(MockModel(), config)
-    model_state = model.state_dict()
-    del model_state[NNCFNetwork.CONTROLLER_STATE_ATTR]
-    mocker.patch('nncf.nncf_network.NNCFNetwork.set_controller')
-    _ = create_compressed_model_and_algo_for_test(MockModel(), config, resuming_state_dict=model_state)
-
-
 @pytest.mark.parametrize('algo',
                          ('magnitude_sparsity', 'rb_sparsity'))
 class TestSparseModules:
@@ -97,7 +87,7 @@ class TestSparseModules:
     def test_compression_ctrl_state(self, algo):
         config = get_empty_config()
         config['compression'] = {'algorithm': algo, "params": {"schedule": 'polynomial'}}
-        model, ctrl = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config)
+        _, ctrl = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config)
 
         assert ctrl.scheduler.current_step == -1
         assert ctrl.scheduler.current_epoch == -1
@@ -105,20 +95,21 @@ class TestSparseModules:
         # Test get state
         ctrl.scheduler.current_step = 100
         ctrl.scheduler.current_epoch = 5
-        model_state = model.state_dict()
-        ctrl_state_saved = NNCFNetwork.get_compression_state(model_state, NNCFNetwork.CONTROLLER_STATE_ATTR)
-        assert ctrl_state_saved == ctrl.get_state()
-        assert ctrl_state_saved == {'current_step': 100, 'current_epoch': 5}
+        saved_checkpoint = ctrl.get_nncf_checkpoint()
+        saved_ctrl_state = saved_checkpoint[PTCompressionAlgorithmController.CONTROLLER_STATE_ATTR]
+        assert saved_ctrl_state == ctrl.get_state()
+        state_content = next(iter(saved_ctrl_state.values()))
+        assert state_content == {'current_step': 100, 'current_epoch': 5}
 
         # Test load state
-        model, ctrl = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config,
-                                                                resuming_state_dict=model_state)
+        _, ctrl = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config,
+                                                                nncf_checkpoint=saved_checkpoint)
         assert ctrl.scheduler.current_step == 100
         assert ctrl.scheduler.current_epoch == 5
-        model_state = model.state_dict()
-        ctrl_state_loaded = NNCFNetwork.get_compression_state(model_state, NNCFNetwork.CONTROLLER_STATE_ATTR)
-        assert ctrl_state_loaded == ctrl.get_state()
-        assert ctrl_state_loaded == ctrl_state_saved
+        loaded_checkpoint = ctrl.get_nncf_checkpoint()
+        loaded_ctrl_state = loaded_checkpoint[PTCompressionAlgorithmController.CONTROLLER_STATE_ATTR]
+        assert loaded_ctrl_state == ctrl.get_state()
+        assert loaded_ctrl_state == saved_ctrl_state
 
     @pytest.mark.parametrize(('schedule', 'get_params', 'ref_levels'),
                              (('polynomial', get_poly_params, [0.2, 0.4, 0.6, 0.6, 0.6, 0.6]),

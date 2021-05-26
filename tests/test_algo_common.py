@@ -13,7 +13,6 @@
 import copy
 import itertools
 import os
-from functools import partial
 from functools import reduce
 from typing import Dict
 from typing import List
@@ -22,13 +21,11 @@ import onnx
 import pytest
 from torch import cuda
 from torch import nn
-from torch.nn import DataParallel
 
 from nncf import NNCFConfig
 from nncf.algo_selector import COMPRESSION_ALGORITHMS
 from nncf.algo_selector import NoCompressionAlgorithmBuilder
 from nncf.api.compression import CompressionLevel
-from nncf.checkpoint_loading import load_state
 from nncf.common.hardware.config import HWConfigType
 from nncf.compression_method_api import DOMAIN_CUSTOM_OPS_NAME
 from tests.helpers import BasicConvTestModel

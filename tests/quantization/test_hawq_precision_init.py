@@ -783,11 +783,11 @@ def test_staged_quantization_saves_enabled_quantizers_in_state_dict(tmp_path):
         "activations_quant_start_epoch": 2,
         "weights_quant_start_epoch": 1
     }
-    model_save, ctrl_save = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config)
+    _, ctrl_save = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config)
     ctrl_save.scheduler.epoch_step()
     ctrl_save.scheduler.epoch_step()
     _, ctrl_load = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config,
-                                                             resuming_state_dict=model_save.state_dict())
+                                                             nncf_checkpoint=ctrl_save.get_nncf_checkpoint())
     for quantizer_info in ctrl_load.non_weight_quantizers.values():
         assert not quantizer_info.quantizer_module_ref.is_enabled_quantization()
     for quantizer_info in ctrl_load.weight_quantizers.values():
