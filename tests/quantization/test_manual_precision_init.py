@@ -20,7 +20,7 @@ from nncf.common.quantization.statistics import BitwidthDistributionStatistics
 from examples.common.model_loader import load_model
 from nncf import NNCFConfig
 from nncf import register_default_init_args
-from nncf.quantization.algo import QuantizationController
+from nncf.torch.quantization.algo import QuantizationController
 from tests.conftest import EXAMPLES_DIR
 from tests.conftest import TEST_ROOT
 from tests.helpers import BasicConvTestModel

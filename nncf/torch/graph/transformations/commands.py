@@ -82,7 +82,7 @@ class PTTargetPoint(TargetPoint):
         kwargs = {cls._TARGET_TYPE_STATE_ATTR: TargetType.from_state(state[cls._TARGET_TYPE_STATE_ATTR]),
                   cls._INPUT_PORT_STATE_ATTR: state[cls._INPUT_PORT_STATE_ATTR]}
         if cls._MODULE_SCOPE_STATE_ATTR in state:
-            from nncf.dynamic_graph.context import Scope
+            from nncf.torch.dynamic_graph.context import Scope
             kwargs[cls._MODULE_SCOPE_STATE_ATTR] = Scope.from_str(state[cls._MODULE_SCOPE_STATE_ATTR])
         if cls._IA_OP_EXEC_CONTEXT_STATE_ATTR in state:
             ia_op_exec_ctx_str = state[cls._IA_OP_EXEC_CONTEXT_STATE_ATTR]

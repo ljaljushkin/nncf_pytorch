@@ -74,7 +74,7 @@ class SingleConfigQuantizationPoint(QuantizationPointBase):
         Creates the object from its state
         :param state: Output of `get_state()` method.
         """
-        from nncf.dynamic_graph.context import Scope
+        from nncf.torch.dynamic_graph.context import Scope
         list_scopes = [Scope.from_str(scope_state) for scope_state in state[cls._SCOPES_OF_QUANTIZED_OPS_STATE_ATTR]]
         kwargs = {cls._INSERTION_POINT_STATE_ATTR: PTTargetPoint.from_state(state[cls._INSERTION_POINT_STATE_ATTR]),
                   cls._QCONFIG_STATE_ATTR: QuantizerConfig.from_state(state[cls._QCONFIG_STATE_ATTR]),

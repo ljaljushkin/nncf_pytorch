@@ -226,6 +226,19 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
         self._handle_frozen_layers(target_model)
         return layout
 
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a JSON-compatible dictionary containing a state of the object
+        """
+        return {}
+
+    def load_state(self, state: Dict[str, object]):
+        """
+        Initializes object from the state
+        :param state: Output of `get_state()` method.
+        """
+        pass
+
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
         raise NotImplementedError()
 

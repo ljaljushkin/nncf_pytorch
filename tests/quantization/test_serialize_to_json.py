@@ -4,11 +4,11 @@ import torch
 
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.quantization.structs import QuantizerConfig
-from nncf.dynamic_graph.context import Scope
-from nncf.dynamic_graph.graph import InputAgnosticOperationExecutionContext
-from nncf.graph.transformations.commands import PTTargetPoint
-from nncf.quantization.quantizer_setup import SingleConfigQuantizationPoint
-from nncf.quantization.quantizer_setup import SingleConfigQuantizerSetup
+from nncf.torch.dynamic_graph.context import Scope
+from nncf.torch.dynamic_graph.graph import InputAgnosticOperationExecutionContext
+from nncf.torch.graph.transformations.commands import PTTargetPoint
+from nncf.torch.quantization.quantizer_setup import SingleConfigQuantizationPoint
+from nncf.torch.quantization.quantizer_setup import SingleConfigQuantizerSetup
 
 
 def check_serialization(obj):

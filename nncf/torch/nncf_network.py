@@ -27,7 +27,6 @@ import torch
 from copy import deepcopy
 from torch import nn
 
-from nncf.checkpoint_loading import OPTIONAL_PARAMETERS_REGISTRY
 from nncf.common.graph.graph import MODEL_INPUT_OP_NAME
 from nncf.common.graph.graph import MODEL_OUTPUT_OP_NAME
 from nncf.common.graph.graph import NNCFGraph
@@ -38,6 +37,7 @@ from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.transformations.commands import TransformationPriority
 from nncf.common.hardware.config import HWConfig
 from nncf.common.utils.ordered_enum import OrderedEnum
+from nncf.torch.checkpoint_loading import OPTIONAL_PARAMETERS_REGISTRY
 from nncf.torch.debug import CombinedDebugInterface
 from nncf.torch.debug import debuggable_forward
 from nncf.torch.debug import is_debug

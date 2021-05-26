@@ -241,7 +241,7 @@ def test_load_state__with_resume_checkpoint(_resume_algos, _model_wrapper, mocke
 
     config_resume = get_empty_config()
     config_resume['compression'] = [{'algorithm': algo} for algo in _resume_algos['load_algos'] if algo != 'EMPTY']
-    from nncf.checkpoint_loading import KeyMatcher
+    from nncf.torch.checkpoint_loading import KeyMatcher
     key_matcher_run_spy = mocker.spy(KeyMatcher, 'run')
 
     if _resume_algos['is_resume_ok']:

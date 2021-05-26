@@ -50,12 +50,13 @@ class QuantizationShareBuildTimeInfo:
         }
 
     @classmethod
-    def from_state(cls, state: Dict[str, object]) -> 'NetworkQuantizationShareMetricBuildTimeInfo':
+    def from_state(cls, state: Dict[str, object]) -> 'QuantizationShareBuildTimeInfo':
         """
         Creates the object from its state
         :param state: Output of `get_state()` method.
         """
         return cls(**state)
+
 
 class QuantizationShareStatisticsCollector(StatisticsCollector):
     """

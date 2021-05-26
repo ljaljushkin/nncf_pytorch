@@ -15,8 +15,8 @@ from typing import NamedTuple
 
 import pytest
 
-from nncf.model_creation import _match_configs
-from nncf.model_creation import get_compression_algorithm
+from nncf.torch.model_creation import _match_configs
+from nncf.torch.model_creation import get_compression_algorithm
 from tests.helpers import get_empty_config
 
 

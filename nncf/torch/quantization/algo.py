@@ -29,6 +29,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from nncf.api.compression import CompressionLoss
+from nncf.api.compression import CompressionScheduler
 from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
 from nncf.torch.algo_selector import ZeroCompressionLoss
 from nncf.api.compression import CompressionStage
@@ -523,7 +525,7 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         """
         quantizer_setup_state = state[self._QUANTIZER_SETUP_STATE_ATTR]
         self._single_config_quantizer_setup = SingleConfigQuantizerSetup.from_state(quantizer_setup_state)
-        self._build_time_metric_infos = NetworkQuantizationShareMetricBuildTimeInfo.from_state(
+        self._build_time_metric_infos = QuantizationShareBuildTimeInfo.from_state(
             state[self._BUILD_TIME_METRIC_INFOS_STATE_ATTR])
 
     def _parse_init_params(self):

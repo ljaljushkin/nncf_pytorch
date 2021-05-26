@@ -19,7 +19,7 @@ from nncf.common.sparsity.schedulers import AdaptiveSparsityScheduler
 from nncf.common.sparsity.schedulers import ExponentialSparsityScheduler
 from nncf.common.sparsity.schedulers import MultiStepSparsityScheduler
 from nncf.common.sparsity.schedulers import PolynomialSparsityScheduler
-from nncf.compression_method_api import PTCompressionAlgorithmController
+from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 from tests.helpers import BasicConvTestModel
 from tests.helpers import MockModel
 from tests.helpers import create_compressed_model_and_algo_for_test
