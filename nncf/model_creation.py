@@ -282,7 +282,7 @@ def _match_configs(loaded_config: NNCFConfig, saved_config: NNCFConfig) -> Tuple
         return algo_class_vs_should_init_map, is_strict_loading
 
     at_least_one_matches = False
-    loaded_sparsity_algo = [algo for algo in loaded_algo_configs.keys() if 'sparsity' in algo]
+    loaded_sparsity_algo = [algo for algo in loaded_algo_configs if 'sparsity' in algo]
     for algo_name, saved_cfg in saved_algo_configs.items():
         matched = False
         loaded_algo_name = algo_name

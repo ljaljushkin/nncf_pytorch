@@ -27,7 +27,6 @@ from torch import nn
 
 from nncf.api.compression import CompressionAlgorithmBuilder
 from nncf.api.compression import CompressionLoss
-from nncf.checkpoint_loading import OPTIONAL_PARAMETERS_REGISTRY
 from nncf.common.compression import BaseCompressionAlgorithmController
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.common.utils.registry import Registry
@@ -251,19 +250,6 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
         layout = self._get_transformation_layout(target_model)
         self._handle_frozen_layers(target_model)
         return layout
-
-    def get_state(self) -> Dict[str, object]:
-        """
-        Returns a JSON-compatible dictionary containing a state of the object
-        """
-        return {}
-
-    def load_state(self, state: Dict[str, object]):
-        """
-        Initializes object from the state
-        :param state: Output of `get_state()` method.
-        """
-        pass
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
         raise NotImplementedError()
