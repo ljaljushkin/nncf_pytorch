@@ -14,6 +14,9 @@ from collections import OrderedDict
 from copy import deepcopy
 import random
 from tqdm import tqdm
+import numpy as np
+import os
+import torch
 
 from nncf.algo_selector import COMPRESSION_ALGORITHMS, ZeroCompressionLoss
 from nncf.api.compression import CompressionLevel
@@ -42,7 +45,7 @@ from nncf.utils import is_main_process
 
 @COMPRESSION_ALGORITHMS.register('bootstrapNAS')
 class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
-    def __init__(self, config, should_init: bool = True, is_elastic_kernel=False, is_elastic_width=False):
+    def __init__(self, config, should_init: bool = True, is_elastic_kernel=False, is_elastic_width=False): # TODO: Pass is elastic dim from config
         super().__init__(config, should_init)
         self._weight_dynamic = OrderedDict()
         self._processed_insertion_points = set()  # type: Set[PTTargetPoint]
@@ -227,13 +230,15 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
         # 1. Check stage and phase.
         if stage == 'kernel':
-            # train(distributed_run_manager, args,
-            #       lambda _run_manager, epoch, is_test: validate(_run_manager, epoch, is_test, **validate_func_dict))
             self.train(config, validate_func=None)
         elif stage == 'expand':
             pass
         elif stage == 'width':
-            pass
+            # TODO Load already fine tuned supernet.
+            # TODO 1. Load previously finetuned network.
+            # TODO 2. Reorganize middle and outter weights.
+            # self.train_elastic_width(self.train, config)
+            self.train(config, validate_func=None)
         elif stage == 'depth':
             pass
 
@@ -254,8 +259,6 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         return width_conf
 
     def sample_active_subnet(self, stage):
-        # self.scope_vs_elastic_width_op_map = scope_vs_elastic_width_op_map
-        # self.elastic_kernel_ops = elastic_kernel_ops
         subnet_config = {}
         if stage == 'kernel':
             subnet_config['kernel'] = self._get_random_kernel_conf()
@@ -271,7 +274,6 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             subnet_config['width'] = self._get_random_width_conf()
         else:
             raise ValueError('Unsupported stage')
-
         self.set_active_subnet(subnet_config)
 
     def set_active_subnet(self, subnet_config):
@@ -293,7 +295,6 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             train_loss, (train_top1, train_top5) = self.train_one_epoch(config, epoch)
 
             if (epoch + 1) % config.validation_frequency == 0:
-                # val_loss, val_acc, val_acc5, _val_log = validate_func(run_manager, epoch=epoch, is_test=False)
                 val_loss, val_acc, val_acc5, _val_log = validate_func(config)
                 # best_acc
                 is_best = val_acc > self.best_acc
@@ -308,12 +309,15 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                     val_log += _val_log
                     self.write_log(val_log, 'valid', should_print=False)
 
-                    self.save_model({
+                    torch.save({
                         'epoch': epoch,
                         'best_acc': self.best_acc,
                         'optimizer': self.optimizer.state_dict(),
                         'state_dict': self.target_model.state_dict(),
-                    }, is_best=is_best)
+                    }, 'test_save_TODO_delete.pth')
+                    # TODO: keep another copy if best.
+                    if is_best:
+                        pass
 
     def train_one_epoch(self, config, epoch):
         warmup_epochs = config.warmup_epochs
@@ -362,10 +366,6 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                     subnet_seed = int('%d%.3d%.3d' % (epoch * nBatch + i, _, 0))
                     random.seed(subnet_seed)
                     subnet_settings = self.sample_active_subnet(config.compression.fine_tuner_params.stage)
-                    # subnet_str += '%d: ' % _ + ','.join(['%s_%s' % (
-                    #     key, '%.2f' % subset_mean(val, 0) if isinstance(val, list) else val
-                    # ) for key, val in subnet_settings.items()]) + ' || '
-                    # print('Subnet: ', subnet_str)
 
                     output = dynamic_net(images)
                     if config.compression.kd_ratio == 0:
@@ -381,6 +381,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
                     # measure accuracy and record loss
                     loss_of_subnets.append(loss)
+                    # TODO: Update metrics
                     # self.update_metric(metric_dict, output, target)
 
                     loss.backward()
@@ -409,27 +410,20 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
         dynamic_net.eval()
 
-        # TODO
-        # if image_size_list is None:
-        #     image_size_list = val2list(run_manager.run_config.data_provider.image_size, 1)
-        # if ks_list is None:
-        #     ks_list = dynamic_net.ks_list
-        # if expand_ratio_list is None:
-        #     expand_ratio_list = dynamic_net.expand_ratio_list
-        # if depth_list is None:
-        #     depth_list = dynamic_net.depth_list
-        # if width_mult_list is None:
-        #     if 'width_mult_list' in dynamic_net.__dict__:
-        #         width_mult_list = list(range(len(dynamic_net.width_mult_list)))
-        #     else:
-        #         width_mult_list = [0]
+        depth_list = [5] # TODO
+        expand_ratio_list = [1] # TODO
+        ks_list = [7] # TODO
+        width_list = []
+        for op in self.elastic_width_ops:
+            width_list.append(op.width_list[0])
+        image_size_list = [224] # TODO
 
         # TODO: Fix dimensions that are not yet implemented.
         subnet_settings = []
         for d in depth_list:
             for e in expand_ratio_list:
                 for k in ks_list:
-                    for w in width_mult_list:
+                    for w in width_list:
                         for img_size in image_size_list:
                             subnet_settings.append([{
                                 'image_size': img_size,
@@ -438,29 +432,29 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                                 'ks': k,
                                 'w': w,
                             }, 'R%s-D%s-E%s-K%s-W%s' % (img_size, d, e, k, w)])
-        if additional_setting is not None:
-            subnet_settings += additional_setting
+        # if additional_setting is not None:
+        #     subnet_settings += additional_setting
 
         losses_of_subnets, top1_of_subnets, top5_of_subnets = [], [], []
 
         valid_log = ''
         for setting, name in subnet_settings:
             self.write_log('-' * 30 + ' Validate %s ' % name + '-' * 30, 'train', should_print=False)
-            # run_manager.run_config.data_provider.assign_active_img_size(setting.pop('image_size'))
-            dynamic_net.set_active_subnet(**setting)
-            self.write_log(dynamic_net.module_str, 'train', should_print=False)
+            # TODO: Elastic Resolution?
+            self.set_active_subnet(**setting)
+            # self.write_log(dynamic_net.module_str, 'train', should_print=False) # TODO
 
-            self.reset_running_statistics(dynamic_net) # TODO: JP Is there an utility function in NNCF for this already?
+            # self.reset_running_statistics(dynamic_net) # TODO: JP Is there an utility function in NNCF for this already?
             loss, (top1, top5) = self.validate(epoch=epoch, is_test=is_test, run_str=name, net=dynamic_net)
             losses_of_subnets.append(loss)
             top1_of_subnets.append(top1)
             top5_of_subnets.append(top5)
             valid_log += '%s (%.3f), ' % (name, top1)
 
-        return list_mean(losses_of_subnets), list_mean(top1_of_subnets), list_mean(top5_of_subnets), valid_log
+        return np.array(losses_of_subnets).mean(), np.array(top1_of_subnets).mean(), np.array(top5_of_subnets).mean(), valid_log
 
-    # TODO: Move to utils
-    def write_log(logs_path, log_str, prefix='valid', should_print=True, mode='a'):
+    # TODO: Move to utils or use NNCF build in funcs
+    def write_log(self, logs_path, log_str, prefix='valid', should_print=True, mode='a'):
         if not os.path.exists(logs_path):
             os.makedirs(logs_path, exist_ok=True)
         """ prefix: valid, train, test """
