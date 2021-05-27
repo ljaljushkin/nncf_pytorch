@@ -254,6 +254,21 @@ def _get_algo_configs(cfg) -> Tuple[Dict[str, Dict], Dict[str, Any]]:
 
 
 def _match_configs(loaded_config: NNCFConfig, saved_config: NNCFConfig) -> Tuple[Dict['str', bool], bool]:
+    """
+    Performs matching of two configs: a config that is used for creation of compressed model and config that was
+    saved in the checkpoint.
+    When compression training is resumed there shouldn't not be a conflict between resuming checkpoint and
+    specified config. E.g. it might be impossible to load all parameters of CPU-quantized model into VPU-quantized model,
+    because of different location of FQ and its parameters.
+    This function raises error if configs are not matched, otherwise tells which algorithm should be initialized and
+    notifies whether checkpoint should be loaded strictly.
+    E.g. checkpoint for RB-sparsified model can be further trained with quantization and frozen sparsity masks.
+    Quantization should be initialized, sparsity masks - not strictly loaded to overcome conflicts with quantization
+    parameters.
+    :param loaded_config: a config that is used for creation of compressed model
+    :param saved_config: config that was saved in the checkpoint
+    :return: mapping of algorithm class to a flag about need of initialization and flag about need of strict loading
+    """
     loaded_compression_config = deepcopy(loaded_config.get('compression', {}))
     saved_compression_config = deepcopy(saved_config.get('compression', {}))
 
