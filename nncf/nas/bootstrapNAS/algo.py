@@ -36,6 +36,7 @@ from nncf.graph.transformations.commands import PTTargetPoint
 from nncf.graph.transformations.commands import PTInsertionCommand
 from nncf.module_operations import UpdatePadding
 from nncf.nas.bootstrapNAS.layers import ElasticBatchNormOp
+from nncf.nas.bootstrapNAS.layers import ElasticConv2DOp # Unified Operator
 from nncf.nas.bootstrapNAS.layers import ElasticConv2DKernelOp
 from nncf.nas.bootstrapNAS.layers import ElasticConv2DWidthOp
 from nncf.nas.bootstrapNAS.layers import ElasticKernelPaddingAdjustment
@@ -45,46 +46,60 @@ from nncf.utils import is_main_process
 
 @COMPRESSION_ALGORITHMS.register('bootstrapNAS')
 class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
-    def __init__(self, config, should_init: bool = True, is_elastic_kernel=False, is_elastic_width=False): # TODO: Pass is elastic dim from config
+    def __init__(self, config, should_init: bool = True):
         super().__init__(config, should_init)
         self._weight_dynamic = OrderedDict()
         self._processed_insertion_points = set()  # type: Set[PTTargetPoint]
-        self.is_elastic_kernel = is_elastic_kernel
-        self.is_elastic_width = is_elastic_width
+        # Using Unified operator
+        # self.is_elastic_kernel = is_elastic_kernel
+        # self.is_elastic_width = is_elastic_width
 
         self.elastic_kernel_ops = []
         self.elastic_width_ops = []
         self.scope_vs_elastic_kernel_op_map = OrderedDict()
         self.scope_vs_elastic_width_op_map = OrderedDict()
 
+        # Unified op
+        self.scope_vs_elastic_op_map = OrderedDict()
+
     def build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
-        return BootstrapNASController(target_model, self.config, self.scope_vs_elastic_width_op_map,
+        return BootstrapNASController(target_model, self.config, self.scope_vs_elastic_op_map,
                                       self.elastic_kernel_ops, self.elastic_width_ops)
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
         layout = PTTransformationLayout()
         commands = []
-        if self.is_elastic_kernel:
-            commands.extend(self._elastic_kernel(target_model))
-        if self.is_elastic_width:
-            commands.extend(self._elastic_width(target_model))
+        # if self.is_elastic_kernel:
+        #     commands.extend(self._elastic_kernel(target_model))
+        # if self.is_elastic_width:
+        #     commands.extend(self._elastic_width(target_model))
+        # Unified op
+        commands.extend(self._elastic_k_w(target_model))
         for command in commands:
             layout.register(command)
         return layout
 
+    # Unified operator
     @staticmethod
-    def create_elastic_kernel_operation(module, scope):
-        return ElasticConv2DKernelOp(module.kernel_size[0], scope)
+    def create_elastic_k_w(module, scope):
+        return ElasticConv2DOp(module.kernel_size[0], module.in_channels, module.out_channels, scope)
+
 
     @staticmethod
     def create_elastic_bn_operation(module, scope):
         return ElasticBatchNormOp(module.out_channels, scope)
 
-    @staticmethod
-    def create_elastic_width_operation(module, scope):
-        return ElasticConv2DWidthOp(module.in_channels, module.out_channels, scope)
 
-    def _elastic_kernel(self, target_model: NNCFNetwork):
+    # @staticmethod
+    # def create_elastic_kernel_operation(module, scope):
+    #     return ElasticConv2DKernelOp(module.kernel_size[0], scope)
+    #
+
+    # @staticmethod
+    # def create_elastic_width_operation(module, scope):
+    #     return ElasticConv2DWidthOp(module.in_channels, module.out_channels, scope)
+
+    def _elastic_k_w(self, target_model: NNCFNetwork):
         nncf_graph = target_model.get_original_graph()
         device = next(target_model.parameters()).device
         insertion_commands = []
@@ -105,15 +120,15 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         for conv_node in conv2d_nodes:
             conv_module_scope = conv_node.ia_op_exec_context.scope_in_model
             conv_module = target_model.get_module_by_scope(conv_module_scope)
-            if conv_module.kernel_size[0] <= 3:
-                continue
+            # if conv_module.kernel_size[0] <= 3:
+            #     continue
             nncf_logger.info("Adding Dynamic Conv2D Layer in scope: {}".format(str(conv_module_scope)))
-            conv_operation = self.create_elastic_kernel_operation(conv_module, conv_module_scope)
+            conv_operation = self.create_elastic_k_w(conv_module, conv_module_scope)
             insertion_commands.append(
                 PTInsertionCommand(
                     PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS,
                                   module_scope=conv_module_scope),
-                    conv_operation #hook
+                    conv_operation  # hook
                 )
             )
             # Padding
@@ -124,6 +139,7 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
             nncf_logger.warning('Padding will be adjusted for {}'.format(str(conv_module_scope)))
             pad_commands.append(PTInsertionCommand(insertion_point, pad_op, TransformationPriority.DEFAULT_PRIORITY))
             self.elastic_kernel_ops.append(conv_operation)
+            self.elastic_width_ops.append(conv_operation)
 
             # Get BN in pair
             for conv_node_p, bn_node in conv2d_bn_node_pairs:
@@ -139,7 +155,7 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
                             elastic_bn_kernel_op
                         )
                     )
-                    self.scope_vs_elastic_kernel_op_map[str(conv_module_scope)] = conv_operation
+                    self.scope_vs_elastic_op_map[str(conv_module_scope)] = conv_operation
                     break
 
         if pad_commands:
@@ -147,59 +163,123 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
 
         return insertion_commands
 
-    def _elastic_width(self, target_model: NNCFNetwork):
-        # TODO: Missing convs that don't have a bn associated with them.
-        insertion_commands = []
-        nncf_graph = target_model.get_original_graph()
-        conv_bn_pattern = N('conv2d') + BN
-        nx_graph = deepcopy(nncf_graph.get_nx_graph_copy())
-        from nncf.graph.graph_matching import search_all
-        matches = search_all(nx_graph, conv_bn_pattern)
-        conv2d_bn_node_pairs = []
-        for match in matches:
-            input_node_key = match[0]
-            output_node_key = match[-1]
-            conv_node = nncf_graph.get_node_by_key(input_node_key)
-            bn_node = nncf_graph.get_node_by_key(output_node_key)
-            conv2d_bn_node_pairs.append((conv_node, bn_node))
-
-        for conv_node, bn_node in conv2d_bn_node_pairs:
-            conv_module_scope = conv_node.ia_op_exec_context.scope_in_model
-            conv_module = target_model.get_module_by_scope(conv_module_scope)
-            nncf_logger.info("Adding Elastic Width Op for Conv in scope: {}".format(str(conv_module_scope)))
-            elastic_conv_width_op = self.create_elastic_width_operation(conv_module, conv_module_scope)
-            insertion_commands.append(
-                PTInsertionCommand(
-                    PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS,
-                                  module_scope=conv_module_scope),
-                    elastic_conv_width_op
-                )
-            )
-            self.elastic_width_ops.append(elastic_conv_width_op)
-
-            bn_module_scope = bn_node.ia_op_exec_context.scope_in_model
-            nncf_logger.info("Adding Elastic Width Op for BN in scope: {}".format(str(bn_module_scope)))
-
-            elastic_bn_width_op = self.create_elastic_bn_operation(conv_module, bn_module_scope)
-            insertion_commands.append(
-                PTInsertionCommand(
-                    PTTargetPoint(TargetType.OPERATION_WITH_BN_PARAMS,
-                                  module_scope=bn_module_scope),
-                    elastic_bn_width_op
-                )
-            )
-            self.scope_vs_elastic_width_op_map[str(conv_module_scope)] = elastic_conv_width_op
-        return insertion_commands
+    # def _elastic_kernel(self, target_model: NNCFNetwork):
+    #     nncf_graph = target_model.get_original_graph()
+    #     device = next(target_model.parameters()).device
+    #     insertion_commands = []
+    #     pad_commands = []
+    #     conv_bn_pattern = N('conv2d') + BN
+    #     conv2d_nodes = nncf_graph.get_nodes_by_types(['conv2d'])
+    #     nx_graph = deepcopy(nncf_graph.get_nx_graph_copy())
+    #     from nncf.graph.graph_matching import search_all
+    #     matches = search_all(nx_graph, conv_bn_pattern)
+    #     conv2d_bn_node_pairs = []
+    #     for match in matches:
+    #         input_node_key = match[0]
+    #         output_node_key = match[-1]
+    #         conv_node = nncf_graph.get_node_by_key(input_node_key)
+    #         bn_node = nncf_graph.get_node_by_key(output_node_key)
+    #         conv2d_bn_node_pairs.append((conv_node, bn_node))
+    #
+    #     for conv_node in conv2d_nodes:
+    #         conv_module_scope = conv_node.ia_op_exec_context.scope_in_model
+    #         conv_module = target_model.get_module_by_scope(conv_module_scope)
+    #         if conv_module.kernel_size[0] <= 3:
+    #             continue
+    #         nncf_logger.info("Adding Dynamic Conv2D Layer in scope: {}".format(str(conv_module_scope)))
+    #         conv_operation = self.create_elastic_kernel_operation(conv_module, conv_module_scope)
+    #         insertion_commands.append(
+    #             PTInsertionCommand(
+    #                 PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS,
+    #                               module_scope=conv_module_scope),
+    #                 conv_operation #hook
+    #             )
+    #         )
+    #         # Padding
+    #         ap = ElasticKernelPaddingAdjustment(conv_operation)
+    #         pad_op = UpdatePadding(ap).to(device)
+    #         insertion_point = PTTargetPoint(target_type=TargetType.PRE_LAYER_OPERATION,
+    #                                         module_scope=conv_module_scope)
+    #         nncf_logger.warning('Padding will be adjusted for {}'.format(str(conv_module_scope)))
+    #         pad_commands.append(PTInsertionCommand(insertion_point, pad_op, TransformationPriority.DEFAULT_PRIORITY))
+    #         self.elastic_kernel_ops.append(conv_operation)
+    #
+    #         # Get BN in pair
+    #         for conv_node_p, bn_node in conv2d_bn_node_pairs:
+    #             if conv_node == conv_node_p:
+    #                 bn_module_scope = bn_node.ia_op_exec_context.scope_in_model
+    #                 nncf_logger.info("Adding Elastic Kernel Op for BN in scope: {}".format(str(bn_module_scope)))
+    #
+    #                 elastic_bn_kernel_op = self.create_elastic_bn_operation(conv_module, bn_module_scope)
+    #                 insertion_commands.append(
+    #                     PTInsertionCommand(
+    #                         PTTargetPoint(TargetType.OPERATION_WITH_BN_PARAMS,
+    #                                       module_scope=bn_module_scope),
+    #                         elastic_bn_kernel_op
+    #                     )
+    #                 )
+    #                 self.scope_vs_elastic_kernel_op_map[str(conv_module_scope)] = conv_operation
+    #                 break
+    #
+    #     if pad_commands:
+    #         insertion_commands += pad_commands
+    #
+    #     return insertion_commands
+    #
+    # def _elastic_width(self, target_model: NNCFNetwork):
+    #     # TODO: Missing convs that don't have a bn associated with them.
+    #     insertion_commands = []
+    #     nncf_graph = target_model.get_original_graph()
+    #     conv_bn_pattern = N('conv2d') + BN
+    #     nx_graph = deepcopy(nncf_graph.get_nx_graph_copy())
+    #     from nncf.graph.graph_matching import search_all
+    #     matches = search_all(nx_graph, conv_bn_pattern)
+    #     conv2d_bn_node_pairs = []
+    #     for match in matches:
+    #         input_node_key = match[0]
+    #         output_node_key = match[-1]
+    #         conv_node = nncf_graph.get_node_by_key(input_node_key)
+    #         bn_node = nncf_graph.get_node_by_key(output_node_key)
+    #         conv2d_bn_node_pairs.append((conv_node, bn_node))
+    #
+    #     for conv_node, bn_node in conv2d_bn_node_pairs:
+    #         conv_module_scope = conv_node.ia_op_exec_context.scope_in_model
+    #         conv_module = target_model.get_module_by_scope(conv_module_scope)
+    #         nncf_logger.info("Adding Elastic Width Op for Conv in scope: {}".format(str(conv_module_scope)))
+    #         elastic_conv_width_op = self.create_elastic_width_operation(conv_module, conv_module_scope)
+    #         insertion_commands.append(
+    #             PTInsertionCommand(
+    #                 PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS,
+    #                               module_scope=conv_module_scope),
+    #                 elastic_conv_width_op
+    #             )
+    #         )
+    #         self.elastic_width_ops.append(elastic_conv_width_op)
+    #
+    #         bn_module_scope = bn_node.ia_op_exec_context.scope_in_model
+    #         nncf_logger.info("Adding Elastic Width Op for BN in scope: {}".format(str(bn_module_scope)))
+    #
+    #         elastic_bn_width_op = self.create_elastic_bn_operation(conv_module, bn_module_scope)
+    #         insertion_commands.append(
+    #             PTInsertionCommand(
+    #                 PTTargetPoint(TargetType.OPERATION_WITH_BN_PARAMS,
+    #                               module_scope=bn_module_scope),
+    #                 elastic_bn_width_op
+    #             )
+    #         )
+    #         self.scope_vs_elastic_width_op_map[str(conv_module_scope)] = elastic_conv_width_op
+    #     return insertion_commands
 
 
 class BootstrapNASController(PTCompressionAlgorithmController):
-    def __init__(self, target_model: NNCFNetwork, config, scope_vs_elastic_width_op_map,
+    def __init__(self, target_model: NNCFNetwork, config, scope_vs_elastic_op_map,
                  elastic_kernel_ops, elastic_width_ops):
         super().__init__(target_model)
         self.target_model = target_model
         self._loss = ZeroCompressionLoss(next(target_model.parameters()).device)
         self._scheduler = BaseCompressionScheduler()
-        self.scope_vs_elastic_width_op_map = scope_vs_elastic_width_op_map
+        # self.scope_vs_elastic_width_op_map = scope_vs_elastic_width_op_map
+        self.scope_vs_elastic_op_map = scope_vs_elastic_op_map
         self.elastic_kernel_ops = elastic_kernel_ops
         self.elastic_width_ops = elastic_width_ops
 
@@ -223,39 +303,41 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         self.optimizer = optimizer
         stage = config.compression.fine_tuner_params.stage
         stage = 'kernel' if stage is None else stage
-        print(config.compression)
-        print(stage)
+
+        nncf_logger.info('Fine tuning stage = {}'.format(stage))
 
         self.best_acc = 0
 
         # 1. Check stage and phase.
         if stage == 'kernel':
             self.train(config, validate_func=None)
+        elif stage == 'depth':
+            pass
         elif stage == 'expand':
             pass
         elif stage == 'width':
             # TODO Load already fine tuned supernet.
             # TODO 1. Load previously finetuned network.
-            # TODO 2. Reorganize middle and outter weights.
+            # TODO 2. Reorganize middle and outter weights. How to do it in NNCF? First use method used in OFA.
+
             # self.train_elastic_width(self.train, config)
             self.train(config, validate_func=None)
-        elif stage == 'depth':
-            pass
+
 
     def _get_random_kernel_conf(self):
         kernel_conf = []
         for op in self.elastic_kernel_ops:
-            rand_i = random.randint(len(op.kernel_size_list))
+            rand_i = random.randrange(0, len(op.kernel_size_list))
             # TODO: Slow decreasing of sizes?
-            kernel_conf.append(rand_i)
+            kernel_conf.append(op.kernel_size_list[rand_i])
         return kernel_conf
 
     def _get_random_width_conf(self):
         width_conf = []
         for op in self.elastic_width_ops:
-            rand_i = random.randint(len(op.width_list))
+            rand_i = random.randrange(0, len(op.width_list))
             # TODO: Slow decreasing of number of channels?
-            width_conf.append(rand_i)
+            width_conf.append(op.width_list[rand_i])
         return width_conf
 
     def sample_active_subnet(self, stage):
@@ -272,6 +354,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             # Set random elastic depth # TODO:
             # Set random elastic width
             subnet_config['width'] = self._get_random_width_conf()
+            # TODO: Nikolay's idea to satisfy other requirements
         else:
             raise ValueError('Unsupported stage')
         self.set_active_subnet(subnet_config)
@@ -282,6 +365,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             for op, ks in zip(self.elastic_kernel_ops, subnet_config['kernel']):
                 op.set_active_kernel_size(ks)
 
+        # width
         if 'width' in subnet_config:
             for op, w in zip(self.elastic_width_ops, subnet_config['width']):
                 op.set_active_out_channels(w)
@@ -301,7 +385,6 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 self.best_acc = max(self.best_acc, val_acc)
 
                 if is_main_process():
-                # if not distributed or run_manager.is_root:
                     val_log = 'Valid [{0}/{1}] loss={2:.3f}, top-1={3:.3f} ({4:.3f})'. \
                         format(epoch + 1 - config.warmup_epochs, config.epochs, val_loss, val_acc,
                                self.best_acc)
@@ -323,6 +406,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         warmup_epochs = config.warmup_epochs
 
         dynamic_net = self.target_model
+        dynamic_net.to('cuda')
         dynamic_net.train()
 
         nBatch = len(self.train_loader)
@@ -376,7 +460,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                             kd_loss = cross_entropy_loss_with_soft_target(output, soft_label)
                         else:
                             kd_loss = F.mse_loss(output, soft_logits)
-                        loss = config.compressionkd_ratio * kd_loss + self.train_criterion(output, labels)
+                        loss = config.compression.kd_ratio * kd_loss + self.train_criterion(output, labels)
                         loss_type = '%.1fkd-%s & ce' % (config.compression.kd_ratio, config.compression.kd_type)
 
                     # measure accuracy and record loss
@@ -389,8 +473,9 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
                 # losses.update(list_mean(loss_of_subnets), images.size(0))
 
-                # t.set_postfix({
-                #     'loss': losses.avg.item(),
+                loss_avg = np.array(loss_of_subnets).mean()
+                t.set_postfix({
+                    'loss': loss_avg, # losses.avg.item(),
                 #     **self.get_metric_vals(metric_dict, return_dict=True),
                 #     'R': images.size(2),
                 #     'lr': new_lr,
@@ -398,11 +483,11 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 #     'seed': str(subnet_seed),
                 #     'str': subnet_str,
                 #     'data_time': data_time.avg,
-                # })
+                })
                 t.update(1)
                 # end = time.time()
         # return losses.avg.item(), self.get_metric_vals(metric_dict)
-        return 0, (0, 0) # TODO:
+        return loss_avg, (0, 0) # TODO:
 
 
     def validate(self, config):
