@@ -52,6 +52,8 @@ class ElasticConv2DOp(nn.Module):
 
     def generate_kernel_size_list(self, max_kernel_size):
         assert max_kernel_size % 2 > 0, 'kernel size should be odd number'
+        if max_kernel_size == 1:
+            return [1]
         kernel = max_kernel_size
         ks_list = []
         while kernel > 1:
