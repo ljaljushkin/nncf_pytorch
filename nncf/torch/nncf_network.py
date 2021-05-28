@@ -54,7 +54,7 @@ from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.layers import NNCF_MODULES
 from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT
 from nncf.torch.module_operations import UpdateWeight
-from nncf.module_operations import UpdateBatchNormParams
+from nncf.torch.module_operations import UpdateBatchNormParams
 from nncf.torch.quantization.layers import QUANTIZATION_MODULES
 from nncf.torch.utils import compute_FLOPs_hook
 from nncf.torch.utils import get_all_modules_by_type

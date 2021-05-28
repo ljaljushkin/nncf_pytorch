@@ -4,8 +4,8 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 
 from nncf.common.utils.logger import logger as nncf_logger
-from nncf.layer_utils import COMPRESSION_MODULES
-from nncf.nas.bootstrapNAS.ofa_layers_utils import sub_filter_start_end
+from nncf.torch.layer_utils import COMPRESSION_MODULES
+from nncf.torch.nas.bootstrapNAS.ofa_layers_utils import sub_filter_start_end
 
 @COMPRESSION_MODULES.register()
 class ElasticBypassOp(nn.Module):

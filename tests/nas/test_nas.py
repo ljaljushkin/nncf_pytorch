@@ -11,10 +11,10 @@
  limitations under the License.
 """
 
-from nncf.dynamic_graph.graph_tracer import create_dummy_forward_fn
-from nncf.dynamic_graph.graph_tracer import create_input_infos
-from nncf.nas.bootstrapNAS.algo import BootstrapNASBuilder
-from nncf.nncf_network import NNCFNetwork
+from nncf.torch.dynamic_graph.graph_tracer import create_dummy_forward_fn
+from nncf.torch.dynamic_graph.graph_tracer import create_input_infos
+from nncf.torch.nas.bootstrapNAS.algo import BootstrapNASBuilder
+from nncf.torch.nncf_network import NNCFNetwork
 from tests import test_models
 from tests.helpers import BasicConvTestModel
 from tests.helpers import get_empty_config

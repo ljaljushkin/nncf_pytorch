@@ -18,30 +18,30 @@ import numpy as np
 import os
 import torch
 
-from nncf.algo_selector import COMPRESSION_ALGORITHMS, ZeroCompressionLoss
-from nncf.api.compression import CompressionLevel
+from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS, ZeroCompressionLoss
+from nncf.common.statistics import NNCFStatistics
+# from nncf.api.compression import CompressionLevel
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler
 from nncf.common.schedulers import BaseCompressionScheduler
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.transformations.commands import TransformationPriority
-from nncf.compression_method_api import PTCompressionAlgorithmBuilder
-from nncf.compression_method_api import PTCompressionAlgorithmController
-from nncf.graph.graph import NNCFNodeExpression as N
-from nncf.graph.patterns import BN
-from nncf.config import NNCFConfig
-from nncf.graph.transformations.layout import PTTransformationLayout
+from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
+from nncf.torch.compression_method_api import PTCompressionAlgorithmController
+from nncf.torch.graph.graph import NNCFNodeExpression as N
+from nncf.torch.graph.patterns import BN
+from nncf.torch.graph.transformations.layout import PTTransformationLayout
 from nncf.common.utils.logger import logger as nncf_logger
-from nncf.graph.transformations.commands import PTTargetPoint
-from nncf.graph.transformations.commands import PTInsertionCommand
-from nncf.module_operations import UpdatePadding
-from nncf.nas.bootstrapNAS.layers import ElasticBatchNormOp
-from nncf.nas.bootstrapNAS.layers import ElasticConv2DOp # Unified Operator
-from nncf.nas.bootstrapNAS.layers import ElasticConv2DKernelOp
-from nncf.nas.bootstrapNAS.layers import ElasticConv2DWidthOp
-from nncf.nas.bootstrapNAS.layers import ElasticKernelPaddingAdjustment
-from nncf.nncf_network import NNCFNetwork
-from nncf.utils import is_main_process
+from nncf.torch.graph.transformations.commands import PTTargetPoint
+from nncf.torch.graph.transformations.commands import PTInsertionCommand
+from nncf.torch.module_operations import UpdatePadding
+from nncf.torch.nas.bootstrapNAS.layers import ElasticBatchNormOp
+from nncf.torch.nas.bootstrapNAS.layers import ElasticConv2DOp # Unified Operator
+# from nncf.nas.bootstrapNAS.layers import ElasticConv2DKernelOp
+# from nncf.nas.bootstrapNAS.layers import ElasticConv2DWidthOp
+from nncf.torch.nas.bootstrapNAS.layers import ElasticKernelPaddingAdjustment
+from nncf.torch.nncf_network import NNCFNetwork
+from nncf.torch.utils import is_main_process
 
 
 @COMPRESSION_ALGORITHMS.register('bootstrapNAS')
@@ -107,7 +107,7 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         conv_bn_pattern = N('conv2d') + BN
         conv2d_nodes = nncf_graph.get_nodes_by_types(['conv2d'])
         nx_graph = deepcopy(nncf_graph.get_nx_graph_copy())
-        from nncf.graph.graph_matching import search_all
+        from nncf.torch.graph.graph_matching import search_all
         matches = search_all(nx_graph, conv_bn_pattern)
         conv2d_bn_node_pairs = []
         for match in matches:
@@ -294,8 +294,11 @@ class BootstrapNASController(PTCompressionAlgorithmController):
     def scheduler(self) -> CompressionScheduler:
         return self._scheduler
 
-    def compression_level(self) -> CompressionLevel:
-        return CompressionLevel.FULL
+    # def compression_level(self) -> CompressionLevel:
+    #     return CompressionLevel.FULL
+
+    def statistics(self, quickly_collected_only: bool = False) -> NNCFStatistics:
+        return NNCFStatistics()
 
     def progressive_shrinking(self, optimizer, train_loader, criterion, config):
         self.train_loader = train_loader
