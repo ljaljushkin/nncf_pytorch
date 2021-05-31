@@ -16,6 +16,7 @@ import random
 from tqdm import tqdm
 import numpy as np
 import os
+import time
 import torch
 
 from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS, ZeroCompressionLoss
@@ -54,6 +55,7 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         # self.is_elastic_kernel = is_elastic_kernel
         # self.is_elastic_width = is_elastic_width
 
+        self.config = config
         self.elastic_kernel_ops = []
         self.elastic_width_ops = []
         self.scope_vs_elastic_kernel_op_map = OrderedDict()
@@ -276,6 +278,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                  elastic_kernel_ops, elastic_width_ops):
         super().__init__(target_model)
         self.target_model = target_model
+        self.config = config
         self._loss = ZeroCompressionLoss(next(target_model.parameters()).device)
         self._scheduler = BaseCompressionScheduler()
         # self.scope_vs_elastic_width_op_map = scope_vs_elastic_width_op_map
@@ -283,6 +286,12 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         self.elastic_kernel_ops = elastic_kernel_ops
         self.elastic_width_ops = elastic_width_ops
 
+        # KD
+
+        kd_ratio = config.get('kd_ratio', 0)
+        if kd_ratio > 0:
+            # TODO: Load teacher model
+            self.teacher_model = None
         if is_main_process():
             print("Created BootstrapNAS controller")
 
@@ -300,11 +309,16 @@ class BootstrapNASController(PTCompressionAlgorithmController):
     def statistics(self, quickly_collected_only: bool = False) -> NNCFStatistics:
         return NNCFStatistics()
 
-    def progressive_shrinking(self, optimizer, train_loader, criterion, config):
+    def progressive_shrinking(self, optimizer, train_loader, val_loader,criterion):
         self.train_loader = train_loader
-        self.train_criterion = criterion
+        self.val_loader = val_loader
+        self.criterion = criterion
         self.optimizer = optimizer
-        stage = config.compression.fine_tuner_params.stage
+
+        config = self.config
+        print(config)
+        print(config.keys())
+        stage = config['fine_tuner_params']['stage']
         stage = 'kernel' if stage is None else stage
 
         nncf_logger.info('Fine tuning stage = {}'.format(stage))
@@ -313,7 +327,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
         # 1. Check stage and phase.
         if stage == 'kernel':
-            self.train(config, validate_func=None)
+            self.train()
         elif stage == 'depth':
             pass
         elif stage == 'expand':
@@ -324,7 +338,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             # TODO 2. Reorganize middle and outter weights. How to do it in NNCF? First use method used in OFA.
 
             # self.train_elastic_width(self.train, config)
-            self.train(config, validate_func=None)
+            self.train(validate_func=None)
 
 
     def _get_random_kernel_conf(self):
@@ -336,12 +350,38 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         return kernel_conf
 
     def _get_random_width_conf(self):
+        #TODO: Generalize
+        dep = self.config["only_shortcuts_dependencies"]
+        dep_group_value_assigned = dict()
+
         width_conf = []
         for op in self.elastic_width_ops:
             rand_i = random.randrange(0, len(op.width_list))
             # TODO: Slow decreasing of number of channels?
-            width_conf.append(op.width_list[rand_i])
+
+            width_sel = op.width_list[rand_i]
+            for g_i, dep_group in enumerate(dep):
+                if str(op.scope) in dep_group:
+                    print(f'{str(op.scope)} in dep list')
+                    if g_i in dep_group_value_assigned.keys():
+                        width_sel = dep_group_value_assigned[g_i]
+                    else:
+                        dep_group_value_assigned[g_i] = width_sel
+            width_conf.append(width_sel)
+
+            print(str(op.scope), width_sel)
         return width_conf
+
+
+    def get_active_config(self):
+        subnet_config = {}
+        for op in self.elastic_kernel_ops:
+            subnet_config['kernel'].append(op.active_kernel_size)
+        # width
+        for op in self.elastic_width_ops:
+            subnet_config['width'].append(op.active_out_channels)
+
+        return subnet_config
 
     def sample_active_subnet(self, stage):
         subnet_config = {}
@@ -360,6 +400,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             # TODO: Nikolay's idea to satisfy other requirements
         else:
             raise ValueError('Unsupported stage')
+        # print(subnet_config)
         self.set_active_subnet(subnet_config)
 
     def set_active_subnet(self, subnet_config):
@@ -373,27 +414,28 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             for op, w in zip(self.elastic_width_ops, subnet_config['width']):
                 op.set_active_out_channels(w)
 
-    def train(self, config, validate_func=None):
+    def train(self, validate_func=None):
 
+        config = self.config
         if validate_func is None:
             validate_func = self.validate
 
-        for epoch in range(config.start_epoch, config.epochs + config.warmup_epochs):
-            train_loss, (train_top1, train_top5) = self.train_one_epoch(config, epoch)
+        for epoch in range(config['fine_tuner_params']['start_epoch'], config['fine_tuner_params']['epochs'] + config['fine_tuner_params']['warmup_epochs']):
+            train_loss, (train_top1, train_top5) = self.train_one_epoch(epoch)
 
-            if (epoch + 1) % config.validation_frequency == 0:
-                val_loss, val_acc, val_acc5, _val_log = validate_func(config)
+            if (epoch + 1) % config['fine_tuner_params']['validation_frequency'] == 0:
+                val_loss, val_acc, val_acc5, _val_log = validate_func(epoch)
                 # best_acc
                 is_best = val_acc > self.best_acc
                 self.best_acc = max(self.best_acc, val_acc)
 
                 if is_main_process():
                     val_log = 'Valid [{0}/{1}] loss={2:.3f}, top-1={3:.3f} ({4:.3f})'. \
-                        format(epoch + 1 - config.warmup_epochs, config.epochs, val_loss, val_acc,
+                        format(epoch + 1 - config['fine_tuner_params']['warmup_epochs'], config['fine_tuner_params']['epochs'], val_loss, val_acc,
                                self.best_acc)
                     val_log += ', Train top-1 {top1:.3f}, Train loss {loss:.3f}\t'.format(top1=train_top1, loss=train_loss)
                     val_log += _val_log
-                    self.write_log(val_log, 'valid', should_print=False)
+                    # self.write_log(val_log, 'valid', should_print=False)
 
                     torch.save({
                         'epoch': epoch,
@@ -405,24 +447,35 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                     if is_best:
                         pass
 
-    def train_one_epoch(self, config, epoch):
-        warmup_epochs = config.warmup_epochs
+    def train_one_epoch(self, epoch):
+        config = self.config
+        warmup_epochs = config['fine_tuner_params']['warmup_epochs']
 
         dynamic_net = self.target_model
         dynamic_net.to('cuda')
         dynamic_net.train()
 
+        batch_time = AverageMeter()
+        data_time = AverageMeter()
+        losses = AverageMeter()
+        compression_losses = AverageMeter()
+        criterion_losses = AverageMeter()
+        top1 = AverageMeter()
+        top5 = AverageMeter()
+
         nBatch = len(self.train_loader)
 
-        # TODO. Check utilities used by NNCF.
-        # data_time = AverageMeter()
         # losses = DistributedMetric('train_loss') if distributed else AverageMeter()
         # metric_dict = run_manager.get_metric_dict()
 
         with tqdm(total=nBatch,
                   desc='Train Epoch #{}'.format(epoch + 1),
                   disable=not is_main_process()) as t:
+            end = time.time()
             for i, (images, labels) in enumerate(self.train_loader):
+                # measure data loading time
+                data_time.update(time.time() - end)
+
                 # TODO: Fix adjustment of learning rate.
                 # if epoch < warmup_epochs:
                 #     new_lr = self.warmup_adjust_learning_rate(
@@ -437,8 +490,10 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 target = labels
 
                 # soft target
-                if config.compression.kd_ratio > 0:
-                    self.teacher_model.train()
+                if config['kd_ratio'] > 0:
+                    assert self.teacher_model is not None, 'Teacher model is None'
+                    # self.teacher_model.train()
+                    self.teacher_model.eval()
                     with torch.no_grad():
                         soft_logits = self.teacher_model(images).detach()
                         soft_label = F.softmax(soft_logits, dim=1)
@@ -446,40 +501,50 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 # clean gradients
                 dynamic_net.zero_grad()
 
-                loss_of_subnets = []
                 # compute output
                 subnet_str = ''
-                for _ in range(config.compression.fine_tuner_params.dynamic_batch_size):
+                for _ in range(config['fine_tuner_params']['dynamic_batch_size']):
                     subnet_seed = int('%d%.3d%.3d' % (epoch * nBatch + i, _, 0))
                     random.seed(subnet_seed)
-                    subnet_settings = self.sample_active_subnet(config.compression.fine_tuner_params.stage)
+                    self.sample_active_subnet(config['fine_tuner_params']['stage'])
 
                     output = dynamic_net(images)
-                    if config.compression.kd_ratio == 0:
-                        loss = self.train_criterion(output, labels)
+                    if config['kd_ratio'] == 0:
+                        loss = self.criterion(output, labels)
                         loss_type = 'ce'
                     else:
-                        if config.compression.kd_type == 'ce':
+                        if config['kd_type'] == 'ce':
                             kd_loss = cross_entropy_loss_with_soft_target(output, soft_label)
                         else:
                             kd_loss = F.mse_loss(output, soft_logits)
-                        loss = config.compression.kd_ratio * kd_loss + self.train_criterion(output, labels)
-                        loss_type = '%.1fkd-%s & ce' % (config.compression.kd_ratio, config.compression.kd_type)
+                        loss = config['kd_ratio'] * kd_loss + self.criterion(output, labels)
+                        loss_type = '%.1fkd-%s & ce' % (config['kd_ratio'], config['kd_type'])
 
                     # measure accuracy and record loss
-                    loss_of_subnets.append(loss)
+                    # loss_of_subnets.append(loss)
                     # TODO: Update metrics
                     # self.update_metric(metric_dict, output, target)
 
+                    acc1, acc5 = accuracy(output, target, topk=(1, 5))
+                    losses.update(loss.item(), images.size(0))
+                    # criterion_losses.update(criterion_loss.item(), input_.size(0))
+                    top1.update(acc1, images.size(0))
+                    top5.update(acc5, images.size(0))
+
                     loss.backward()
+                    # loss_of_subnets.append(loss.detach().cpu()) # Too expensive. Keep tensor in GPU.
                 self.optimizer.step()
 
-                # losses.update(list_mean(loss_of_subnets), images.size(0))
+                # measure elapsed time
+                batch_time.update(time.time() - end)
+                end = time.time()
 
-                loss_avg = np.array(loss_of_subnets).mean()
+
                 t.set_postfix({
-                    'loss': loss_avg, # losses.avg.item(),
+                    'loss': losses.avg,
                 #     **self.get_metric_vals(metric_dict, return_dict=True),
+                    'top1': top1.avg,
+                    'top5': top5.avg,
                 #     'R': images.size(2),
                 #     'lr': new_lr,
                 #     'loss_type': loss_type,
@@ -489,57 +554,106 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 })
                 t.update(1)
                 # end = time.time()
-        # return losses.avg.item(), self.get_metric_vals(metric_dict)
-        return loss_avg, (0, 0) # TODO:
+        return losses.avg, (top1.avg, top5.avg) # TODO:
 
 
-    def validate(self, config):
+    def validate(self, epoch):
+        config = self.config
         dynamic_net = self.target_model
 
         dynamic_net.eval()
 
-        depth_list = [5] # TODO
-        expand_ratio_list = [1] # TODO
-        ks_list = [7] # TODO
-        width_list = []
-        for op in self.elastic_width_ops:
-            width_list.append(op.width_list[0])
-        image_size_list = [224] # TODO
+        # TODO: Only validating single setting for now.
+        return self.validate_single_setting(epoch=epoch)
 
-        # TODO: Fix dimensions that are not yet implemented.
-        subnet_settings = []
-        for d in depth_list:
-            for e in expand_ratio_list:
-                for k in ks_list:
-                    for w in width_list:
-                        for img_size in image_size_list:
-                            subnet_settings.append([{
-                                'image_size': img_size,
-                                'd': d,
-                                'e': e,
-                                'ks': k,
-                                'w': w,
-                            }, 'R%s-D%s-E%s-K%s-W%s' % (img_size, d, e, k, w)])
-        # if additional_setting is not None:
-        #     subnet_settings += additional_setting
+        # TODO Fix this function
+        # depth_list = [5] # TODO
+        # expand_ratio_list = [1] # TODO
+        # ks_list = []
+        # for op in self.elastic_kernel_ops:
+        #     ks_list.append(op.kernel_size_list[0])
+        # width_list = []
+        # for op in self.elastic_width_ops:
+        #     width_list.append(op.width_list[0])
+        # image_size_list = [224] # TODO
+        #
+        # # TODO: Number of settings for validation is too big.
+        #
+        # # TODO: Fix dimensions that are not yet implemented.
+        # subnet_settings = []
+        # for d in depth_list:
+        #     for e in expand_ratio_list:
+        #         for k in ks_list:
+        #             for w in width_list:
+        #                 for img_size in image_size_list:
+        #                     subnet_settings.append([{
+        #                         # 'image_size': img_size,
+        #                         # 'd': d,
+        #                         # 'e': e,
+        #                         'kernel': k,
+        #                         'width': w,
+        #                     }, 'R%s-D%s-E%s-K%s-W%s' % (img_size, d, e, k, w)])
+        # # if additional_setting is not None:
+        # #     subnet_settings += additional_setting
+        #
+        # print(subnet_settings)
+        # # exit(0)
+        #
+        # losses_of_subnets, top1_of_subnets, top5_of_subnets = [], [], []
+        #
+        # valid_log = ''
+        # for setting, name in subnet_settings:
+        #     # self.write_log('-' * 30 + ' Validate %s ' % name + '-' * 30, 'train', should_print=False)
+        #     # TODO: Elastic Resolution?
+        #     # self.set_active_subnet(**setting) #TODO
+        #     # self.write_log(dynamic_net.module_str, 'train', should_print=False) # TODO
+        #
+        #     # self.reset_running_statistics(dynamic_net) # TODO: JP Is there an utility function in NNCF for this already?
+        #     loss, (top1, top5) = self.validate_single_setting(epoch=epoch) #, is_test=is_test, run_str=name, net=dynamic_net)
+        #     losses_of_subnets.append(loss)
+        #     top1_of_subnets.append(top1)
+        #     top5_of_subnets.append(top5)
+        #     valid_log += '%s (%.3f), ' % (name, top1)
+        #
+        # return np.array(losses_of_subnets).mean(), np.array(top1_of_subnets).mean(), np.array(top5_of_subnets).mean(), valid_log
 
-        losses_of_subnets, top1_of_subnets, top5_of_subnets = [], [], []
 
-        valid_log = ''
-        for setting, name in subnet_settings:
-            self.write_log('-' * 30 + ' Validate %s ' % name + '-' * 30, 'train', should_print=False)
-            # TODO: Elastic Resolution?
-            self.set_active_subnet(**setting)
-            # self.write_log(dynamic_net.module_str, 'train', should_print=False) # TODO
+    def validate_single_setting(self, epoch):
+        dynamic_net = self.target_model
 
-            # self.reset_running_statistics(dynamic_net) # TODO: JP Is there an utility function in NNCF for this already?
-            loss, (top1, top5) = self.validate(epoch=epoch, is_test=is_test, run_str=name, net=dynamic_net)
-            losses_of_subnets.append(loss)
-            top1_of_subnets.append(top1)
-            top5_of_subnets.append(top5)
-            valid_log += '%s (%.3f), ' % (name, top1)
+        dynamic_net.eval()
 
-        return np.array(losses_of_subnets).mean(), np.array(top1_of_subnets).mean(), np.array(top5_of_subnets).mean(), valid_log
+        batch_time = AverageMeter()
+        losses = AverageMeter()
+        top1 = AverageMeter()
+        top5 = AverageMeter()
+
+        with torch.no_grad():
+            end = time.time()
+            with tqdm(total=len(self.val_loader),
+                      desc='Validate Epoch #{}'.format(epoch + 1)) as t: #, run_str),
+                      # disable=no_logs or not self.is_root) as t:
+                for i, (images, labels) in enumerate(self.val_loader): #data_loader):
+                    images, labels = images.cuda(), labels.cuda()
+                    # compute output
+                    output = dynamic_net(images)
+                    # loss = self.test_criterion(output, labels)
+                    loss = self.criterion(output, labels)
+                    # measure accuracy and record loss
+                    losses.update(loss, images.size(0))
+                    acc1, acc5 = accuracy(output, labels, topk=(1, 5))
+                    top1.update(acc1, images.size(0))
+                    top5.update(acc5, images.size(0))
+                    # self.update_metric(metric_dict, output, labels)
+                    t.set_postfix({
+                        'loss': losses.avg, #.item(),
+                        # **self.get_metric_vals(metric_dict, return_dict=True),
+                        'top1': top1.avg,
+                        'top5': top5.avg,
+                        'img_size': images.size(2),
+                    })
+                    t.update(1)
+        return losses.avg, top1.avg, top5.avg, 'TODO_log'
 
     # TODO: Move to utils or use NNCF build in funcs
     def write_log(self, logs_path, log_str, prefix='valid', should_print=True, mode='a'):
@@ -562,3 +676,43 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 fout.flush()
         if should_print:
             print(log_str)
+
+
+class AverageMeter:
+    """Computes and stores the average and current value"""
+
+    def __init__(self):
+        self.val = None
+        self.avg = None
+        self.sum = None
+        self.count = None
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+
+def accuracy(output, target, topk=(1,)):
+    """Computes the accuracy over the k top predictions for the specified values of k"""
+    with torch.no_grad():
+        maxk = max(topk)
+        batch_size = target.size(0)
+
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+        res = []
+        for k in topk:
+            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+            res.append(correct_k.mul_(100.0 / batch_size).item())
+        return res
