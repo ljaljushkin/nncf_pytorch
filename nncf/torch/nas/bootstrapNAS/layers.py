@@ -20,6 +20,30 @@ class ElasticBypassOp(nn.Module):
     def forward(self, weight, inputs):
         pass
 
+@COMPRESSION_MODULES.register() # TODO: Remove?
+class ElasticLinearOp(nn.Module):
+    def __init__(self, max_in_features, max_out_features, bias, scope):
+        super().__init__()
+        self.max_in_features = max_in_features
+        self.max_out_features = max_out_features
+        self.bias = bias
+        self.scope = scope
+
+        self.active_out_features = self.max_out_features
+
+    # TODO: Remove
+    def get_active_bias(self, out_features):
+      return self.linear.bias[:out_features] if self.bias else None
+
+    def forward(self, weight, inputs):
+        nncf_logger.info('Linear in scope={}'.format(self.scope))
+        in_features = inputs.size(1)
+
+        # TODO: Bias
+
+        return weight[:self.active_out_features, :in_features].contiguous()
+
+
 # Unified operator for elastic kernel and width
 @COMPRESSION_MODULES.register() # TODO: Remove?
 class ElasticConv2DOp(nn.Module):
@@ -163,7 +187,7 @@ class ElasticBatchNormOp(nn.Module):
         return self.bn_forward(feature_dim, **bn_params)
 
 # ***************
-# REMOVE OPS Below after confirming that unified op works correctly
+# REMOVE OPS Below after confirming that unified op works correctly.
 # ***************
 
 @COMPRESSION_MODULES.register() # TODO: Remove?
