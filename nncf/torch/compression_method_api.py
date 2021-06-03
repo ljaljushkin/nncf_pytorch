@@ -197,17 +197,6 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
         name, builder_state = self._builder_state_with_name
         return CompressionSetup(name, builder_state, ctrl_state)
 
-    def get_compression_state(self) -> Dict:
-        """
-        Returns entire compression state, containing nncf_network state (with state of the builder)
-        and composite controller state, containing the state of all children controllers.
-        This checkpoint can be used to resume compression via compression_state of create_compressed_model
-        :return: The entire compression state.
-        """
-        model_state = self.model.state_dict()
-        setups = [self.get_compression_setup()]
-        return PTCompressionState(setups, model_state).get_state()
-
 
 class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
     """
