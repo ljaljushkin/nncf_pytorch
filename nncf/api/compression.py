@@ -177,7 +177,7 @@ class CompressionSetup(NamedTuple):
     @classmethod
     def from_state(cls, state: Dict) -> 'CompressionSetup':
         """
-        Creates the object from its state
+        Creates the object from its state.
         :param state: Output of `get_state()` method.
         """
         return cls(**state)
@@ -399,13 +399,13 @@ class CompressionAlgorithmBuilder(ABC):
     @abstractmethod
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object
+        Returns a JSON-compatible dictionary containing a state of the object.
         """
 
     @abstractmethod
     def load_state(self, state: Dict[str, object]):
         """
-        Initializes object from the state
+        Initializes object from the state.
         :param state: Output of `get_state()` method.
         """
 

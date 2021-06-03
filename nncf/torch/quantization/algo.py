@@ -508,7 +508,7 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object
+        Returns a JSON-compatible dictionary containing a state of the object.
         """
         build_time_metric_infos_state = {}
         if self._build_time_metric_infos:
@@ -523,7 +523,7 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
 
     def load_state(self, state: Dict):
         """
-        Initializes object from the state
+        Initializes object from the state.
         :param state: Output of `get_state()` method.
         """
         quantizer_setup_state = state[self._QUANTIZER_SETUP_STATE_ATTR]

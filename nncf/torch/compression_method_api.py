@@ -280,13 +280,13 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object
+        Returns a JSON-compatible dictionary containing a state of the object.
         """
         return {}
 
     def load_state(self, state: Dict[str, object]):
         """
-        Initializes object from the state
+        Initializes object from the state.
         :param state: Output of `get_state()` method.
         """
 

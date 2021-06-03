@@ -42,7 +42,7 @@ class QuantizationShareBuildTimeInfo:
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object
+        Returns a JSON-compatible dictionary containing a state of the object.
         """
         return {
             'aq_potential_num': self.aq_potential_num,
@@ -52,7 +52,7 @@ class QuantizationShareBuildTimeInfo:
     @classmethod
     def from_state(cls, state: Dict[str, object]) -> 'QuantizationShareBuildTimeInfo':
         """
-        Creates the object from its state
+        Creates the object from its state.
         :param state: Output of `get_state()` method.
         """
         return cls(**state)

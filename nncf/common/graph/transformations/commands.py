@@ -84,14 +84,14 @@ class TargetType(OrderedEnum):
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object
+        Returns a JSON-compatible dictionary containing a state of the object.
         """
         return {TARGET_TYPE_STATE_ATTR: self.name}
 
     @classmethod
     def from_state(cls, state: Dict[str, object]) -> 'TargetType':
         """
-        Creates the object from its state
+        Creates the object from its state.
         :param state: Output of `get_state()` method.
         """
         return TargetType[state[TARGET_TYPE_STATE_ATTR]]

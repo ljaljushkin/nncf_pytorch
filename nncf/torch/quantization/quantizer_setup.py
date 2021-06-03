@@ -60,7 +60,7 @@ class SingleConfigQuantizationPoint(QuantizationPointBase):
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object
+        Returns a JSON-compatible dictionary containing a state of the object.
         """
         return {
             self._INSERTION_POINT_STATE_ATTR: self.insertion_point.get_state(),
@@ -71,7 +71,7 @@ class SingleConfigQuantizationPoint(QuantizationPointBase):
     @classmethod
     def from_state(cls, state: Dict[str, object]) -> 'SingleConfigQuantizationPoint':
         """
-        Creates the object from its state
+        Creates the object from its state.
         :param state: Output of `get_state()` method.
         """
         from nncf.torch.dynamic_graph.context import Scope
@@ -308,7 +308,7 @@ class SingleConfigQuantizerSetup(QuantizerSetupBase):
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object
+        Returns a JSON-compatible dictionary containing a state of the object.
         """
         def set2list(pair):
             i, qp_id_set = pair
@@ -326,7 +326,7 @@ class SingleConfigQuantizerSetup(QuantizerSetupBase):
     @classmethod
     def from_state(cls, state: Dict[str, object]) -> 'SingleConfigQuantizerSetup':
         """
-        Creates the object from its state
+        Creates the object from its state.
         :param state: Output of `get_state()` method.
         """
         setup = SingleConfigQuantizerSetup()

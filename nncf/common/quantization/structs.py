@@ -104,7 +104,7 @@ class QuantizerConfig:
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object
+        Returns a JSON-compatible dictionary containing a state of the object.
         """
         return {'num_bits': self.num_bits,
                 'mode': self.mode,
@@ -114,7 +114,7 @@ class QuantizerConfig:
     @classmethod
     def from_state(cls, state: Dict[str, object]) -> 'QuantizerConfig':
         """
-        Creates the object from its state
+        Creates the object from its state.
         :param state: Output of `get_state()` method.
         """
         return cls(**state)

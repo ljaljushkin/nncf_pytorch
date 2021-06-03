@@ -63,7 +63,7 @@ class PTTargetPoint(TargetPoint):
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object
+        Returns a JSON-compatible dictionary containing a state of the object.
         """
         state = {self._TARGET_TYPE_STATE_ATTR: self.target_type.get_state(),
                  self._INPUT_PORT_STATE_ATTR: self.input_port_id}
@@ -76,7 +76,7 @@ class PTTargetPoint(TargetPoint):
     @classmethod
     def from_state(cls, state: Dict[str, Any]) -> 'PTTargetPoint':
         """
-        Creates the object from its state
+        Creates the object from its state.
         :param state: Output of `get_state()` method.
         """
         kwargs = {cls._TARGET_TYPE_STATE_ATTR: TargetType.from_state(state[cls._TARGET_TYPE_STATE_ATTR]),
