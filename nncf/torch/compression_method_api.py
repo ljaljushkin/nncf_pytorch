@@ -127,10 +127,6 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
         super().__init__(target_model)
         self._builder_state_with_name = None
 
-    def __init__(self, target_model: ModelType):
-        super().__init__(target_model)
-        self._builder_state_with_name = None
-
     def distributed(self):
         """
         Should be called when distributed training with multiple training processes

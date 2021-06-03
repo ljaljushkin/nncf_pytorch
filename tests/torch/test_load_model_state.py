@@ -18,7 +18,7 @@ from typing import Set
 import pytest
 import torch
 
-from examples.common.model_loader import load_model
+from examples.torch.common.model_loader import load_model
 from nncf.torch.checkpoint_loading import KeyMatcher
 from nncf.torch.checkpoint_loading import OPTIONAL_PARAMETERS_REGISTRY
 from nncf.torch.checkpoint_loading import ProcessedKeyStatus
@@ -28,8 +28,8 @@ from nncf.torch.dynamic_graph.transform_graph import replace_modules_by_nncf_mod
 from nncf.torch.layers import NNCF_PADDING_VALUE_ATTR_NAME
 from nncf.torch.nncf_network import EXTERNAL_QUANTIZERS_STORAGE_NAME
 from nncf.torch.nncf_network import LEGACY_ACT_STORAGE_NAME
-from tests.helpers import BasicConvTestModel
-from tests.quantization.test_functions import check_equal
+from tests.torch.helpers import BasicConvTestModel
+from tests.torch.helpers import check_equal
 
 
 def test_export_sq_11_is_ok(tmp_path):

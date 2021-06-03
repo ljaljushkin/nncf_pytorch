@@ -14,7 +14,7 @@ import torch
 
 from nncf import NNCFConfig
 from nncf.torch.dynamic_graph.graph_tracer import create_input_infos
-from tests.helpers import get_empty_config
+from tests.torch.helpers import get_empty_config
 
 
 def compare_multi_gpu_dump(config, dump_dir, get_path_by_rank_fn):

@@ -20,13 +20,13 @@ from nncf import load_state
 from nncf import register_default_init_args
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
-from tests.helpers import BasicConvTestModel
-from tests.helpers import create_compressed_model_and_algo_for_test
-from tests.helpers import create_ones_mock_dataloader
-from tests.helpers import get_empty_config
-from tests.helpers import register_bn_adaptation_init_args
-from tests.quantization.test_manual_precision_init import TestPrecisionInitDesc
-from tests.sparsity.rb.test_algo import get_basic_sparsity_config
+from tests.torch.helpers import BasicConvTestModel
+from tests.torch.helpers import create_compressed_model_and_algo_for_test
+from tests.torch.helpers import create_ones_mock_dataloader
+from tests.torch.helpers import get_empty_config
+from tests.torch.helpers import register_bn_adaptation_init_args
+from tests.torch.quantization.test_manual_precision_init import TestPrecisionInitDesc
+from tests.torch.sparsity.rb.test_algo import get_basic_sparsity_config
 
 
 @pytest.yield_fixture()
