@@ -190,13 +190,6 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
         setups = [self.get_compression_setup()]
         return PTCompressionState(setups, model_state).get_state()
 
-    def get_compression_setup(self) -> CompressionSetup:
-        ctrl_state = self.get_state()
-        if self._builder_state_with_name is None:
-            raise RuntimeError('Internal error: builder state is not set for the controller')
-        name, builder_state = self._builder_state_with_name
-        return CompressionSetup(name, builder_state, ctrl_state)
-
 
 class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
     """
