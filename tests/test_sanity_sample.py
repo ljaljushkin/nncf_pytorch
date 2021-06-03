@@ -25,6 +25,9 @@ import pytest
 import torch
 
 # pylint: disable=redefined-outer-name
+from examples.common.model_loader import NNCF_CHECKPOINT_ATTR
+from nncf.torch.compression_method_api import PTCompressionAlgorithmController
+
 from examples.common.optimizer import get_default_weight_decay
 from examples.common.sample_config import SampleConfig
 from examples.common.utils import get_name
@@ -34,6 +37,8 @@ from nncf.common.hardware.config import HWConfigType
 from nncf.common.quantization.structs import QuantizerConfig
 from nncf.config import NNCFConfig
 from pytest_dependency import depends
+
+from nncf.torch.compression_method_api import PTCompressionState
 from tests.conftest import EXAMPLES_DIR
 from tests.conftest import PROJECT_ROOT
 from tests.conftest import TEST_ROOT
@@ -231,7 +236,8 @@ def test_pretrained_model_train(config, tmp_path, multiprocessing_distributed, c
         allowed_compression_stages = (CompressionStage.FULLY_COMPRESSED, CompressionStage.PARTIALLY_COMPRESSED)
     else:
         allowed_compression_stages = (CompressionStage.UNCOMPRESSED,)
-    assert torch.load(last_checkpoint_path)['compression_stage'] in allowed_compression_stages
+    compression_stage = extract_compression_stage_from_checkpoint(last_checkpoint_path)
+    assert compression_stage in allowed_compression_stages
 
 
 def depends_on_pretrained_train(request, test_case_id: str, current_multiprocessing_distributed: bool):
@@ -257,6 +263,7 @@ def test_trained_model_eval(request, config, tmp_path, multiprocessing_distribut
         "--log-dir": tmp_path,
         "--batch-size": config["batch_size"] * NUM_DEVICES,
         "--workers": 0,  # Workaround for the PyTorch MultiProcessingDataLoader issue
+        # TODO: compression won't be loaded!!!
         "--weights": ckpt_path,
         "--dist-url": "tcp://127.0.0.1:8987"
     }
@@ -314,7 +321,17 @@ def test_resume(request, config, tmp_path, multiprocessing_distributed, case_com
         allowed_compression_stages = (CompressionStage.FULLY_COMPRESSED, CompressionStage.PARTIALLY_COMPRESSED)
     else:
         allowed_compression_stages = (CompressionStage.UNCOMPRESSED,)
-    assert torch.load(last_checkpoint_path)['compression_stage'] in allowed_compression_stages
+    compression_stage = extract_compression_stage_from_checkpoint(last_checkpoint_path)
+    assert compression_stage in allowed_compression_stages
+
+
+def extract_compression_stage_from_checkpoint(last_checkpoint_path):
+    nnsf_state = torch.load(last_checkpoint_path)[NNCF_CHECKPOINT_ATTR]
+    pt_compression_state = PTCompressionState()
+    pt_compression_state.load_state(nnsf_state)
+    ctrl_state = pt_compression_state.compression_setups[0].ctrl_state
+    compression_stage = ctrl_state[PTCompressionAlgorithmController.COMPRESSION_STAGE_ATTR]
+    return compression_stage
 
 
 @pytest.mark.dependency()

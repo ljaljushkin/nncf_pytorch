@@ -14,9 +14,11 @@
 from functools import partial
 from functools import update_wrapper
 from typing import List
+from typing import Optional
 
 from torch import nn
 
+from nncf.api.compression import CompressionSetup
 from nncf.torch.algo_selector import ZeroCompressionLoss
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
@@ -53,8 +55,9 @@ class NodeInfo:
 
 
 class BasePruningAlgoBuilder(PTCompressionAlgorithmBuilder):
-    def __init__(self, config, should_init: bool = True):
-        super().__init__(config, should_init)
+    def __init__(self, config, should_init: bool = True,
+                 compression_setups: Optional[List[CompressionSetup]] = None):
+        super().__init__(config, should_init, compression_setups)
         params = config.get('params', {})
         self._params = params
 

@@ -12,11 +12,13 @@
 """
 from collections import OrderedDict
 from typing import List, Callable
+from typing import Optional
 
 import torch
 from texttable import Texttable
 from torch import nn
 
+from nncf.api.compression import CompressionSetup
 from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS, ZeroCompressionLoss
 from nncf.api.compression import CompressionStage
 from nncf.api.compression import CompressionLoss
@@ -46,8 +48,8 @@ from nncf.torch.quantization.schedulers import QUANTIZATION_SCHEDULERS
 
 @COMPRESSION_ALGORITHMS.register('binarization')
 class BinarizationBuilder(PTCompressionAlgorithmBuilder):
-    def __init__(self, config, should_init: bool = True):
-        super().__init__(config, should_init)
+    def __init__(self, config, should_init: bool = True, compression_setups: Optional[List[CompressionSetup]] = None):
+        super().__init__(config, should_init, compression_setups)
         self.mode = self.config.get('mode', BinarizationMode.XNOR)
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
@@ -93,7 +95,7 @@ class BinarizationBuilder(PTCompressionAlgorithmBuilder):
                                                              TransformationPriority.QUANTIZATION_PRIORITY))
         return insertion_commands
 
-    def build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
+    def _build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
         return BinarizationController(target_model, self.config)
 
 

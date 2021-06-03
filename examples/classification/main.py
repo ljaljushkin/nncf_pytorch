@@ -40,6 +40,7 @@ from examples.common.argparser import get_common_argument_parser
 from examples.common.example_logger import logger
 from examples.common.execution import ExecutionMode, get_execution_mode, \
     prepare_model_for_execution, start_worker
+from examples.common.model_loader import NNCF_CHECKPOINT_ATTR
 from examples.common.model_loader import load_model
 from examples.common.optimizer import get_parameter_groups, make_optimizer
 from examples.common.sample_config import SampleConfig, create_sample_config
@@ -157,8 +158,8 @@ def main_worker(current_gpu, config: SampleConfig):
 
     model.to(config.device)
 
-    resuming_model_sd, resuming_checkpoint = load_resuming_checkpoint(resuming_checkpoint_path)
-    compression_ctrl, model = create_compressed_model(model, nncf_config, resuming_state_dict=resuming_model_sd)
+    nncf_checkpoint, resuming_checkpoint = load_resuming_checkpoint(resuming_checkpoint_path)
+    compression_ctrl, model = create_compressed_model(model, nncf_config, compression_state=nncf_checkpoint)
 
     if config.to_onnx:
         compression_ctrl.export_model(config.to_onnx)
@@ -179,7 +180,6 @@ def main_worker(current_gpu, config: SampleConfig):
         if config.mode.lower() == 'train' and config.to_onnx is None:
             config.start_epoch = resuming_checkpoint['epoch']
             best_acc1 = resuming_checkpoint['best_acc1']
-            compression_ctrl.load_state(resuming_checkpoint)
             optimizer.load_state_dict(resuming_checkpoint['optimizer'])
             logger.info("=> loaded checkpoint '{}' (epoch: {}, best_acc1: {:.3f})"
                         .format(resuming_checkpoint_path, resuming_checkpoint['epoch'], best_acc1))
@@ -249,12 +249,10 @@ def train(config, compression_ctrl, model, criterion, criterion_fn, lr_scheduler
             checkpoint = {
                 'epoch': epoch + 1,
                 'arch': model_name,
-                'state_dict': model.state_dict(),
+                NNCF_CHECKPOINT_ATTR: compression_ctrl.get_compression_state(),
                 'best_acc1': best_acc1,
-                'compression_stage': compression_stage,
                 'acc1': acc1,
                 'optimizer': optimizer.state_dict(),
-                'scheduler': compression_ctrl.scheduler.get_state()
             }
 
             torch.save(checkpoint, checkpoint_path)

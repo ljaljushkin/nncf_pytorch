@@ -13,32 +13,35 @@
 
 from collections import namedtuple
 from typing import List
+from typing import Optional
 
-from nncf.torch.algo_selector import ZeroCompressionLoss
-from nncf.api.compression import CompressionStage
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler
+from nncf.api.compression import CompressionSetup
+from nncf.api.compression import CompressionStage
 from nncf.common.graph.transformations.commands import TargetType
+from nncf.common.schedulers import BaseCompressionScheduler
 from nncf.common.sparsity.controller import SparsityController
 from nncf.common.sparsity.statistics import SparsifiedLayerSummary
 from nncf.common.sparsity.statistics import SparsifiedModelStatistics
+from nncf.common.utils.logger import logger as nncf_logger
+from nncf.torch.algo_selector import ZeroCompressionLoss
 from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
 from nncf.torch.compression_method_api import PTCompressionAlgorithmController
+from nncf.torch.graph.transformations.commands import PTInsertionCommand
+from nncf.torch.graph.transformations.commands import PTTargetPoint
+from nncf.torch.graph.transformations.commands import TransformationPriority
 from nncf.torch.graph.transformations.layout import PTTransformationLayout
 from nncf.torch.layer_utils import COMPRESSION_MODULES
-from nncf.common.utils.logger import logger as nncf_logger
-from nncf.torch.graph.transformations.commands import TransformationPriority
-from nncf.torch.graph.transformations.commands import PTTargetPoint
-from nncf.torch.graph.transformations.commands import PTInsertionCommand
-from nncf.common.schedulers import BaseCompressionScheduler
 from nncf.torch.nncf_network import NNCFNetwork
 
 SparseModuleInfo = namedtuple('SparseModuleInfo', ['module_name', 'module', 'operand'])
 
 
 class BaseSparsityAlgoBuilder(PTCompressionAlgorithmBuilder):
-    def __init__(self, config, should_init: bool = True):
-        super().__init__(config, should_init)
+    def __init__(self, config, should_init: bool = True,
+                 compression_setups: Optional[List[CompressionSetup]] = None):
+        super().__init__(config, should_init, compression_setups)
         self._sparsified_module_info = []
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:

@@ -41,6 +41,10 @@ class QuantizationPointBase:
 
 
 class SingleConfigQuantizationPoint(QuantizationPointBase):
+    _QCONFIG_STATE_ATTR = 'qconfig'
+    _INSERTION_POINT_STATE_ATTR = 'insertion_point'
+    _SCOPES_OF_QUANTIZED_OPS_STATE_ATTR = 'scopes_of_directly_quantized_operators'
+
     def __init__(self, insertion_point: PTTargetPoint, qconfig: QuantizerConfig,
                  scopes_of_directly_quantized_operators: List['Scope']):
         super().__init__(insertion_point, scopes_of_directly_quantized_operators)
@@ -53,6 +57,29 @@ class SingleConfigQuantizationPoint(QuantizationPointBase):
         return [tuple(get_scale_shape(
             input_shape,
             is_weights=self.is_weight_quantization_point(), per_channel=self.qconfig.per_channel))]
+
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a JSON-compatible dictionary containing a state of the object
+        """
+        return {
+            self._INSERTION_POINT_STATE_ATTR: self.insertion_point.get_state(),
+            self._QCONFIG_STATE_ATTR: self.qconfig.get_state(),
+            self._SCOPES_OF_QUANTIZED_OPS_STATE_ATTR: list(map(str, self.scopes_of_directly_quantized_operators))
+        }
+
+    @classmethod
+    def from_state(cls, state: Dict[str, object]) -> 'SingleConfigQuantizationPoint':
+        """
+        Creates the object from its state
+        :param state: Output of `get_state()` method.
+        """
+        from nncf.torch.dynamic_graph.context import Scope
+        list_scopes = [Scope.from_str(scope_state) for scope_state in state[cls._SCOPES_OF_QUANTIZED_OPS_STATE_ATTR]]
+        kwargs = {cls._INSERTION_POINT_STATE_ATTR: PTTargetPoint.from_state(state[cls._INSERTION_POINT_STATE_ATTR]),
+                  cls._QCONFIG_STATE_ATTR: QuantizerConfig.from_state(state[cls._QCONFIG_STATE_ATTR]),
+                  cls._SCOPES_OF_QUANTIZED_OPS_STATE_ATTR: list_scopes}
+        return cls(**kwargs)
 
 
 class MultiConfigQuantizationPoint(QuantizationPointBase):
@@ -239,9 +266,19 @@ class QuantizerSetupBase:
 
 
 class SingleConfigQuantizerSetup(QuantizerSetupBase):
+    _SHARED_INPUT_OPERATION_SET_GROUPS_STATE_ATTR = 'shared_input_operation_set_groups'
+    _UNIFIED_SCALE_GROUPS_STATE_ATTR = 'unified_scale_groups'
+    _QUANTIZATION_POINTS_STATE_ATTR = 'quantization_points'
+
     def __init__(self):
         super().__init__()
         self.quantization_points = {}  # type: Dict[QuantizationPointId, SingleConfigQuantizationPoint]
+
+    def __eq__(self, other):
+        return all(
+            map(lambda x: x[0] == x[1], zip(self.quantization_points.values(), other.quantization_points.values()))) \
+               and self.unified_scale_groups == other.unified_scale_groups \
+               and self.shared_input_operation_set_groups == other.shared_input_operation_set_groups
 
     def get_minmax_values(self,
                           tensor_statistics: Dict[PTTargetPoint, Dict[ReductionShape, TensorStatistic]],
@@ -268,6 +305,45 @@ class SingleConfigQuantizerSetup(QuantizerSetupBase):
                 minmax_stat = MinMaxTensorStatistic.from_stat(tensor_statistics[ip][scale_shape])
                 retval[qp_id] = minmax_stat
         return retval
+
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a JSON-compatible dictionary containing a state of the object
+        """
+        def set2list(pair):
+            i, qp_id_set = pair
+            return i, list(qp_id_set)
+
+        quantization_points_state = {qp_id: qp.get_state() for qp_id, qp in self.quantization_points.items()}
+        unified_scale_groups_state = dict(map(set2list, self.unified_scale_groups.items()))
+        shared_input_operation_set_groups_state = dict(map(set2list, self.shared_input_operation_set_groups.items()))
+        return {
+            self._QUANTIZATION_POINTS_STATE_ATTR: quantization_points_state,
+            self._UNIFIED_SCALE_GROUPS_STATE_ATTR: unified_scale_groups_state,
+            self._SHARED_INPUT_OPERATION_SET_GROUPS_STATE_ATTR: shared_input_operation_set_groups_state,
+        }
+
+    @classmethod
+    def from_state(cls, state: Dict[str, object]) -> 'SingleConfigQuantizerSetup':
+        """
+        Creates the object from its state
+        :param state: Output of `get_state()` method.
+        """
+        setup = SingleConfigQuantizerSetup()
+
+        def decode_qp(pair):
+            str_qp_id, qp_state = pair
+            return int(str_qp_id), SingleConfigQuantizationPoint.from_state(qp_state)
+
+        def list2set(pair):
+            str_idx, qp_id_list = pair
+            return int(str_idx), set(qp_id_list)
+
+        setup.quantization_points = dict(map(decode_qp, state[cls._QUANTIZATION_POINTS_STATE_ATTR].items()))
+        setup.unified_scale_groups = dict(map(list2set, state[cls._UNIFIED_SCALE_GROUPS_STATE_ATTR].items()))
+        shared_input_operation_set_groups_state = state[cls._SHARED_INPUT_OPERATION_SET_GROUPS_STATE_ATTR]
+        setup.shared_input_operation_set_groups = dict(map(list2set, shared_input_operation_set_groups_state.items()))
+        return setup
 
 
 class MultiConfigQuantizerSetup(QuantizerSetupBase):

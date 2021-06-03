@@ -61,7 +61,7 @@ class TensorStatisticsCollectionBuilder(PTCompressionAlgorithmBuilder):
             layout.register(command)
         return layout
 
-    def build_controller(self, target_model: NNCFNetwork) -> 'TensorStatisticsCollectionController':
+    def _build_controller(self, target_model: NNCFNetwork) -> 'TensorStatisticsCollectionController':
         return TensorStatisticsCollectionController(target_model,
                                                     {k.insertion_point: v
                                                      for k, v in self._observation_points_vs_collectors.items()})
