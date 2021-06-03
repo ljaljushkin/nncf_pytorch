@@ -359,7 +359,6 @@ def train(net, compression_ctrl, train_data_loader, test_data_loader, criterion,
                     NNCF_CHECKPOINT_ATTR: compression_ctrl.get_compression_state(),
                     'optimizer': optimizer.state_dict(),
                     'iter': iteration,
-                    'compression_stage': compression_stage,
                 }, str(checkpoint_file_path))
                 make_additional_checkpoints(checkpoint_file_path,
                                             is_best=is_best,

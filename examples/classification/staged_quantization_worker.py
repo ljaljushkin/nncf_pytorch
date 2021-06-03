@@ -263,7 +263,6 @@ def train_staged(config, compression_ctrl, model, criterion, criterion_fn, optim
                 NNCF_CHECKPOINT_ATTR: compression_ctrl.get_compression_state(),
                 'original_model_state_dict': kd_loss_calculator.original_model.state_dict(),
                 'best_acc1': best_acc1,
-                'compression_stage': compression_stage,
                 'optimizer': optimizer.state_dict(),
                 'optimizer_scheduler': optimizer_scheduler.state_dict()
             }

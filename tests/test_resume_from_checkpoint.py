@@ -46,6 +46,7 @@ LIST_MANUAL_INIT_CASES = [
 def test_can_resume_with_manual_init(mocker, desc, _nncf_caplog):
     config = desc.config
     config_to_resume = desc.config_to_resume
+
     config = register_default_init_args(config, train_loader=create_ones_mock_dataloader(config))
     all_spies = desc.setup_init_spies(mocker)
     init_spy = mocker.spy(PTCompressionAlgorithmBuilder, '__init__')
@@ -58,7 +59,7 @@ def test_can_resume_with_manual_init(mocker, desc, _nncf_caplog):
         m.reset_mock()
 
     nncf_checkpoint = compression_ctrl.get_compression_state()
-
+    register_bn_adaptation_init_args(config_to_resume)
     _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), config_to_resume,
                                                                     compression_state=nncf_checkpoint)
 
@@ -243,6 +244,7 @@ def _resume_algos(request):
 def test_load_state__with_resume_checkpoint(_resume_algos, _model_wrapper, mocker):
     config_save = get_empty_config()
     config_save['compression'] = [{'algorithm': algo} for algo in _resume_algos['save_algos'] if algo != 'EMPTY']
+    register_bn_adaptation_init_args(config_save)
     orig_model = BasicConvTestModel()
     num_model_params = len(orig_model.state_dict())
     _, compressed_ctrl_save = create_compressed_model_and_algo_for_test(orig_model, config_save)
@@ -251,6 +253,7 @@ def test_load_state__with_resume_checkpoint(_resume_algos, _model_wrapper, mocke
 
     config_resume = get_empty_config()
     config_resume['compression'] = [{'algorithm': algo} for algo in _resume_algos['load_algos'] if algo != 'EMPTY']
+    register_bn_adaptation_init_args(config_resume)
     from nncf.torch.checkpoint_loading import KeyMatcher
     key_matcher_run_spy = mocker.spy(KeyMatcher, 'run')
     create_compressed_model_and_algo_for_test(BasicConvTestModel(), config_resume, compression_state=saved_checkpoint,

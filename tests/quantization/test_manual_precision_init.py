@@ -185,7 +185,6 @@ class TestPrecisionInitDesc:
             }})
         config['target_device'] = 'TRIAL'
         config['compression']["activations"] = {"bits": 6}
-        register_bn_adaptation_init_args(config)
         self.config = config
         self.ref_bitwidth_per_scope = [
             ('AddTwoConv/NNCFConv2d[conv1]module_weight', 2),
@@ -243,10 +242,10 @@ class TestPrecisionInitDesc:
         assert self.expected_stats.num_aq_per_bitwidth == actual_stats.num_aq_per_bitwidth
 
 
-
 def test_quantization_configs__with_precisions_list():
     desc = TestPrecisionInitDesc()
     model = desc.model_creator()
     config = desc.config
+    register_bn_adaptation_init_args(config)
     _, compression_ctrl = create_compressed_model_and_algo_for_test(model, config)
     desc.check_precision_init(compression_ctrl)

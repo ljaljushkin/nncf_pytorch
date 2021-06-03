@@ -44,7 +44,6 @@ def save_checkpoint(compression_ctrl, optimizer, epoch, miou, compression_stage,
     checkpoint = {
         'epoch': epoch,
         'miou': miou,
-        'compression_stage': compression_stage,
         NNCF_CHECKPOINT_ATTR: compression_ctrl.get_compression_state(),
         'optimizer': optimizer.state_dict()
     }

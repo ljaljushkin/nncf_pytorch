@@ -119,6 +119,13 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
     into the original uncompressed model in order to enable algorithm-specific compression.
     Hosts entities that are to be used during the training process, such as compression scheduler and
     compression loss."""
+    COMPRESSION_STAGE_ATTR = 'compression_stage'
+    COMPRESSION_LEVEL_ATTR = 'compression_level'
+    SCHEDULER_ATTR = 'scheduler'
+
+    def __init__(self, target_model: ModelType):
+        super().__init__(target_model)
+        self._builder_state_with_name = None
 
     def __init__(self, target_model: ModelType):
         super().__init__(target_model)
@@ -146,19 +153,19 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
             self.scheduler.load_state(state['scheduler'])
 
     def _check_loaded_compression_stage(self, state: Dict[str, object]) -> None:
-        if 'compression_level' in state:
-            if 'compression_stage' not in state:
-                compression_level = state['compression_level']
-                state['compression_stage'] = CompressionLevel.map_legacy_level_to_stage()[compression_level]
+        if self.COMPRESSION_LEVEL_ATTR in state:
+            if self.COMPRESSION_STAGE_ATTR not in state:
+                compression_level = state[self.COMPRESSION_LEVEL_ATTR]
+                state[self.COMPRESSION_STAGE_ATTR] = CompressionLevel.map_legacy_level_to_stage()[compression_level]
             else:
                 nncf_logger.warning('Both CompressionStage and (legacy) CompressionLevel attributes '
                                     'are specified in the checkpoint. Proceeding with the value stored '
                                     'in CompressionStage')
-        if 'compression_stage' in state and self.compression_stage() != state['compression_stage']:
+        if self.COMPRESSION_STAGE_ATTR in state and self.compression_stage() != state[self.COMPRESSION_STAGE_ATTR]:
             nncf_logger.warning('Current CompressionStage ({}) of the compression controller does '
                                 'not correspond to the value found in '
                                 'the checkpoint ({})'.format(self.compression_stage(),
-                                                             state['compression_stage']))
+                                                             state[self.COMPRESSION_STAGE_ATTR]))
 
     def get_state(self) -> Dict[str, object]:
         """
@@ -166,8 +173,26 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
 
         :return: The compression controller state.
         """
-        return {'scheduler': self.scheduler.get_state(),
-                'compression_stage': self.compression_stage()}
+        return {self.SCHEDULER_ATTR: self.scheduler.get_state(),
+                self.COMPRESSION_STAGE_ATTR: self.compression_stage()}
+
+    def get_compression_setup(self) -> CompressionSetup:
+        ctrl_state = self.get_state()
+        if self._builder_state_with_name is None:
+            raise RuntimeError('Internal error: builder state is not set for the controller')
+        name, builder_state = self._builder_state_with_name
+        return CompressionSetup(name, builder_state, ctrl_state)
+
+    def get_compression_state(self) -> Dict:
+        """
+        Returns entire compression state, containing nncf_network state (with state of the builder)
+        and composite controller state, containing the state of all children controllers.
+        This checkpoint can be used to resume compression via compression_state of create_compressed_model
+        :return: The entire compression state.
+        """
+        model_state = self.model.state_dict()
+        setups = [self.get_compression_setup()]
+        return PTCompressionState(setups, model_state).get_state()
 
     def get_compression_setup(self) -> CompressionSetup:
         ctrl_state = self.get_state()

@@ -251,7 +251,6 @@ def train(config, compression_ctrl, model, criterion, criterion_fn, lr_scheduler
                 'arch': model_name,
                 NNCF_CHECKPOINT_ATTR: compression_ctrl.get_compression_state(),
                 'best_acc1': best_acc1,
-                'compression_stage': compression_stage,
                 'acc1': acc1,
                 'optimizer': optimizer.state_dict(),
             }
