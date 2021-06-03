@@ -19,7 +19,7 @@ from nncf.common.sparsity.schedulers import AdaptiveSparsityScheduler
 from nncf.common.sparsity.schedulers import ExponentialSparsityScheduler
 from nncf.common.sparsity.schedulers import MultiStepSparsityScheduler
 from nncf.common.sparsity.schedulers import PolynomialSparsityScheduler
-from nncf.torch.compression_method_api import PTCompressionAlgorithmController
+from nncf.torch.compression_method_api import PTCompressionState
 from tests.helpers import BasicConvTestModel
 from tests.helpers import MockModel
 from tests.helpers import create_compressed_model_and_algo_for_test
@@ -95,19 +95,22 @@ class TestSparseModules:
         # Test get state
         ctrl.scheduler.current_step = 100
         ctrl.scheduler.current_epoch = 5
-        saved_checkpoint = ctrl.get_compression_state()
-        saved_ctrl_state = saved_checkpoint[PTCompressionAlgorithmController.CONTROLLER_STATE_ATTR]
+        saved_nncf_state = ctrl.get_compression_state()
+        pt_compression_state = PTCompressionState()
+        pt_compression_state.load_state(saved_nncf_state)
+        saved_ctrl_state = pt_compression_state.compression_setups[0].ctrl_state
         assert saved_ctrl_state == ctrl.get_state()
-        state_content = next(iter(saved_ctrl_state.values()))
-        assert state_content == {'current_step': 100, 'current_epoch': 5}
+        assert saved_ctrl_state == {'current_step': 100, 'current_epoch': 5}
 
         # Test load state
         _, ctrl = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config,
-                                                                nncf_checkpoint=saved_checkpoint)
+                                                            compression_state=saved_nncf_state)
         assert ctrl.scheduler.current_step == 100
         assert ctrl.scheduler.current_epoch == 5
-        loaded_checkpoint = ctrl.get_compression_state()
-        loaded_ctrl_state = loaded_checkpoint[PTCompressionAlgorithmController.CONTROLLER_STATE_ATTR]
+        loaded_compression_state = ctrl.get_compression_state()
+        pt_compression_state = PTCompressionState()
+        pt_compression_state.load_state(loaded_compression_state)
+        loaded_ctrl_state = pt_compression_state.compression_setups[0].ctrl_state
         assert loaded_ctrl_state == ctrl.get_state()
         assert loaded_ctrl_state == saved_ctrl_state
 

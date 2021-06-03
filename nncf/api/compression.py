@@ -167,19 +167,19 @@ class CompressionSetup(NamedTuple):
     builder_state: Dict
     ctrl_state: Dict
 
-    def get_state(self) -> Tuple:
+    def get_state(self) -> Dict:
         """
         :return: the JSON-compatible representation of the object
         """
-        return tuple(self)
+        return self._asdict()
 
     @classmethod
-    def from_state(cls, state: Tuple) -> 'CompressionSetup':
+    def from_state(cls, state: Dict) -> 'CompressionSetup':
         """
         Creates the object from its state
         :param state: Output of `get_state()` method.
         """
-        return cls(*state)
+        return cls(**state)
 
 
 class CompressionState:
@@ -188,8 +188,8 @@ class CompressionState:
     """
     COMPRESSION_SETUPS_ATTR = 'nncf_compression_setups'
 
-    def __init__(self):
-        self._compression_setups = []  # type: List[CompressionSetup]
+    def __init__(self, compression_setups: List[CompressionSetup] = None):
+        self._compression_setups = compression_setups
 
     @property
     def compression_setups(self) -> List[CompressionSetup]:
@@ -346,7 +346,8 @@ class CompressionAlgorithmBuilder(ABC):
     order to enable algorithm-specific compression during fine-tuning.
     """
 
-    def __init__(self, config: NNCFConfig, should_init: bool = True):
+    def __init__(self, config: NNCFConfig, should_init: bool = True,
+                 compression_setups: Optional[List[CompressionSetup]] = None):
         """
         Initializes internal state of the compression algorithm builder
 
@@ -354,9 +355,12 @@ class CompressionAlgorithmBuilder(ABC):
             method.
         :param should_init: If False, trainable parameter initialization will be
             skipped during building.
+        :param compression_setups: the list of structures (includes builder and controller states) defining how to
+        unambiguously setup a compression state.
         """
         self.config = config
         self.should_init = should_init
+        self._compression_setups = compression_setups
 
     @abstractmethod
     def apply_to(self, model: ModelType) -> ModelType:

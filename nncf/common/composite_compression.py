@@ -11,14 +11,18 @@
  limitations under the License.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 
 from nncf import NNCFConfig
-from nncf.api.compression import CompressionStage
-from nncf.api.compression import CompressionLoss
-from nncf.api.compression import CompressionScheduler
 from nncf.api.compression import CompressionAlgorithmBuilder
 from nncf.api.compression import CompressionAlgorithmController
+from nncf.api.compression import CompressionLoss
+from nncf.api.compression import CompressionScheduler
+from nncf.api.compression import CompressionSetup
+from nncf.api.compression import CompressionStage
 from nncf.api.compression import ModelType
 from nncf.common.statistics import NNCFStatistics
 
@@ -272,7 +276,8 @@ class CompositeCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
     treated the same way as a single `CompressionAlgorithmBuilder` instance.
     """
 
-    def __init__(self, config: NNCFConfig, should_init: bool = True):
+    def __init__(self, config: NNCFConfig, should_init: bool = True,
+                 compression_setups: Optional[List[CompressionSetup]] = None):
         """
         Initializes internal state of the composite compression algorithm builder
 
@@ -281,7 +286,7 @@ class CompositeCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
         :param should_init: If False, trainable parameter initialization will be
             skipped during building.
         """
-        super().__init__(config, should_init)
+        super().__init__(config, should_init, compression_setups)
         self._child_builders = []
 
     @property

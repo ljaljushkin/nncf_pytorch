@@ -48,7 +48,7 @@ LegacyModelState = Dict[str, torch.Tensor]
 
 
 def create_compressed_model(model: Module,
-                            config: NNCFConfig = None,
+                            config: NNCFConfig,
                             compression_state: Union[Dict, LegacyModelState] = None,
                             dummy_forward_fn: Callable[[Module], Any] = None,
                             wrap_inputs_fn: Callable[[Tuple, Dict], Tuple[Tuple, Dict]] = None,
@@ -97,16 +97,14 @@ def create_compressed_model(model: Module,
                          "building, then the wrap_inputs_fn parameter MUST also be specified and be consistent with "
                          "the input wrapping done in dummy_forward_fn.")
 
-    if config is None and compression_state is None:
-        raise ValueError("Whether config or compression state should be specified to create compressed model.")
-
     compression_setups = None
     model_state = None
     if compression_state is not None:
         if PTCompressionState.COMPRESSION_SETUPS_ATTR in compression_state:
-            compression_state = PTCompressionState().load_state(compression_state)
-            model_state = compression_state.model_state
-            compression_setups = compression_state.compression_setups
+            pt_compression_state = PTCompressionState()
+            pt_compression_state.load_state(compression_state)
+            model_state = pt_compression_state.model_state
+            compression_setups = pt_compression_state.compression_setups
         else:  # support backward compatibility with old checkpoints
             model_state = compression_state
             new_format_notice = 'It does not have builder and controller state to unambiguously restore compression ' \
@@ -118,9 +116,6 @@ def create_compressed_model(model: Module,
             is_model_state_in_new_format = NNCFNetwork.get_state_version(model_state)
             if is_model_state_in_new_format:
                 raise ValueError('Invalid checkpoint format. {}'.format(new_format_notice))
-
-            if config is None:
-                raise ValueError("Config should be specified!")
 
             warnings.warn('Legacy NNCF-enabled .pth checkpoint has been loaded! {} '
                           'This checkpoint will be loaded; update your checkpoint file by saving this model\'s'

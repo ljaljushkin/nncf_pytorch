@@ -52,13 +52,12 @@ class PTCompositeCompressionAlgorithmBuilder(
         CompositeCompressionAlgorithmBuilder, PTCompressionAlgorithmBuilder):
     def __init__(self, config: 'NNCFConfig', should_init: bool = True,
                  compression_setups: Optional[List[CompressionSetup]] = None):
+        super().__init__(config, should_init, compression_setups)
         from nncf import NNCFConfig
         from nncf.torch.model_creation import get_compression_algorithm
         saved_builder_classes = []
         if compression_setups is not None:
             saved_builder_classes = map(lambda x: COMPRESSION_ALGORITHMS.get(x.name), compression_setups)
-
-        super().__init__(config, should_init)
         global_should_init = should_init
         compression_config_json_section = config.get('compression', {})
         compression_config_json_section = deepcopy(compression_config_json_section)
@@ -103,6 +102,12 @@ class PTCompositeCompressionAlgorithmBuilder(
         transformer = PTModelTransformer(target_model, layout)
         transformed_model = transformer.transform()
         return transformed_model
+
+    def _build_controller(self, model: ModelType) -> PTCompressionAlgorithmController:
+        """
+        Simple implementation of building controller without setting builder state and loading controller's one
+        It's not needed for CompositeBuilder since there's no state for composite builder and controller.
+        """
 
     def build_controller(self, model: ModelType) -> PTCompressionAlgorithmController:
         """

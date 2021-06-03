@@ -31,6 +31,7 @@ from torch import nn
 
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler
+from nncf.api.compression import CompressionSetup
 from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
 from nncf.torch.algo_selector import ZeroCompressionLoss
 from nncf.api.compression import CompressionStage
@@ -466,8 +467,8 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
     _BUILD_TIME_METRIC_INFOS_STATE_ATTR = 'build_time_metric_infos'
     _QUANTIZER_SETUP_STATE_ATTR = 'quantizer_setup'
 
-    def __init__(self, config, should_init: bool = True):
-        super().__init__(config, should_init)
+    def __init__(self, config, should_init: bool = True, compression_setups: Optional[List[CompressionSetup]] = None):
+        super().__init__(config, should_init, compression_setups)
         self._debug_interface = QuantizationDebugInterface() if is_debug() else None
         self._weight_quantizers = OrderedDict()  # Quantizers applied via UpdateWeights
         self._non_weight_quantizers = OrderedDict()  # All the other quantizers
@@ -710,7 +711,7 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         self._build_time_metric_infos = setup_generator.get_build_time_metric_infos()
         return single_config_quantizer_setup
 
-    def build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
+    def _build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
         return QuantizationController(target_model,
                                       self.config,
                                       self.should_init,
@@ -1558,7 +1559,7 @@ class ExperimentalQuantizationBuilder(QuantizationBuilder):
         PTTargetPoint, Dict[ReductionShape, TensorStatistic]]:
         return self._tensor_stats
 
-    def build_controller(self, target_model: NNCFNetwork) -> 'ExperimentalQuantizationController':
+    def _build_controller(self, target_model: NNCFNetwork) -> 'ExperimentalQuantizationController':
         groups_of_adjacent_quantizers = GroupsOfAdjacentQuantizers()
         all_quantizations = {}  # type: Dict[QuantizerId, BaseQuantizer]
         all_quantizations.update({k: v.quantizer_module_ref for k, v in self._weight_quantizers.items()})

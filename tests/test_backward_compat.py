@@ -176,10 +176,4 @@ def test_can_compress_with_config_and_resume_of_old_checkpoint():
     config = get_basic_quantization_config(input_info={
         "sample_size": [1, 3, 100, 100]
     })
-    create_compressed_model_and_algo_for_test(model, config, nncf_checkpoint=old_style_sd)
-
-
-def test_can_not_compress_without_config_with_old_checkpoint():
-    model = SingleConv2dIdentityModel()
-    with pytest.raises(ValueError):
-        create_compressed_model_and_algo_for_test(model, config=None, nncf_checkpoint=old_style_sd)
+    create_compressed_model_and_algo_for_test(model, config, compression_state=old_style_sd)

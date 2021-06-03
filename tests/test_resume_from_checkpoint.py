@@ -19,6 +19,7 @@ from torch.nn import DataParallel
 from nncf import load_state
 from nncf import register_default_init_args
 from nncf.common.utils.logger import logger as nncf_logger
+from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
 from tests.helpers import BasicConvTestModel
 from tests.helpers import create_compressed_model_and_algo_for_test
 from tests.helpers import create_ones_mock_dataloader
@@ -35,7 +36,6 @@ def _nncf_caplog(caplog):
 
 
 LIST_MANUAL_INIT_CASES = [
-    TestPrecisionInitDesc().config_with_all_inits(),
     TestPrecisionInitDesc().config_with_all_inits().resume_with_the_same_config(),
     TestPrecisionInitDesc().config_with_all_inits().resume_with_the_same_config_without_init()
 ]
@@ -47,6 +47,7 @@ def test_can_resume_with_manual_init(mocker, desc, _nncf_caplog):
     config_to_resume = desc.config_to_resume
     config = register_default_init_args(config, train_loader=create_ones_mock_dataloader(config))
     all_spies = desc.setup_init_spies(mocker)
+    init_spy = mocker.spy(PTCompressionAlgorithmBuilder, '__init__')
 
     _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), config)
     desc.check_precision_init(compression_ctrl)
@@ -58,10 +59,10 @@ def test_can_resume_with_manual_init(mocker, desc, _nncf_caplog):
     nncf_checkpoint = compression_ctrl.get_compression_state()
 
     _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), config_to_resume,
-                                                                    nncf_checkpoint=nncf_checkpoint)
+                                                                    compression_state=nncf_checkpoint)
 
     if config_to_resume is not None and config_to_resume['compression']['initializer']:
-        assert 'is not going to be initialized' in _nncf_caplog.text
+        assert not init_spy.call_args[0][2]
 
     for m in all_spies:
         m.assert_not_called()
@@ -69,8 +70,8 @@ def test_can_resume_with_manual_init(mocker, desc, _nncf_caplog):
     desc.check_precision_init(compression_ctrl)
 
 
-# TODO: test for strict=False/True
-def test_can_resume_with_algo_mixing(mocker):
+@pytest.mark.parametrize('is_strict', (True,False))
+def test_can_resume_with_algo_mixing(mocker, is_strict):
     desc = TestPrecisionInitDesc().config_with_all_inits()
     all_quantization_init_spies = desc.setup_init_spies(mocker)
     sparsity_config = get_basic_sparsity_config()
@@ -83,12 +84,17 @@ def test_can_resume_with_algo_mixing(mocker):
     nncf_checkpoint = compression_ctrl.get_compression_state()
 
     config = register_default_init_args(config, train_loader=create_ones_mock_dataloader(config))
-    _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), config,
-                                                                    nncf_checkpoint=nncf_checkpoint)
+    fn = partial(create_compressed_model_and_algo_for_test,
+                 desc.model_creator(), config, compression_state=nncf_checkpoint, is_strict=is_strict)
+    if is_strict:
+        with pytest.raises(RuntimeError):
+            fn()
+    else:
+        _, compression_ctrl = fn()
+        for m in all_quantization_init_spies:
+            m.assert_called()
+        desc.check_precision_init(compression_ctrl.child_ctrls[1])
 
-    for m in all_quantization_init_spies:
-        m.assert_called()
-    desc.check_precision_init(compression_ctrl.child_ctrls[1])
 
 QUANTIZATION = 'quantization'
 SPARSITY_TYPES = ['magnitude', 'rb', 'const']
@@ -210,14 +216,14 @@ def _resume_algos(request):
     pair_algos = request.param
     save_algos = pair_algos[0]
     load_algos = pair_algos[1]
-    resume_ok = True
+    is_strict = True
 
     sparsity_on_save = SPARSITY_ALGOS.intersection(save_algos)
     sparsity_on_load = SPARSITY_ALGOS.intersection(load_algos)
     common_algos = set(save_algos).intersection(set(load_algos))
-    has_empty = 'EMPTY' in save_algos or 'EMPTY' in load_algos
-    if not common_algos and not (sparsity_on_save and sparsity_on_load) and not has_empty:
-        resume_ok = False
+    different_algos = set(save_algos).symmetric_difference(set(load_algos))
+    if different_algos:
+        is_strict = False
 
     ref_num_compression_params = sum(map(lambda x: NUM_PARAMS_PER_ALGO[x], common_algos))
     if not SPARSITY_ALGOS.intersection(common_algos) and (sparsity_on_save and sparsity_on_load):
@@ -226,7 +232,7 @@ def _resume_algos(request):
     return {
         'save_algos': save_algos,
         'load_algos': load_algos,
-        'is_resume_ok': resume_ok,
+        'is_strict': is_strict,
         'ref_num_compression_params': ref_num_compression_params
     }
 
@@ -244,21 +250,11 @@ def test_load_state__with_resume_checkpoint(_resume_algos, _model_wrapper, mocke
     config_resume['compression'] = [{'algorithm': algo} for algo in _resume_algos['load_algos'] if algo != 'EMPTY']
     from nncf.torch.checkpoint_loading import KeyMatcher
     key_matcher_run_spy = mocker.spy(KeyMatcher, 'run')
-
-    if _resume_algos['is_resume_ok']:
-        create_compressed_model_and_algo_for_test(BasicConvTestModel(),
-                                                  config_resume,
-                                                  nncf_checkpoint=saved_checkpoint)
-
-        key_matcher_run_spy.assert_called_once()
-        act_num_loaded = len(key_matcher_run_spy.spy_return)
-
-        assert act_num_loaded == ref_num_loaded
-    else:
-        with pytest.raises(RuntimeError):
-            create_compressed_model_and_algo_for_test(BasicConvTestModel(),
-                                                      config_resume,
-                                                      nncf_checkpoint=saved_checkpoint)
+    create_compressed_model_and_algo_for_test(BasicConvTestModel(), config_resume, compression_state=saved_checkpoint,
+                                              is_strict=_resume_algos['is_strict'])
+    key_matcher_run_spy.assert_called_once()
+    act_num_loaded = len(key_matcher_run_spy.spy_return)
+    assert act_num_loaded == ref_num_loaded
 
 
 LIST_ALGOS = [None, QUANTIZATION]

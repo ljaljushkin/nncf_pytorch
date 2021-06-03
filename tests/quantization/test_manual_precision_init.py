@@ -198,11 +198,7 @@ class TestPrecisionInitDesc:
         self.config_to_resume = None
 
     def __str__(self):
-        if self.config_to_resume is None:
-            return 'empty_resume'
-        if self.config == self.config_to_resume:
-            return 'resume_with_same'
-        return 'resume_without_init'
+        return 'resume_with_same' if self.config == self.config_to_resume else 'resume_without_init'
 
     def config_with_all_inits(self):
         self.config['compression']['initializer'].update(

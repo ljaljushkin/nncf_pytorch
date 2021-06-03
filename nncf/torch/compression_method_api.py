@@ -96,9 +96,9 @@ class PTCompressionState(CompressionState):
     """
     MODEL_STATE_ATTR = 'nncf_model_state'
 
-    def __init__(self):
-        super().__init__()
-        self._model_state = None  # type: Optional[Dict[str, torch.Tensor]]
+    def __init__(self, compression_setups: List[CompressionSetup] = None, model_state: Dict[str, torch.Tensor] = None):
+        super().__init__(compression_setups)
+        self._model_state = model_state
 
     @property
     def model_state(self) -> Dict[str, torch.Tensor]:
@@ -160,7 +160,7 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
 
     def get_compression_setup(self) -> CompressionSetup:
         ctrl_state = self.get_state()
-        if self._builder_state_with_name:
+        if self._builder_state_with_name is None:
             raise RuntimeError('Internal error: builder state is not set for the controller')
         name, builder_state = self._builder_state_with_name
         return CompressionSetup(name, builder_state, ctrl_state)
@@ -224,7 +224,7 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
           `config` - a dictionary that contains parameters of compression method
           `should_init` - if False, trainable parameter initialization will be skipped during building
         """
-        super().__init__(config, should_init)
+        super().__init__(config, should_init, compression_setups)
         self.ignored_scopes = None
         self.target_scopes = None
         if not isinstance(self.config, list):
@@ -233,11 +233,12 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
         self.compressed_nncf_module_names = self._nncf_module_types_to_compress()
         self._ctrl_state = None
 
-        for compression_setup in compression_setups:
-            name, builder_state, ctrl_state = compression_setup
-            if self.registered_name == name:
-                self.load_state(builder_state)
-                self._ctrl_state = ctrl_state
+        if self._compression_setups is not None:
+            for compression_setup in self._compression_setups:
+                name, builder_state, ctrl_state = compression_setup
+                if self.registered_name == name:
+                    self.load_state(builder_state)
+                    self._ctrl_state = ctrl_state
 
     def apply_to(self, model: NNCFNetwork) -> NNCFNetwork:
         transformation_layout = self.get_transformation_layout(model)
@@ -258,8 +259,14 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
         self._handle_frozen_layers(target_model)
         return layout
 
+    @abstractmethod
+    def _build_controller(self, model: ModelType) -> PTCompressionAlgorithmController:
+        """
+        Simple implementation of building controller without setting builder state and loading controller's one
+        """
+
     def build_controller(self, model: ModelType) -> PTCompressionAlgorithmController:
-        ctrl = super().build_controller(model)
+        ctrl = self._build_controller(model)
         if not isinstance(ctrl, PTCompressionAlgorithmController):
             raise RuntimeError('Internal error: builder must create controller inherited from '
                                '`PTCompressionAlgorithmController` class')
