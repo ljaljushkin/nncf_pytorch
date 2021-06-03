@@ -18,8 +18,8 @@ def check_serialization(obj):
     print(serialized_state)
     deserialized_state = json.loads(serialized_state)
 
-    assert obj == obj.__class__.from_state(state)
-    assert obj == obj.__class__.from_state(deserialized_state)
+    assert obj == obj.from_state(state)
+    assert obj == obj.from_state(deserialized_state)
 
 
 def test_quantizer_setup_serialization():

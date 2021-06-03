@@ -356,7 +356,7 @@ def train(net, compression_ctrl, train_data_loader, test_data_loader, criterion,
 
                 checkpoint_file_path = osp.join(config.checkpoint_save_dir, "{}_last.pth".format(get_name(config)))
                 torch.save({
-                    NNCF_CHECKPOINT_ATTR: compression_ctrl.get_nncf_checkpoint(),
+                    NNCF_CHECKPOINT_ATTR: compression_ctrl.get_compression_state(),
                     'optimizer': optimizer.state_dict(),
                     'iter': iteration,
                     'compression_stage': compression_stage,

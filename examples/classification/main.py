@@ -159,7 +159,7 @@ def main_worker(current_gpu, config: SampleConfig):
     model.to(config.device)
 
     nncf_checkpoint, resuming_checkpoint = load_resuming_checkpoint(resuming_checkpoint_path)
-    compression_ctrl, model = create_compressed_model(model, nncf_config, nncf_checkpoint=nncf_checkpoint)
+    compression_ctrl, model = create_compressed_model(model, nncf_config, compression_state=nncf_checkpoint)
 
     if config.to_onnx:
         compression_ctrl.export_model(config.to_onnx)
@@ -249,7 +249,7 @@ def train(config, compression_ctrl, model, criterion, criterion_fn, lr_scheduler
             checkpoint = {
                 'epoch': epoch + 1,
                 'arch': model_name,
-                NNCF_CHECKPOINT_ATTR: compression_ctrl.get_nncf_checkpoint(),
+                NNCF_CHECKPOINT_ATTR: compression_ctrl.get_compression_state(),
                 'best_acc1': best_acc1,
                 'compression_stage': compression_stage,
                 'acc1': acc1,

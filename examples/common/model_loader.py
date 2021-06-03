@@ -54,7 +54,7 @@ def load_model(model, pretrained=True, num_classes=1000, model_params=None,
 
 
 LEGACY_NNCF_CHECKPOINT_ATTR = 'state_dict'
-NNCF_CHECKPOINT_ATTR = 'nncf_checkpoint'
+NNCF_CHECKPOINT_ATTR = 'compression_state'
 
 
 def load_checkpoints_from_path(resuming_checkpoint_path):

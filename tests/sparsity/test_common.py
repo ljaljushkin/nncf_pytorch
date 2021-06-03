@@ -95,7 +95,7 @@ class TestSparseModules:
         # Test get state
         ctrl.scheduler.current_step = 100
         ctrl.scheduler.current_epoch = 5
-        saved_checkpoint = ctrl.get_nncf_checkpoint()
+        saved_checkpoint = ctrl.get_compression_state()
         saved_ctrl_state = saved_checkpoint[PTCompressionAlgorithmController.CONTROLLER_STATE_ATTR]
         assert saved_ctrl_state == ctrl.get_state()
         state_content = next(iter(saved_ctrl_state.values()))
@@ -106,7 +106,7 @@ class TestSparseModules:
                                                                 nncf_checkpoint=saved_checkpoint)
         assert ctrl.scheduler.current_step == 100
         assert ctrl.scheduler.current_epoch == 5
-        loaded_checkpoint = ctrl.get_nncf_checkpoint()
+        loaded_checkpoint = ctrl.get_compression_state()
         loaded_ctrl_state = loaded_checkpoint[PTCompressionAlgorithmController.CONTROLLER_STATE_ATTR]
         assert loaded_ctrl_state == ctrl.get_state()
         assert loaded_ctrl_state == saved_ctrl_state

@@ -10,30 +10,32 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
+import warnings
 from os import path as osp
 from typing import Any
 from typing import Callable
 from typing import Dict
-from typing import List
 from typing import Tuple
+from typing import Union
 
-import warnings
-from copy import deepcopy
+import torch
 from torch.distributed import barrier
 from torch.nn import Module
 
-from nncf.torch.checkpoint_loading import load_state
 from nncf.common.utils.logger import logger as nncf_logger
+from nncf.config import NNCFConfig
+from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
+from nncf.torch.checkpoint_loading import load_state
 from nncf.torch.composite_compression import PTCompositeCompressionAlgorithmBuilder as CompositeBuilder
 from nncf.torch.compression_method_api import PTCompressionAlgorithmController as Controller
-from nncf.config import NNCFConfig
+from nncf.torch.compression_method_api import PTCompressionState
 from nncf.torch.debug import set_debug_log_dir
-from nncf.torch.dynamic_graph.graph_tracer import create_input_infos, create_dummy_forward_fn
+from nncf.torch.dynamic_graph.graph_tracer import create_dummy_forward_fn
+from nncf.torch.dynamic_graph.graph_tracer import create_input_infos
 from nncf.torch.graph.graph_builder import GraphBuilder
 from nncf.torch.nncf_network import NNCFNetwork
-from nncf.torch.utils import is_main_process
 from nncf.torch.utils import is_dist_avail_and_initialized
-from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
+from nncf.torch.utils import is_main_process
 
 
 def get_compression_algorithm(config):
@@ -42,14 +44,18 @@ def get_compression_algorithm(config):
     return COMPRESSION_ALGORITHMS.get(algorithm_key)
 
 
+LegacyModelState = Dict[str, torch.Tensor]
+
+
 def create_compressed_model(model: Module,
                             config: NNCFConfig = None,
-                            nncf_checkpoint: dict = None,
+                            compression_state: Union[Dict, LegacyModelState] = None,
                             dummy_forward_fn: Callable[[Module], Any] = None,
                             wrap_inputs_fn: Callable[[Tuple, Dict], Tuple[Tuple, Dict]] = None,
                             wrap_outputs_fn: Callable[[Tuple, Dict], Tuple[Tuple, Dict]] = None,
-                            dump_graphs=True, ) \
-    -> Tuple[Controller, NNCFNetwork]:
+                            dump_graphs=True,
+                            is_strict=True) \
+        -> Tuple[Controller, NNCFNetwork]:
     """
     The main function used to produce a model ready for compression fine-tuning from an original PyTorch
     model and a configuration object.
@@ -58,8 +64,8 @@ def create_compressed_model(model: Module,
     source.
     :param config: A configuration object used to determine the exact compression modifications to be applied
     to the model
-    :param nncf_checkpoint: An entire compression state to unambiguously restore the compressed model. Includes builder,
-    controller and model states.
+    :param compression_state: PT-specific representation of the entire compression state to unambiguously restore the
+    compressed model. Includes builder, controller and model states.
     :param dummy_forward_fn: if supplied, will be used instead of a *forward* function call to build
     the internal graph representation via tracing. Specifying this is useful when the original training pipeline
     has special formats of data loader output or has additional *forward* arguments other than input tensors.
@@ -80,6 +86,7 @@ def create_compressed_model(model: Module,
     input, but each tensor in the original input. Must be specified if dummy_forward_fn is specified.
     :param dump_graphs: Whether or not should also dump the internal graph representation of the
     original and compressed models in the .dot format into the log directory.
+    :param is_strict: whether to strictly enforce that the model keys in state match the keys returned by this module.
     :return: A controller for the compression algorithm (or algorithms, in which case the controller
     is an instance of CompositeCompressionController) and the model ready for compression parameter training wrapped
     as an object of NNCFNetwork."""
@@ -90,19 +97,18 @@ def create_compressed_model(model: Module,
                          "building, then the wrap_inputs_fn parameter MUST also be specified and be consistent with "
                          "the input wrapping done in dummy_forward_fn.")
 
-    if config is None and nncf_checkpoint is None:
-        raise ValueError("Config and resuming checkpoint can not be empty at the same time.")
+    if config is None and compression_state is None:
+        raise ValueError("Whether config or compression state should be specified to create compressed model.")
 
-    is_strict = True
-    should_init_per_builder = None
-    builder_state = None
+    compression_setups = None
     model_state = None
-    ctrl_state = None
-    if nncf_checkpoint is not None:
-        is_new_checkpoint_format = Controller.MODEL_STATE_ATTR in nncf_checkpoint
-        model_state = nncf_checkpoint.get(Controller.MODEL_STATE_ATTR, nncf_checkpoint)
-
-        if not is_new_checkpoint_format:
+    if compression_state is not None:
+        if PTCompressionState.COMPRESSION_SETUPS_ATTR in compression_state:
+            compression_state = PTCompressionState().load_state(compression_state)
+            model_state = compression_state.model_state
+            compression_setups = compression_state.compression_setups
+        else:  # support backward compatibility with old checkpoints
+            model_state = compression_state
             new_format_notice = 'It does not have builder and controller state to unambiguously restore compression ' \
                                 'setup (e.g. location of compression modules in the graph and their parameters). ' \
                                 'Checkpoint should be saved not by calling \'state_dict\' method of the compressed ' \
@@ -119,15 +125,6 @@ def create_compressed_model(model: Module,
             warnings.warn('Legacy NNCF-enabled .pth checkpoint has been loaded! {} '
                           'This checkpoint will be loaded; update your checkpoint file by saving this model\'s'
                           'checkpoint file again.'.format(new_format_notice), category=DeprecationWarning)
-
-        else:
-            ctrl_state = nncf_checkpoint.get(Controller.CONTROLLER_STATE_ATTR)
-            builder_state = nncf_checkpoint.get(Controller.BUILDER_STATE_ATTR)
-            saved_config = NNCFConfig.from_dict(builder_state[CompositeBuilder.CONFIG_STATE_ATTR])
-            if config is None:
-                config = saved_config
-            else:
-                should_init_per_builder, is_strict = _match_configs(config, saved_config)
 
     # Compress model that will be deployed for the inference on target device. No need to compress parts of the
     # model that are used on training stage only (e.g. AuxLogits of Inception-v3 model) or unused modules with weights.
@@ -162,10 +159,8 @@ def create_compressed_model(model: Module,
                                    target_scopes=target_scopes,
                                    scopes_without_shape_matching=scopes_without_shape_matching)
 
-    should_init = nncf_checkpoint is None
-    composite_builder = CompositeBuilder(config, should_init, should_init_per_builder)
-    if builder_state:
-        composite_builder.load_state(builder_state)
+    should_init = compression_state is None
+    composite_builder = CompositeBuilder(config, should_init, compression_setups)
     composite_builder.apply_to(compressed_model)
     compression_ctrl = composite_builder.build_controller(compressed_model)
 
@@ -176,8 +171,6 @@ def create_compressed_model(model: Module,
     try:
         if model_state is not None:
             load_state(compressed_model, model_state, is_resume=is_strict)
-        if ctrl_state:
-            compression_ctrl.load_state(ctrl_state)
     finally:
         if dump_graphs and is_main_process() and composite_builder:
             if dummy_forward_fn is None:
@@ -207,139 +200,3 @@ def create_compressed_model(model: Module,
             return compression_ctrl, compressed_model
 
     return compression_ctrl, compressed_model
-
-
-# ignore init section
-def _remove_init_section(cfg: Dict):
-    was_found = False
-    if 'initializer' in cfg:
-        was_found = True
-        cfg['initializer'] = {}
-    return was_found
-
-
-def _match_params(cfg1: Dict, cfg2: Dict, param_vs_default_pairs: List[Tuple[str, Any]]):
-    is_matched = True
-    for param_name, default in param_vs_default_pairs:
-        if cfg1.get(param_name, default) != cfg2.get(param_name, default):
-            is_matched = False
-            break
-    return is_matched
-
-
-def _get_algo_configs(cfg) -> Tuple[Dict[str, Dict], Dict[str, Any]]:
-    """
-        Returns mapping of the algorithm name and its config.
-        Sparsity algorithms have unified name ('sparsity') since they are inter loadable
-        No entry for  non compression case
-    """
-
-    algo_name_vs_algo_config_map = {}
-    algo_name_vs_algo_class_map = {}
-    if isinstance(cfg, dict):
-        algo_name = cfg.get('algorithm')
-        if algo_name:
-            algo_name_vs_algo_config_map[algo_name] = cfg
-            algo_class = get_compression_algorithm(cfg)
-            algo_name_vs_algo_class_map[algo_name] = algo_class
-    else:
-        for algo_config in cfg:
-            algo_name = algo_config.get('algorithm')
-            if algo_name:
-                algo_name_vs_algo_config_map[algo_name] = algo_config
-                algo_class = get_compression_algorithm(algo_config)
-                algo_name_vs_algo_class_map[algo_name] = algo_class
-
-    return algo_name_vs_algo_config_map, algo_name_vs_algo_class_map
-
-
-def _match_configs(loaded_config: NNCFConfig, saved_config: NNCFConfig) -> Tuple[Dict['str', bool], bool]:
-    """
-    Performs matching of two configs: a config that is used for creation of compressed model and config that was
-    saved in the checkpoint.
-    When compression training is resumed there shouldn't not be a conflict between resuming checkpoint and
-    specified config. E.g. it might be impossible to load all parameters of CPU-quantized model into VPU-quantized model,
-    because of different location of FQ and its parameters.
-    This function raises error if configs are not matched, otherwise tells which algorithm should be initialized and
-    notifies whether checkpoint should be loaded strictly.
-    E.g. checkpoint for RB-sparsified model can be further trained with quantization and frozen sparsity masks.
-    Quantization should be initialized, sparsity masks - not strictly loaded to overcome conflicts with quantization
-    parameters.
-    :param loaded_config: a config that is used for creation of compressed model
-    :param saved_config: config that was saved in the checkpoint
-    :return: mapping of algorithm class to a flag about need of initialization and flag about need of strict loading
-    """
-    loaded_compression_config = deepcopy(loaded_config.get('compression', {}))
-    saved_compression_config = deepcopy(saved_config.get('compression', {}))
-
-    global_param_vs_default_pairs = [('target_device', 'ANY'), ('ignored_scopes', []), ('target_scopes', [])]
-    global_params_matches = _match_params(saved_config, loaded_config, global_param_vs_default_pairs)
-    if not global_params_matches:
-        raise RuntimeError('Global parameters for the given config and for the config from checkpoint do not match: ')
-
-    saved_algo_configs, _ = _get_algo_configs(saved_compression_config)
-    loaded_algo_configs, algo_name_vs_algo_config_map = _get_algo_configs(loaded_compression_config)
-
-    is_strict_loading = set(saved_algo_configs.keys()) == set(loaded_algo_configs.keys())
-
-    # just need to disable init for common
-    algo_class_vs_should_init_map = {algo_class: True for algo_class in algo_name_vs_algo_config_map.values()}
-
-    if not saved_algo_configs or not loaded_algo_configs:
-        # CHECKPOINT                 -> CREATE                     - STS       - INIT                          - STRICT
-        # ---------------------------|-----------------------------|-----------|-------------------------------|--------
-        # quantization              -> empty                       - OK        -  no init                      - False
-        # sparsity + quantization   -> empty                       - OK        -  no init                      - False
-        # empty                     -> quantization                - OK        -  init quantization            - False
-        # empty                     -> sparsity + quantization     - OK        -  init sparsity + quantization - False
-        return algo_class_vs_should_init_map, is_strict_loading
-
-    at_least_one_matches = False
-    loaded_sparsity_algo = [algo for algo in loaded_algo_configs if 'sparsity' in algo]
-    for algo_name, saved_cfg in saved_algo_configs.items():
-        matched = False
-        loaded_algo_name = algo_name
-        if 'sparsity' in algo_name and algo_name not in loaded_algo_configs and loaded_sparsity_algo:
-            param_vs_default_pairs = [('ignored_scopes', []), ('target_scopes', [])]
-            loaded_algo_name = loaded_sparsity_algo[0]
-            matched = _match_params(saved_cfg, loaded_algo_configs[loaded_algo_name], param_vs_default_pairs)
-
-        if algo_name in loaded_algo_configs:
-            loaded_algo_section = loaded_algo_configs[algo_name]
-            has_init = _remove_init_section(loaded_algo_section)
-            _remove_init_section(saved_cfg)
-            if saved_cfg != loaded_algo_section:
-                raise RuntimeError(
-                    'Failed to resume algorithm {} with config different from one with which the algorithm was '
-                    'originally created and saved to checkpoint'.format(algo_name))
-            if has_init:
-                nncf_logger.warning(
-                    '{} is not going to be initialized, since it\'s resumed from checkpoint'.format(algo_name))
-            matched = True
-        if matched:
-            # CHECKPOINT                -> CREATE                      - STS       - INIT              - STRICT
-            # ---------------------------|-----------------------------|-----------|-------------------|----------
-            # RB spars. + quantization  -> quantization                - OK        - no init           - False
-            # RB spars.                 -> RB spars. + quantization    - OK        - init quantization - False
-            # RB spars.                 -> CONST spars. + quantization - OK        - init quantization - False
-            # RB spars. + quantization  -> quantization + pruning      - OK        - init quantization - False
-            # RB spars. + quantization  -> CONST spars. + quantization - OK        - no init           - False
-            # RB spars. + quantization  -> RB spars. + quantization    - OK        - no init           - True
-            # quantization params1      -> quantization params1        - OK        - no init           - True
-            # quantization params1      -> quantization params2        - not OK    -                   -
-
-            # OK, if common part is matched and new loaded algo should be initialized
-            at_least_one_matches = True
-            algo_class = algo_name_vs_algo_config_map[loaded_algo_name]
-            algo_class_vs_should_init_map[algo_class] = False
-
-    if not at_least_one_matches:
-        # CHECKPOINT               -> CREATE                    - STS       - INIT
-        # -------------------------|----------------------------|-----------|----------
-        # rb_sparsity + pruning   -> quantization               - not OK    -
-        # rb_sparsity             -> quantization               - not OK    -
-        raise RuntimeError('Created algorithms don\'t match to algorithms in the checkpoint: {} vs {}'.format(
-            list(loaded_algo_configs.keys()), list(saved_algo_configs.keys()),
-        ))
-
-    return algo_class_vs_should_init_map, is_strict_loading

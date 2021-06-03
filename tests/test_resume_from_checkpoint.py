@@ -55,7 +55,7 @@ def test_can_resume_with_manual_init(mocker, desc, _nncf_caplog):
         m.assert_called()
         m.reset_mock()
 
-    nncf_checkpoint = compression_ctrl.get_nncf_checkpoint()
+    nncf_checkpoint = compression_ctrl.get_compression_state()
 
     _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), config_to_resume,
                                                                     nncf_checkpoint=nncf_checkpoint)
@@ -69,6 +69,7 @@ def test_can_resume_with_manual_init(mocker, desc, _nncf_caplog):
     desc.check_precision_init(compression_ctrl)
 
 
+# TODO: test for strict=False/True
 def test_can_resume_with_algo_mixing(mocker):
     desc = TestPrecisionInitDesc().config_with_all_inits()
     all_quantization_init_spies = desc.setup_init_spies(mocker)
@@ -79,7 +80,7 @@ def test_can_resume_with_algo_mixing(mocker):
     config['compression'] = [{'algorithm': 'const_sparsity'}, quantization_section]
 
     _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), sparsity_config)
-    nncf_checkpoint = compression_ctrl.get_nncf_checkpoint()
+    nncf_checkpoint = compression_ctrl.get_compression_state()
 
     config = register_default_init_args(config, train_loader=create_ones_mock_dataloader(config))
     _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), config,
@@ -236,7 +237,7 @@ def test_load_state__with_resume_checkpoint(_resume_algos, _model_wrapper, mocke
     orig_model = BasicConvTestModel()
     num_model_params = len(orig_model.state_dict())
     _, compressed_ctrl_save = create_compressed_model_and_algo_for_test(orig_model, config_save)
-    saved_checkpoint = compressed_ctrl_save.get_nncf_checkpoint()
+    saved_checkpoint = compressed_ctrl_save.get_compression_state()
     ref_num_loaded = _resume_algos['ref_num_compression_params'] + num_model_params + 2  # padding_value + version
 
     config_resume = get_empty_config()

@@ -257,7 +257,7 @@ def create_compressed_model_and_algo_for_test(model: Module, config: NNCFConfig=
         NNCFConfig.validate(config)
     algo, model = create_compressed_model(model, config, dump_graphs=False, dummy_forward_fn=dummy_forward_fn,
                                           wrap_inputs_fn=wrap_inputs_fn,
-                                          nncf_checkpoint=nncf_checkpoint)
+                                          compression_state=nncf_checkpoint)
     return model, algo
 
 

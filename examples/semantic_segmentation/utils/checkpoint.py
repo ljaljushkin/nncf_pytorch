@@ -47,7 +47,7 @@ def save_checkpoint(compression_ctrl, optimizer, epoch, miou, compression_stage,
         'epoch': epoch,
         'miou': miou,
         'compression_stage': compression_stage,
-        NNCF_CHECKPOINT_ATTR: compression_ctrl.get_nncf_checkpoint(),
+        NNCF_CHECKPOINT_ATTR: compression_ctrl.get_compression_state(),
         'optimizer': optimizer.state_dict()
     }
     torch.save(checkpoint, checkpoint_path)

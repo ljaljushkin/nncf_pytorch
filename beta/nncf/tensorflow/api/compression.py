@@ -14,6 +14,7 @@ import json
 from abc import ABC
 from abc import abstractmethod
 from typing import Dict
+from typing import List
 from typing import Optional
 from typing import TypeVar
 
@@ -21,6 +22,8 @@ import tensorflow as tf
 
 from beta.nncf.tensorflow.graph.model_transformer import TFModelTransformer
 from nncf.api.compression import CompressionAlgorithmBuilder
+from nncf.api.compression import CompressionSetup
+from nncf.api.compression import CompressionState
 from nncf.common.compression import BaseCompressionAlgorithmController
 
 ModelType = TypeVar('ModelType')
@@ -40,6 +43,26 @@ class TFCompressionAlgorithmInitializer(ABC):
 
     def __call__(self, *args, **kwargs) -> None:
         self.call(*args, **kwargs)
+
+
+class TFCompressionState(CompressionState, tf.train.experimental.PythonState):
+    def __init__(self, compression_setups: List[CompressionSetup]):
+        super().__init__(compression_setups)
+
+    def serialize(self) -> str:
+        """
+        Callback to serialize the object by tf.train.experimental.PythonState.
+        """
+        json_compatible_setups = self.get_state()
+        string_value = json.dumps(json_compatible_setups)
+        return string_value
+
+    def deserialize(self, string_value: str) -> None:
+        """
+        Callback to deserialize the object by tf.train.experimental.PythonState.
+        """
+        json_compatible_setups = json.loads(string_value)
+        self.load_state(json_compatible_setups)
 
 
 class TFCompressionAlgorithmController(BaseCompressionAlgorithmController, tf.train.experimental.PythonState):

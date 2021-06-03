@@ -509,7 +509,7 @@ def main_worker(current_gpu, config):
     if resuming_checkpoint_path is not None:
         resuming_model_sd, resuming_checkpoint = load_checkpoints_from_path(
             resuming_checkpoint_path)
-    compression_ctrl, model = create_compressed_model(model, nncf_config, nncf_checkpoint=resuming_model_sd)
+    compression_ctrl, model = create_compressed_model(model, nncf_config, compression_state=resuming_model_sd)
     model, model_without_dp = prepare_model_for_execution(model, config)
 
     if config.distributed:

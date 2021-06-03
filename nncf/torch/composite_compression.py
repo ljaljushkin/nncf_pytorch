@@ -11,21 +11,26 @@
  limitations under the License.
 """
 
+from copy import deepcopy
 from typing import Dict
+from typing import List
+from typing import Optional
 from typing import TypeVar
 
 import torch.nn
-from copy import deepcopy
 
+from nncf.api.compression import CompressionSetup
 from nncf.common.composite_compression import CompositeCompressionAlgorithmBuilder
 from nncf.common.composite_compression import CompositeCompressionAlgorithmController
 from nncf.common.composite_compression import CompositeCompressionLoss
+from nncf.common.hardware.config import HWConfigType
+from nncf.common.hardware.config import HW_CONFIG_TYPE_TARGET_DEVICE_MAP
+from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
 from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
 from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 from nncf.torch.compression_method_api import PTCompressionLoss
+from nncf.torch.compression_method_api import PTCompressionState
 from nncf.torch.graph.transformations.layout import PTTransformationLayout
-from nncf.common.hardware.config import HW_CONFIG_TYPE_TARGET_DEVICE_MAP
-from nncf.common.hardware.config import HWConfigType
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.nncf_network import PTModelTransformer
 from nncf.torch.pruning.base_algo import BasePruningAlgoController
@@ -45,13 +50,13 @@ class PTCompositeCompressionLoss(CompositeCompressionLoss, PTCompressionLoss):
 
 class PTCompositeCompressionAlgorithmBuilder(
         CompositeCompressionAlgorithmBuilder, PTCompressionAlgorithmBuilder):
-    _ALGO_NAME_VS_STATE_MAP_STATE_ATTR = 'algo_name_vs_state_map'
-    CONFIG_STATE_ATTR = 'config'
-
     def __init__(self, config: 'NNCFConfig', should_init: bool = True,
-                 should_init_per_builder: Dict[str, bool] = None):
+                 compression_setups: Optional[List[CompressionSetup]] = None):
         from nncf import NNCFConfig
         from nncf.torch.model_creation import get_compression_algorithm
+        saved_builder_classes = []
+        if compression_setups is not None:
+            saved_builder_classes = map(lambda x: COMPRESSION_ALGORITHMS.get(x.name), compression_setups)
 
         super().__init__(config, should_init)
         global_should_init = should_init
@@ -72,9 +77,10 @@ class PTCompositeCompressionAlgorithmBuilder(
                 compression_config["compression_lr_multiplier"] = global_compression_lr_multiplier
             compression_algorithm_class = get_compression_algorithm(compression_config)
             should_init = global_should_init
-            if should_init_per_builder:
-                should_init = should_init_per_builder[compression_algorithm_class]
-            self._child_builders = [compression_algorithm_class(compression_config, should_init=should_init), ]
+            if compression_algorithm_class not in saved_builder_classes:
+                should_init = True
+            self._child_builders = [compression_algorithm_class(compression_config, should_init=should_init,
+                                                                compression_setups=compression_setups), ]
         else:
             for algo_config in compression_config_json_section:
                 algo_config = NNCFConfig(algo_config)
@@ -84,10 +90,10 @@ class PTCompositeCompressionAlgorithmBuilder(
                     algo_config["compression_lr_multiplier"] = global_compression_lr_multiplier
                 compression_algorithm_class = get_compression_algorithm(algo_config)
                 should_init = global_should_init
-                if should_init_per_builder:
-                    should_init = should_init_per_builder[compression_algorithm_class]
-                self._child_builders.append(
-                    compression_algorithm_class(algo_config, should_init=should_init))
+                if compression_algorithm_class not in saved_builder_classes:
+                    should_init = True
+                self._child_builders.append(compression_algorithm_class(algo_config, should_init=should_init,
+                                                                        compression_setups=compression_setups))
 
     def __bool__(self):
         return bool(self.child_builders)
@@ -96,33 +102,7 @@ class PTCompositeCompressionAlgorithmBuilder(
         layout = self.get_transformation_layout(target_model)
         transformer = PTModelTransformer(target_model, layout)
         transformed_model = transformer.transform()
-        target_model.builder_state = self.get_state()
         return transformed_model
-
-    def get_state(self) -> Dict[str, object]:
-        """
-        Returns a JSON-compatible dictionary containing a state of the object
-        """
-        algo_name_vs_state_map = {}
-        for builder in self.child_builders:
-            builder_state = builder.get_state()
-            if builder_state:
-                algo_name = builder.registered_name.replace('_', ' ')
-                algo_name_vs_state_map[algo_name] = builder_state
-        return {self.CONFIG_STATE_ATTR: dict(self.config.items()),
-                self._ALGO_NAME_VS_STATE_MAP_STATE_ATTR:  algo_name_vs_state_map}
-
-    def load_state(self, state: Dict[str, object]):
-        """
-        Initializes object from the state
-        :param state: Output of `get_state()` method.
-        """
-        algo_name_vs_state_map = state[self._ALGO_NAME_VS_STATE_MAP_STATE_ATTR]
-        if algo_name_vs_state_map:
-            for builder in self.child_builders:
-                algo_name = builder.registered_name.replace('_', ' ')
-                if algo_name in algo_name_vs_state_map:
-                    builder.load_state(algo_name_vs_state_map[algo_name])
 
     def build_controller(self, model: ModelType) -> PTCompressionAlgorithmController:
         """
@@ -165,41 +145,16 @@ class PTCompositeCompressionAlgorithmController(
         super().__init__(target_model)
         self._loss = PTCompositeCompressionLoss()
 
-    def get_nncf_checkpoint(self) -> Dict[str, object]:
+    def get_compression_state(self) -> Dict:
         """
-        Returns entire compression state - a NNCF checkpoint, containing nncf_network state, builder state
-         and composite controller state, containing the state of all children controllers.
-         This checkpoint can be used to resume compression via nncf_checkpoint of create_compressed_model
-         met
+        Returns PT-specific representatino of entire compression state, containing nncf_network state
+        (with state of the builder) and composite controller state, containing the state of all children controllers.
+        This checkpoint can be used to resume compression via compression_state of create_compressed_model
         :return: The entire compression state.
         """
-        return self._nncf_checkpoint_helper(super().get_state())
-
-    def load_state(self, state: Dict) -> None:
-        """
-        Calls `load_state()` method for all children.
-
-        :param state: Output of `get_state()` method.
-        """
-        for ctrl in self.child_ctrls:
-            algo_key = self._get_algo_key()
-            if algo_key in state:
-                ctrl.load_state(state[algo_key])
-
-    def get_state(self) -> Dict[str, object]:
-        """
-        Returns the composite compression controller state. This state contains
-        the state of all children.
-
-        :return: The composite compression controller state.
-        """
-        algo_key_vs_state_map = {}
-        for ctrl in self.child_ctrls:
-            ctrl_state = ctrl.get_state()
-            if ctrl_state:
-                algo_key = ctrl.__class__.__name__
-                algo_key_vs_state_map[algo_key] = ctrl_state
-        return algo_key_vs_state_map
+        model_state = self.model.state_dict()
+        setups = [child_ctrl.get_compression_setup() for child_ctrl in self._child_ctrls]
+        return PTCompressionState(setups, model_state).get_state()
 
     def distributed(self):
         for ctrl in self.child_ctrls:

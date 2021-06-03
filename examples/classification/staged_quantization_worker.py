@@ -260,7 +260,7 @@ def train_staged(config, compression_ctrl, model, criterion, criterion_fn, optim
             checkpoint = {
                 'epoch': epoch + 1,
                 'arch': model_name,
-                NNCF_CHECKPOINT_ATTR: compression_ctrl.get_nncf_checkpoint(),
+                NNCF_CHECKPOINT_ATTR: compression_ctrl.get_compression_state(),
                 'original_model_state_dict': kd_loss_calculator.original_model.state_dict(),
                 'best_acc1': best_acc1,
                 'compression_stage': compression_stage,

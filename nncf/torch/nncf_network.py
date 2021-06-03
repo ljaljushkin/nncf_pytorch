@@ -468,7 +468,6 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
         if self.scopes_without_shape_matching:
             self._compressed_context.add_node_comparators(scopes_without_shape_matching,
                                                           ShapeIgnoringTensorMetaComparator())
-        self.builder_state = None
         self.register_buffer(self.MODEL_STATE_VERSION_ATTR, torch.IntTensor([self.MODEL_STATE_VERSION]).to(device))
         # to load old checkpoints without state version parameter in a strict mode
         OPTIONAL_PARAMETERS_REGISTRY.register(self.MODEL_STATE_VERSION_ATTR)
