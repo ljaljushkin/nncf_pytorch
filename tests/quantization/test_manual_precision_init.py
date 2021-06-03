@@ -26,6 +26,7 @@ from tests.conftest import TEST_ROOT
 from tests.helpers import BasicConvTestModel
 from tests.helpers import create_compressed_model_and_algo_for_test
 from tests.helpers import create_ones_mock_dataloader
+from tests.helpers import register_bn_adaptation_init_args
 from tests.quantization.test_hawq_precision_init import check_bitwidth_graph
 from tests.quantization.test_quantization_helpers import get_quantization_config_without_range_init
 from tests.test_models.synthetic import AddTwoConv
@@ -159,6 +160,7 @@ MANUAL_SINGLE_CONV_TEST_PARAMS = [
                          ids=[p.name for p in MANUAL_SINGLE_CONV_TEST_PARAMS])
 def test_manual_single_conv(params):
     config = params.nncf_config
+    register_bn_adaptation_init_args(config)
     model = params.model
 
     if params.expects_error:
@@ -183,6 +185,7 @@ class TestPrecisionInitDesc:
             }})
         config['target_device'] = 'TRIAL'
         config['compression']["activations"] = {"bits": 6}
+        register_bn_adaptation_init_args(config)
         self.config = config
         self.ref_bitwidth_per_scope = [
             ('AddTwoConv/NNCFConv2d[conv1]module_weight', 2),
@@ -221,9 +224,10 @@ class TestPrecisionInitDesc:
     def setup_init_spies(mocker):
         from nncf.torch.quantization.algo import QuantizationBuilder
         from nncf.torch.quantization.precision_init.manual_init import ManualPrecisionInitializer
+        from nncf.common.batchnorm_adaptation import BatchnormAdaptationAlgorithm
         parse_range_init = mocker.spy(QuantizationBuilder, '_parse_range_init_params')
         get_stats = mocker.spy(QuantizationBuilder, '_get_statistics_for_final_range_init')
-        run_bn_adapt = mocker.spy(QuantizationController, 'run_batchnorm_adaptation')
+        run_bn_adapt = mocker.spy(BatchnormAdaptationAlgorithm, 'run')
         apply_manual_precision_init = mocker.spy(ManualPrecisionInitializer, 'apply_init')
         return [get_stats, parse_range_init, run_bn_adapt, apply_manual_precision_init]
 

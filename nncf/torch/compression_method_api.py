@@ -17,13 +17,8 @@ This package defines the API for the NNCF compression methods so that the user c
 extend the existing algorithms.
 """
 from abc import abstractmethod
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import TypeVar
+from typing import List, Tuple, TypeVar, Dict, Optional
 
-import numpy
 import torch
 from torch import nn
 
@@ -32,16 +27,15 @@ from nncf.api.compression import CompressionState
 from nncf.common.utils.registry import Registry
 from nncf.config import NNCFConfig
 from nncf.torch.graph.transformations.layout import PTTransformationLayout
-from nncf.torch.initialization import DataLoaderBNAdaptationRunner
 from nncf.torch.layers import NNCF_MODULES_DICT, NNCF_WRAPPED_USER_MODULES_DICT
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.common.compression import BaseCompressionAlgorithmController
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.nncf_network import PTModelTransformer
-from nncf.torch.structures import BNAdaptationInitArgs
 from nncf.torch.utils import should_consider_scope
 from nncf.api.compression import CompressionAlgorithmBuilder
 from nncf.api.compression import CompressionLoss
+from nncf.api.compression import CompressionLevel
 
 ModelType = TypeVar('ModelType')
 
@@ -147,7 +141,24 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
 
         :param state: Output of `get_state()` method.
         """
-        self.scheduler.load_state(state)
+        self._check_loaded_compression_stage(state)
+        if self.scheduler is not None:
+            self.scheduler.load_state(state['scheduler'])
+
+    def _check_loaded_compression_stage(self, state: Dict[str, object]) -> None:
+        if 'compression_level' in state:
+            if 'compression_stage' not in state:
+                compression_level = state['compression_level']
+                state['compression_stage'] = CompressionLevel.map_legacy_level_to_stage()[compression_level]
+            else:
+                nncf_logger.warning('Both CompressionStage and (legacy) CompressionLevel attributes '
+                                    'are specified in the checkpoint. Proceeding with the value stored '
+                                    'in CompressionStage')
+        if 'compression_stage' in state and self.compression_stage() != state['compression_stage']:
+            nncf_logger.warning('Current CompressionStage ({}) of the compression controller does '
+                                'not correspond to the value found in '
+                                'the checkpoint ({})'.format(self.compression_stage(),
+                                                             state['compression_stage']))
 
     def get_state(self) -> Dict[str, object]:
         """
@@ -155,7 +166,8 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
 
         :return: The compression controller state.
         """
-        return self.scheduler.get_state()
+        return {'scheduler': self.scheduler.get_state(),
+                'compression_stage': self.compression_stage()}
 
     def get_compression_setup(self) -> CompressionSetup:
         ctrl_state = self.get_state()
@@ -174,39 +186,6 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
         model_state = self.model.state_dict()
         setups = [self.get_compression_setup()]
         return PTCompressionState(setups, model_state).get_state()
-
-    def run_batchnorm_adaptation(self, config):
-        initializer_params = config.get("initializer", {})
-        init_bn_adapt_config = initializer_params.get('batchnorm_adaptation', {})
-        num_bn_adaptation_samples = init_bn_adapt_config.get('num_bn_adaptation_samples', 0)
-        num_bn_forget_samples = init_bn_adapt_config.get('num_bn_forget_samples', 0)
-        try:
-            bn_adaptation_args = config.get_extra_struct(BNAdaptationInitArgs)
-            has_bn_adapt_init_args = True
-        except KeyError:
-            has_bn_adapt_init_args = False
-
-        if not init_bn_adapt_config:
-            if has_bn_adapt_init_args:
-                nncf_logger.warning("Enabling quantization batch norm adaptation with default parameters.")
-                num_bn_adaptation_samples = 2000
-                num_bn_forget_samples = 1000
-
-        if num_bn_adaptation_samples < 0:
-            raise AttributeError('Number of adaptation samples must be >= 0')
-        if num_bn_adaptation_samples > 0:
-            if not has_bn_adapt_init_args:
-                nncf_logger.info(
-                    'Could not run batchnorm adaptation '
-                    'as the adaptation data loader is not provided as an extra struct. '
-                    'Refer to `NNCFConfig.register_extra_structs` and the `BNAdaptationInitArgs` class')
-                return
-            batch_size = bn_adaptation_args.data_loader.batch_size
-            num_bn_forget_steps = numpy.ceil(num_bn_forget_samples / batch_size)
-            num_bn_adaptation_steps = numpy.ceil(num_bn_adaptation_samples / batch_size)
-            bn_adaptation_runner = DataLoaderBNAdaptationRunner(self._model, bn_adaptation_args.device,
-                                                                num_bn_forget_steps)
-            bn_adaptation_runner.run(bn_adaptation_args.data_loader, num_bn_adaptation_steps)
 
 
 class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):

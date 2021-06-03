@@ -408,3 +408,23 @@ class CompressionAlgorithmBuilder(ABC):
         Initializes object from the state
         :param state: Output of `get_state()` method.
         """
+
+
+class CompressionLevel(OrderedEnum):
+    """
+    Legacy class, now replaced by CompressionStage.
+    Supports backward compatibility of older checkpoints produced with NNCF.
+    CompressionLevel is deprecated and will be removed in future releases.
+    """
+
+    NONE = 0
+    PARTIAL = 1
+    FULL = 2
+
+    @classmethod
+    def map_legacy_level_to_stage(cls):
+        return {
+            CompressionLevel.NONE: CompressionStage.UNCOMPRESSED,
+            CompressionLevel.PARTIAL: CompressionStage.PARTIALLY_COMPRESSED,
+            CompressionLevel.FULL: CompressionStage.FULLY_COMPRESSED,
+        }

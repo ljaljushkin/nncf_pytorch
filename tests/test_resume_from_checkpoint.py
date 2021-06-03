@@ -24,6 +24,7 @@ from tests.helpers import BasicConvTestModel
 from tests.helpers import create_compressed_model_and_algo_for_test
 from tests.helpers import create_ones_mock_dataloader
 from tests.helpers import get_empty_config
+from tests.helpers import register_bn_adaptation_init_args
 from tests.quantization.test_manual_precision_init import TestPrecisionInitDesc
 from tests.sparsity.rb.test_algo import get_basic_sparsity_config
 
@@ -171,6 +172,7 @@ def _model_wrapper(request):
 def test_load_state_interoperability(_algos, _model_wrapper, is_resume):
     config_save = get_empty_config()
     config_save['compression'] = [{'algorithm': algo} for algo in _algos['save_algos']]
+    register_bn_adaptation_init_args(config_save)
     compressed_model_save, _ = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config_save)
     model_save = _model_wrapper['save_model'](compressed_model_save)
     saved_model_state = model_save.state_dict()
@@ -178,6 +180,7 @@ def test_load_state_interoperability(_algos, _model_wrapper, is_resume):
 
     config_resume = get_empty_config()
     config_resume['compression'] = [{'algorithm': algo} for algo in _algos['load_algos']]
+    register_bn_adaptation_init_args(config_resume)
     compressed_model_resume, _ = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config_resume)
     model_resume = _model_wrapper['resume_model'](compressed_model_resume)
 
@@ -267,6 +270,7 @@ def test_ordinary_load(algo, _model_wrapper, is_resume):
     config = get_empty_config()
     if algo:
         config['compression'] = {'algorithm': algo}
+    register_bn_adaptation_init_args(config)
 
     compressed_model_save, _ = create_compressed_model_and_algo_for_test(BasicConvTestModel(), config)
     model_save = _model_wrapper['save_model'](compressed_model_save)

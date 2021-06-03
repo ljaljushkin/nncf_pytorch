@@ -24,7 +24,7 @@ def save_checkpoint(compression_ctrl, optimizer, epoch, miou, compression_stage,
     - compression_ctrl (``PTCompressionAlgorithmController``): The controller containing compression state to save.
     - optimizer (``torch.optim``): The optimizer state to save.
     - epoch (``int``): The current epoch for the model.
-    - miou (``float``): The mean IoU obtained by the model.
+    - miou (``float``): The mean IoU obtained by the model.test_load_state_interoperabilitytest_load_state_interoperability
     - compression_stage (``CompressionStage``): level of compression
     - compression_scheduler: The compression scheduler associated with the model
     - config: Model config".

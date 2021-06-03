@@ -31,6 +31,7 @@ from nncf.torch.compression_method_api import DOMAIN_CUSTOM_OPS_NAME
 from tests.helpers import BasicConvTestModel
 from tests.helpers import create_compressed_model_and_algo_for_test
 from tests.helpers import get_empty_config
+from tests.helpers import register_bn_adaptation_init_args
 from tests.quantization.test_quantization_helpers import get_quantization_config_without_range_init
 from tests.sparsity.magnitude.test_helpers import get_basic_magnitude_sparsity_config
 from tests.sparsity.rb.test_algo import get_basic_sparsity_config
@@ -80,6 +81,7 @@ class TestCompressionAlgos:
         test_path = str(tmp_path.joinpath('test.onnx'))
         model = model_provider()
         config = config_provider()
+        register_bn_adaptation_init_args(config)
         _, compression_ctrl = create_compressed_model_and_algo_for_test(model, config)
 
         compression_ctrl.export_model(test_path)
@@ -188,7 +190,9 @@ LIST_OF_TEST_PARAMS = [
 def test_can_get_compression_stage(test_struct: CompressionStageTestStruct):
     config_provider, compression_stages = test_struct.config_provider, test_struct.compression_stages
     model = BasicConvTestModel()
-    _, compression_ctrl = create_compressed_model_and_algo_for_test(model, config_provider.create())
+    config = config_provider.create()
+    register_bn_adaptation_init_args(config)
+    _, compression_ctrl = create_compressed_model_and_algo_for_test(model, config)
     compression_scheduler = compression_ctrl.scheduler
     assert compression_ctrl.compression_stage() == compression_stages[0]
 
@@ -244,6 +248,7 @@ def test_can_export_compressed_model_with_input_output_names(tmp_path):
     config = get_basic_asym_quantization_config()
 
     config["input_info"] = [{'sample_size': [1, 1, 4, 4]}, {'sample_size': [1, 1, 4, 4]}]
+    register_bn_adaptation_init_args(config)
 
     _, compression_ctrl = create_compressed_model_and_algo_for_test(model, config)
 
@@ -268,6 +273,7 @@ def test_can_export_compressed_model_with_specified_domain_for_custom_ops(tmp_pa
     config = get_basic_asym_quantization_config()
 
     config["input_info"] = [{'sample_size': [1, 1, 4, 4]}, {'sample_size': [1, 1, 4, 4]}]
+    register_bn_adaptation_init_args(config)
 
     _, compression_ctrl = create_compressed_model_and_algo_for_test(model, config)
 
@@ -337,6 +343,7 @@ comp_loss_configs = [
 def test_compression_loss_gpu_device_compatibility(config):
     model = BasicConvTestModel()
     model.to(cuda.current_device())
+    register_bn_adaptation_init_args(config)
     _, compression_ctrl = create_compressed_model_and_algo_for_test(model, config)
     compression_ctrl.loss()
 
@@ -359,6 +366,7 @@ def test_target_device_is_propagated_to_algos(mocker, algo_name, target_device):
         },
         "target_device": target_device
     })
+    register_bn_adaptation_init_args(config)
 
     import nncf
     compression_builder_init_spy = mocker.spy(nncf.api.compression.CompressionAlgorithmBuilder, '__init__')
