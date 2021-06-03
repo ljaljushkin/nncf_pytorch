@@ -97,29 +97,7 @@ def create_compressed_model(model: Module,
                          "building, then the wrap_inputs_fn parameter MUST also be specified and be consistent with "
                          "the input wrapping done in dummy_forward_fn.")
 
-    compression_setups = None
-    model_state = None
-    if compression_state is not None:
-        if PTCompressionState.COMPRESSION_SETUPS_ATTR in compression_state:
-            pt_compression_state = PTCompressionState()
-            pt_compression_state.load_state(compression_state)
-            model_state = pt_compression_state.model_state
-            compression_setups = pt_compression_state.compression_setups
-        else:  # support backward compatibility with old checkpoints
-            model_state = compression_state
-            new_format_notice = 'It does not have builder and controller state to unambiguously restore compression ' \
-                                'setup (e.g. location of compression modules in the graph and their parameters). ' \
-                                'Checkpoint should be saved not by calling \'state_dict\' method of the compressed ' \
-                                'model, but by \'get_checkpoint\' method of the compression controller.'
-            # currently exact version number is not necessary. It's supposed to be used in the future.
-            # But presence of this attribute ensures new format of the resuming state dict.
-            is_model_state_in_new_format = NNCFNetwork.get_state_version(model_state)
-            if is_model_state_in_new_format:
-                raise ValueError('Invalid checkpoint format. {}'.format(new_format_notice))
-
-            warnings.warn('Legacy NNCF-enabled .pth checkpoint has been loaded! {} '
-                          'This checkpoint will be loaded; update your checkpoint file by saving this model\'s'
-                          'checkpoint file again.'.format(new_format_notice), category=DeprecationWarning)
+    compression_setups, model_state = _parse_compression_state(compression_state)
 
     # Compress model that will be deployed for the inference on target device. No need to compress parts of the
     # model that are used on training stage only (e.g. AuxLogits of Inception-v3 model) or unused modules with weights.
@@ -195,3 +173,30 @@ def create_compressed_model(model: Module,
             return compression_ctrl, compressed_model
 
     return compression_ctrl, compressed_model
+
+
+def _parse_compression_state(compression_state):
+    compression_setups = None
+    model_state = None
+    if compression_state is not None:
+        if PTCompressionState.COMPRESSION_SETUPS_ATTR in compression_state:
+            pt_compression_state = PTCompressionState()
+            pt_compression_state.load_state(compression_state)
+            model_state = pt_compression_state.model_state
+            compression_setups = pt_compression_state.compression_setups
+        else:  # support backward compatibility with old checkpoints
+            model_state = compression_state
+            new_format_notice = 'It does not have builder and controller state to unambiguously restore compression ' \
+                                'setup (e.g. location of compression modules in the graph and their parameters). ' \
+                                'Checkpoint should be saved not by calling \'state_dict\' method of the compressed ' \
+                                'model, but by \'get_checkpoint\' method of the compression controller.'
+            # currently exact version number is not necessary. It's supposed to be used in the future.
+            # But presence of this attribute ensures new format of the resuming state dict.
+            is_model_state_in_new_format = NNCFNetwork.get_state_version(model_state)
+            if is_model_state_in_new_format:
+                raise ValueError('Invalid checkpoint format. {}'.format(new_format_notice))
+
+            warnings.warn('Legacy NNCF-enabled .pth checkpoint has been loaded! {} '
+                          'This checkpoint will be loaded; update your checkpoint file by saving this model\'s'
+                          'checkpoint file again.'.format(new_format_notice), category=DeprecationWarning)
+    return compression_setups, model_state

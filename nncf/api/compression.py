@@ -171,6 +171,7 @@ class CompressionSetup(NamedTuple):
         """
         :return: the JSON-compatible representation of the object
         """
+        # pylint:disable=no-member
         return self._asdict()
 
     @classmethod
@@ -210,7 +211,7 @@ class CompressionState:
         :param state: Output of `get_state()` method.
         """
         compression_setups_state = state[self.COMPRESSION_SETUPS_ATTR]
-        self._compression_setups = list(map(lambda x: CompressionSetup.from_state(x), compression_setups_state))
+        self._compression_setups = list(map(CompressionSetup.from_state, compression_setups_state))
 
 
 class CompressionAlgorithmController(ABC):

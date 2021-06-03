@@ -27,7 +27,6 @@ import numpy
 import torch
 from torch import nn
 
-from nncf.api.compression import CompressionAlgorithmController
 from nncf.api.compression import CompressionSetup
 from nncf.api.compression import CompressionState
 from nncf.common.utils.registry import Registry
@@ -286,7 +285,6 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
         Initializes object from the state
         :param state: Output of `get_state()` method.
         """
-        pass
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
         raise NotImplementedError()

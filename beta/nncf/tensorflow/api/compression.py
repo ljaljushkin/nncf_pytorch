@@ -17,6 +17,7 @@ from typing import Dict
 from typing import List
 from typing import Optional
 from typing import TypeVar
+from typing import Union
 
 import tensorflow as tf
 
@@ -98,6 +99,10 @@ class TFCompressionAlgorithmController(BaseCompressionAlgorithmController, tf.tr
             'loss_state': self.loss.get_state()
         }
 
+    def get_compression_state(self) -> Union[CompressionState, Dict]:
+        # TODO(nlyalyus) add support for TF
+        return {}
+
     def serialize(self) -> str:
         """
         Callback to serialize the object by tf.train.experimental.PythonState.
@@ -134,7 +139,6 @@ class TFCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
         Initializes object from the state
         :param state: Output of `get_state()` method.
         """
-        pass
 
     def apply_to(self, model: ModelType) -> ModelType:
         """
