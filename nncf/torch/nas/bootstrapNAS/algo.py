@@ -18,10 +18,11 @@ import numpy as np
 import os
 import time
 import torch
+import torch.nn as nn
+
 
 from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS, ZeroCompressionLoss
 from nncf.common.statistics import NNCFStatistics
-# from nncf.api.compression import CompressionLevel
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler
 from nncf.common.schedulers import BaseCompressionScheduler
@@ -77,7 +78,6 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
     def create_elastic_k_w(module, scope):
         return ElasticConv2DOp(module.kernel_size[0], module.in_channels, module.out_channels, scope)
 
-
     @staticmethod
     def create_elastic_bn_operation(module, scope):
         return ElasticBatchNormOp(module.out_channels, scope)
@@ -85,7 +85,6 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
     @staticmethod
     def create_elastic_linear_op(module, scope):
         return ElasticLinearOp(module.in_features, module.out_features, module.bias, scope)
-
 
     def _elastic_k_w(self, target_model: NNCFNetwork):
         nncf_graph = target_model.get_original_graph()
@@ -111,6 +110,9 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
             # if conv_module.kernel_size[0] <= 3:
             #     continue
             nncf_logger.info("Adding Dynamic Conv2D Layer in scope: {}".format(str(conv_module_scope)))
+
+            # TODO: Use config ... width_step if progressive shrinking
+
             conv_operation = self.create_elastic_k_w(conv_module, conv_module_scope)
             insertion_commands.append(
                 PTInsertionCommand(
@@ -165,8 +167,6 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
 
         return insertion_commands
 
-
-
 class BootstrapNASController(PTCompressionAlgorithmController):
     def __init__(self, target_model: NNCFNetwork, config, scope_vs_elastic_op_map,
                  elastic_kernel_ops, elastic_width_ops):
@@ -185,6 +185,9 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             # TODO: Load teacher model
             self.teacher_model = None
         if is_main_process():
+            test_mode = config.get('test_mode', False)
+            if not test_mode:
+                self._create_output_folder(config)
             print("Created BootstrapNAS controller")
 
     @property
@@ -206,7 +209,6 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
         config = self.config
         print(config)
-        print(config.keys())
         stage = config['fine_tuner_params']['stage']
         stage = 'kernel' if stage is None else stage
 
@@ -219,14 +221,17 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             self.train()
         elif stage == 'depth':
             pass
-        elif stage == 'expand':
-            pass
+        # elif stage == 'expand':
+        #     pass
         elif stage == 'width':
-            # TODO Load already fine tuned supernet.
             # TODO 1. Load previously finetuned network.
-            # TODO 2. Reorganize middle and outter weights. How to do it in NNCF? First use method used in OFA.
-            self.train(validate_func=None)
+            # kernel_config = config.get('kernel_config')
+            # depth_config =
+            # TODO 2. Load elastic kernel and depth used in previously finetuned network
 
+            self.reorganize_weights()
+
+            self.train(validate_func=None)
 
     def _get_random_kernel_conf(self):
         kernel_conf = []
@@ -249,14 +254,13 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             width_sel = op.width_list[rand_i]
             for g_i, dep_group in enumerate(dep):
                 if str(op.scope) in dep_group:
-                    print(f'{str(op.scope)} in dep list')
+                    nncf_logger.debug(f'{str(op.scope)} in dep list')
                     if g_i in dep_group_value_assigned.keys():
                         width_sel = dep_group_value_assigned[g_i]
                     else:
                         dep_group_value_assigned[g_i] = width_sel
             width_conf.append(width_sel)
-
-            print(str(op.scope), width_sel)
+            nncf_logger.debug(f'str(op.scope): width_sel')
         return width_conf
 
 
@@ -324,17 +328,24 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                                self.best_acc)
                     val_log += ', Train top-1 {top1:.3f}, Train loss {loss:.3f}\t'.format(top1=train_top1, loss=train_loss)
                     val_log += _val_log
-                    # self.write_log(val_log, 'valid', should_print=False)
+                    nncf_logger.info(val_log)
 
+                    # TODO: Add elastic parameters metadata
                     torch.save({
                         'epoch': epoch,
                         'best_acc': self.best_acc,
                         'optimizer': self.optimizer.state_dict(),
                         'state_dict': self.target_model.state_dict(),
-                    }, 'test_save_TODO_delete.pth')
+                    }, os.path.join(os.path.join(self.main_path, 'checkpoint'), 'checkpoint.pth.tar'))
                     # TODO: keep another copy if best.
                     if is_best:
-                        pass
+                        # TODO: Add elastic parameters
+                        torch.save({
+                            'epoch': epoch,
+                            'best_acc': self.best_acc,
+                            'optimizer': self.optimizer.state_dict(),
+                            'state_dict': self.target_model.state_dict(),
+                        }, os.path.join(os.path.join(self.main_path, 'checkpoint'), 'model_best.pth.tar'))
 
     def train_one_epoch(self, epoch):
         config = self.config
@@ -352,84 +363,85 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
         nBatch = len(self.train_loader)
 
+        len_train_loader = len(self.train_loader)
+        end = time.time()
+        for i, (images, labels) in enumerate(self.train_loader):
+            # measure data loading time
+            data_time.update(time.time() - end)
 
-        with tqdm(total=nBatch,
-                  desc='Train Epoch #{}'.format(epoch + 1),
-                  disable=not is_main_process()) as t:
-            end = time.time()
-            for i, (images, labels) in enumerate(self.train_loader):
-                # measure data loading time
-                data_time.update(time.time() - end)
+            # TODO: Fix adjustment of learning rate.
+            # if epoch < warmup_epochs:
+            #     new_lr = self.warmup_adjust_learning_rate(
+            #         optimizer, warmup_epochs * nBatch, nBatch, epoch, i, warmup_lr,
+            #     )
+            # else:
+            #     new_lr = self.adjust_learning_rate(
+            #         optimizer, epoch - warmup_epochs, i, nBatch
+            #     )
 
-                # TODO: Fix adjustment of learning rate.
-                # if epoch < warmup_epochs:
-                #     new_lr = self.warmup_adjust_learning_rate(
-                #         optimizer, warmup_epochs * nBatch, nBatch, epoch, i, warmup_lr,
-                #     )
-                # else:
-                #     new_lr = self.adjust_learning_rate(
-                #         optimizer, epoch - warmup_epochs, i, nBatch
-                #     )
+            images, labels = images.cuda(), labels.cuda()
+            target = labels
 
-                images, labels = images.cuda(), labels.cuda()
-                target = labels
-
-                # soft target
-                if config['kd_ratio'] > 0:
-                    assert self.teacher_model is not None, 'Teacher model is None'
+            # soft target
+            if config['kd_ratio'] > 0:
+                assert self.teacher_model is not None, 'Teacher model is None'
                     # self.teacher_model.train()
-                    self.teacher_model.eval()
-                    with torch.no_grad():
-                        soft_logits = self.teacher_model(images).detach()
-                        soft_label = F.softmax(soft_logits, dim=1)
+                self.teacher_model.eval()
+                with torch.no_grad():
+                    soft_logits = self.teacher_model(images).detach()
+                    soft_label = F.softmax(soft_logits, dim=1)
 
-                # clean gradients
-                dynamic_net.zero_grad()
+            # clean gradients
+            dynamic_net.zero_grad()
 
-                # compute output
-                subnet_str = ''
-                for _ in range(config['fine_tuner_params']['dynamic_batch_size']):
-                    subnet_seed = int('%d%.3d%.3d' % (epoch * nBatch + i, _, 0))
-                    random.seed(subnet_seed)
-                    self.sample_active_subnet(config['fine_tuner_params']['stage'])
+            # compute output
+            subnet_str = ''
+            for _ in range(config['fine_tuner_params']['dynamic_batch_size']):
+                subnet_seed = int('%d%.3d%.3d' % (epoch * nBatch + i, _, 0))
+                random.seed(subnet_seed)
+                # TODO: Enable subnet sampling
+                # self.sample_active_subnet(config['fine_tuner_params']['stage'])
 
-                    output = dynamic_net(images)
-                    if config['kd_ratio'] == 0:
-                        loss = self.criterion(output, labels)
-                        loss_type = 'ce'
+                output = dynamic_net(images)
+                if config['kd_ratio'] == 0:
+                    loss = self.criterion(output, labels)
+                    loss_type = 'ce'
+                else:
+                    if config['kd_type'] == 'ce':
+                        kd_loss = cross_entropy_loss_with_soft_target(output, soft_label)
                     else:
-                        if config['kd_type'] == 'ce':
-                            kd_loss = cross_entropy_loss_with_soft_target(output, soft_label)
-                        else:
-                            kd_loss = F.mse_loss(output, soft_logits)
-                        loss = config['kd_ratio'] * kd_loss + self.criterion(output, labels)
-                        loss_type = '%.1fkd-%s & ce' % (config['kd_ratio'], config['kd_type'])
+                        kd_loss = F.mse_loss(output, soft_logits)
+                    loss = config['kd_ratio'] * kd_loss + self.criterion(output, labels)
+                    loss_type = '%.1fkd-%s & ce' % (config['kd_ratio'], config['kd_type'])
 
-                    acc1, acc5 = accuracy(output, target, topk=(1, 5))
-                    losses.update(loss.item(), images.size(0))
-                    top1.update(acc1, images.size(0))
-                    top5.update(acc5, images.size(0))
+                acc1, acc5 = accuracy(output, target, topk=(1, 5))
+                losses.update(loss, images.size(0))
+                top1.update(acc1, images.size(0))
+                top5.update(acc5, images.size(0))
 
-                    loss.backward()
-                self.optimizer.step()
+                # self.optimizer.zero_grad()
+                loss.backward()
+            self.optimizer.step()
 
-                # measure elapsed time
-                batch_time.update(time.time() - end)
-                end = time.time()
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
 
-                t.set_postfix({
-                    'loss': losses.avg,
-                    'top1': top1.avg,
-                    'top5': top5.avg,
-                #     'R': images.size(2),
-                #     'lr': new_lr,
-                #     'loss_type': loss_type,
-                #     'seed': str(subnet_seed),
-                #     'str': subnet_str,
-                #     'data_time': data_time.avg,
-                })
-                t.update(1)
-                end = time.time()
+            if i % self.config['print_freq'] == 0:
+                nncf_logger.info(
+                    '{rank}'
+                    'Train: [{0}/{1}] '
+                    'Time: {batch_time.val:.3f} ({batch_time.avg:.3f}) '
+                    'Lr: {lr:.3} '
+                    'Loss: {loss.val:.4f} ({loss.avg:.4f}) '
+                    'Acc@1: {top1.val:.3f} ({top1.avg:.3f}) '
+                    'Acc@5: {top5.val:.3f} ({top5.avg:.3f})'.format(
+                        i, len_train_loader, batch_time=batch_time, lr=self.optimizer.param_groups[0]['lr'], loss=losses,
+                        top1=top1, top5=top5,
+                        rank=''))  # {}:'.format(self.config['rank']) if self.config['multiprocessing_distributed'] else ''
+                # )) # TODO: Fix getting multiprocessing info
+
+            end = time.time()
         return losses.avg, (top1.avg, top5.avg)
 
 
@@ -504,51 +516,109 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         top1 = AverageMeter()
         top5 = AverageMeter()
 
+        len_val_loader = len(self.val_loader)
+
         with torch.no_grad():
             end = time.time()
-            with tqdm(total=len(self.val_loader),
-                      desc='Validate Epoch #{}'.format(epoch + 1)) as t:
-                for i, (images, labels) in enumerate(self.val_loader): #data_loader):
-                    images, labels = images.cuda(), labels.cuda()
-                    # compute output
-                    output = dynamic_net(images)
-                    # loss = self.test_criterion(output, labels)
-                    loss = self.criterion(output, labels)
-                    # measure accuracy and record loss
-                    losses.update(loss, images.size(0))
-                    acc1, acc5 = accuracy(output, labels, topk=(1, 5))
-                    top1.update(acc1, images.size(0))
-                    top5.update(acc5, images.size(0))
-                    t.set_postfix({
-                        'loss': losses.avg,
-                        'top1': top1.avg,
-                        'top5': top5.avg,
-                        'img_size': images.size(2),
-                    })
-                    t.update(1)
+            # with tqdm(total=len(self.val_loader),
+            #           desc='Validate Epoch #{}'.format(epoch + 1)) as t:
+            for i, (images, labels) in enumerate(self.val_loader): #data_loader):
+                images, labels = images.cuda(), labels.cuda()
+                # compute output
+                output = dynamic_net(images)                    # loss = self.test_criterion(output, labels)
+                loss = self.criterion(output, labels)
+                # measure accuracy and record loss
+                losses.update(loss, images.size(0))
+                acc1, acc5 = accuracy(output, labels, topk=(1, 5))
+                top1.update(acc1, images.size(0))
+                top5.update(acc5, images.size(0))
+                if i % self.config['print_freq'] == 0:
+                    nncf_logger.info(
+                    '{rank}'
+                    'Val: [{0}/{1}] '
+                    'Time: {batch_time.val:.3f} ({batch_time.avg:.3f}) '
+                    'Loss: {loss.val:.4f} ({loss.avg:.4f}) '
+                    'Acc@1: {top1.val:.3f} ({top1.avg:.3f}) '
+                    'Acc@5: {top5.val:.3f} ({top5.avg:.3f})'.format(
+                        i, len_val_loader, batch_time=batch_time, loss=losses,
+                        top1=top1, top5=top5,
+                        rank='')) #{}:'.format(self.config['rank']) if self.config['multiprocessing_distributed'] else ''
+                    # )) # TODO: Fix getting multiprocessing info
+            nncf_logger.info(
+                'Val: [{0}/{1}] '
+                'Acc@1: {top1.val:.3f} ({top1.avg:.3f}) '
+                'Acc@5: {top5.val:.3f} ({top5.avg:.3f})'.format(
+                    i, len_val_loader,
+                    top1=top1, top5=top5))#,
+                    # rank=''))  # {}:'.format(self.config['rank']) if self.config['multiprocessing_distributed'] else ''
+            # )) # TODO: Fix getting multiprocessing info
+            if is_main_process():
+                # TODO: Tensorboard.
+                pass # TODO
+
         return losses.avg, top1.avg, top5.avg, 'TODO_log'
 
-    # TODO: Move to utils or use NNCF build in funcs
-    def write_log(self, logs_path, log_str, prefix='valid', should_print=True, mode='a'):
-        if not os.path.exists(logs_path):
-            os.makedirs(logs_path, exist_ok=True)
-        """ prefix: valid, train, test """
-        if prefix in ['valid', 'test']:
-            with open(os.path.join(logs_path, 'valid_console.txt'), mode) as fout:
-                fout.write(log_str + '\n')
-                fout.flush()
-        if prefix in ['valid', 'test', 'train']:
-            with open(os.path.join(logs_path, 'train_console.txt'), mode) as fout:
-                if prefix in ['valid', 'test']:
-                    fout.write('=' * 10)
-                fout.write(log_str + '\n')
-                fout.flush()
-        else:
-            with open(os.path.join(logs_path, '%s.txt' % prefix), mode) as fout:
-                fout.write(log_str + '\n')
-                fout.flush()
-        if should_print:
-            print(log_str)
+    def _create_output_folder(self, config):
+        self.main_path = config.get('output_path', 'bootstrapNASOutput')
+        stage = config.get('fine_tuner_params', None).get('stage', None)
+        assert stage is not None, 'Config file does not specified stage'
+        self.main_path = os.path.join(self.main_path, stage)
+        if stage in ['width', 'depth']:
+            phase = config.get('fine_tuner_params', None).get('phase', None)
+            assert phase is not None, 'Config file does not specified phase'
+            self.main_path = os.path.join(self.main_path, str(phase))
+        os.makedirs(os.path.join(self.main_path, 'logs'), exist_ok=True)
+        os.makedirs(os.path.join(self.main_path, 'checkpoint'), exist_ok=True)
+
+
+    def adjust_learning_rate(self, optimizer, epoch, batch=0, nBatch=None):
+        """ adjust learning of a given optimizer and return the new learning rate """
+        new_lr = calc_learning_rate(epoch, self.init_lr, self.n_epochs, batch, nBatch, self.lr_schedule_type)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = new_lr
+        return new_lr
+
+
+    def warmup_adjust_learning_rate(self, optimizer, T_total, nBatch, epoch, batch=0, warmup_lr=0):
+        T_cur = epoch * nBatch + batch + 1
+        new_lr = T_cur / T_total * (self.init_lr - warmup_lr) + warmup_lr
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = new_lr
+        return new_lr
+
+    # TODO: Refactor to take into account convs without associated normalization.
+    def reorganize_weights(self):
+        nncf_graph = self.target_model.get_original_graph()
+        conv_bn_pattern = N('conv2d') + BN
+        nx_graph = deepcopy(nncf_graph.get_nx_graph_copy())
+        from nncf.torch.graph.graph_matching import search_all
+        matches = search_all(nx_graph, conv_bn_pattern)
+        conv2d_bn_node_pairs = []
+        for match in matches:
+            input_node_key = match[0]
+            output_node_key = match[-1]
+            conv_node = nncf_graph.get_node_by_key(input_node_key)
+            bn_node = nncf_graph.get_node_by_key(output_node_key)
+            conv2d_bn_node_pairs.append((conv_node, bn_node))
+
+        for conv_node, bn_node in conv2d_bn_node_pairs:
+            conv_module_scope = conv_node.ia_op_exec_context.scope_in_model
+            conv_module = self.target_model.get_module_by_scope(conv_module_scope)
+
+            importance = torch.sum(torch.abs(conv_module.weight.data), dim=(0, 2, 3))
+            sorted_importance, sorted_idx = torch.sort(importance, dim=0, descending=True)
+            conv_module.weight.data = torch.index_select(
+                conv_module.weight.data, 1, sorted_idx)
+
+            bn_module_scope = bn_node.ia_op_exec_context.scope_in_model
+            bn_module = self.target_model.get_module_by_scope(bn_module_scope)
+
+            # TODO: This is causing a RuntimeError: CUDA error: device-side assert triggered
+            # bn_module.weight.data = torch.index_select(bn_module.weight.data, 0, sorted_idx)
+            # bn_module.bias.data = torch.index_select(bn_module.bias.data, 0, sorted_idx)
+            # if type(bn_module) in [nn.BatchNorm1d, nn.BatchNorm2d]:
+            #     bn_module.running_mean.data = torch.index_select(bn_module.running_mean.data, 0, sorted_idx)
+            #     bn_module.running_var.data = torch.index_select(bn_module.running_var.data, 0, sorted_idx)
 
 
 class AverageMeter:
