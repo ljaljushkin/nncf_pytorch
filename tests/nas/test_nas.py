@@ -36,6 +36,7 @@ def _test_model(model_name):
     dummy_forward = create_dummy_forward_fn(input_info_list)
 
     compressed_model = NNCFNetwork(model, input_infos=input_info_list)
+    config["test_mode"] = True
     composite_builder = BootstrapNASBuilder(config)
     composite_builder.apply_to(compressed_model)
     compression_ctrl = composite_builder.build_controller(compressed_model)
@@ -106,6 +107,7 @@ def test_elastic_width_vgg11_k7(): # VGG with Bias False
 
 def test_elastic_kernel():
     config = get_empty_config(input_sample_sizes=[1, 30, 30, 7])
+    config["test_mode"] = True
     model = BasicConvTestModel(in_channels=30, out_channels=20, kernel_size=7)
 
     input_info_list = create_input_infos(config)

@@ -36,7 +36,7 @@ class ElasticLinearOp(nn.Module):
       return self.linear.bias[:out_features] if self.bias else None
 
     def forward(self, weight, inputs):
-        nncf_logger.info('Linear in scope={}'.format(self.scope))
+        nncf_logger.debug('Linear in scope={}'.format(self.scope))
         in_features = inputs.size(1)
 
         # TODO: Bias
@@ -125,7 +125,7 @@ class ElasticConv2DOp(nn.Module):
         return filters
 
     def set_active_kernel_size(self, kernel_size):
-        nncf_logger.info('set active elastic_kernel={} for scope={}'.format(kernel_size, self.scope))
+        nncf_logger.debug('set active elastic_kernel={} for scope={}'.format(kernel_size, self.scope))
         assert kernel_size % 2 > 0, 'kernel size should be odd number'
         if kernel_size not in self.kernel_size_list:
             raise ValueError(
@@ -133,7 +133,7 @@ class ElasticConv2DOp(nn.Module):
         self.active_kernel_size = kernel_size
 
     def set_active_out_channels(self, num_channels):
-        nncf_logger.info('set active out channels={} for scope={}'.format(num_channels, self.scope))
+        nncf_logger.debug('set active out channels={} for scope={}'.format(num_channels, self.scope))
         if 0 > num_channels > self.max_out_channels:
             raise ValueError(
                 'invalid number of output channels to set. Should be within [{}, {}]'.format(0, self.max_out_channels))
@@ -143,7 +143,7 @@ class ElasticConv2DOp(nn.Module):
         self.active_out_channels = num_channels
 
     def forward(self, weight, inputs):
-        nncf_logger.info('Conv2d with active kernel size={} and active number of out channels={} in scope={}'.format(self.active_kernel_size, self.active_out_channels, self.scope))
+        nncf_logger.debug('Conv2d with active kernel size={} and active number of out channels={} in scope={}'.format(self.active_kernel_size, self.active_out_channels, self.scope))
         kernel_size = self.active_kernel_size
         out_channels = self.active_out_channels
         in_channels = inputs.size(1)
@@ -176,7 +176,7 @@ class ElasticBatchNormOp(nn.Module):
         self.scope = scope
 
     def bn_forward(self, feature_dim, **bn_params):
-        nncf_logger.info('BN with active num_features={} in scope={}'.format(feature_dim, self.scope))
+        nncf_logger.debug('BN with active num_features={} in scope={}'.format(feature_dim, self.scope))
         if self.num_features == feature_dim:
             return list(bn_params.values())
         # TODO: training, track_running_stats.
