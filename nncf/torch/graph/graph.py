@@ -13,11 +13,7 @@
 
 import os
 from copy import deepcopy
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import TypeVar
+from typing import Dict, List, Optional, Tuple, TypeVar
 
 import networkx as nx
 import networkx.algorithms.isomorphism as iso

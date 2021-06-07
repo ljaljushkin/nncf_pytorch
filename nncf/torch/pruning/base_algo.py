@@ -13,8 +13,7 @@
 
 from functools import partial
 from functools import update_wrapper
-from typing import List
-from typing import Optional
+from typing import List, Optional
 
 from torch import nn
 

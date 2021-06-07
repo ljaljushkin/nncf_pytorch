@@ -11,13 +11,7 @@
  limitations under the License.
 """
 from abc import ABC, abstractmethod
-from typing import Dict
-from typing import Callable
-from typing import Any
-from typing import Union
-from typing import List
-from typing import Tuple
-from typing import TypeVar
+from typing import Dict, Callable, Any, Union, List, Tuple, TypeVar
 
 import onnx
 import numpy as np

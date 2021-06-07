@@ -11,10 +11,7 @@
  limitations under the License.
 """
 
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from nncf import NNCFConfig
 from nncf.api.compression import CompressionAlgorithmBuilder

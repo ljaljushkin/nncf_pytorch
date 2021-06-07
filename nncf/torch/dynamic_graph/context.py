@@ -19,12 +19,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from functools import partial
 from itertools import islice
-from typing import Callable
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 import torch
 
 from nncf.torch.debug import is_debug

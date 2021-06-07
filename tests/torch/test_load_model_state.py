@@ -11,9 +11,7 @@
  limitations under the License.
 """
 import os
-from typing import Dict
-from typing import List
-from typing import Set
+from typing import Dict, List, Set
 
 import pytest
 import torch

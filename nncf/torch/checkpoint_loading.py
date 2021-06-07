@@ -13,10 +13,7 @@
 import re
 import warnings
 from enum import Enum
-from typing import Dict
-from typing import List
-from typing import Set
-from typing import Tuple
+from typing import Dict, List, Set, Tuple
 
 import torch
 

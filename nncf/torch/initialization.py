@@ -1,9 +1,5 @@
 import math
-from typing import Any
-from typing import Callable
-from typing import Dict
-from typing import Optional
-from typing import Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import torch
 from functools import partial

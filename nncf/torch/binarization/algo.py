@@ -11,8 +11,7 @@
  limitations under the License.
 """
 from collections import OrderedDict
-from typing import List, Callable
-from typing import Optional
+from typing import List, Callable, Optional
 
 import torch
 from texttable import Texttable

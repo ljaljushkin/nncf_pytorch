@@ -18,11 +18,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from pathlib import Path
 from string import Template
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Set
-from typing import Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import networkx as nx
 import numpy as np

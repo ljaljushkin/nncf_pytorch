@@ -12,8 +12,7 @@
 import itertools
 from collections import Counter
 from functools import partial
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import onnx
 import pytest

@@ -16,10 +16,7 @@ import math
 from collections import OrderedDict
 from collections import namedtuple
 from pathlib import Path
-from typing import Callable
-from typing import Dict
-from typing import List
-from typing import NamedTuple
+from typing import Callable, Dict, List, NamedTuple
 
 import os
 import pytest

@@ -11,8 +11,7 @@
  limitations under the License.
 """
 
-from typing import Any
-from typing import Dict
+from typing import Any, Dict
 
 from nncf.common.utils.ordered_enum import OrderedEnum
 

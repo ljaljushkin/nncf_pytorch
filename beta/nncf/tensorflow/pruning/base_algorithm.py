@@ -11,8 +11,7 @@
  limitations under the License.
 """
 
-from typing import List
-from typing import Tuple
+from typing import List, Tuple
 
 import tensorflow as tf
 

@@ -16,9 +16,7 @@ import json
 import sys
 import csv
 import datetime
-from typing import Tuple
-from typing import List
-from typing import Optional
+from typing import Tuple, List, Optional
 
 import tensorflow as tf
 import pytest

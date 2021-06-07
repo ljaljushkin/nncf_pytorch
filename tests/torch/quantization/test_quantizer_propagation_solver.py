@@ -14,9 +14,7 @@
 import random
 from collections import namedtuple
 from itertools import permutations
-from typing import Dict
-from typing import List
-from typing import Tuple
+from typing import Dict, List, Tuple
 from unittest.mock import MagicMock
 
 import networkx as nx

@@ -10,8 +10,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-from typing import Dict
-from typing import Set
+from typing import Dict, Set
 
 from nncf.torch.algo_selector import ZeroCompressionLoss
 from nncf.api.compression import CompressionStage

@@ -12,11 +12,7 @@
 """
 import warnings
 from os import path as osp
-from typing import Any
-from typing import Callable
-from typing import Dict
-from typing import Tuple
-from typing import Union
+from typing import Any, Callable, Dict, Tuple, Union
 
 import torch
 from torch.distributed import barrier

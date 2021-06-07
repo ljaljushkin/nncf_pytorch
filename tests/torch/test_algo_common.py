@@ -14,8 +14,7 @@ import copy
 import itertools
 import os
 from functools import reduce
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import onnx
 import pytest

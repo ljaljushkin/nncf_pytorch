@@ -12,8 +12,7 @@
 """
 
 from collections import namedtuple
-from typing import List
-from typing import Optional
+from typing import List, Optional
 
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler

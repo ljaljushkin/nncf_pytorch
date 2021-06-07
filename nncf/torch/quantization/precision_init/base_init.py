@@ -12,9 +12,7 @@
 """
 
 from collections import OrderedDict
-from typing import Dict
-from typing import List
-from typing import Union
+from typing import Dict, List, Union
 
 from copy import deepcopy
 

@@ -13,11 +13,7 @@
 import json
 from abc import ABC
 from abc import abstractmethod
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import TypeVar
-from typing import Union
+from typing import Dict, List, Optional, TypeVar, Union
 
 import tensorflow as tf
 

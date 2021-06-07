@@ -1,10 +1,6 @@
 from collections import Counter
 from copy import deepcopy
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Set
-from typing import Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.utils.logger import logger as nncf_logger

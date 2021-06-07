@@ -1,6 +1,4 @@
-from typing import Any
-from typing import Callable
-from typing import Dict
+from typing import Any, Callable, Dict
 
 from nncf.common.graph.transformations.commands import TargetPoint
 from nncf.common.graph.transformations.commands import TargetType
