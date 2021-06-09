@@ -12,7 +12,7 @@
 """
 
 from copy import deepcopy
-from typing import Dict, List, Optional, TypeVar
+from typing import Dict, Optional, TypeVar
 
 import torch.nn
 
