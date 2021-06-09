@@ -11,7 +11,7 @@
  limitations under the License.
 """
 from collections import OrderedDict
-from typing import List, Callable, Optional
+from typing import List, Callable, Optional, Dict
 
 import torch
 from texttable import Texttable
@@ -47,7 +47,8 @@ from nncf.torch.quantization.schedulers import QUANTIZATION_SCHEDULERS
 
 @COMPRESSION_ALGORITHMS.register('binarization')
 class BinarizationBuilder(PTCompressionAlgorithmBuilder):
-    def __init__(self, config, should_init: bool = True, compression_setups: Optional[List[CompressionSetup]] = None):
+    def __init__(self, config, should_init: bool = True,
+                 compression_setups: Optional[Dict[str, CompressionSetup]] = None):
         super().__init__(config, should_init, compression_setups)
         self.mode = self.config.get('mode', BinarizationMode.XNOR)
 

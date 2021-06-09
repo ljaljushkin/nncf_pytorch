@@ -48,13 +48,13 @@ class PTCompositeCompressionLoss(CompositeCompressionLoss, PTCompressionLoss):
 class PTCompositeCompressionAlgorithmBuilder(
         CompositeCompressionAlgorithmBuilder, PTCompressionAlgorithmBuilder):
     def __init__(self, config: 'NNCFConfig', should_init: bool = True,
-                 compression_setups: Optional[List[CompressionSetup]] = None):
+                 compression_setups: Optional[Dict[str, CompressionSetup]] = None):
         super().__init__(config, should_init, compression_setups)
         from nncf import NNCFConfig
         from nncf.torch.model_creation import get_compression_algorithm
         saved_builder_classes = []
         if compression_setups is not None:
-            saved_builder_classes = map(lambda x: COMPRESSION_ALGORITHMS.get(x.name), compression_setups)
+            saved_builder_classes = map(COMPRESSION_ALGORITHMS.get, compression_setups)
         global_should_init = should_init
         compression_config_json_section = config.get('compression', {})
         compression_config_json_section = deepcopy(compression_config_json_section)
@@ -103,8 +103,13 @@ class PTCompositeCompressionAlgorithmBuilder(
     def _build_controller(self, model: ModelType) -> PTCompressionAlgorithmController:
         """
         Simple implementation of building controller without setting builder state and loading controller's one
-        It's not needed for CompositeBuilder since there's no state for composite builder and controller.
         """
+        if len(self._child_builders) == 1:
+            return self._child_builders[0].build_controller(model)
+        composite_ctrl = PTCompositeCompressionAlgorithmController(model)
+        for builder in self.child_builders:
+            composite_ctrl.add(builder.build_controller(model))
+        return composite_ctrl
 
     def build_controller(self, model: ModelType) -> PTCompressionAlgorithmController:
         """
@@ -116,12 +121,7 @@ class PTCompositeCompressionAlgorithmBuilder(
          algorithm-specific compression during fine-tuning.
         :return: The instance of the `PTCompositeCompressionAlgorithmController`.
         """
-        if len(self._child_builders) == 1:
-            return self._child_builders[0].build_controller(model)
-        composite_ctrl = PTCompositeCompressionAlgorithmController(model)
-        for builder in self.child_builders:
-            composite_ctrl.add(builder.build_controller(model))
-        return composite_ctrl
+        return self._build_controller(model)
 
     def get_transformation_layout(self, model: ModelType) -> PTTransformationLayout:
         """
@@ -149,13 +149,13 @@ class PTCompositeCompressionAlgorithmController(
 
     def get_compression_state(self) -> Dict:
         """
-        Returns PT-specific representatino of entire compression state, containing nncf_network state
+        Returns PT-specific representation of entire compression state, containing nncf_network state
         (with state of the builder) and composite controller state, containing the state of all children controllers.
         This checkpoint can be used to resume compression via compression_state of create_compressed_model
         :return: The entire compression state.
         """
         model_state = self.model.state_dict()
-        setups = [child_ctrl.get_compression_setup() for child_ctrl in self._child_ctrls]
+        setups = dict([child_ctrl.get_compression_setup() for child_ctrl in self._child_ctrls])
         return PTCompressionState(setups, model_state).get_state()
 
     def distributed(self):
@@ -178,5 +178,5 @@ class PTCompositeCompressionAlgorithmController(
 
     def load_state(self, states):
         self._check_loaded_compression_stage(states)
-        for child_ctrl, child_state in zip(self.child_ctrls, states['scheduler']):
-            child_ctrl.load_state({'scheduler': child_state})
+        for child_ctrl, child_state in zip(self.child_ctrls, states[self.SCHEDULER_ATTR]):
+            child_ctrl.load_state({self.SCHEDULER_ATTR: child_state})

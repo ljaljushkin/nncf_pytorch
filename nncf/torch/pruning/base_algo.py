@@ -13,7 +13,7 @@
 
 from functools import partial
 from functools import update_wrapper
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from torch import nn
 
@@ -55,7 +55,7 @@ class NodeInfo:
 
 class BasePruningAlgoBuilder(PTCompressionAlgorithmBuilder):
     def __init__(self, config, should_init: bool = True,
-                 compression_setups: Optional[List[CompressionSetup]] = None):
+                 compression_setups: Optional[Dict[str, CompressionSetup]] = None):
         super().__init__(config, should_init, compression_setups)
         params = config.get('params', {})
         self._params = params

@@ -83,7 +83,8 @@ class TargetType(OrderedEnum):
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object.
+        Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
         """
         return {TARGET_TYPE_STATE_ATTR: self.name}
 

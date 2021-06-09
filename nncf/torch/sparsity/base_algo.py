@@ -12,7 +12,7 @@
 """
 
 from collections import namedtuple
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from nncf.torch.algo_selector import ZeroCompressionLoss
 
@@ -37,7 +37,7 @@ SparseModuleInfo = namedtuple('SparseModuleInfo', ['module_name', 'module', 'ope
 
 class BaseSparsityAlgoBuilder(PTCompressionAlgorithmBuilder):
     def __init__(self, config, should_init: bool = True,
-                 compression_setups: Optional[List[CompressionSetup]] = None):
+                 compression_setups: Optional[Dict[str, CompressionSetup]] = None):
         super().__init__(config, should_init, compression_setups)
         self._sparsified_module_info = []
 

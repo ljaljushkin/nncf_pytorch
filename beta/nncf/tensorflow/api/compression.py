@@ -43,7 +43,7 @@ class TFCompressionAlgorithmInitializer(ABC):
 
 
 class TFCompressionState(CompressionState, tf.train.experimental.PythonState):
-    def __init__(self, compression_setups: List[CompressionSetup]):
+    def __init__(self, compression_setups: Dict[str, CompressionSetup]):
         super().__init__(compression_setups)
 
     def serialize(self) -> str:
@@ -126,7 +126,8 @@ class TFCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object.
+        Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
         """
         return {}
 

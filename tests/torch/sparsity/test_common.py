@@ -100,7 +100,8 @@ class TestSparseModules:
         saved_nncf_state = ctrl.get_compression_state()
         pt_compression_state = PTCompressionState()
         pt_compression_state.load_state(saved_nncf_state)
-        saved_ctrl_state = pt_compression_state.compression_setups[0].ctrl_state
+        first_setup = next(iter(pt_compression_state.compression_setups.values()))
+        saved_ctrl_state = first_setup.ctrl_state
         assert saved_ctrl_state == ctrl.get_state()
         assert saved_ctrl_state == {
             PTCompressionAlgorithmController.COMPRESSION_STAGE_ATTR: CompressionStage.UNCOMPRESSED,
@@ -115,7 +116,8 @@ class TestSparseModules:
         loaded_compression_state = ctrl.get_compression_state()
         pt_compression_state = PTCompressionState()
         pt_compression_state.load_state(loaded_compression_state)
-        loaded_ctrl_state = pt_compression_state.compression_setups[0].ctrl_state
+        first_setup = next(iter(pt_compression_state.compression_setups.values()))
+        loaded_ctrl_state = first_setup.ctrl_state
         assert loaded_ctrl_state == ctrl.get_state()
         assert loaded_ctrl_state == saved_ctrl_state
 

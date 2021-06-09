@@ -274,7 +274,7 @@ class CompositeCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
     """
 
     def __init__(self, config: NNCFConfig, should_init: bool = True,
-                 compression_setups: Optional[List[CompressionSetup]] = None):
+                 compression_setups: Optional[Dict[str, CompressionSetup]] = None):
         """
         Initializes internal state of the composite compression algorithm builder
 

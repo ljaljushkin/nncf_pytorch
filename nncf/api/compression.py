@@ -13,7 +13,7 @@
 
 from abc import ABC
 from abc import abstractmethod
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, TypeVar, Union
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
 from nncf import NNCFConfig
 from nncf.api.statistics import Statistics
@@ -151,21 +151,27 @@ class CompressionStage(OrderedEnum):
         return CompressionStage.PARTIALLY_COMPRESSED
 
 
-class CompressionSetup(NamedTuple):
+class CompressionSetup:
     """
-    Consists of algorithm key, builder and controller states - JSON-compatible dictionaries defining how to setup the
-    compression
+    Consists of builder and controller states - a dictionaries with Python data structures,
+    defining how to setup the compression
     """
-    name: str
-    builder_state: Dict
-    ctrl_state: Dict
+    BUILDER_STATE_ATTR = 'builder_state'
+    CONTROLLER_STATE_ATTR = 'ctrl_state'
+
+    def __init__(self, builder_state: Dict, ctrl_state: Dict):
+        self.builder_state = builder_state
+        self.ctrl_state = ctrl_state
 
     def get_state(self) -> Dict:
         """
-        :return: the JSON-compatible representation of the object
+        :return: a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
         """
-        # pylint:disable=no-member
-        return self._asdict()
+        return {
+            self.BUILDER_STATE_ATTR: self.builder_state,
+            self.CONTROLLER_STATE_ATTR: self.ctrl_state
+        }
 
     @classmethod
     def from_state(cls, state: Dict) -> 'CompressionSetup':
@@ -182,11 +188,11 @@ class CompressionState:
     """
     COMPRESSION_SETUPS_ATTR = 'nncf_compression_setups'
 
-    def __init__(self, compression_setups: List[CompressionSetup] = None):
+    def __init__(self, compression_setups: Dict[str, CompressionSetup] = None):
         self._compression_setups = compression_setups
 
     @property
-    def compression_setups(self) -> List[CompressionSetup]:
+    def compression_setups(self) -> Dict[str, CompressionSetup]:
         """
         Returns list of structures defining how to setup the compression.
         """
@@ -194,17 +200,19 @@ class CompressionState:
 
     def get_state(self) -> Dict:
         """
-        :return: Framework-friendly representation of the object for saving to the checkpoint
+        :return: a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
         """
-        return {self.COMPRESSION_SETUPS_ATTR: list(map(lambda x: x.get_state(), self.compression_setups))}
+        setup_states = {name: setup.get_state() for name, setup in self.compression_setups.items()}
+        return {self.COMPRESSION_SETUPS_ATTR: setup_states}
 
     def load_state(self, state: Dict):
         """
         Loads state of the object
         :param state: Output of `get_state()` method.
         """
-        compression_setups_state = state[self.COMPRESSION_SETUPS_ATTR]
-        self._compression_setups = list(map(CompressionSetup.from_state, compression_setups_state))
+        setup_states = state[self.COMPRESSION_SETUPS_ATTR]
+        self._compression_setups = {name: CompressionSetup.from_state(state) for name, state in setup_states.items()}
 
 
 class CompressionAlgorithmController(ABC):
@@ -341,7 +349,7 @@ class CompressionAlgorithmBuilder(ABC):
     """
 
     def __init__(self, config: NNCFConfig, should_init: bool = True,
-                 compression_setups: Optional[List[CompressionSetup]] = None):
+                 compression_setups: Optional[Dict[str, CompressionSetup]] = None):
         """
         Initializes internal state of the compression algorithm builder
 
@@ -349,8 +357,8 @@ class CompressionAlgorithmBuilder(ABC):
             method.
         :param should_init: If False, trainable parameter initialization will be
             skipped during building.
-        :param compression_setups: the list of structures (includes builder and controller states) defining how to
-        unambiguously setup a compression state.
+        :param compression_setups: algorithm key per compression setup (includes builder and controller states),
+        defining how to unambiguously setup a compression state.
         """
         self.config = config
         self.should_init = should_init
@@ -392,7 +400,8 @@ class CompressionAlgorithmBuilder(ABC):
     @abstractmethod
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object.
+        Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
         """
 
     @abstractmethod

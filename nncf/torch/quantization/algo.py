@@ -465,7 +465,8 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
     _BUILD_TIME_METRIC_INFOS_STATE_ATTR = 'build_time_metric_infos'
     _QUANTIZER_SETUP_STATE_ATTR = 'quantizer_setup'
 
-    def __init__(self, config, should_init: bool = True, compression_setups: Optional[List[CompressionSetup]] = None):
+    def __init__(self, config, should_init: bool = True,
+                 compression_setups: Optional[Dict[str, CompressionSetup]] = None):
         super().__init__(config, should_init, compression_setups)
         self._debug_interface = QuantizationDebugInterface() if is_debug() else None
         self._weight_quantizers = OrderedDict()  # Quantizers applied via UpdateWeights
@@ -504,7 +505,8 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object.
+        Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
         """
         build_time_metric_infos_state = {}
         if self._build_time_metric_infos:

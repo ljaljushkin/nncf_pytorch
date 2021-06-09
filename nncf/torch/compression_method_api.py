@@ -22,20 +22,21 @@ from typing import List, Tuple, TypeVar, Dict, Optional
 import torch
 from torch import nn
 
+from nncf.api.compression import CompressionAlgorithmBuilder
+from nncf.api.compression import CompressionLevel
+from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionSetup
 from nncf.api.compression import CompressionState
+from nncf.common.compression import BaseCompressionAlgorithmController
+from nncf.common.utils.logger import logger as nncf_logger
 from nncf.common.utils.registry import Registry
 from nncf.config import NNCFConfig
 from nncf.torch.graph.transformations.layout import PTTransformationLayout
-from nncf.torch.layers import NNCF_MODULES_DICT, NNCF_WRAPPED_USER_MODULES_DICT
-from nncf.common.utils.logger import logger as nncf_logger
-from nncf.common.compression import BaseCompressionAlgorithmController
+from nncf.torch.layers import NNCF_MODULES_DICT
+from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.nncf_network import PTModelTransformer
 from nncf.torch.utils import should_consider_scope
-from nncf.api.compression import CompressionAlgorithmBuilder
-from nncf.api.compression import CompressionLoss
-from nncf.api.compression import CompressionLevel
 
 ModelType = TypeVar('ModelType')
 
@@ -89,7 +90,8 @@ class PTCompressionState(CompressionState):
     """
     MODEL_STATE_ATTR = 'nncf_model_state'
 
-    def __init__(self, compression_setups: List[CompressionSetup] = None, model_state: Dict[str, torch.Tensor] = None):
+    def __init__(self, compression_setups: Dict[str, CompressionSetup] = None,
+                 model_state: Dict[str, torch.Tensor] = None):
         super().__init__(compression_setups)
         self._model_state = model_state
 
@@ -146,7 +148,7 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
         """
         self._check_loaded_compression_stage(state)
         if self.scheduler is not None:
-            self.scheduler.load_state(state['scheduler'])
+            self.scheduler.load_state(state[self.SCHEDULER_ATTR])
 
     def _check_loaded_compression_stage(self, state: Dict[str, object]) -> None:
         if self.COMPRESSION_LEVEL_ATTR in state:
@@ -172,12 +174,12 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
         return {self.SCHEDULER_ATTR: self.scheduler.get_state(),
                 self.COMPRESSION_STAGE_ATTR: self.compression_stage()}
 
-    def get_compression_setup(self) -> CompressionSetup:
+    def get_compression_setup(self) -> Tuple[str, CompressionSetup]:
         ctrl_state = self.get_state()
         if self._builder_state_with_name is None:
             raise RuntimeError('Internal error: builder state is not set for the controller')
         name, builder_state = self._builder_state_with_name
-        return CompressionSetup(name, builder_state, ctrl_state)
+        return name, CompressionSetup(builder_state, ctrl_state)
 
     def get_compression_state(self) -> Dict:
         """
@@ -187,7 +189,8 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
         :return: The entire compression state.
         """
         model_state = self.model.state_dict()
-        setups = [self.get_compression_setup()]
+        name, builder_state = self.get_compression_setup()
+        setups = {name: builder_state}
         return PTCompressionState(setups, model_state).get_state()
 
 
@@ -199,7 +202,7 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
     """
 
     def __init__(self, config: NNCFConfig, should_init: bool = True,
-                 compression_setups: Optional[List[CompressionSetup]] = None):
+                 compression_setups: Optional[Dict[str, CompressionSetup]] = None):
         """
         Arguments:
           `config` - a dictionary that contains parameters of compression method
@@ -215,11 +218,10 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
         self._ctrl_state = None
 
         if self._compression_setups is not None:
-            for compression_setup in self._compression_setups:
-                name, builder_state, ctrl_state = compression_setup
+            for name, setup in self._compression_setups.items():
                 if self.registered_name == name:
-                    self.load_state(builder_state)
-                    self._ctrl_state = ctrl_state
+                    self.load_state(setup.builder_state)
+                    self._ctrl_state = setup.ctrl_state
 
     def apply_to(self, model: NNCFNetwork) -> NNCFNetwork:
         transformation_layout = self.get_transformation_layout(model)
@@ -258,7 +260,8 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
 
     def get_state(self) -> Dict[str, object]:
         """
-        Returns a JSON-compatible dictionary containing a state of the object.
+        Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
         """
         return {}
 

@@ -330,7 +330,8 @@ def extract_compression_stage_from_checkpoint(last_checkpoint_path):
     nnsf_state = torch.load(last_checkpoint_path)[NNCF_CHECKPOINT_ATTR]
     pt_compression_state = PTCompressionState()
     pt_compression_state.load_state(nnsf_state)
-    ctrl_state = pt_compression_state.compression_setups[0].ctrl_state
+    first_setup = next(iter(pt_compression_state.compression_setups.values()))
+    ctrl_state = first_setup.ctrl_state
     compression_stage = ctrl_state[PTCompressionAlgorithmController.COMPRESSION_STAGE_ATTR]
     return compression_stage
 
