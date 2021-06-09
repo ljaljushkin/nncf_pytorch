@@ -151,13 +151,17 @@ class CompressionStage(OrderedEnum):
         return CompressionStage.PARTIALLY_COMPRESSED
 
 
+class CompressionSetupStateNames:
+    BUILDER = 'builder_state'
+    CONTROLLER = 'ctrl_state'
+
+
 class CompressionSetup:
     """
     Consists of builder and controller states - a dictionaries with Python data structures,
     defining how to setup the compression
     """
-    BUILDER_STATE_ATTR = 'builder_state'
-    CONTROLLER_STATE_ATTR = 'ctrl_state'
+    _state_names = CompressionSetupStateNames
 
     def __init__(self, builder_state: Dict, ctrl_state: Dict):
         self.builder_state = builder_state
@@ -169,8 +173,8 @@ class CompressionSetup:
         represents state of the object.
         """
         return {
-            self.BUILDER_STATE_ATTR: self.builder_state,
-            self.CONTROLLER_STATE_ATTR: self.ctrl_state
+            self._state_names.BUILDER: self.builder_state,
+            self._state_names.CONTROLLER: self.ctrl_state
         }
 
     @classmethod

@@ -28,26 +28,26 @@ from torch import nn
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler
 from nncf.api.compression import CompressionSetup
-from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
-from nncf.torch.algo_selector import ZeroCompressionLoss
 from nncf.api.compression import CompressionStage
+from nncf.common.batchnorm_adaptation import BatchnormAdaptationAlgorithm
 from nncf.common.graph.graph import MODEL_INPUT_OP_NAME
 from nncf.common.graph.transformations.commands import TargetType
-from nncf.common.quantization.structs import QuantizableModule
-from nncf.common.quantization.structs import QuantizationConstraints
-from nncf.common.quantization.structs import QuantizerGroup
 from nncf.common.hardware.config import HWConfig
 from nncf.common.hardware.config import HWConfigType
 from nncf.common.quantization.statistics import QuantizationStatistics
-from nncf.common.statistics import NNCFStatistics
+from nncf.common.quantization.structs import QuantizableModule
+from nncf.common.quantization.structs import QuantizationConstraints
+from nncf.common.quantization.structs import QuantizerGroup
 from nncf.common.schedulers import BaseCompressionScheduler
+from nncf.common.statistics import NNCFStatistics
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.common.utils.os import safe_open
-from nncf.common.batchnorm_adaptation import BatchnormAdaptationAlgorithm
-from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
-from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 from nncf.config import NNCFConfig
 from nncf.config.utils import extract_bn_adaptation_init_params
+from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
+from nncf.torch.algo_selector import ZeroCompressionLoss
+from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
+from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 from nncf.torch.debug import CallCountTracker
 from nncf.torch.debug import DebugInterface
 from nncf.torch.debug import is_debug
@@ -82,10 +82,10 @@ from nncf.torch.quantization.layers import QuantizationMode
 from nncf.torch.quantization.layers import QuantizerConfig
 from nncf.torch.quantization.layers import QuantizerExportMode
 from nncf.torch.quantization.layers import QuantizersSwitcher
-from nncf.torch.quantization.metrics import MemoryConsumptionStatisticsCollector
-from nncf.torch.quantization.metrics import QuantizationShareStatisticsCollector
-from nncf.torch.quantization.metrics import QuantizationShareBuildTimeInfo
 from nncf.torch.quantization.metrics import BitwidthDistributionStatisticsCollector
+from nncf.torch.quantization.metrics import MemoryConsumptionStatisticsCollector
+from nncf.torch.quantization.metrics import QuantizationShareBuildTimeInfo
+from nncf.torch.quantization.metrics import QuantizationShareStatisticsCollector
 from nncf.torch.quantization.metrics import ShareEdgesQuantizedDataPathStatisticsCollector
 from nncf.torch.quantization.node_matcher import PTOperatorMetatypeNodeMatcher
 from nncf.torch.quantization.precision_constraints import HardwareQuantizationConstraints
@@ -460,11 +460,14 @@ class PropagationBasedQuantizerSetupGenerator(QuantizerSetupGeneratorBase):
                                               self._num_potential_quantized_weights)
 
 
+class QBuilderStateNames:
+    BUILD_TIME_METRIC_INFOS = 'build_time_metric_infos'
+    QUANTIZER_SETUP = 'quantizer_setup'
+
+
 @COMPRESSION_ALGORITHMS.register('quantization')
 class QuantizationBuilder(PTCompressionAlgorithmBuilder):
-    _BUILD_TIME_METRIC_INFOS_STATE_ATTR = 'build_time_metric_infos'
-    _QUANTIZER_SETUP_STATE_ATTR = 'quantizer_setup'
-
+    _state_names = QBuilderStateNames
     def __init__(self, config, should_init: bool = True,
                  compression_setups: Optional[Dict[str, CompressionSetup]] = None):
         super().__init__(config, should_init, compression_setups)
@@ -503,6 +506,9 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         self._disable_saturation_fix = self.config.get('disable_saturation_fix', False)
         self._single_config_quantizer_setup = None  # type: Optional[SingleConfigQuantizerSetup]
 
+        if self._builder_state is not None:
+            self.load_state(self._builder_state)
+
     def get_state(self) -> Dict[str, object]:
         """
         Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
@@ -515,8 +521,8 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         if self._single_config_quantizer_setup:
             quantizer_setup_state = self._single_config_quantizer_setup.get_state()
         return {
-            self._QUANTIZER_SETUP_STATE_ATTR: quantizer_setup_state,
-            self._BUILD_TIME_METRIC_INFOS_STATE_ATTR: build_time_metric_infos_state
+            self._state_names.QUANTIZER_SETUP: quantizer_setup_state,
+            self._state_names.BUILD_TIME_METRIC_INFOS: build_time_metric_infos_state
         }
 
     def load_state(self, state: Dict):
@@ -524,10 +530,10 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         Initializes object from the state.
         :param state: Output of `get_state()` method.
         """
-        quantizer_setup_state = state[self._QUANTIZER_SETUP_STATE_ATTR]
+        quantizer_setup_state = state[self._state_names.QUANTIZER_SETUP]
         self._single_config_quantizer_setup = SingleConfigQuantizerSetup.from_state(quantizer_setup_state)
         self._build_time_metric_infos = QuantizationShareBuildTimeInfo.from_state(
-            state[self._BUILD_TIME_METRIC_INFOS_STATE_ATTR])
+            state[self._state_names.BUILD_TIME_METRIC_INFOS])
 
     def _parse_init_params(self):
         init_config = self.config.get('initializer', {})

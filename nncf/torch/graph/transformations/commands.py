@@ -8,6 +8,13 @@ from nncf.common.graph.transformations.commands import TransformationType
 from nncf.torch.graph.graph import InputAgnosticOperationExecutionContext
 
 
+class PTTargetPointStateNames:
+    IA_OP_EXEC_CONTEXT = 'ia_op_exec_context'
+    MODULE_SCOPE = 'module_scope'
+    INPUT_PORT = 'input_port_id'
+    TARGET_TYPE = 'target_type'
+
+
 class PTTargetPoint(TargetPoint):
     _OPERATION_TYPES = [TargetType.PRE_LAYER_OPERATION,
                         TargetType.POST_LAYER_OPERATION,
@@ -15,10 +22,7 @@ class PTTargetPoint(TargetPoint):
     _HOOK_TYPES = [TargetType.OPERATOR_PRE_HOOK,
                    TargetType.OPERATOR_POST_HOOK]
 
-    _IA_OP_EXEC_CONTEXT_STATE_ATTR = 'ia_op_exec_context'
-    _MODULE_SCOPE_STATE_ATTR = 'module_scope'
-    _INPUT_PORT_STATE_ATTR = 'input_port_id'
-    _TARGET_TYPE_STATE_ATTR = 'target_type'
+    _state_names = PTTargetPointStateNames
 
     def __init__(self, target_type: TargetType, *,
                  ia_op_exec_context: InputAgnosticOperationExecutionContext = None,
@@ -64,12 +68,12 @@ class PTTargetPoint(TargetPoint):
         Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
         represents state of the object.
         """
-        state = {self._TARGET_TYPE_STATE_ATTR: self.target_type.get_state(),
-                 self._INPUT_PORT_STATE_ATTR: self.input_port_id}
+        state = {self._state_names.TARGET_TYPE: self.target_type.get_state(),
+                 self._state_names.INPUT_PORT: self.input_port_id}
         if self.target_type in self._OPERATION_TYPES:
-            state[self._MODULE_SCOPE_STATE_ATTR] = str(self.module_scope)
+            state[self._state_names.MODULE_SCOPE] = str(self.module_scope)
         elif self.target_type in self._HOOK_TYPES:
-            state[self._IA_OP_EXEC_CONTEXT_STATE_ATTR] = str(self.ia_op_exec_context)
+            state[self._state_names.IA_OP_EXEC_CONTEXT] = str(self.ia_op_exec_context)
         return state
 
     @classmethod
@@ -78,14 +82,14 @@ class PTTargetPoint(TargetPoint):
         Creates the object from its state.
         :param state: Output of `get_state()` method.
         """
-        kwargs = {cls._TARGET_TYPE_STATE_ATTR: TargetType.from_state(state[cls._TARGET_TYPE_STATE_ATTR]),
-                  cls._INPUT_PORT_STATE_ATTR: state[cls._INPUT_PORT_STATE_ATTR]}
-        if cls._MODULE_SCOPE_STATE_ATTR in state:
+        kwargs = {cls._state_names.TARGET_TYPE: TargetType.from_state(state[cls._state_names.TARGET_TYPE]),
+                  cls._state_names.INPUT_PORT: state[cls._state_names.INPUT_PORT]}
+        if cls._state_names.MODULE_SCOPE in state:
             from nncf.torch.dynamic_graph.context import Scope
-            kwargs[cls._MODULE_SCOPE_STATE_ATTR] = Scope.from_str(state[cls._MODULE_SCOPE_STATE_ATTR])
-        if cls._IA_OP_EXEC_CONTEXT_STATE_ATTR in state:
-            ia_op_exec_ctx_str = state[cls._IA_OP_EXEC_CONTEXT_STATE_ATTR]
-            kwargs[cls._IA_OP_EXEC_CONTEXT_STATE_ATTR] = \
+            kwargs[cls._state_names.MODULE_SCOPE] = Scope.from_str(state[cls._state_names.MODULE_SCOPE])
+        if cls._state_names.IA_OP_EXEC_CONTEXT in state:
+            ia_op_exec_ctx_str = state[cls._state_names.IA_OP_EXEC_CONTEXT]
+            kwargs[cls._state_names.IA_OP_EXEC_CONTEXT] = \
                 InputAgnosticOperationExecutionContext.from_str(ia_op_exec_ctx_str)
         return cls(**kwargs)
 

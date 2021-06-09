@@ -15,13 +15,13 @@ from typing import List, Optional
 import pytest
 
 from nncf.api.compression import CompressionStage
-from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 
 from nncf.common.sparsity.schedulers import AdaptiveSparsityScheduler
 from nncf.common.sparsity.schedulers import ExponentialSparsityScheduler
 from nncf.common.sparsity.schedulers import MultiStepSparsityScheduler
 from nncf.common.sparsity.schedulers import PolynomialSparsityScheduler
 from nncf.torch.compression_method_api import PTCompressionState
+from nncf.torch.compression_method_api import PTControllerStateNames
 from tests.torch.helpers import BasicConvTestModel
 from tests.torch.helpers import MockModel
 from tests.torch.helpers import create_compressed_model_and_algo_for_test
@@ -104,8 +104,8 @@ class TestSparseModules:
         saved_ctrl_state = first_setup.ctrl_state
         assert saved_ctrl_state == ctrl.get_state()
         assert saved_ctrl_state == {
-            PTCompressionAlgorithmController.COMPRESSION_STAGE_ATTR: CompressionStage.UNCOMPRESSED,
-            PTCompressionAlgorithmController.SCHEDULER_ATTR: {'current_step': 100, 'current_epoch': 5}
+            PTControllerStateNames.COMPRESSION_STAGE: CompressionStage.UNCOMPRESSED,
+            PTControllerStateNames.SCHEDULER: {'current_step': 100, 'current_epoch': 5}
         }
 
         # Test load state

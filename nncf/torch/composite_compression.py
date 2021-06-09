@@ -12,7 +12,7 @@
 """
 
 from copy import deepcopy
-from typing import Dict, Optional, TypeVar
+from typing import Dict, Optional, TypeVar, List
 
 import torch.nn
 
@@ -176,7 +176,7 @@ class PTCompositeCompressionAlgorithmController(
             target_model = ctrl.apply_to(target_model)
         return target_model
 
-    def load_state(self, states):
-        self._check_loaded_compression_stage(states)
-        for child_ctrl, child_state in zip(self.child_ctrls, states[self.SCHEDULER_ATTR]):
-            child_ctrl.load_state({self.SCHEDULER_ATTR: child_state})
+    def load_state(self, states: List[Dict]):
+        for child_ctrl, child_state in zip(self.child_ctrls, states[self._state_name.SCHEDULER]):
+            self._check_loaded_compression_stage(child_state)
+            child_ctrl.load_state({self._state_name.SCHEDULER: child_state})

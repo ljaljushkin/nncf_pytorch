@@ -26,7 +26,6 @@ import torch
 
 # pylint: disable=redefined-outer-name
 from examples.torch.common.model_loader import NNCF_CHECKPOINT_ATTR
-from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 
 from examples.torch.common.optimizer import get_default_weight_decay
 from examples.torch.common.sample_config import SampleConfig
@@ -39,6 +38,7 @@ from nncf.config import NNCFConfig
 from pytest_dependency import depends
 
 from nncf.torch.compression_method_api import PTCompressionState
+from nncf.torch.compression_method_api import PTControllerStateNames
 from tests.common.helpers import EXAMPLES_DIR
 from tests.common.helpers import PROJECT_ROOT
 from tests.common.helpers import TEST_ROOT
@@ -332,7 +332,7 @@ def extract_compression_stage_from_checkpoint(last_checkpoint_path):
     pt_compression_state.load_state(nnsf_state)
     first_setup = next(iter(pt_compression_state.compression_setups.values()))
     ctrl_state = first_setup.ctrl_state
-    compression_stage = ctrl_state[PTCompressionAlgorithmController.COMPRESSION_STAGE_ATTR]
+    compression_stage = ctrl_state[PTControllerStateNames.COMPRESSION_STAGE]
     return compression_stage
 
 

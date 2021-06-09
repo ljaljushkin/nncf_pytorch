@@ -116,14 +116,18 @@ class PTCompressionState(CompressionState):
         self._model_state = state[self.MODEL_STATE_ATTR]
 
 
+class PTControllerStateNames:
+    COMPRESSION_STAGE = 'compression_stage'
+    COMPRESSION_LEVEL = 'compression_level'
+    SCHEDULER = 'scheduler'
+
+
 class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
     """Serves as a handle to the additional modules, parameters and hooks inserted
     into the original uncompressed model in order to enable algorithm-specific compression.
     Hosts entities that are to be used during the training process, such as compression scheduler and
     compression loss."""
-    COMPRESSION_STAGE_ATTR = 'compression_stage'
-    COMPRESSION_LEVEL_ATTR = 'compression_level'
-    SCHEDULER_ATTR = 'scheduler'
+    _state_name = PTControllerStateNames
 
     def __init__(self, target_model: ModelType):
         super().__init__(target_model)
@@ -148,22 +152,24 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
         """
         self._check_loaded_compression_stage(state)
         if self.scheduler is not None:
-            self.scheduler.load_state(state[self.SCHEDULER_ATTR])
+            self.scheduler.load_state(state[self._state_name.SCHEDULER])
 
     def _check_loaded_compression_stage(self, state: Dict[str, object]) -> None:
-        if self.COMPRESSION_LEVEL_ATTR in state:
-            if self.COMPRESSION_STAGE_ATTR not in state:
-                compression_level = state[self.COMPRESSION_LEVEL_ATTR]
-                state[self.COMPRESSION_STAGE_ATTR] = CompressionLevel.map_legacy_level_to_stage()[compression_level]
+        if self._state_name.COMPRESSION_LEVEL in state:
+            if self._state_name.COMPRESSION_STAGE not in state:
+                compression_level = state[self._state_name.COMPRESSION_LEVEL]
+                compression_stage = CompressionLevel.map_legacy_level_to_stage()[compression_level]
+                state[self._state_name.COMPRESSION_STAGE] = compression_stage
             else:
                 nncf_logger.warning('Both CompressionStage and (legacy) CompressionLevel attributes '
                                     'are specified in the checkpoint. Proceeding with the value stored '
                                     'in CompressionStage')
-        if self.COMPRESSION_STAGE_ATTR in state and self.compression_stage() != state[self.COMPRESSION_STAGE_ATTR]:
-            nncf_logger.warning('Current CompressionStage ({}) of the compression controller does '
-                                'not correspond to the value found in '
-                                'the checkpoint ({})'.format(self.compression_stage(),
-                                                             state[self.COMPRESSION_STAGE_ATTR]))
+        if self._state_name.COMPRESSION_STAGE in state:
+            if self.compression_stage() != state[self._state_name.COMPRESSION_STAGE]:
+                nncf_logger.warning('Current CompressionStage ({}) of the compression controller does '
+                                    'not correspond to the value found in '
+                                    'the checkpoint ({})'.format(self.compression_stage(),
+                                                                 state[self._state_name.COMPRESSION_STAGE]))
 
     def get_state(self) -> Dict[str, object]:
         """
@@ -171,8 +177,8 @@ class PTCompressionAlgorithmController(BaseCompressionAlgorithmController):
 
         :return: The compression controller state.
         """
-        return {self.SCHEDULER_ATTR: self.scheduler.get_state(),
-                self.COMPRESSION_STAGE_ATTR: self.compression_stage()}
+        return {self._state_name.SCHEDULER: self.scheduler.get_state(),
+                self._state_name.COMPRESSION_STAGE: self.compression_stage()}
 
     def get_compression_setup(self) -> Tuple[str, CompressionSetup]:
         ctrl_state = self.get_state()
@@ -216,11 +222,12 @@ class PTCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
             self.target_scopes = self.config.get('target_scopes')
         self.compressed_nncf_module_names = self._nncf_module_types_to_compress()
         self._ctrl_state = None
+        self._builder_state = None
 
         if self._compression_setups is not None:
             for name, setup in self._compression_setups.items():
                 if self.registered_name == name:
-                    self.load_state(setup.builder_state)
+                    self._builder_state = setup.builder_state
                     self._ctrl_state = setup.ctrl_state
 
     def apply_to(self, model: NNCFNetwork) -> NNCFNetwork:

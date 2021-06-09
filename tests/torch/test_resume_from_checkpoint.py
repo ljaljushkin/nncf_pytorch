@@ -14,6 +14,7 @@ import itertools
 from functools import partial
 
 import pytest
+from nncf.torch.quantization.algo import QuantizationBuilder
 from torch.nn import DataParallel
 
 from nncf import load_state
@@ -50,6 +51,7 @@ def test_can_resume_with_manual_init(mocker, desc, _nncf_caplog):
     config = register_default_init_args(config, train_loader=create_ones_mock_dataloader(config))
     all_spies = desc.setup_init_spies(mocker)
     init_spy = mocker.spy(PTCompressionAlgorithmBuilder, '__init__')
+    get_setup_spy = mocker.spy(QuantizationBuilder, '_get_quantizer_setup')
 
     _, compression_ctrl = create_compressed_model_and_algo_for_test(desc.model_creator(), config)
     desc.check_precision_init(compression_ctrl)
@@ -57,6 +59,8 @@ def test_can_resume_with_manual_init(mocker, desc, _nncf_caplog):
     for m in all_spies:
         m.assert_called()
         m.reset_mock()
+    get_setup_spy.assert_called()
+    get_setup_spy.reset_mock()
 
     nncf_checkpoint = compression_ctrl.get_compression_state()
     register_bn_adaptation_init_args(config_to_resume)
@@ -68,6 +72,7 @@ def test_can_resume_with_manual_init(mocker, desc, _nncf_caplog):
 
     for m in all_spies:
         m.assert_not_called()
+    get_setup_spy.assert_not_called()
 
     desc.check_precision_init(compression_ctrl)
 
