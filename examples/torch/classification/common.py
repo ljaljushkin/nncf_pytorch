@@ -1,6 +1,6 @@
 import torch.backends.cudnn as cudnn
 
-from examples.torch.common.model_loader import load_resuming_model_state_dict_and_checkpoint_from_path
+from examples.torch.common.model_loader import load_checkpoints_from_path
 from nncf.torch.utils import manual_seed
 
 
@@ -12,9 +12,9 @@ def set_seed(config):
 
 
 def load_resuming_checkpoint(resuming_checkpoint_path):
-    resuming_model_sd = None
+    nncf_checkpoint = None
     resuming_checkpoint = None
     if resuming_checkpoint_path is not None:
-        resuming_model_sd, resuming_checkpoint = load_resuming_model_state_dict_and_checkpoint_from_path(
+        nncf_checkpoint, resuming_checkpoint = load_checkpoints_from_path(
             resuming_checkpoint_path)
-    return resuming_model_sd, resuming_checkpoint
+    return nncf_checkpoint, resuming_checkpoint

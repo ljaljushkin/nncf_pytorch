@@ -27,7 +27,7 @@ class ConstSparsityBuilder(BaseSparsityAlgoBuilder):
     def create_weight_sparsifying_operation(self, module, compression_lr_multiplier):
         return BinaryMask(module.weight.size())
 
-    def build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
+    def _build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
         return ConstSparsityController(target_model, self._sparsified_module_info)
 
     def _are_frozen_layers_allowed(self) -> Tuple[bool, str]:

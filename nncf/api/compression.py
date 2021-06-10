@@ -11,8 +11,9 @@
  limitations under the License.
 """
 
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, TypeVar, List, Tuple
+from abc import ABC
+from abc import abstractmethod
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
 from nncf import NNCFConfig
 from nncf.api.statistics import Statistics
@@ -150,6 +151,74 @@ class CompressionStage(OrderedEnum):
         return CompressionStage.PARTIALLY_COMPRESSED
 
 
+class CompressionSetupStateNames:
+    BUILDER = 'builder_state'
+    CONTROLLER = 'ctrl_state'
+
+
+class CompressionSetup:
+    """
+    Consists of builder and controller states - a dictionaries with Python data structures,
+    defining how to setup the compression
+    """
+    _state_names = CompressionSetupStateNames
+
+    def __init__(self, builder_state: Dict, ctrl_state: Dict):
+        self.builder_state = builder_state
+        self.ctrl_state = ctrl_state
+
+    def get_state(self) -> Dict:
+        """
+        :return: a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
+        """
+        return {
+            self._state_names.BUILDER: self.builder_state,
+            self._state_names.CONTROLLER: self.ctrl_state
+        }
+
+    @classmethod
+    def from_state(cls, state: Dict) -> 'CompressionSetup':
+        """
+        Creates the object from its state.
+        :param state: Output of `get_state()` method.
+        """
+        return cls(**state)
+
+
+class CompressionState:
+    """
+    Contains entire compression state of the model to unambiguously resume compression from it.
+    """
+    COMPRESSION_SETUPS_ATTR = 'nncf_compression_setups'
+
+    def __init__(self, compression_setups: Dict[str, CompressionSetup] = None):
+        self._compression_setups = compression_setups
+
+    @property
+    def compression_setups(self) -> Dict[str, CompressionSetup]:
+        """
+        Returns list of structures defining how to setup the compression.
+        """
+        return self._compression_setups
+
+    def get_state(self) -> Dict:
+        """
+        :return: a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
+        """
+        setup_states = {name: setup.get_state() for name, setup in self.compression_setups.items()}
+        return {self.COMPRESSION_SETUPS_ATTR: setup_states}
+
+    def load_state(self, state: Dict):
+        """
+        Loads state of the object
+        :param state: Output of `get_state()` method.
+        """
+        setup_states = state[self.COMPRESSION_SETUPS_ATTR]
+        self._compression_setups = {name: CompressionSetup.from_state(state) for name, state in setup_states.items()}
+
+
 class CompressionAlgorithmController(ABC):
     """
     Serves as a handle to the additional modules, parameters and hooks inserted
@@ -203,6 +272,13 @@ class CompressionAlgorithmController(ABC):
         Returns the compression controller state.
 
         :return: The compression controller state.
+        """
+
+    @abstractmethod
+    def get_compression_state(self) -> Union[CompressionState, Dict]:
+        """
+        :return: Framework-specific representation of compression state of the model to unambiguously resume
+        compression from it.
         """
 
     def compression_stage(self) -> CompressionStage:
@@ -276,7 +352,8 @@ class CompressionAlgorithmBuilder(ABC):
     order to enable algorithm-specific compression during fine-tuning.
     """
 
-    def __init__(self, config: NNCFConfig, should_init: bool = True):
+    def __init__(self, config: NNCFConfig, should_init: bool = True,
+                 compression_setups: Optional[Dict[str, CompressionSetup]] = None):
         """
         Initializes internal state of the compression algorithm builder
 
@@ -284,9 +361,12 @@ class CompressionAlgorithmBuilder(ABC):
             method.
         :param should_init: If False, trainable parameter initialization will be
             skipped during building.
+        :param compression_setups: algorithm key per compression setup (includes builder and controller states),
+        defining how to unambiguously setup a compression state.
         """
         self.config = config
         self.should_init = should_init
+        self._compression_setups = compression_setups
 
     @abstractmethod
     def apply_to(self, model: ModelType) -> ModelType:
@@ -319,6 +399,20 @@ class CompressionAlgorithmBuilder(ABC):
         :param model: The original uncompressed model.
         :return: The instance of the `TransformationLayout` class containing
             a list of algorithm-specific modifications.
+        """
+
+    @abstractmethod
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
+        """
+
+    @abstractmethod
+    def load_state(self, state: Dict[str, object]):
+        """
+        Initializes object from the state.
+        :param state: Output of `get_state()` method.
         """
 
 

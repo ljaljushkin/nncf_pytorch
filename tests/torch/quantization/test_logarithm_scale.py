@@ -14,6 +14,7 @@ import itertools
 
 import pytest
 import torch
+
 import nncf
 from nncf import NNCFConfig
 from tests.torch.helpers import create_compressed_model_and_algo_for_test
@@ -34,7 +35,7 @@ def get_config_for_logarithm_scale(logarithm_scale: bool, quantization_type: str
         "compression": {
             "algorithm": "quantization",
             "initializer": {
-                "range":{
+                "range": {
                     "num_init_samples": 4,
                     "type": "percentile",
                     "params": {
@@ -67,6 +68,7 @@ def get_config_for_logarithm_scale(logarithm_scale: bool, quantization_type: str
     class SquadInitializingDataloader(nncf.torch.initialization.InitializingDataLoader):
         def get_inputs(self, batch):
             return batch, {}
+
         def get_target(self, batch):
             return None
 
@@ -101,6 +103,6 @@ def test_logarithm_scale_parameter(logarithm_scale_setting_1, logarithm_scale_se
 
             for k, v0 in sd0.items():
                 v1 = sd1[k]
-                diff = (v1-v0).abs().sum().item() / v1.numel()
+                diff = (v1 - v0).abs().sum().item() / v1.numel()
                 assert diff < 1e-6, "symmetric {} logarithm_scales {} param {} is corrupted mean({}-{})={}".format(
                     symmetric, logarithm_scales, k, v0, v1, diff)

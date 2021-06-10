@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Any, Callable, Dict
 
 from nncf.common.graph.transformations.commands import TargetPoint
 from nncf.common.graph.transformations.commands import TargetType
@@ -8,19 +8,33 @@ from nncf.common.graph.transformations.commands import TransformationType
 from nncf.torch.graph.graph import InputAgnosticOperationExecutionContext
 
 
+class PTTargetPointStateNames:
+    IA_OP_EXEC_CONTEXT = 'ia_op_exec_context'
+    MODULE_SCOPE = 'module_scope'
+    INPUT_PORT = 'input_port_id'
+    TARGET_TYPE = 'target_type'
+
+
 class PTTargetPoint(TargetPoint):
+    _OPERATION_TYPES = [TargetType.PRE_LAYER_OPERATION,
+                        TargetType.POST_LAYER_OPERATION,
+                        TargetType.OPERATION_WITH_WEIGHTS]
+    _HOOK_TYPES = [TargetType.OPERATOR_PRE_HOOK,
+                   TargetType.OPERATOR_POST_HOOK]
+
+    _state_names = PTTargetPointStateNames
+
     def __init__(self, target_type: TargetType, *,
                  ia_op_exec_context: InputAgnosticOperationExecutionContext = None,
                  module_scope: 'Scope' = None,
                  input_port_id: int = None):
         super().__init__(target_type)
         self.target_type = target_type
-        if self.target_type in [TargetType.PRE_LAYER_OPERATION, TargetType.POST_LAYER_OPERATION,
-                                TargetType.OPERATION_WITH_WEIGHTS]:
+        if self.target_type in self._OPERATION_TYPES:
             if module_scope is None:
                 raise ValueError("Should specify module scope for module pre- and post-op insertion points!")
 
-        elif self.target_type in [TargetType.OPERATOR_PRE_HOOK, TargetType.OPERATOR_POST_HOOK]:
+        elif self.target_type in self._HOOK_TYPES:
             if ia_op_exec_context is None:
                 raise ValueError("Should specify an operator's InputAgnosticOperationExecutionContext "
                                  "for operator pre- and post-hook insertion points!")
@@ -38,10 +52,9 @@ class PTTargetPoint(TargetPoint):
     def __str__(self):
         prefix = str(self.target_type)
         retval = prefix
-        if self.target_type in [TargetType.PRE_LAYER_OPERATION, TargetType.POST_LAYER_OPERATION,
-                                TargetType.OPERATION_WITH_WEIGHTS]:
+        if self.target_type in self._OPERATION_TYPES:
             retval += " {}".format(self.module_scope)
-        elif self.target_type in [TargetType.OPERATOR_PRE_HOOK, TargetType.OPERATOR_POST_HOOK]:
+        elif self.target_type in self._HOOK_TYPES:
             if self.input_port_id is not None:
                 retval += " {}".format(self.input_port_id)
             retval += " " + str(self.ia_op_exec_context)
@@ -49,6 +62,36 @@ class PTTargetPoint(TargetPoint):
 
     def __hash__(self):
         return hash(str(self))
+
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
+        """
+        state = {self._state_names.TARGET_TYPE: self.target_type.get_state(),
+                 self._state_names.INPUT_PORT: self.input_port_id}
+        if self.target_type in self._OPERATION_TYPES:
+            state[self._state_names.MODULE_SCOPE] = str(self.module_scope)
+        elif self.target_type in self._HOOK_TYPES:
+            state[self._state_names.IA_OP_EXEC_CONTEXT] = str(self.ia_op_exec_context)
+        return state
+
+    @classmethod
+    def from_state(cls, state: Dict[str, Any]) -> 'PTTargetPoint':
+        """
+        Creates the object from its state.
+        :param state: Output of `get_state()` method.
+        """
+        kwargs = {cls._state_names.TARGET_TYPE: TargetType.from_state(state[cls._state_names.TARGET_TYPE]),
+                  cls._state_names.INPUT_PORT: state[cls._state_names.INPUT_PORT]}
+        if cls._state_names.MODULE_SCOPE in state:
+            from nncf.torch.dynamic_graph.context import Scope
+            kwargs[cls._state_names.MODULE_SCOPE] = Scope.from_str(state[cls._state_names.MODULE_SCOPE])
+        if cls._state_names.IA_OP_EXEC_CONTEXT in state:
+            ia_op_exec_ctx_str = state[cls._state_names.IA_OP_EXEC_CONTEXT]
+            kwargs[cls._state_names.IA_OP_EXEC_CONTEXT] = \
+                InputAgnosticOperationExecutionContext.from_str(ia_op_exec_ctx_str)
+        return cls(**kwargs)
 
 
 class PTInsertionCommand(TransformationCommand):

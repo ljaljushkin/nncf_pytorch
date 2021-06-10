@@ -37,7 +37,7 @@ class MagnitudeSparsityBuilder(BaseSparsityAlgoBuilder):
         device = module.weight.device
         return BinaryMask(module.weight.size()).to(device)
 
-    def build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
+    def _build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
         return MagnitudeSparsityController(target_model, self._sparsified_module_info, self.config)
 
 

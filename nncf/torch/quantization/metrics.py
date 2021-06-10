@@ -40,6 +40,24 @@ class QuantizationShareBuildTimeInfo:
         self.aq_potential_num = aq_potential_num
         self.wq_potential_num = wq_potential_num
 
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
+        """
+        return {
+            'aq_potential_num': self.aq_potential_num,
+            'wq_potential_num': self.wq_potential_num
+        }
+
+    @classmethod
+    def from_state(cls, state: Dict[str, object]) -> 'QuantizationShareBuildTimeInfo':
+        """
+        Creates the object from its state.
+        :param state: Output of `get_state()` method.
+        """
+        return cls(**state)
+
 
 class QuantizationShareStatisticsCollector(StatisticsCollector):
     """

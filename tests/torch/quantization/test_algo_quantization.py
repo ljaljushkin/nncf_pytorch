@@ -13,8 +13,7 @@
 import logging
 from contextlib import contextmanager
 from copy import deepcopy
-from typing import List
-from typing import Tuple
+from typing import List, Tuple
 
 import pytest
 import torch

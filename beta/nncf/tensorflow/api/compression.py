@@ -10,15 +10,18 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-from abc import ABC, abstractmethod
-from typing import Optional, TypeVar, Dict
-
 import json
+from abc import ABC
+from abc import abstractmethod
+from typing import Dict, Optional, TypeVar, Union
+
 import tensorflow as tf
 
-from nncf.api.compression import CompressionAlgorithmBuilder
-from nncf.common.compression import BaseCompressionAlgorithmController
 from beta.nncf.tensorflow.graph.model_transformer import TFModelTransformer
+from nncf.api.compression import CompressionAlgorithmBuilder
+from nncf.api.compression import CompressionSetup
+from nncf.api.compression import CompressionState
+from nncf.common.compression import BaseCompressionAlgorithmController
 
 ModelType = TypeVar('ModelType')
 DatasetType = TypeVar('DatasetType')
@@ -37,6 +40,26 @@ class TFCompressionAlgorithmInitializer(ABC):
 
     def __call__(self, *args, **kwargs) -> None:
         self.call(*args, **kwargs)
+
+
+class TFCompressionState(CompressionState, tf.train.experimental.PythonState):
+    def __init__(self, compression_setups: Dict[str, CompressionSetup]):
+        super().__init__(compression_setups)
+
+    def serialize(self) -> str:
+        """
+        Callback to serialize the object by tf.train.experimental.PythonState.
+        """
+        json_compatible_setups = self.get_state()
+        string_value = json.dumps(json_compatible_setups)
+        return string_value
+
+    def deserialize(self, string_value: str) -> None:
+        """
+        Callback to deserialize the object by tf.train.experimental.PythonState.
+        """
+        json_compatible_setups = json.loads(string_value)
+        self.load_state(json_compatible_setups)
 
 
 class TFCompressionAlgorithmController(BaseCompressionAlgorithmController, tf.train.experimental.PythonState):
@@ -72,6 +95,10 @@ class TFCompressionAlgorithmController(BaseCompressionAlgorithmController, tf.tr
             'loss_state': self.loss.get_state()
         }
 
+    def get_compression_state(self) -> Union[CompressionState, Dict]:
+        # TODO(nlyalyus) add support for TF
+        return {}
+
     def serialize(self) -> str:
         """
         Callback to serialize the object by tf.train.experimental.PythonState.
@@ -96,6 +123,19 @@ class TFCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
     Determines which modifications should be made to the original model in
     order to enable algorithm-specific compression during fine-tuning.
     """
+
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
+        """
+        return {}
+
+    def load_state(self, state: Dict[str, object]):
+        """
+        Initializes object from the state.
+        :param state: Output of `get_state()` method.
+        """
 
     def apply_to(self, model: ModelType) -> ModelType:
         """

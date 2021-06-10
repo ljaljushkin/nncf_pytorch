@@ -10,10 +10,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-from typing import Dict
-from typing import List
-from typing import NamedTuple
-from typing import Tuple
+from typing import Dict, List, NamedTuple, Tuple
 
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.torch.quantization.layers import BaseQuantizer

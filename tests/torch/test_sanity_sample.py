@@ -25,6 +25,8 @@ import pytest
 import torch
 
 # pylint: disable=redefined-outer-name
+from examples.torch.common.model_loader import NNCF_CHECKPOINT_ATTR
+
 from examples.torch.common.optimizer import get_default_weight_decay
 from examples.torch.common.sample_config import SampleConfig
 from examples.torch.common.utils import get_name
@@ -34,6 +36,9 @@ from nncf.common.hardware.config import HWConfigType
 from nncf.common.quantization.structs import QuantizerConfig
 from nncf.config import NNCFConfig
 from pytest_dependency import depends
+
+from nncf.torch.compression_method_api import PTCompressionState
+from nncf.torch.compression_method_api import PTControllerStateNames
 from tests.common.helpers import EXAMPLES_DIR
 from tests.common.helpers import PROJECT_ROOT
 from tests.common.helpers import TEST_ROOT
@@ -233,7 +238,8 @@ def test_pretrained_model_train(config, tmp_path, multiprocessing_distributed, c
         allowed_compression_stages = (CompressionStage.FULLY_COMPRESSED, CompressionStage.PARTIALLY_COMPRESSED)
     else:
         allowed_compression_stages = (CompressionStage.UNCOMPRESSED,)
-    assert torch.load(last_checkpoint_path)['compression_stage'] in allowed_compression_stages
+    compression_stage = extract_compression_stage_from_checkpoint(last_checkpoint_path)
+    assert compression_stage in allowed_compression_stages
 
 
 def depends_on_pretrained_train(request, test_case_id: str, current_multiprocessing_distributed: bool):
@@ -316,7 +322,18 @@ def test_resume(request, config, tmp_path, multiprocessing_distributed, case_com
         allowed_compression_stages = (CompressionStage.FULLY_COMPRESSED, CompressionStage.PARTIALLY_COMPRESSED)
     else:
         allowed_compression_stages = (CompressionStage.UNCOMPRESSED,)
-    assert torch.load(last_checkpoint_path)['compression_stage'] in allowed_compression_stages
+    compression_stage = extract_compression_stage_from_checkpoint(last_checkpoint_path)
+    assert compression_stage in allowed_compression_stages
+
+
+def extract_compression_stage_from_checkpoint(last_checkpoint_path):
+    nnsf_state = torch.load(last_checkpoint_path)[NNCF_CHECKPOINT_ATTR]
+    pt_compression_state = PTCompressionState()
+    pt_compression_state.load_state(nnsf_state)
+    first_setup = next(iter(pt_compression_state.compression_setups.values()))
+    ctrl_state = first_setup.ctrl_state
+    compression_stage = ctrl_state[PTControllerStateNames.COMPRESSION_STAGE]
+    return compression_stage
 
 
 @pytest.mark.dependency()

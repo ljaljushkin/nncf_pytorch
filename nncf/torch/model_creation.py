@@ -10,40 +10,48 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
+import warnings
 from os import path as osp
-from typing import Callable, Any, Tuple, Dict
+from typing import Any, Callable, Dict, Tuple, Union
 
-from torch.nn import Module
+import torch
 from torch.distributed import barrier
+from torch.nn import Module
 
-from nncf.torch.checkpoint_loading import load_state
-from nncf.torch.composite_compression import PTCompositeCompressionAlgorithmBuilder
-from nncf.torch.compression_method_api import PTCompressionAlgorithmController
+from nncf.common.utils.logger import logger as nncf_logger
 from nncf.config import NNCFConfig
+from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
+from nncf.torch.checkpoint_loading import load_state
+from nncf.torch.composite_compression import PTCompositeCompressionAlgorithmBuilder as CompositeBuilder
+from nncf.torch.compression_method_api import PTCompressionAlgorithmController as Controller
+from nncf.torch.compression_method_api import PTCompressionState
 from nncf.torch.debug import set_debug_log_dir
-from nncf.torch.dynamic_graph.graph_tracer import create_input_infos, create_dummy_forward_fn
+from nncf.torch.dynamic_graph.graph_tracer import create_dummy_forward_fn
+from nncf.torch.dynamic_graph.graph_tracer import create_input_infos
 from nncf.torch.graph.graph_builder import GraphBuilder
 from nncf.torch.nncf_network import NNCFNetwork
-from nncf.torch.utils import is_main_process
 from nncf.torch.utils import is_dist_avail_and_initialized
-from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
-
-from nncf.common.utils.logger import logger
+from nncf.torch.utils import is_main_process
 
 
 def get_compression_algorithm(config):
     algorithm_key = config.get('algorithm', 'NoCompressionAlgorithmBuilder')
-    logger.info("Creating compression algorithm: {}".format(algorithm_key))
+    nncf_logger.info("Creating compression algorithm: {}".format(algorithm_key))
     return COMPRESSION_ALGORITHMS.get(algorithm_key)
 
 
-def create_compressed_model(model: Module, config: NNCFConfig,
-                            resuming_state_dict: dict = None,
+LegacyModelState = Dict[str, torch.Tensor]
+
+
+def create_compressed_model(model: Module,
+                            config: NNCFConfig,
+                            compression_state: Union[Dict, LegacyModelState] = None,
                             dummy_forward_fn: Callable[[Module], Any] = None,
                             wrap_inputs_fn: Callable[[Tuple, Dict], Tuple[Tuple, Dict]] = None,
                             wrap_outputs_fn: Callable[[Tuple, Dict], Tuple[Tuple, Dict]] = None,
-                            dump_graphs=True, ) \
-    -> Tuple[PTCompressionAlgorithmController, NNCFNetwork]:
+                            dump_graphs=True,
+                            is_strict=True) \
+        -> Tuple[Controller, NNCFNetwork]:
     """
     The main function used to produce a model ready for compression fine-tuning from an original PyTorch
     model and a configuration object.
@@ -52,8 +60,8 @@ def create_compressed_model(model: Module, config: NNCFConfig,
     source.
     :param config: A configuration object used to determine the exact compression modifications to be applied
     to the model
-    :param resuming_state_dict: A PyTorch state dict object to load (strictly) into the compressed model after
-    building.
+    :param compression_state: PT-specific representation of the entire compression state to unambiguously restore the
+    compressed model. Includes builder, controller and model states.
     :param dummy_forward_fn: if supplied, will be used instead of a *forward* function call to build
     the internal graph representation via tracing. Specifying this is useful when the original training pipeline
     has special formats of data loader output or has additional *forward* arguments other than input tensors.
@@ -74,6 +82,7 @@ def create_compressed_model(model: Module, config: NNCFConfig,
     input, but each tensor in the original input. Must be specified if dummy_forward_fn is specified.
     :param dump_graphs: Whether or not should also dump the internal graph representation of the
     original and compressed models in the .dot format into the log directory.
+    :param is_strict: whether to strictly enforce that the model keys in state match the keys returned by this module.
     :return: A controller for the compression algorithm (or algorithms, in which case the controller
     is an instance of CompositeCompressionController) and the model ready for compression parameter training wrapped
     as an object of NNCFNetwork."""
@@ -83,6 +92,8 @@ def create_compressed_model(model: Module, config: NNCFConfig,
                          "was not. In case a custom dummy forward function is specified for purposes of NNCF graph "
                          "building, then the wrap_inputs_fn parameter MUST also be specified and be consistent with "
                          "the input wrapping done in dummy_forward_fn.")
+
+    compression_setups, model_state = _parse_compression_state(compression_state)
 
     # Compress model that will be deployed for the inference on target device. No need to compress parts of the
     # model that are used on training stage only (e.g. AuxLogits of Inception-v3 model) or unused modules with weights.
@@ -117,10 +128,9 @@ def create_compressed_model(model: Module, config: NNCFConfig,
                                    target_scopes=target_scopes,
                                    scopes_without_shape_matching=scopes_without_shape_matching)
 
-    should_init = resuming_state_dict is None
-    composite_builder = PTCompositeCompressionAlgorithmBuilder(config, should_init=should_init)
+    should_init = compression_state is None
+    composite_builder = CompositeBuilder(config, should_init, compression_setups)
     composite_builder.apply_to(compressed_model)
-
     compression_ctrl = composite_builder.build_controller(compressed_model)
 
     # Required to ensure that the model leaving create_compressed_model has correct compressed graph.
@@ -128,8 +138,8 @@ def create_compressed_model(model: Module, config: NNCFConfig,
     compressed_model.rebuild_graph()
 
     try:
-        if resuming_state_dict is not None:
-            load_state(compressed_model, resuming_state_dict, is_resume=True)
+        if model_state is not None:
+            load_state(compressed_model, model_state, is_resume=is_strict)
     finally:
         if dump_graphs and is_main_process() and composite_builder:
             if dummy_forward_fn is None:
@@ -150,8 +160,8 @@ def create_compressed_model(model: Module, config: NNCFConfig,
         # Exception can be raised during running barrier
         # if the backend not in the supported list https://pytorch.org/docs/stable/distributed.html
         except RuntimeError as err:
-            logger.warning(err)
-            logger.warning(
+            nncf_logger.warning(err)
+            nncf_logger.warning(
                 "NNCF continues work, while does not guarantee that "
                 "the processes will finish model's compression at the same time. "
                 "If your training pipeline demands the processes be synchronized, please, "
@@ -159,3 +169,30 @@ def create_compressed_model(model: Module, config: NNCFConfig,
             return compression_ctrl, compressed_model
 
     return compression_ctrl, compressed_model
+
+
+def _parse_compression_state(compression_state):
+    compression_setups = None
+    model_state = None
+    if compression_state is not None:
+        if PTCompressionState.COMPRESSION_SETUPS_ATTR in compression_state:
+            pt_compression_state = PTCompressionState()
+            pt_compression_state.load_state(compression_state)
+            model_state = pt_compression_state.model_state
+            compression_setups = pt_compression_state.compression_setups
+        else:  # support backward compatibility with old checkpoints
+            model_state = compression_state
+            new_format_notice = 'It does not have builder and controller state to unambiguously restore compression ' \
+                                'setup (e.g. location of compression modules in the graph and their parameters). ' \
+                                'Checkpoint should be saved not by calling \'state_dict\' method of the compressed ' \
+                                'model, but by \'get_checkpoint\' method of the compression controller.'
+            # currently exact version number is not necessary. It's supposed to be used in the future.
+            # But presence of this attribute ensures new format of the resuming state dict.
+            is_model_state_in_new_format = NNCFNetwork.get_state_version(model_state)
+            if is_model_state_in_new_format:
+                raise ValueError('Invalid checkpoint format. {}'.format(new_format_notice))
+
+            warnings.warn('Legacy NNCF-enabled .pth checkpoint has been loaded! {} '
+                          'This checkpoint will be loaded; update your checkpoint file by saving this model\'s'
+                          'checkpoint file again.'.format(new_format_notice), category=DeprecationWarning)
+    return compression_setups, model_state

@@ -18,38 +18,36 @@ from collections import OrderedDict
 from copy import deepcopy
 from pathlib import Path
 from string import Template
-from typing import Dict
-from typing import List
-from typing import Set
-from typing import Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import networkx as nx
 import numpy as np
 import torch
 from torch import nn
 
-from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
-from nncf.torch.algo_selector import ZeroCompressionLoss
-from nncf.api.compression import CompressionStage
-from nncf.common.graph.graph import MODEL_INPUT_OP_NAME
-from nncf.common.graph.transformations.commands import TargetType
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler
-from nncf.common.quantization.structs import QuantizableModule
-from nncf.common.quantization.structs import QuantizationConstraints
-from nncf.common.quantization.structs import QuantizerGroup
+from nncf.api.compression import CompressionSetup
+from nncf.api.compression import CompressionStage
+from nncf.common.batchnorm_adaptation import BatchnormAdaptationAlgorithm
+from nncf.common.graph.graph import MODEL_INPUT_OP_NAME
+from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.hardware.config import HWConfig
 from nncf.common.hardware.config import HWConfigType
 from nncf.common.quantization.statistics import QuantizationStatistics
-from nncf.common.statistics import NNCFStatistics
+from nncf.common.quantization.structs import QuantizableModule
+from nncf.common.quantization.structs import QuantizationConstraints
+from nncf.common.quantization.structs import QuantizerGroup
 from nncf.common.schedulers import BaseCompressionScheduler
+from nncf.common.statistics import NNCFStatistics
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.common.utils.os import safe_open
-from nncf.common.batchnorm_adaptation import BatchnormAdaptationAlgorithm
-from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
-from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 from nncf.config import NNCFConfig
 from nncf.config.utils import extract_bn_adaptation_init_params
+from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
+from nncf.torch.algo_selector import ZeroCompressionLoss
+from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
+from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 from nncf.torch.debug import CallCountTracker
 from nncf.torch.debug import DebugInterface
 from nncf.torch.debug import is_debug
@@ -84,10 +82,10 @@ from nncf.torch.quantization.layers import QuantizationMode
 from nncf.torch.quantization.layers import QuantizerConfig
 from nncf.torch.quantization.layers import QuantizerExportMode
 from nncf.torch.quantization.layers import QuantizersSwitcher
-from nncf.torch.quantization.metrics import MemoryConsumptionStatisticsCollector
-from nncf.torch.quantization.metrics import QuantizationShareStatisticsCollector
-from nncf.torch.quantization.metrics import QuantizationShareBuildTimeInfo
 from nncf.torch.quantization.metrics import BitwidthDistributionStatisticsCollector
+from nncf.torch.quantization.metrics import MemoryConsumptionStatisticsCollector
+from nncf.torch.quantization.metrics import QuantizationShareBuildTimeInfo
+from nncf.torch.quantization.metrics import QuantizationShareStatisticsCollector
 from nncf.torch.quantization.metrics import ShareEdgesQuantizedDataPathStatisticsCollector
 from nncf.torch.quantization.node_matcher import PTOperatorMetatypeNodeMatcher
 from nncf.torch.quantization.precision_constraints import HardwareQuantizationConstraints
@@ -270,7 +268,7 @@ class DefaultQuantizerSetupDisambiguator(IQuantizerSetupDisambiguator):
 
     @staticmethod
     def select_first_qconfig_with_bitwidth_variants_for_each_point(
-            multi_config_setup: MultiConfigQuantizerSetup) -> MultiConfigQuantizerSetup:
+        multi_config_setup: MultiConfigQuantizerSetup) -> MultiConfigQuantizerSetup:
         new_setup = deepcopy(multi_config_setup)
         for qp_id, qp in multi_config_setup.quantization_points.items():
             main_qconfig = qp.possible_qconfigs[0]
@@ -397,7 +395,7 @@ class PropagationBasedQuantizerSetupGenerator(QuantizerSetupGeneratorBase):
                                "quantization will be correct")
 
     def _assign_qconfig_lists_to_modules(self, module_scope_vs_module_dict: Dict[Scope, torch.nn.Module]) -> Dict[
-            Scope, List[QuantizerConfig]]:
+        Scope, List[QuantizerConfig]]:
         retval = {}  # type: Dict[Scope, List[QuantizerConfig]]
         insertion_point_graph = self._target_model.get_insertion_point_graph()
         global_constraints = self.global_quantizer_constraints[QuantizerGroup.WEIGHTS]
@@ -462,10 +460,17 @@ class PropagationBasedQuantizerSetupGenerator(QuantizerSetupGeneratorBase):
                                               self._num_potential_quantized_weights)
 
 
+class QBuilderStateNames:
+    BUILD_TIME_METRIC_INFOS = 'build_time_metric_infos'
+    QUANTIZER_SETUP = 'quantizer_setup'
+
+
 @COMPRESSION_ALGORITHMS.register('quantization')
 class QuantizationBuilder(PTCompressionAlgorithmBuilder):
-    def __init__(self, config, should_init: bool = True):
-        super().__init__(config, should_init)
+    _state_names = QBuilderStateNames
+    def __init__(self, config, should_init: bool = True,
+                 compression_setups: Optional[Dict[str, CompressionSetup]] = None):
+        super().__init__(config, should_init, compression_setups)
         self._debug_interface = QuantizationDebugInterface() if is_debug() else None
         self._weight_quantizers = OrderedDict()  # Quantizers applied via UpdateWeights
         self._non_weight_quantizers = OrderedDict()  # All the other quantizers
@@ -473,7 +478,7 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         self._groups_of_adjacent_quantizers = GroupsOfAdjacentQuantizers()  # type: GroupsOfAdjacentQuantizers
         self._setup_to_module_id_translation_dict = {}  # type: Dict[QuantizationPointId, QuantizerId]
         self.eval_ops_exec_ctx = []
-        self._build_time_metric_infos = None
+        self._build_time_metric_infos = None  # type: Optional[NetworkQuantizationShareMetricBuildTimeInfo]
         self.hw_config = None
 
         # can be False to disable setting of adjust padding operations on precision init, because it may add unnecessary
@@ -490,9 +495,6 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         self._precision_init_params = None
         if self.should_init:
             self._parse_init_params()
-        else:
-            # TODO: remove it! It workarounds checkpoint loading for mixed precision model by forcing manual init
-            self._force_manual_precision_init()
 
         self._use_logarithm_scale_per_group = {}  # type: Dict[QuantizerGroup, bool]
 
@@ -502,18 +504,36 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
             self._use_logarithm_scale_per_group[quantizer_group] = params_dict.get('logarithm_scale', False)
 
         self._disable_saturation_fix = self.config.get('disable_saturation_fix', False)
+        self._single_config_quantizer_setup = None  # type: Optional[SingleConfigQuantizerSetup]
 
-    def _force_manual_precision_init(self):
-        init_config = self.config.get('initializer', {})
-        init_precision_config = init_config.get('precision', None)
-        if init_precision_config is not None:
-            precision_init_type = init_precision_config.get('type', 'manual')
-            if precision_init_type == 'manual':
-                # range init is needed for correct setting of Adjust Padding ops as it considers sign of FQ
-                self._range_init_params = self._parse_range_init_params(init_config)
-                self.should_init = True
-                self._precision_init_type = precision_init_type
-                self._precision_init_params = ManualPrecisionInitParams.from_config(init_precision_config)
+        if self._builder_state is not None:
+            self.load_state(self._builder_state)
+
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
+        """
+        build_time_metric_infos_state = {}
+        if self._build_time_metric_infos:
+            build_time_metric_infos_state = self._build_time_metric_infos.get_state()
+        quantizer_setup_state = {}
+        if self._single_config_quantizer_setup:
+            quantizer_setup_state = self._single_config_quantizer_setup.get_state()
+        return {
+            self._state_names.QUANTIZER_SETUP: quantizer_setup_state,
+            self._state_names.BUILD_TIME_METRIC_INFOS: build_time_metric_infos_state
+        }
+
+    def load_state(self, state: Dict):
+        """
+        Initializes object from the state.
+        :param state: Output of `get_state()` method.
+        """
+        quantizer_setup_state = state[self._state_names.QUANTIZER_SETUP]
+        self._single_config_quantizer_setup = SingleConfigQuantizerSetup.from_state(quantizer_setup_state)
+        self._build_time_metric_infos = QuantizationShareBuildTimeInfo.from_state(
+            state[self._state_names.BUILD_TIME_METRIC_INFOS])
 
     def _parse_init_params(self):
         init_config = self.config.get('initializer', {})
@@ -611,16 +631,18 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
         target_model.register_compression_module_type(ExtraCompressionModuleType.EXTERNAL_QUANTIZER)
-        single_config_quantizer_setup = self._get_quantizer_setup(target_model)
+        if self._single_config_quantizer_setup is None:
+            self._single_config_quantizer_setup = self._get_quantizer_setup(target_model)
+
         minmax_values_for_range_init = {}
         if is_main_process() and self.should_init:
             stats_for_range_init = self._get_statistics_for_final_range_init(target_model,
-                                                                             single_config_quantizer_setup,
+                                                                             self._single_config_quantizer_setup,
                                                                              self._range_init_params)
-            minmax_values_for_range_init = single_config_quantizer_setup.get_minmax_values(stats_for_range_init,
-                                                                                           target_model)
+            minmax_values_for_range_init = self._single_config_quantizer_setup.get_minmax_values(stats_for_range_init,
+                                                                                                 target_model)
         insertion_commands, setup_to_module_id_translation_dict = \
-            self._build_insertion_commands_list_for_quantizer_setup(single_config_quantizer_setup,
+            self._build_insertion_commands_list_for_quantizer_setup(self._single_config_quantizer_setup,
                                                                     target_model,
                                                                     minmax_values_for_range_init)
 
@@ -632,7 +654,8 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         all_quantizations = {}
         all_quantizations.update({k: v.quantizer_module_ref for k, v in self._weight_quantizers.items()})
         all_quantizations.update({k: v.quantizer_module_ref for k, v in self._non_weight_quantizers.items()})
-        self._groups_of_adjacent_quantizers.parse_from_quantizer_setup(all_quantizations, single_config_quantizer_setup,
+        self._groups_of_adjacent_quantizers.parse_from_quantizer_setup(all_quantizations,
+                                                                       self._single_config_quantizer_setup,
                                                                        setup_to_module_id_translation_dict)
 
         # NOTE: Order of activations must be the same to correctly broadcast parameters (e.g. scales) in distributed
@@ -694,7 +717,7 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
         self._build_time_metric_infos = setup_generator.get_build_time_metric_infos()
         return single_config_quantizer_setup
 
-    def build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
+    def _build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
         return QuantizationController(target_model,
                                       self.config,
                                       self.should_init,
@@ -1549,7 +1572,7 @@ class ExperimentalQuantizationBuilder(QuantizationBuilder):
         PTTargetPoint, Dict[ReductionShape, TensorStatistic]]:
         return self._tensor_stats
 
-    def build_controller(self, target_model: NNCFNetwork) -> 'ExperimentalQuantizationController':
+    def _build_controller(self, target_model: NNCFNetwork) -> 'ExperimentalQuantizationController':
         groups_of_adjacent_quantizers = GroupsOfAdjacentQuantizers()
         all_quantizations = {}  # type: Dict[QuantizerId, BaseQuantizer]
         all_quantizations.update({k: v.quantizer_module_ref for k, v in self._weight_quantizers.items()})

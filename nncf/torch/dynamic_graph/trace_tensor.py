@@ -11,9 +11,7 @@
  limitations under the License.
 """
 
-from typing import Iterable
-from typing import List
-from typing import Optional
+from typing import Iterable, List, Optional
 
 import numpy as np
 import torch

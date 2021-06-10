@@ -13,10 +13,7 @@
 
 import contextlib
 import copy
-from typing import Callable
-from typing import Tuple
-from typing import List
-from typing import Dict
+from typing import Callable, Tuple, List, Dict
 
 import pytest
 import torch

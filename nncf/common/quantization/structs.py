@@ -102,6 +102,24 @@ class QuantizerConfig:
                self.signedness_to_force == other_qconfig.signedness_to_force and \
                self.mode == other_qconfig.mode
 
+    def get_state(self) -> Dict[str, object]:
+        """
+        Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
+        represents state of the object.
+        """
+        return {'num_bits': self.num_bits,
+                'mode': self.mode,
+                'signedness_to_force': self.signedness_to_force,
+                'per_channel': self.per_channel}
+
+    @classmethod
+    def from_state(cls, state: Dict[str, object]) -> 'QuantizerConfig':
+        """
+        Creates the object from its state.
+        :param state: Output of `get_state()` method.
+        """
+        return cls(**state)
+
 
 class QuantizerSpec:
     """

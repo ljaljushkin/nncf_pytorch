@@ -37,7 +37,7 @@ from examples.torch.common.execution import get_execution_mode, \
     prepare_model_for_execution, start_worker
 from nncf.api.compression import CompressionStage
 from nncf.torch.initialization import register_default_init_args
-from examples.torch.common.model_loader import load_model, load_resuming_model_state_dict_and_checkpoint_from_path
+from examples.torch.common.model_loader import load_model, load_checkpoints_from_path
 from examples.torch.common.optimizer import make_optimizer
 from examples.torch.common.utils import configure_logging, configure_paths, make_additional_checkpoints, print_args, \
     write_metrics, is_pretrained_model_requested, log_common_mlflow_params, SafeMLFLow, \
@@ -312,7 +312,6 @@ def train(model, model_without_dp, compression_ctrl, train_loader, val_loader, c
         start_epoch = resuming_checkpoint['epoch']
         best_miou = resuming_checkpoint['miou']
 
-        compression_ctrl.load_state(resuming_checkpoint)
         logger.info("Resuming from model: Start epoch = {0} "
                     "| Best mean IoU = {1:.4f}".format(start_epoch, best_miou))
         config.start_epoch = start_epoch
@@ -383,10 +382,9 @@ def train(model, model_without_dp, compression_ctrl, train_loader, val_loader, c
 
             # Save the model if it's the best thus far
             if is_main_process():
-                checkpoint_path = save_checkpoint(model,
+                checkpoint_path = save_checkpoint(compression_ctrl,
                                                   optimizer, epoch, best_miou,
-                                                  compression_stage,
-                                                  compression_ctrl.scheduler, config)
+                                                  compression_stage, config)
 
                 make_additional_checkpoints(checkpoint_path, is_best, epoch, config)
                 statistics = compression_ctrl.statistics()
@@ -509,9 +507,9 @@ def main_worker(current_gpu, config):
     resuming_model_sd = None
     resuming_checkpoint = None
     if resuming_checkpoint_path is not None:
-        resuming_model_sd, resuming_checkpoint = load_resuming_model_state_dict_and_checkpoint_from_path(
+        resuming_model_sd, resuming_checkpoint = load_checkpoints_from_path(
             resuming_checkpoint_path)
-    compression_ctrl, model = create_compressed_model(model, nncf_config, resuming_state_dict=resuming_model_sd)
+    compression_ctrl, model = create_compressed_model(model, nncf_config, compression_state=resuming_model_sd)
     model, model_without_dp = prepare_model_for_execution(model, config)
 
     if config.distributed:

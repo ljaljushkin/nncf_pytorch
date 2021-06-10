@@ -12,12 +12,14 @@
 """
 
 from collections import namedtuple
-from typing import List
+from typing import List, Optional, Dict
 
 from nncf.torch.algo_selector import ZeroCompressionLoss
-from nncf.api.compression import CompressionStage
+
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler
+from nncf.api.compression import CompressionSetup
+from nncf.api.compression import CompressionStage
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.sparsity.controller import SparsityController
 from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
@@ -34,8 +36,9 @@ SparseModuleInfo = namedtuple('SparseModuleInfo', ['module_name', 'module', 'ope
 
 
 class BaseSparsityAlgoBuilder(PTCompressionAlgorithmBuilder):
-    def __init__(self, config, should_init: bool = True):
-        super().__init__(config, should_init)
+    def __init__(self, config, should_init: bool = True,
+                 compression_setups: Optional[Dict[str, CompressionSetup]] = None):
+        super().__init__(config, should_init, compression_setups)
         self._sparsified_module_info = []
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:

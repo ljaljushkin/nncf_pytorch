@@ -1,7 +1,6 @@
 from collections import OrderedDict
 from inspect import Signature, Parameter
-from typing import Any
-from typing import List
+from typing import Any, List
 
 import torch
 
