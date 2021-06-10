@@ -1,0 +1,44 @@
+{
+    "model": "mobilenetv2_cifar100",
+    "dataset": "CIFAR100",
+    "batch_size": 128,
+    "input_info": {
+        "sample_size": [
+            1,
+            3,
+            32,
+            32
+        ]
+    },
+    "num_classes": 100,
+    "epochs": 200,
+    "optimizer": {
+        "type": "SGD",
+        "base_lr": 0.01,
+        "weight_decay": 5e-4,
+        "schedule_type": "multistep",
+        "gamma": 0.2,
+        "steps": [
+            60,
+            120,
+            160
+        ],
+        "optimizer_params": {
+            "momentum": 0.9
+        }
+    },
+    "target_device": "VPU",
+    "compression": {
+        "algorithm": "quantization",
+        "initializer": {
+            "precision": {
+                "type": "hawq",
+                "bits": [
+                    4,
+                    8
+                ],
+                "compression_ratio": 1.2
+            }
+        }
+    }
+}
