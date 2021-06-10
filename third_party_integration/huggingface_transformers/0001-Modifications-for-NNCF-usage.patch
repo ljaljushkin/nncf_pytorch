@@ -1,26 +1,26 @@
-From 24e975fb879f8b5b6b590e83d0ffb8e0359c11dc Mon Sep 17 00:00:00 2001
-From: Vasily Shamporov <vasily.shamporov@intel.com>
-Date: Fri, 29 Nov 2019 18:33:05 +0300
+From 0d87092784db98d979aacb2b39c684b2b9f7cf02 Mon Sep 17 00:00:00 2001
+From: "Lyalyushkin, Nikolay" <nikolay.lyalyushkin@intel.com>
+Date: Thu, 10 Jun 2021 11:01:59 +0300
 Subject: [PATCH] Modifications for NNCF usage
 
 ---
- .../run_language_modeling.py                  |  78 +++++++++--
- examples/question-answering/run_squad.py      | 128 ++++++++++++++++--
- examples/text-classification/run_glue.py      |  38 +++++-
- examples/text-classification/run_xnli.py      | 127 +++++++++++++++--
- nncf_bert_config_squad.json                   |  46 +++++++
+ .../run_language_modeling.py                  |  81 +++++++++--
+ examples/question-answering/run_squad.py      | 131 ++++++++++++++++--
+ examples/text-classification/run_glue.py      |  41 +++++-
+ examples/text-classification/run_xnli.py      | 130 +++++++++++++++--
+ nncf_bert_config_squad.json                   |  46 ++++++
  ...config_squad_magnitude_sparsity_cubic.json |  31 +++++
  nncf_bert_config_xnli.json                    |  36 +++++
  nncf_distilbert_config_sst2.json              |  33 +++++
  nncf_gpt2_config_wikitext_hw_config.json      |  58 ++++++++
- nncf_mobilebert_config_squad_int8.json        |  46 +++++++
+ nncf_mobilebert_config_squad_int8.json        |  46 ++++++
  nncf_roberta_config_mnli.json                 |  36 +++++
  src/transformers/modeling_gpt2.py             |   5 +-
- src/transformers/modeling_utils.py            |  26 +++-
+ src/transformers/modeling_utils.py            |  28 +++-
  src/transformers/tokenization_utils_base.py   |   2 +-
  src/transformers/trainer.py                   |  65 ++++++++-
  src/transformers/training_args.py             |   8 ++
- 16 files changed, 708 insertions(+), 55 deletions(-)
+ 16 files changed, 722 insertions(+), 55 deletions(-)
  create mode 100644 nncf_bert_config_squad.json
  create mode 100644 nncf_bert_config_squad_magnitude_sparsity_cubic.json
  create mode 100644 nncf_bert_config_xnli.json
@@ -30,7 +30,7 @@ Subject: [PATCH] Modifications for NNCF usage
  create mode 100644 nncf_roberta_config_mnli.json
 
 diff --git a/examples/language-modeling/run_language_modeling.py b/examples/language-modeling/run_language_modeling.py
-index d9465c37..9da9d30f 100644
+index d9465c376..3edd6d5a3 100644
 --- a/examples/language-modeling/run_language_modeling.py
 +++ b/examples/language-modeling/run_language_modeling.py
 @@ -26,6 +26,8 @@ import os
@@ -59,7 +59,7 @@ index d9465c37..9da9d30f 100644
  
  MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
  MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
-@@ -192,16 +200,60 @@ def main():
+@@ -192,16 +201,60 @@ def main():
              "and load it from here, using --tokenizer_name"
          )
  
@@ -122,7 +122,7 @@ index d9465c37..9da9d30f 100644
  
      model.resize_token_embeddings(len(tokenizer))
  
-@@ -211,19 +261,16 @@ def main():
+@@ -211,19 +264,16 @@ def main():
              "flag (masked language modeling)."
          )
  
@@ -151,7 +151,7 @@ index d9465c37..9da9d30f 100644
  
      # Initialize our Trainer
      trainer = Trainer(
-@@ -233,6 +280,7 @@ def main():
+@@ -233,6 +283,7 @@ def main():
          train_dataset=train_dataset,
          eval_dataset=eval_dataset,
          prediction_loss_only=True,
@@ -160,7 +160,7 @@ index d9465c37..9da9d30f 100644
  
      # Training
 diff --git a/examples/question-answering/run_squad.py b/examples/question-answering/run_squad.py
-index 2bd4e90f..2b1a60e8 100644
+index 2bd4e90ff..f5fe860e3 100644
 --- a/examples/question-answering/run_squad.py
 +++ b/examples/question-answering/run_squad.py
 @@ -25,9 +25,13 @@ import timeit
@@ -177,7 +177,7 @@ index 2bd4e90f..2b1a60e8 100644
  
  from transformers import (
      MODEL_FOR_QUESTION_ANSWERING_MAPPING,
-@@ -52,6 +54,8 @@ try:
+@@ -52,6 +56,8 @@ try:
  except ImportError:
      from tensorboardX import SummaryWriter
  
@@ -186,7 +186,7 @@ index 2bd4e90f..2b1a60e8 100644
  
  logger = logging.getLogger(__name__)
  
-@@ -71,14 +75,19 @@ def to_list(tensor):
+@@ -71,14 +77,19 @@ def to_list(tensor):
      return tensor.detach().cpu().tolist()
  
  
@@ -210,7 +210,7 @@ index 2bd4e90f..2b1a60e8 100644
  
      if args.max_steps > 0:
          t_total = args.max_steps
-@@ -144,7 +153,7 @@ def train(args, train_dataset, model, tokenizer):
+@@ -144,7 +155,7 @@ def train(args, train_dataset, model, tokenizer):
      epochs_trained = 0
      steps_trained_in_current_epoch = 0
      # Check if continuing training from a checkpoint
@@ -219,7 +219,7 @@ index 2bd4e90f..2b1a60e8 100644
          try:
              # set global_step to gobal_step of last saved checkpoint from model path
              checkpoint_suffix = args.model_name_or_path.split("-")[-1].split("/")[0]
-@@ -200,6 +209,7 @@ def train(args, train_dataset, model, tokenizer):
+@@ -200,6 +211,7 @@ def train(args, train_dataset, model, tokenizer):
                      )
  
              outputs = model(**inputs)
@@ -227,7 +227,7 @@ index 2bd4e90f..2b1a60e8 100644
              # model outputs are always tuple in transformers (see doc)
              loss = outputs[0]
  
-@@ -208,6 +218,10 @@ def train(args, train_dataset, model, tokenizer):
+@@ -208,6 +220,10 @@ def train(args, train_dataset, model, tokenizer):
              if args.gradient_accumulation_steps > 1:
                  loss = loss / args.gradient_accumulation_steps
  
@@ -238,7 +238,7 @@ index 2bd4e90f..2b1a60e8 100644
              if args.fp16:
                  with amp.scale_loss(loss, optimizer) as scaled_loss:
                      scaled_loss.backward()
-@@ -215,6 +229,8 @@ def train(args, train_dataset, model, tokenizer):
+@@ -215,6 +231,8 @@ def train(args, train_dataset, model, tokenizer):
                  loss.backward()
  
              tr_loss += loss.item()
@@ -247,7 +247,7 @@ index 2bd4e90f..2b1a60e8 100644
              if (step + 1) % args.gradient_accumulation_steps == 0:
                  if args.fp16:
                      torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
-@@ -223,6 +239,10 @@ def train(args, train_dataset, model, tokenizer):
+@@ -223,6 +241,10 @@ def train(args, train_dataset, model, tokenizer):
  
                  optimizer.step()
                  scheduler.step()  # Update learning rate schedule
@@ -258,7 +258,7 @@ index 2bd4e90f..2b1a60e8 100644
                  model.zero_grad()
                  global_step += 1
  
-@@ -237,12 +257,19 @@ def train(args, train_dataset, model, tokenizer):
+@@ -237,12 +259,19 @@ def train(args, train_dataset, model, tokenizer):
                      tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                      logging_loss = tr_loss
  
@@ -277,11 +277,11 @@ index 2bd4e90f..2b1a60e8 100644
 -                    model_to_save.save_pretrained(output_dir)
 +
 +                    model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
-+                    model_to_save.save_pretrained(output_dir, saved_module_override=model_to_save)
++                    model_to_save.save_pretrained(output_dir, compression_ctrl=compression_ctrl)
                      tokenizer.save_pretrained(output_dir)
  
                      torch.save(args, os.path.join(output_dir, "training_args.bin"))
-@@ -255,10 +283,13 @@ def train(args, train_dataset, model, tokenizer):
+@@ -255,10 +284,13 @@ def train(args, train_dataset, model, tokenizer):
              if args.max_steps > 0 and global_step > args.max_steps:
                  epoch_iterator.close()
                  break
@@ -296,7 +296,7 @@ index 2bd4e90f..2b1a60e8 100644
      if args.local_rank in [-1, 0]:
          tb_writer.close()
  
-@@ -658,6 +689,11 @@ def main():
+@@ -658,6 +690,11 @@ def main():
      parser.add_argument("--server_port", type=str, default="", help="Can be used for distant debugging.")
  
      parser.add_argument("--threads", type=int, default=1, help="multiple threads for converting example to features")
@@ -308,7 +308,7 @@ index 2bd4e90f..2b1a60e8 100644
      args = parser.parse_args()
  
      if args.doc_stride >= args.max_seq_length - args.max_query_length:
-@@ -732,19 +768,69 @@ def main():
+@@ -732,19 +769,69 @@ def main():
          do_lower_case=args.do_lower_case,
          cache_dir=args.cache_dir if args.cache_dir else None,
      )
@@ -379,7 +379,7 @@ index 2bd4e90f..2b1a60e8 100644
      logger.info("Training/evaluation parameters %s", args)
  
      # Before we do anything with models, we want to ensure that we get fp16 execution of torch.einsum if args.fp16 is set.
-@@ -761,7 +845,7 @@ def main():
+@@ -761,7 +848,7 @@ def main():
      # Training
      if args.do_train:
          train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
@@ -388,12 +388,12 @@ index 2bd4e90f..2b1a60e8 100644
          logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
  
      # Save the trained model and the tokenizer
-@@ -771,14 +855,22 @@ def main():
+@@ -771,14 +858,22 @@ def main():
          # They can then be reloaded using `from_pretrained()`
          # Take care of distributed/parallel training
          model_to_save = model.module if hasattr(model, "module") else model
 -        model_to_save.save_pretrained(args.output_dir)
-+        model_to_save.save_pretrained(args.output_dir, saved_module_override=model_to_save)
++        model_to_save.save_pretrained(args.output_dir, compression_ctrl=compression_ctrl)
          tokenizer.save_pretrained(args.output_dir)
  
          # Good practice: save your training arguments together with the trained model
@@ -413,7 +413,7 @@ index 2bd4e90f..2b1a60e8 100644
          tokenizer = AutoTokenizer.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
          model.to(args.device)
  
-@@ -803,7 +895,15 @@ def main():
+@@ -803,7 +898,15 @@ def main():
          for checkpoint in checkpoints:
              # Reload the model
              global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
@@ -431,7 +431,7 @@ index 2bd4e90f..2b1a60e8 100644
  
              # Evaluate
 diff --git a/examples/text-classification/run_glue.py b/examples/text-classification/run_glue.py
-index cf9b765a..957cdba2 100644
+index cf9b765a8..ac8807b66 100644
 --- a/examples/text-classification/run_glue.py
 +++ b/examples/text-classification/run_glue.py
 @@ -24,6 +24,10 @@ from dataclasses import dataclass, field
@@ -445,7 +445,7 @@ index cf9b765a..957cdba2 100644
  
  from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer, EvalPrediction, GlueDataset
  from transformers import GlueDataTrainingArguments as DataTrainingArguments
-@@ -36,7 +39,7 @@ from transformers import (
+@@ -36,7 +40,7 @@ from transformers import (
      glue_tasks_num_labels,
      set_seed,
  )
@@ -454,7 +454,7 @@ index cf9b765a..957cdba2 100644
  
  logger = logging.getLogger(__name__)
  
-@@ -126,14 +129,44 @@ def main():
+@@ -126,14 +130,44 @@ def main():
          model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
          cache_dir=model_args.cache_dir,
      )
@@ -501,7 +501,7 @@ index cf9b765a..957cdba2 100644
      train_dataset = (
          GlueDataset(data_args, tokenizer=tokenizer, cache_dir=model_args.cache_dir) if training_args.do_train else None
      )
-@@ -165,6 +196,7 @@ def main():
+@@ -165,6 +199,7 @@ def main():
          train_dataset=train_dataset,
          eval_dataset=eval_dataset,
          compute_metrics=build_compute_metrics_fn(data_args.task_name),
@@ -510,7 +510,7 @@ index cf9b765a..957cdba2 100644
  
      # Training
 diff --git a/examples/text-classification/run_xnli.py b/examples/text-classification/run_xnli.py
-index c1db6fa3..ca44bd1c 100644
+index c1db6fa37..d1a6e6597 100644
 --- a/examples/text-classification/run_xnli.py
 +++ b/examples/text-classification/run_xnli.py
 @@ -25,8 +25,13 @@ import random
@@ -527,7 +527,7 @@ index c1db6fa3..ca44bd1c 100644
  from tqdm import tqdm, trange
  
  from transformers import (
-@@ -48,6 +51,8 @@ try:
+@@ -48,6 +53,8 @@ try:
  except ImportError:
      from tensorboardX import SummaryWriter
  
@@ -536,7 +536,7 @@ index c1db6fa3..ca44bd1c 100644
  
  logger = logging.getLogger(__name__)
  
-@@ -60,14 +65,19 @@ def set_seed(args):
+@@ -60,14 +67,19 @@ def set_seed(args):
          torch.cuda.manual_seed_all(args.seed)
  
  
@@ -560,7 +560,7 @@ index c1db6fa3..ca44bd1c 100644
  
      if args.max_steps > 0:
          t_total = args.max_steps
-@@ -132,7 +142,7 @@ def train(args, train_dataset, model, tokenizer):
+@@ -132,7 +144,7 @@ def train(args, train_dataset, model, tokenizer):
      epochs_trained = 0
      steps_trained_in_current_epoch = 0
      # Check if continuing training from a checkpoint
@@ -569,7 +569,7 @@ index c1db6fa3..ca44bd1c 100644
          # set global_step to gobal_step of last saved checkpoint from model path
          global_step = int(args.model_name_or_path.split("-")[-1].split("/")[0])
          epochs_trained = global_step // (len(train_dataloader) // args.gradient_accumulation_steps)
-@@ -164,7 +174,9 @@ def train(args, train_dataset, model, tokenizer):
+@@ -164,7 +176,9 @@ def train(args, train_dataset, model, tokenizer):
                  inputs["token_type_ids"] = (
                      batch[2] if args.model_type in ["bert"] else None
                  )  # XLM and DistilBERT don't use segment_ids
@@ -579,7 +579,7 @@ index c1db6fa3..ca44bd1c 100644
              loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
  
              if args.n_gpu > 1:
-@@ -172,6 +184,10 @@ def train(args, train_dataset, model, tokenizer):
+@@ -172,6 +186,10 @@ def train(args, train_dataset, model, tokenizer):
              if args.gradient_accumulation_steps > 1:
                  loss = loss / args.gradient_accumulation_steps
  
@@ -590,7 +590,7 @@ index c1db6fa3..ca44bd1c 100644
              if args.fp16:
                  with amp.scale_loss(loss, optimizer) as scaled_loss:
                      scaled_loss.backward()
-@@ -179,6 +195,8 @@ def train(args, train_dataset, model, tokenizer):
+@@ -179,6 +197,8 @@ def train(args, train_dataset, model, tokenizer):
                  loss.backward()
  
              tr_loss += loss.item()
@@ -599,7 +599,7 @@ index c1db6fa3..ca44bd1c 100644
              if (step + 1) % args.gradient_accumulation_steps == 0:
                  if args.fp16:
                      torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
-@@ -188,6 +206,10 @@ def train(args, train_dataset, model, tokenizer):
+@@ -188,6 +208,10 @@ def train(args, train_dataset, model, tokenizer):
                  optimizer.step()
                  scheduler.step()  # Update learning rate schedule
                  model.zero_grad()
@@ -610,7 +610,7 @@ index c1db6fa3..ca44bd1c 100644
                  global_step += 1
  
                  if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
-@@ -202,13 +224,20 @@ def train(args, train_dataset, model, tokenizer):
+@@ -202,13 +226,20 @@ def train(args, train_dataset, model, tokenizer):
                      tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                      logging_loss = tr_loss
  
@@ -632,7 +632,7 @@ index c1db6fa3..ca44bd1c 100644
                      )  # Take care of distributed/parallel training
                      model_to_save.save_pretrained(output_dir)
                      tokenizer.save_pretrained(output_dir)
-@@ -223,6 +253,10 @@ def train(args, train_dataset, model, tokenizer):
+@@ -223,6 +254,10 @@ def train(args, train_dataset, model, tokenizer):
              if args.max_steps > 0 and global_step > args.max_steps:
                  epoch_iterator.close()
                  break
@@ -643,7 +643,7 @@ index c1db6fa3..ca44bd1c 100644
          if args.max_steps > 0 and global_step > args.max_steps:
              train_iterator.close()
              break
-@@ -474,6 +508,10 @@ def main():
+@@ -474,6 +509,10 @@ def main():
      parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
      parser.add_argument("--server_ip", type=str, default="", help="For distant debugging.")
      parser.add_argument("--server_port", type=str, default="", help="For distant debugging.")
@@ -654,7 +654,7 @@ index c1db6fa3..ca44bd1c 100644
      args = parser.parse_args()
  
      if (
-@@ -551,24 +589,74 @@ def main():
+@@ -551,24 +590,74 @@ def main():
          do_lower_case=args.do_lower_case,
          cache_dir=args.cache_dir,
      )
@@ -731,7 +731,7 @@ index c1db6fa3..ca44bd1c 100644
          logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
  
      # Saving best-practices: if you use defaults names for the model, you can reload it using from_pretrained()
-@@ -577,16 +663,25 @@ def main():
+@@ -577,16 +666,25 @@ def main():
          # Save a trained model, configuration and tokenizer using `save_pretrained()`.
          # They can then be reloaded using `from_pretrained()`
          model_to_save = (
@@ -740,7 +740,7 @@ index c1db6fa3..ca44bd1c 100644
          )  # Take care of distributed/parallel training
 -        model_to_save.save_pretrained(args.output_dir)
 +
-+        model_to_save.save_pretrained(args.output_dir, saved_module_override=model_to_save)
++        model_to_save.save_pretrained(args.output_dir, compression_ctrl=compression_ctrl)
          tokenizer.save_pretrained(args.output_dir)
  
          # Good practice: save your training arguments together with the trained model
@@ -760,7 +760,7 @@ index c1db6fa3..ca44bd1c 100644
          tokenizer = AutoTokenizer.from_pretrained(args.output_dir)
          model.to(args.device)
  
-@@ -604,7 +699,15 @@ def main():
+@@ -604,7 +702,15 @@ def main():
              global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
              prefix = checkpoint.split("/")[-1] if checkpoint.find("checkpoint") != -1 else ""
  
@@ -779,7 +779,7 @@ index c1db6fa3..ca44bd1c 100644
              result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
 diff --git a/nncf_bert_config_squad.json b/nncf_bert_config_squad.json
 new file mode 100644
-index 00000000..d3a34e92
+index 000000000..d3a34e926
 --- /dev/null
 +++ b/nncf_bert_config_squad.json
 @@ -0,0 +1,46 @@
@@ -831,7 +831,7 @@ index 00000000..d3a34e92
 +}
 diff --git a/nncf_bert_config_squad_magnitude_sparsity_cubic.json b/nncf_bert_config_squad_magnitude_sparsity_cubic.json
 new file mode 100644
-index 00000000..b4452e8d
+index 000000000..b4452e8d4
 --- /dev/null
 +++ b/nncf_bert_config_squad_magnitude_sparsity_cubic.json
 @@ -0,0 +1,31 @@
@@ -868,7 +868,7 @@ index 00000000..b4452e8d
 +}
 diff --git a/nncf_bert_config_xnli.json b/nncf_bert_config_xnli.json
 new file mode 100644
-index 00000000..a21a522f
+index 000000000..a21a522fc
 --- /dev/null
 +++ b/nncf_bert_config_xnli.json
 @@ -0,0 +1,36 @@
@@ -910,7 +910,7 @@ index 00000000..a21a522f
 +}
 diff --git a/nncf_distilbert_config_sst2.json b/nncf_distilbert_config_sst2.json
 new file mode 100644
-index 00000000..6b648ca5
+index 000000000..6b648ca5e
 --- /dev/null
 +++ b/nncf_distilbert_config_sst2.json
 @@ -0,0 +1,33 @@
@@ -949,7 +949,7 @@ index 00000000..6b648ca5
 +}
 diff --git a/nncf_gpt2_config_wikitext_hw_config.json b/nncf_gpt2_config_wikitext_hw_config.json
 new file mode 100644
-index 00000000..4b237613
+index 000000000..4b2376133
 --- /dev/null
 +++ b/nncf_gpt2_config_wikitext_hw_config.json
 @@ -0,0 +1,58 @@
@@ -1013,7 +1013,7 @@ index 00000000..4b237613
 +}
 diff --git a/nncf_mobilebert_config_squad_int8.json b/nncf_mobilebert_config_squad_int8.json
 new file mode 100644
-index 00000000..89504d2c
+index 000000000..89504d2c7
 --- /dev/null
 +++ b/nncf_mobilebert_config_squad_int8.json
 @@ -0,0 +1,46 @@
@@ -1065,7 +1065,7 @@ index 00000000..89504d2c
 +}
 diff --git a/nncf_roberta_config_mnli.json b/nncf_roberta_config_mnli.json
 new file mode 100644
-index 00000000..edbe0f84
+index 000000000..edbe0f84d
 --- /dev/null
 +++ b/nncf_roberta_config_mnli.json
 @@ -0,0 +1,36 @@
@@ -1106,7 +1106,7 @@ index 00000000..edbe0f84
 +    }
 +}
 diff --git a/src/transformers/modeling_gpt2.py b/src/transformers/modeling_gpt2.py
-index b839cba1..1808e58b 100644
+index b839cba16..1808e58b5 100644
 --- a/src/transformers/modeling_gpt2.py
 +++ b/src/transformers/modeling_gpt2.py
 @@ -119,6 +119,7 @@ class Attention(nn.Module):
@@ -1129,7 +1129,7 @@ index b839cba1..1808e58b 100644
          w = torch.where(mask.bool(), w, self.masked_bias.to(w.dtype))
  
 diff --git a/src/transformers/modeling_utils.py b/src/transformers/modeling_utils.py
-index 5b000c81..05df28a7 100644
+index 5b000c812..3bc247819 100644
 --- a/src/transformers/modeling_utils.py
 +++ b/src/transformers/modeling_utils.py
 @@ -24,6 +24,9 @@ from torch import Tensor, device, dtype, nn
@@ -1142,39 +1142,46 @@ index 5b000c81..05df28a7 100644
  from .activations import get_activation
  from .configuration_utils import PretrainedConfig
  from .file_utils import (
-@@ -471,7 +474,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
+@@ -471,12 +474,13 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
  
          self.base_model._prune_heads(heads_to_prune)
  
 -    def save_pretrained(self, save_directory):
-+    def save_pretrained(self, save_directory,
-+                        saved_module_override=None):
++    def save_pretrained(self, save_directory, compression_ctrl=None):
          """ Save a model and its configuration file to a directory, so that it
              can be re-loaded using the `:func:`~transformers.PreTrainedModel.from_pretrained`` class method.
  
-@@ -492,6 +496,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
+             Arguments:
+                 save_directory: directory to which to save.
++                compression_ctrl: a handle to the compression by NNCF
+         """
+         if os.path.isfile(save_directory):
+             logger.error("Provided path ({}) should be a directory, not a file".format(save_directory))
+@@ -492,6 +496,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
          # If we save using the predefined names, we can load using `from_pretrained`
          output_model_file = os.path.join(save_directory, WEIGHTS_NAME)
  
-+        module_to_save = model_to_save if saved_module_override is None else saved_module_override
++        state_to_save_fn = compression_ctrl.get_compression_state
++        if compression_ctrl is None:
++            state_to_save_fn = model_to_save.state_dict
 +
          if getattr(self.config, "xla_device", False):
              import torch_xla.core.xla_model as xm
  
-@@ -499,10 +505,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
+@@ -499,10 +507,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
                  # Save configuration file
                  model_to_save.config.save_pretrained(save_directory)
              # xm.save takes care of saving only from master
 -            xm.save(model_to_save.state_dict(), output_model_file)
-+            xm.save(module_to_save.state_dict(), output_model_file)
++            xm.save(state_to_save_fn(), output_model_file)
          else:
              model_to_save.config.save_pretrained(save_directory)
 -            torch.save(model_to_save.state_dict(), output_model_file)
-+            torch.save(module_to_save.state_dict(), output_model_file)
++            torch.save(state_to_save_fn(), output_model_file)
  
          logger.info("Model weights saved in {}".format(output_model_file))
  
-@@ -588,6 +594,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
+@@ -588,6 +596,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
          output_loading_info = kwargs.pop("output_loading_info", False)
          local_files_only = kwargs.pop("local_files_only", False)
          use_cdn = kwargs.pop("use_cdn", True)
@@ -1183,19 +1190,19 @@ index 5b000c81..05df28a7 100644
  
          # Load config if we don't provide a configuration
          if not isinstance(config, PretrainedConfig):
-@@ -680,6 +688,11 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
+@@ -680,6 +690,11 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
                      "If you tried to load a PyTorch model from a TF 2.0 checkpoint, please set from_tf=True. "
                  )
  
 +        if nncf_config is not None and nncf_eval:
 +            compression_algo_controller, model = create_compressed_model(model, nncf_config,
-+                                                                         resuming_state_dict=state_dict)
++                                                                         compression_state=state_dict)
 +            return compression_algo_controller, model
 +
          missing_keys = []
          unexpected_keys = []
          error_msgs = []
-@@ -786,6 +799,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
+@@ -786,6 +801,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
          # Set model in evaluation mode to deactivate DropOut modules by default
          model.eval()
  
@@ -1206,7 +1213,7 @@ index 5b000c81..05df28a7 100644
          if output_loading_info:
              loading_info = {
                  "missing_keys": missing_keys,
-@@ -802,7 +819,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
+@@ -802,7 +821,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
  
          return model
  
@@ -1217,7 +1224,7 @@ index 5b000c81..05df28a7 100644
      def __init__(self, nf, nx):
          """ Conv1D layer as defined by Radford et al. for OpenAI GPT (and also used in GPT-2)
 diff --git a/src/transformers/tokenization_utils_base.py b/src/transformers/tokenization_utils_base.py
-index 6a1219a4..ccb93309 100644
+index 6a1219a4d..ccb933090 100644
 --- a/src/transformers/tokenization_utils_base.py
 +++ b/src/transformers/tokenization_utils_base.py
 @@ -1365,7 +1365,7 @@ class PreTrainedTokenizerBase(SpecialTokensMixin):
@@ -1230,7 +1237,7 @@ index 6a1219a4..ccb93309 100644
                      write_dict[key] = value
              f.write(json.dumps(write_dict, ensure_ascii=False))
 diff --git a/src/transformers/trainer.py b/src/transformers/trainer.py
-index 067f793d..f9ccb762 100644
+index 067f793d1..bcc37bfa1 100644
 --- a/src/transformers/trainer.py
 +++ b/src/transformers/trainer.py
 @@ -10,6 +10,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -1242,7 +1249,7 @@ index 067f793d..f9ccb762 100644
  from packaging import version
  from torch import nn
  from torch.utils.data.dataloader import DataLoader
-@@ -17,6 +18,7 @@ from torch.utils.data.dataset import Dataset
+@@ -17,6 +19,7 @@ from torch.utils.data.dataset import Dataset
  from torch.utils.data.distributed import DistributedSampler
  from torch.utils.data.sampler import RandomSampler, Sampler, SequentialSampler
  from tqdm.auto import tqdm, trange
@@ -1250,7 +1257,7 @@ index 067f793d..f9ccb762 100644
  
  from .data.data_collator import DataCollator, default_data_collator
  from .file_utils import is_apex_available, is_torch_tpu_available
-@@ -184,6 +186,7 @@ class Trainer:
+@@ -184,6 +187,7 @@ class Trainer:
          prediction_loss_only=False,
          tb_writer: Optional["SummaryWriter"] = None,
          optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = None,
@@ -1258,7 +1265,7 @@ index 067f793d..f9ccb762 100644
      ):
          self.model = model.to(args.device)
          self.args = args
-@@ -226,6 +229,8 @@ class Trainer:
+@@ -226,6 +230,8 @@ class Trainer:
                  FutureWarning,
              )
  
@@ -1267,7 +1274,7 @@ index 067f793d..f9ccb762 100644
      def get_train_dataloader(self) -> DataLoader:
          """
          Returns the training :class:`~torch.utils.data.DataLoader`.
-@@ -417,6 +422,9 @@ class Trainer:
+@@ -417,6 +423,9 @@ class Trainer:
  
          # Distributed training (should be after apex fp16 initialization)
          if self.args.local_rank != -1:
@@ -1277,7 +1284,7 @@ index 067f793d..f9ccb762 100644
              model = torch.nn.parallel.DistributedDataParallel(
                  model,
                  device_ids=[self.args.local_rank],
-@@ -450,7 +458,7 @@ class Trainer:
+@@ -450,7 +459,7 @@ class Trainer:
          epochs_trained = 0
          steps_trained_in_current_epoch = 0
          # Check if continuing training from a checkpoint
@@ -1286,7 +1293,7 @@ index 067f793d..f9ccb762 100644
              # set global_step to global_step of last saved checkpoint from model path
              try:
                  self.global_step = int(model_path.split("-")[-1].split("/")[0])
-@@ -496,7 +504,9 @@ class Trainer:
+@@ -496,7 +505,9 @@ class Trainer:
                      steps_trained_in_current_epoch -= 1
                      continue
  
@@ -1297,7 +1304,7 @@ index 067f793d..f9ccb762 100644
  
                  if (step + 1) % self.args.gradient_accumulation_steps == 0 or (
                      # last step in epoch but step is always smaller than gradient_accumulation_steps
-@@ -515,6 +525,10 @@ class Trainer:
+@@ -515,6 +526,10 @@ class Trainer:
  
                      scheduler.step()
                      model.zero_grad()
@@ -1308,7 +1315,7 @@ index 067f793d..f9ccb762 100644
                      self.global_step += 1
                      self.epoch = epoch + (step + 1) / len(epoch_iterator)
  
-@@ -531,6 +545,12 @@ class Trainer:
+@@ -531,6 +546,12 @@ class Trainer:
                          )
                          logging_loss = tr_loss
  
@@ -1341,10 +1348,10 @@ index 067f793d..f9ccb762 100644
 -        self.model.save_pretrained(output_dir)
 +
 +        model_to_save = (
-+            self.model.module if hasattr(self.model, "module") and self.compression_ctrl is None else self.model
++            self.model.module if hasattr(self.model, "module") else self.model
 +        )  # Take care of distributed/parallel training
 +
-+        model_to_save.save_pretrained(output_dir, saved_module_override=model_to_save)
++        model_to_save.save_pretrained(output_dir, compression_ctrl=self.compression_ctrl)
  
          # Good practice: save your training arguments together with the trained model
          torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
@@ -1380,7 +1387,7 @@ index 067f793d..f9ccb762 100644
 +    )
 +    return data_loader
 diff --git a/src/transformers/training_args.py b/src/transformers/training_args.py
-index 9609cc91..d5658d7e 100644
+index 9609cc914..d5658d7e4 100644
 --- a/src/transformers/training_args.py
 +++ b/src/transformers/training_args.py
 @@ -6,6 +6,8 @@ from dataclasses import dataclass, field
@@ -1406,5 +1413,5 @@ index 9609cc91..d5658d7e 100644
          default=False, metadata={"help": "Drop the last incomplete batch if it is not divisible by the batch size."}
      )
 -- 
-2.17.1
+2.25.1
 
