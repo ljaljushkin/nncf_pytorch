@@ -108,14 +108,15 @@ def create_compressed_model(model: Module, config: NNCFConfig,
     scopes_without_shape_matching = config.get('scopes_without_shape_matching', [])
     ignored_scopes = config.get('ignored_scopes')
     target_scopes = config.get('target_scopes')
-
+    skipped_blocks = config.get('skipped_blocks')
     compressed_model = NNCFNetwork(model, input_infos=input_info_list,
                                    dummy_forward_fn=dummy_forward_fn,
                                    wrap_inputs_fn=wrap_inputs_fn,
                                    wrap_outputs_fn=wrap_outputs_fn,
                                    ignored_scopes=ignored_scopes,
                                    target_scopes=target_scopes,
-                                   scopes_without_shape_matching=scopes_without_shape_matching)
+                                   scopes_without_shape_matching=scopes_without_shape_matching,
+                                   skipped_block=skipped_blocks)
 
     should_init = resuming_state_dict is None
     composite_builder = PTCompositeCompressionAlgorithmBuilder(config, should_init=should_init)

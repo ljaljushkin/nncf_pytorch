@@ -363,7 +363,7 @@ class PTInsertionPoint:
 class NNCFNetwork(nn.Module, PostGraphBuildActing):
     def __init__(self, module, input_infos: List[ModelInputInfo],
                  dummy_forward_fn=None, wrap_inputs_fn=None, scopes_without_shape_matching=None,
-                 ignored_scopes=None, target_scopes=None, reset: bool = False, wrap_outputs_fn=None):
+                 ignored_scopes=None, target_scopes=None, reset: bool = False, wrap_outputs_fn=None, skipped_block=None):
         super().__init__()
         self._set_nncf_wrapped_model(module)
         self._forward_signature = inspect.signature(module.forward)
@@ -373,6 +373,8 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
         self.target_scopes = target_scopes
         self._user_dummy_forward_fn = dummy_forward_fn
 
+
+        self.skipped_block = skipped_block
         try:
             device = next(module.parameters()).device
         except StopIteration:
@@ -436,7 +438,13 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
             self._compressed_context.add_node_comparators(scopes_without_shape_matching,
                                                           ShapeIgnoringTensorMetaComparator())
         self._load_listener = None
-
+        self._compressed_context.skipped_block = self.skipped_block
+        if isinstance(skipped_block, list):
+            self._compressed_context.start_node_name_of_skipped_block = [l[0] for l in skipped_block]
+            self._compressed_context.end_node_name_of_skipped_block = [l[1] for l in skipped_block]
+        else:
+            self._compressed_context.start_node_name_of_skipped_block = [skipped_block[0]]
+            self._compressed_context.end_node_name_of_skipped_block = [skipped_block[1]]
 
     @debuggable_forward
     def forward(self, *args, **kwargs):

@@ -68,6 +68,11 @@ class TracingContext:
         self._is_forwarding = False
         self._may_add_nodes = True
         self._input_comparators_per_scope = []
+        self._elastic_depth = False
+        self.skipped_block = list()
+        self.in_skipped_block = False
+        self.start_node_name_of_skipped_block = list()
+        self.end_node_name_of_skipped_block = list()
 
     def __enter__(self):
         global _CURRENT_CONTEXT
