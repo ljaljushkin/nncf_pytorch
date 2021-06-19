@@ -13,6 +13,7 @@
 from collections import OrderedDict
 from copy import deepcopy
 import random
+import math
 from tqdm import tqdm
 import numpy as np
 import os
@@ -112,6 +113,18 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
             nncf_logger.info("Adding Dynamic Conv2D Layer in scope: {}".format(str(conv_module_scope)))
 
             # TODO: Use config ... width_step if progressive shrinking
+            # fine_tuner_param = self.config.get('fine_tuner_params', None)
+            # elastic_width_max_options = 0
+            # if fine_tuner_param is not None:
+            #     width_step = fine_tuner_param.get('width_step', None)
+            #     stage = fine_tuner_param.get('stage', None)
+            #     phase = fine_tuner_param.get('phase', None)
+            #     if stage == 'width':
+            #         if phase == '1':
+            #             elastic_width_max_options = 2
+            #         elif phase == '2':
+            #             elastic_width_max_options = 3
+            #
 
             conv_operation = self.create_elastic_k_w(conv_module, conv_module_scope)
             insertion_commands.append(
@@ -206,6 +219,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         self.val_loader = val_loader
         self.criterion = criterion
         self.optimizer = optimizer
+        self.init_lr = optimizer.param_groups[0]['lr']
 
         config = self.config
         print(config)
@@ -229,7 +243,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             # depth_config =
             # TODO 2. Load elastic kernel and depth used in previously finetuned network
 
-            self.reorganize_weights()
+            # self.reorganize_weights() # TODO: Automation
+            self.reorganize_weights_from_config()
 
             self.train(validate_func=None)
 
@@ -290,7 +305,6 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             # Set random elastic depth # TODO:
             # Set random elastic width
             subnet_config['width'] = self._get_random_width_conf()
-            # TODO: Nikolay's idea to satisfy other requirements
         else:
             raise ValueError('Unsupported stage')
         # print(subnet_config)
@@ -345,6 +359,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                             'best_acc': self.best_acc,
                             'optimizer': self.optimizer.state_dict(),
                             'state_dict': self.target_model.state_dict(),
+                            # 'elastic_params'
                         }, os.path.join(os.path.join(self.main_path, 'checkpoint'), 'model_best.pth.tar'))
 
     def train_one_epoch(self, epoch):
@@ -370,14 +385,14 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             data_time.update(time.time() - end)
 
             # TODO: Fix adjustment of learning rate.
-            # if epoch < warmup_epochs:
-            #     new_lr = self.warmup_adjust_learning_rate(
-            #         optimizer, warmup_epochs * nBatch, nBatch, epoch, i, warmup_lr,
-            #     )
-            # else:
-            #     new_lr = self.adjust_learning_rate(
-            #         optimizer, epoch - warmup_epochs, i, nBatch
-            #     )
+            if epoch < warmup_epochs:
+                new_lr = self.warmup_adjust_learning_rate(
+                    self.optimizer, warmup_epochs * nBatch, nBatch, epoch, i, warmup_lr,
+                )
+            else:
+                new_lr = self.adjust_learning_rate(
+                    self.optimizer, epoch - warmup_epochs, i, nBatch
+                )
 
             images, labels = images.cuda(), labels.cuda()
             target = labels
@@ -399,8 +414,12 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             for _ in range(config['fine_tuner_params']['dynamic_batch_size']):
                 subnet_seed = int('%d%.3d%.3d' % (epoch * nBatch + i, _, 0))
                 random.seed(subnet_seed)
-                # TODO: Enable subnet sampling
-                # self.sample_active_subnet(config['fine_tuner_params']['stage'])
+                if config['fine_tuner_params'].get('use_fixed_training_config', False):
+                    subnet_config = config['fine_tuner_params']['fixed_training_config']
+                    self.set_active_subnet(subnet_config)
+                    exit(0)
+                else:
+                    self.sample_active_subnet(config['fine_tuner_params']['stage'])
 
                 output = dynamic_net(images)
                 if config['kd_ratio'] == 0:
@@ -451,7 +470,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
         dynamic_net.eval()
 
-        # TODO: Only validating single setting for now.
+        # TODO: Only validating single setting for now. It is not necessarily the supernetwork
         return self.validate_single_setting(epoch=epoch)
 
         # TODO Fix this function
@@ -555,8 +574,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             if is_main_process():
                 # TODO: Tensorboard.
                 pass # TODO
-
         return losses.avg, top1.avg, top5.avg, 'TODO_log'
+
 
     def _create_output_folder(self, config):
         self.main_path = config.get('output_path', 'bootstrapNASOutput')
@@ -573,7 +592,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
     def adjust_learning_rate(self, optimizer, epoch, batch=0, nBatch=None):
         """ adjust learning of a given optimizer and return the new learning rate """
-        new_lr = calc_learning_rate(epoch, self.init_lr, self.n_epochs, batch, nBatch, self.lr_schedule_type)
+        new_lr = self.calc_learning_rate(epoch, self.init_lr, self.config['fine_tuner_params']['epochs'], batch, nBatch, self.config['fine_tuner_params']['lr_schedule_type'])
         for param_group in optimizer.param_groups:
             param_group['lr'] = new_lr
         return new_lr
@@ -586,39 +605,74 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             param_group['lr'] = new_lr
         return new_lr
 
-    # TODO: Refactor to take into account convs without associated normalization.
+    """ learning rate schedule """
+
+    def calc_learning_rate(self, epoch, init_lr, n_epochs, batch=0, nBatch=None, lr_schedule_type='cosine'):
+        if lr_schedule_type == 'cosine':
+            t_total = n_epochs * nBatch
+            t_cur = epoch * nBatch + batch
+            lr = 0.5 * init_lr * (1 + math.cos(math.pi * t_cur / t_total))
+        elif lr_schedule_type is None:
+            lr = init_lr
+        else:
+            raise ValueError('do not support: %s' % lr_schedule_type)
+        return lr
+
     def reorganize_weights(self):
-        nncf_graph = self.target_model.get_original_graph()
-        conv_bn_pattern = N('conv2d') + BN
-        nx_graph = deepcopy(nncf_graph.get_nx_graph_copy())
-        from nncf.torch.graph.graph_matching import search_all
-        matches = search_all(nx_graph, conv_bn_pattern)
-        conv2d_bn_node_pairs = []
-        for match in matches:
-            input_node_key = match[0]
-            output_node_key = match[-1]
-            conv_node = nncf_graph.get_node_by_key(input_node_key)
-            bn_node = nncf_graph.get_node_by_key(output_node_key)
-            conv2d_bn_node_pairs.append((conv_node, bn_node))
+        pass
 
-        for conv_node, bn_node in conv2d_bn_node_pairs:
-            conv_module_scope = conv_node.ia_op_exec_context.scope_in_model
-            conv_module = self.target_model.get_module_by_scope(conv_module_scope)
+    @staticmethod
+    def adjust_bn_according_to_idx(bn, idx):
+        bn.weight.data = torch.index_select(bn.weight.data, 0, idx)
+        bn.bias.data = torch.index_select(bn.bias.data, 0, idx)
+        if type(bn) in [nn.BatchNorm1d, nn.BatchNorm2d]:
+            bn.running_mean.data = torch.index_select(bn.running_mean.data, 0, idx)
+            bn.running_var.data = torch.index_select(bn.running_var.data, 0, idx)
 
-            importance = torch.sum(torch.abs(conv_module.weight.data), dim=(0, 2, 3))
-            sorted_importance, sorted_idx = torch.sort(importance, dim=0, descending=True)
-            conv_module.weight.data = torch.index_select(
-                conv_module.weight.data, 1, sorted_idx)
+    # TODO: Generalize
+    def reorganize_weights_from_config(self):
+        from nncf.torch.dynamic_graph.context import Scope
+        # TODO: Refactor to reorg from config.
+        # Remove hardcoded Resnet50
+        bottlenecks = [2, 3, 5, 2]
+        for layer in range(1, 5):
+            for bottleneck in range(1, bottlenecks[layer-1]+1):
+                print(layer, bottleneck)
+                conv3 = self.target_model.get_module_by_scope(Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[conv3]'))
+                conv2 = self.target_model.get_module_by_scope(Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[conv2]'))
+                bn2 = self.target_model.get_module_by_scope(Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[bn2]'))
+                conv1 = self.target_model.get_module_by_scope(Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[conv1]'))
+                bn1 = self.target_model.get_module_by_scope(Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[bn1]'))
 
-            bn_module_scope = bn_node.ia_op_exec_context.scope_in_model
-            bn_module = self.target_model.get_module_by_scope(bn_module_scope)
+                # conv3 -> conv2
+                importance = torch.sum(torch.abs(conv3.weight.data), dim=(0, 2, 3))
+                sorted_importance, sorted_idx = torch.sort(importance, dim=0, descending=True)
+                conv3.weight.data = torch.index_select(conv3.weight.data, 1, sorted_idx)
+                self.adjust_bn_according_to_idx(bn2, sorted_idx)
+                conv2.weight.data = torch.index_select(conv2.weight.data, 0, sorted_idx)
 
-            # TODO: This is causing a RuntimeError: CUDA error: device-side assert triggered
-            # bn_module.weight.data = torch.index_select(bn_module.weight.data, 0, sorted_idx)
-            # bn_module.bias.data = torch.index_select(bn_module.bias.data, 0, sorted_idx)
-            # if type(bn_module) in [nn.BatchNorm1d, nn.BatchNorm2d]:
-            #     bn_module.running_mean.data = torch.index_select(bn_module.running_mean.data, 0, sorted_idx)
-            #     bn_module.running_var.data = torch.index_select(bn_module.running_var.data, 0, sorted_idx)
+                # conv2 -> conv1
+                importance = torch.sum(torch.abs(conv2.weight.data), dim=(0, 2, 3))
+                sorted_importance, sorted_idx = torch.sort(importance, dim=0, descending=True)
+
+                conv2.weight.data = torch.index_select(conv2.weight.data, 1, sorted_idx)
+                self.adjust_bn_according_to_idx(bn1, sorted_idx)
+                conv1.weight.data = torch.index_select(conv1.weight.data, 0, sorted_idx)
+
+    def set_logger_level(self, level):
+        nncf_logger.setLevel(level)
+        for handler in nncf_logger.handlers:
+            handler.setLevel(level)
+
+    # Search API
+    def get_supernet(self):
+        pass
+
+    def save_subnet(self, config):
+        pass
+
+    def get_subnet(self, config):
+        pass
 
 
 class AverageMeter:

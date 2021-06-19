@@ -7,6 +7,7 @@ from nncf.common.utils.logger import logger as nncf_logger
 from nncf.torch.layer_utils import COMPRESSION_MODULES
 from nncf.torch.nas.bootstrapNAS.ofa_layers_utils import sub_filter_start_end
 
+
 @COMPRESSION_MODULES.register()
 class ElasticBypassOp(nn.Module):
     def __init__(self, scope):
@@ -47,7 +48,7 @@ class ElasticLinearOp(nn.Module):
 # Unified operator for elastic kernel and width
 @COMPRESSION_MODULES.register() # TODO: Remove?
 class ElasticConv2DOp(nn.Module):
-    def __init__(self, max_kernel_size, max_in_channels, max_out_channels,scope): #, module_w):
+    def __init__(self, max_kernel_size, max_in_channels, max_out_channels, scope): #, module_w):
         super().__init__()
         self.scope = scope
         # Create kernel_size_list based on max module kernel size
@@ -138,9 +139,14 @@ class ElasticConv2DOp(nn.Module):
             raise ValueError(
                 'invalid number of output channels to set. Should be within [{}, {}]'.format(0, self.max_out_channels))
         if num_channels not in self.width_list:
-            raise ValueError(
-                'invalid number of output channels to set. Should be a number in {}'.format(self.width_list))
+            raise ValueError(f'{self.scope}: invalid number of output channels to set: {num_channels}. Should be a number in {self.width_list}')
         self.active_out_channels = num_channels
+
+    def get_active_kernel_size(self):
+        return self.active_kernel_size
+
+    def get_active_out_channels(self):
+        return self.active_out_channels
 
     def forward(self, weight, inputs):
         nncf_logger.debug('Conv2d with active kernel size={} and active number of out channels={} in scope={}'.format(self.active_kernel_size, self.active_out_channels, self.scope))
