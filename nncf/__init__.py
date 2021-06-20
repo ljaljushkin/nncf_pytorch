@@ -43,6 +43,8 @@ if __nncf_backend__ == 'Torch':
     from nncf.torch.sparsity.rb import algo as rb_sparsity_algo
     from nncf.torch.pruning.filter_pruning import algo as filter_pruning_algo
 
+    from nncf.torch.nas.bootstrapNAS import algo as bootstrapNAS_algo
+
     # Functions most commonly used in integrating NNCF into training pipelines are
     # listed below for importing convenience
 
