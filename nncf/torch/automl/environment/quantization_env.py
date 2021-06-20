@@ -11,44 +11,50 @@
  limitations under the License.
 """
 
+import ctypes
+import json
 import os
-import logging
-
 import os.path as osp
+from collections import OrderedDict
+from copy import deepcopy
 from pathlib import Path
-from typing import List, Dict, Union, Tuple, Callable
+from typing import Callable
+from typing import Dict
+from typing import List
+from typing import Tuple
+from typing import Union
 
+import functools
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
-
-import ctypes
-import json
-import numpy as np
-import pandas as pd
-from copy import deepcopy
-from collections import OrderedDict
 from natsort import natsorted
-
-from nncf.common.utils.logger import logger
-from nncf.common.hardware.config import HWConfigType
-from nncf.torch.debug import is_debug, DEBUG_LOG_DIR
-from nncf.torch.initialization import PartialDataLoader
-from nncf.torch.quantization.layers import BaseQuantizer
-from nncf.torch.quantization.algo import QuantizationController, NNCFNetwork, ExperimentalQuantizationController
-from nncf.torch.quantization.precision_constraints import HardwareQuantizationConstraints
-from nncf.torch.quantization.quantizer_id import QuantizerId, WeightQuantizerId, \
-    NonWeightQuantizerId, InputQuantizerId, FunctionQuantizerId
-from nncf.common.quantization.structs import QuantizerConfig
-
 from sklearn.preprocessing import MinMaxScaler
 
-from nncf.torch.quantization.quantizer_setup import QuantizationPointId
+from nncf.common.quantization.structs import QuantizerConfig
+from nncf.config.extractors import extract_bn_adaptation_init_params
+from nncf.common.utils.logger import logger
+from nncf.common.hardware.config import HWConfigType
+from nncf.torch.debug import DEBUG_LOG_DIR
+from nncf.torch.debug import is_debug
+from nncf.torch.initialization import PartialDataLoader
+from nncf.torch.quantization.layers import BaseQuantizer
+from nncf.torch.quantization.algo import ExperimentalQuantizationController
+from nncf.torch.quantization.algo import NNCFNetwork
+from nncf.torch.quantization.algo import QuantizationController
+from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
 from nncf.common.utils.os import safe_open
+from nncf.torch.quantization.precision_constraints import HardwareQuantizationConstraints
 from nncf.torch.quantization.precision_init.compression_ratio import CompressionRatioCalculator
+from nncf.common.quantization.structs import NonWeightQuantizerId
+from nncf.common.quantization.structs import QuantizerId
+from nncf.common.quantization.structs import WeightQuantizerId
+from nncf.torch.quantization.quantizer_setup import QuantizationPointId
 
 
 def find_qid_by_str(qctrl: QuantizationController, qid_str: str) -> QuantizerId:
@@ -65,7 +71,7 @@ class ModelSizeCalculator:
         for qid, qconfig_space in per_quantizer_config_space.items():
             if isinstance(qid, WeightQuantizerId):
                 self._bw_space_map[qid] = [qconf.num_bits for qconf in qconfig_space]
-                m = qmodel.get_module_by_scope(qid.scope)
+                m = qmodel.get_containing_module(qid.target_node_name)
                 self._nparam_map[qid] = np.prod(m.weight.size())
 
         self.min_model_size, self.max_model_size = \
@@ -136,6 +142,7 @@ class QuantizationEnv:
         self.eval_loader = eval_loader
         self.eval_fn = eval_fn
         self._hw_precision_constraints = hw_precision_constraints
+        self._bn_adaptation = None
 
         self.model_name = self.qmodel.nncf_module.__class__.__name__
 
@@ -267,6 +274,11 @@ class QuantizationEnv:
 
 
     def _create_quantizer_table(self) -> pd.DataFrame:
+        def get_hook(qid, exec_order_list):
+            def register_quantizer_exec_order(module, input_, output, qid, exec_order_list):
+                exec_order_list.append(qid)
+            return functools.partial(register_quantizer_exec_order, qid=qid, exec_order_list=exec_order_list)
+
         # Create a mapping of qid to its adjacent quantizer group id
         adjq_gid_map = OrderedDict.fromkeys(self.qctrl.all_quantizations.keys())
         for qid in self.qctrl.all_quantizations:
@@ -275,44 +287,44 @@ class QuantizationEnv:
         assert len(set(self.qconfig_space_map.keys()) - set(adjq_gid_map.keys())) == 0, \
             "both qconfig_space_map and adjq_gid_map must have exact keys."
 
-        # Create a mapping of qid to its nodekey in NNCFGraph
-        qid_nodekey_map = self._generate_qid_nodekey_map(self.qctrl, self.qmodel)
-
-        assert len(set(qid_nodekey_map.keys()) - set(adjq_gid_map.keys())) == 0, \
-            "both qid_nodekey_map and adjq_gid_map must have exact keys."
+        # By design, AutoQ requires quantizers in execution order.
+        # RL assumes that state satisfies Markov assumption in which
+        # the future is independent of the past given current state.
+        # Stated differently, curret state should represent well of historical dynamics.
+        # Given sequential nature of NN, state transition in the order of
+        # quantizer being executed is a natural design to conform the assumption.
+        quantizers_in_exec_order = []
+        hooklist = []
+        for qid, qmod in self.qctrl.all_quantizations.items():
+            hooklist.append(
+                qmod.register_forward_hook(
+                    get_hook(qid, quantizers_in_exec_order)
+                )
+            )
+        self.qmodel.do_dummy_forward(force_eval=True)
+        for h in hooklist:
+            h.remove()
 
         d = OrderedDict()
-        for qid in self.qctrl.all_quantizations:
-            nodekey = qid_nodekey_map[qid]
-            q_nx_nodeid = nodekey.split()[0]
-            idx_str = '-'.join([q_nx_nodeid, str(qid)])
+        for qid in quantizers_in_exec_order:
+            idx_str = str(qid)
             gid = adjq_gid_map[qid]
 
             d[idx_str] = OrderedDict()
             d[idx_str]['qid'] = str(qid)
-            d[idx_str]['q_nx_nodeid'] = q_nx_nodeid
-            d[idx_str]['q_nx_nodekey'] = nodekey
             d[idx_str]['gid'] = gid
             d[idx_str]['qconf_space'] = self.qconfig_space_map[qid]
             d[idx_str]['qp_id_set'] = self.qctrl.module_id_to_qp_id_translation_dict[qid]
-
-            if isinstance(qid, WeightQuantizerId):
-                d[idx_str]['state_scope'] = qid.scope
-            elif isinstance(qid, NonWeightQuantizerId):
-                d[idx_str]['state_scope'] = qid.ia_op_exec_context.scope_in_model
-            else:
-                raise NotImplementedError("QuantizerId: {} of {} class is not supported."
-                                          .format(str(qid), str(qid.__class__.__name__)))
+            d[idx_str]['state_scope'] = qid.target_node_name
 
         # quantizer_table index is QuantizerId in string prepended with its quantize node id in NNCFGraph
         df = pd.DataFrame.from_dict(d, orient='index')
         df['qid_obj'] = df['qid'].apply(lambda x: find_qid_by_str(self.qctrl, x))
         df['qmodule'] = df['qid_obj'].apply(lambda x: self.qctrl.all_quantizations[x])
         df['is_wt_quantizer'] = df['qid_obj'].apply(lambda x: x in self.qctrl.weight_quantizers)
-        df['state_module'] = df['state_scope'].apply(self.qmodel.get_module_by_scope)
+        df['state_module'] = df['state_scope'].apply(self.qmodel.get_containing_module)
 
-        quantizer_table = df.loc[natsorted(df.index)]
-        return quantizer_table
+        return df
 
 
     def _get_state_space(self,
@@ -377,7 +389,7 @@ class QuantizationEnv:
                 feature['stride'] = 0.0
                 feature['kernel'] = 1.0
                 feature['param'] = np.prod(m.weight.size())
-                feature['ifm_size'] = np.prod(m.input_shape_[-1]) # feature nodes
+                feature['ifm_size'] = np.prod(m.input_shape_[-1]) # feature elements
                 feature['prev_action'] = 0.0 # placeholder
 
             else:
@@ -398,14 +410,6 @@ class QuantizationEnv:
 
             if len(input_shape) != 4 and len(input_shape) != 2:
                 raise NotImplementedError("A design is required to cater this scenario. Pls. report to maintainer")
-
-        elif isinstance(qid, InputQuantizerId):
-            raise NotImplementedError("InputQuantizerId is supported, quantizer of nncf model input "
-                                      "is of type NonWeightQuantizerId")
-
-        elif isinstance(qid, FunctionQuantizerId):
-            raise NotImplementedError("FunctionQuantizerId is supported, Pls. report to maintainer")
-
         else:
             raise ValueError("qid is an instance of unexpected class {}".format(qid.__class__.__name__))
 
@@ -461,9 +465,15 @@ class QuantizationEnv:
         self.qctrl.enable_activation_quantization()
         self.qmodel.rebuild_graph()
 
+    def _run_batchnorm_adaptation(self):
+        if self._bn_adaptation is None:
+            self._bn_adaptation = BatchnormAdaptationAlgorithm(
+            **extract_bn_adaptation_init_params(self.qctrl.quantization_config))
+        self._bn_adaptation.run(self.qctrl.model)
 
     def _run_quantization_pipeline(self, finetune=False) -> float:
-        self.qctrl.run_batchnorm_adaptation(self.qctrl.quantization_config)
+        if self.qctrl.quantization_config:
+            self._run_batchnorm_adaptation()
 
         if finetune:
             raise NotImplementedError("Post-Quantization fine tuning is not implemented.")
@@ -628,59 +638,6 @@ class QuantizationEnv:
         for qid, qp_id_set in self.qctrl.module_id_to_qp_id_translation_dict.items():
             self.master_df.loc[self.master_df.qp_id_set == qp_id_set].qid = str(qid)
 
-    def _generate_qid_nodekey_map(self,
-                                  quantization_controller: QuantizationController,
-                                  quantized_network: NNCFNetwork) -> Dict[QuantizerId, str]:
-        """
-        Create a lookup mapping for each QuantizerId to its corresponding quantize node in network graph
-        :param quantization_controller:
-        :param quantized_network:
-        :return: dict with key of QuantizerId and value of node key string
-        """
-        # Map Non Weight Qid to its nodes in nxgraph
-        weight_quantize_nodekeys = []
-        non_weight_quantize_nodekeys = []
-        qid_nodekey_map = OrderedDict()
-
-        quantized_network.rebuild_graph()
-        g = quantized_network.get_graph()
-
-        for nodekey in g.get_all_node_keys():
-            if 'symmetric_quantize' in nodekey and 'UpdateWeight' in nodekey:
-                weight_quantize_nodekeys.append(nodekey)
-            if 'symmetric_quantize' in nodekey and 'UpdateWeight' not in nodekey:
-                non_weight_quantize_nodekeys.append(nodekey)
-
-        # Find nodekey of Weight Quantizer
-        for qid, _ in quantization_controller.weight_quantizers.items():
-            quantize_nodekeys = []
-            for nodekey in weight_quantize_nodekeys:
-                if str(qid.scope) in nodekey:
-                    quantize_nodekeys.append(nodekey)
-
-            if len(quantize_nodekeys) == 1:
-                qid_nodekey_map[qid] = quantize_nodekeys[0]
-            else:
-                raise ValueError("Quantize Node not found or More Nodes are found for WQid: {}".format(qid))
-
-        # Find nodekey of Non-Weight Quantizer
-        for qid, _ in quantization_controller.non_weight_quantizers.items():
-            quantize_nodekeys = []
-            for nodekey in non_weight_quantize_nodekeys:
-                if str(qid.ia_op_exec_context.scope_in_model) in nodekey:
-                    quantize_nodekeys.append(nodekey)
-
-            if len(quantize_nodekeys) > 0:
-                qid_nodekey_map[qid] = quantize_nodekeys[qid.ia_op_exec_context.call_order]
-            else:
-                raise ValueError("Quantize Node not found for NWQid: {}".format(qid))
-
-        if logger.level == logging.DEBUG:
-            for qid, nodekey in qid_nodekey_map.items():
-                logger.debug("QuantizerId: {}".format(qid))
-                logger.debug("\tnodekey: {}".format(nodekey))
-
-        return qid_nodekey_map
 
 
     def _dump_master_df(self):

@@ -24,6 +24,7 @@ from torch.nn.utils.rnn import PackedSequence
 
 from nncf.torch.dynamic_graph.context import forward_nncf_trace
 from nncf.torch.checkpoint_loading import OPTIONAL_PARAMETERS_REGISTRY
+from nncf.common.graph.layer_attributes import GenericWeightedLayerAttributes
 from nncf.common.utils.registry import Registry
 from nncf.torch.layer_utils import _NNCFModuleMixin
 
@@ -145,7 +146,6 @@ class NNCFLinear(_NNCFModuleMixin, nn.Linear):
         dict_update(nncf_linear.__dict__, module.__dict__)
         return nncf_linear
 
-
 class NNCFConvTranspose2d(_NNCFModuleMixin, nn.ConvTranspose2d):
     op_func_name = "conv_transpose2d"
     target_weight_dim_for_compression = 1
@@ -176,7 +176,6 @@ class NNCFConv3d(_NNCFModuleMixin, nn.Conv3d):
         )
         dict_update(nncf_conv3d.__dict__, module.__dict__)
         return nncf_conv3d
-
 
 class NNCFConvTranspose3d(_NNCFModuleMixin, nn.ConvTranspose3d):
     op_func_name = "conv_transpose3d"
@@ -211,6 +210,7 @@ class NNCFEmbedding(_NNCFModuleMixin, nn.Embedding):
         return nncf_embedding
 
 
+
 class NNCFEmbeddingBag(_NNCFModuleMixin, nn.EmbeddingBag):
     op_func_name = "embedding_bag"
 
@@ -225,7 +225,6 @@ class NNCFEmbeddingBag(_NNCFModuleMixin, nn.EmbeddingBag):
         nncf_embedding_bag = NNCFEmbeddingBag(*args)
         dict_update(nncf_embedding_bag.__dict__, module.__dict__)
         return nncf_embedding_bag
-
 
 NNCF_MODULES_DICT = {
     NNCFConv1d: nn.Conv1d,
@@ -256,6 +255,8 @@ NNCF_CONV_MODULES = list(NNCF_CONV_MODULES_MAP.keys())
 NNCF_GENERAL_CONV_MODULES_DICT = dict(NNCF_CONV_MODULES_DICT)
 NNCF_GENERAL_CONV_MODULES_DICT.update(NNCF_DECONV_MODULES_DICT)
 
+NNCF_LINEAR_MODULES_DICT = {NNCFLinear: nn.Linear}
+
 NNCF_PRUNING_MODULES_DICT = {
     NNCFConv1d: nn.Conv1d,
     NNCFConv2d: nn.Conv2d,
@@ -277,6 +278,9 @@ def register_module(*quantizable_field_names: str, ignored_algorithms: list = No
         UNWRAPPED_USER_MODULES.registry_dict[cls.__name__] = cls
         nncf_wrapped_module_class_name = 'NNCFUser{}'.format(cls.__name__)
         NNCF_WRAPPED_USER_MODULES_DICT[cls] = type(nncf_wrapped_module_class_name, (_NNCFModuleMixin, cls), {})
+        get_base_attributes_fn = lambda self : GenericWeightedLayerAttributes(self.weight.requires_grad,
+                                                                              self.weight.shape)
+        setattr(NNCF_WRAPPED_USER_MODULES_DICT[cls], "get_weight_shape", get_base_attributes_fn)
         if ignored_algorithms:
             setattr(NNCF_WRAPPED_USER_MODULES_DICT[cls], "ignored_algorithms", ignored_algorithms)
         return cls

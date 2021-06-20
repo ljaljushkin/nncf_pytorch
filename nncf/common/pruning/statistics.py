@@ -100,25 +100,41 @@ class FilterPruningStatistics(Statistics):
     def __init__(self,
                  model_statistics: PrunedModelStatistics,
                  full_flops: int,
-                 current_flops: int):
+                 current_flops: int,
+                 full_params_num: int,
+                 current_params_num: int,
+                 target_pruning_level: float):
         """
         Initializes statistics of the filter pruning algorithm.
 
         :param model_statistics: Statistics of the pruned model.
         :param full_flops: Full FLOPS.
         :param current_flops: Current FLOPS.
+        :param full_params_num: Full number of weights.
+        :param current_params_num: Current number of weights.
+        :param target_pruning_level: A target level of the pruning
+            for the algorithm for the current epoch.
         """
+        self._giga = 1e9
+        self._mega = 1e6
         self.model_statistics = model_statistics
         self.full_flops = full_flops
         self.current_flops = current_flops
         self.flops_pruning_level = 1 - self.current_flops / self.full_flops
+        self.full_params_num = full_params_num
+        self.current_params_num = current_params_num
+        self.target_pruning_level = target_pruning_level
 
     def to_str(self) -> str:
         algorithm_string = create_table(
             header=['Statistic\'s name', 'Value'],
             rows=[
                 ['FLOPS pruning level', self.flops_pruning_level],
-                ['FLOPS current / full', f'{self.current_flops} / {self.full_flops}'],
+                ['GFLOPS current / full', f'{self.current_flops / self._giga:.3f} /'
+                                          f' {self.full_flops / self._giga:.3f}'],
+                ['MParams current / full', f'{self.current_params_num / self._mega:.3f} /'
+                                           f' {self.full_params_num / self._mega:.3f}'],
+                ['A target level of the pruning for the algorithm for the current epoch', self.target_pruning_level],
             ]
         )
 

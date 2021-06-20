@@ -17,22 +17,26 @@ import torch
 
 from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
 from nncf.api.compression import CompressionStage
+from nncf.common.graph import NNCFNode
 from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.sparsity.base_algo import BaseSparsityAlgoBuilder, BaseSparsityAlgoController, SparseModuleInfo
 from nncf.torch.sparsity.layers import BinaryMask
 from nncf.torch.sparsity.magnitude.functions import WEIGHT_IMPORTANCE_FUNCTIONS, calc_magnitude_binary_mask
+from nncf.torch.sparsity.collector import PTSparseModelStatisticsCollector
 from nncf.common.sparsity.schedulers import SPARSITY_SCHEDULERS
 from nncf.common.sparsity.statistics import MagnitudeSparsityStatistics
+from nncf.common.schedulers import StubCompressionScheduler
 from nncf.common.statistics import NNCFStatistics
 from nncf.common.sparsity.statistics import LayerThreshold
+from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
+from nncf.config.extractors import extract_bn_adaptation_init_params
 
 
 @COMPRESSION_ALGORITHMS.register('magnitude_sparsity')
 class MagnitudeSparsityBuilder(BaseSparsityAlgoBuilder):
-    def create_weight_sparsifying_operation(self, module, compression_lr_multiplier):
-        device = module.weight.device
-        return BinaryMask(module.weight.size()).to(device)
+    def create_weight_sparsifying_operation(self, target_module_node: NNCFNode, compression_lr_multiplier: float):
+        return BinaryMask(target_module_node.layer_attributes.get_weight_shape())
 
     def build_controller(self, target_model: NNCFNetwork) -> PTCompressionAlgorithmController:
         return MagnitudeSparsityController(target_model, self._sparsified_module_info, self.config)
@@ -53,25 +57,37 @@ class MagnitudeSparsityController(BaseSparsityAlgoController):
             params['sparsity_init'] = sparsity_init
             scheduler_cls = SPARSITY_SCHEDULERS.get(params.get('schedule', 'polynomial'))
             self._scheduler = scheduler_cls(self, params)
+        else:
+            self._scheduler = StubCompressionScheduler()
+
+        self._bn_adaptation = None
 
         self.set_sparsity_level(sparsity_init)
 
     def statistics(self, quickly_collected_only: bool = False) -> NNCFStatistics:
-        model_statistics = self._calculate_sparsified_model_stats()
+        collector = PTSparseModelStatisticsCollector(self.model, self.sparsified_module_info)
+        model_statistics = collector.collect()
 
         threshold_statistics = []
         if self._mode == 'global':
-            global_threshold = self._select_threshold(self.sparsity_rate_for_sparsified_modules(),
+            global_threshold = self._select_threshold(model_statistics.sparsity_level_for_layers,
                                                       self.sparsified_module_info)
+
+        module_name_to_sparsity_level_map = {
+            s.name: s.sparsity_level for s in model_statistics.sparsified_layers_summary
+        }
         for minfo in self.sparsified_module_info:
             if self._mode == 'global':
                 threshold = global_threshold
             else:
-                threshold = self._select_threshold(self.sparsity_rate_for_sparsified_modules(minfo), [minfo])
+                sparsity_level_for_sparse_module = module_name_to_sparsity_level_map[minfo.module_node_name]
+                threshold = self._select_threshold(sparsity_level_for_sparse_module, [minfo])
 
-            threshold_statistics.append(LayerThreshold(minfo.module_name, threshold))
+            threshold_statistics.append(LayerThreshold(minfo.module_node_name, threshold))
 
-        stats = MagnitudeSparsityStatistics(model_statistics, threshold_statistics)
+        target_sparsity_level = self.scheduler.current_sparsity_level if self._mode == 'global' else None
+
+        stats = MagnitudeSparsityStatistics(model_statistics, threshold_statistics, target_sparsity_level)
 
         nncf_stats = NNCFStatistics()
         nncf_stats.register('magnitude_sparsity', stats)
@@ -93,8 +109,9 @@ class MagnitudeSparsityController(BaseSparsityAlgoController):
             target_sparsified_module_info_list = [target_sparsified_module_info]
         threshold = self._select_threshold(sparsity_level, target_sparsified_module_info_list)
         self._set_masks_for_threshold(threshold, target_sparsified_module_info_list)
+
         if run_batchnorm_adaptation:
-            self.run_batchnorm_adaptation(self._config)
+            self._run_batchnorm_adaptation()
 
     def _select_threshold(self, sparsity_level, target_sparsified_module_info_list):
         all_weights = self._collect_all_weights(target_sparsified_module_info_list)
@@ -126,3 +143,8 @@ class MagnitudeSparsityController(BaseSparsityAlgoController):
         if self.scheduler.current_sparsity_level >= self.scheduler.target_level:
             return CompressionStage.FULLY_COMPRESSED
         return CompressionStage.PARTIALLY_COMPRESSED
+
+    def _run_batchnorm_adaptation(self):
+        if self._bn_adaptation is None:
+            self._bn_adaptation = BatchnormAdaptationAlgorithm(**extract_bn_adaptation_init_params(self._config))
+        self._bn_adaptation.run(self.model)
