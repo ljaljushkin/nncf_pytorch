@@ -15,17 +15,18 @@ from nncf.torch.dynamic_graph.graph_tracer import create_dummy_forward_fn
 from nncf.torch.dynamic_graph.graph_tracer import create_input_infos
 from nncf.torch.nas.bootstrapNAS.algo import BootstrapNASBuilder
 from nncf.torch.nncf_network import NNCFNetwork
-from tests import test_models
-from tests.helpers import BasicConvTestModel
-from tests.helpers import get_empty_config
-from tests.nas.test_nas_helpers import VGG11_K7
+from tests.torch import test_models
+from tests.torch.helpers import BasicConvTestModel
+from tests.torch.helpers import get_empty_config
+from tests.torch.nas.test_nas_helpers import VGG11_K7
 
 __all__ = [
-    'test_elastic_width', 'test_elastic_width_vgg11_k7', 'test_elastic_kernel', 'test_elastic_kernel_bn', 'test_activate_subnet',
+    'test_elastic_width', 'test_elastic_width_vgg11_k7', 'test_elastic_kernel', 'test_elastic_kernel_bn', 'test_activate_subnet', 'test_reactivate_supernet', 'test_get_elastic_parameters'
 ]
 
 def _test_model(model_name):
     models = {
+        'resnet50': [test_models.ResNet50(), [1, 3, 224, 224]],
         'resnet18': [test_models.ResNet18(), [1, 3, 32, 32]],
         'vgg11': [test_models.VGG('VGG11'), [1, 3, 32, 32]],
         'vgg11_k7': [VGG11_K7(), [1, 3, 32, 32]], # for testing elastic kernel
@@ -173,4 +174,14 @@ def test_activate_subnet():
     compression_ctrl.set_active_subnet(subnet_config)
     output = dummy_forward(compressed_model)
     assert list(output.shape) == [1, 10]
+
+def test_reactivate_supernet():
+    #TODO
+    pass
+
+def test_get_elastic_parameters():
+    compressed_model, compression_ctrl, dummy_forward = _test_model('resnet50')
+    print(compression_ctrl.get_elastic_parameters(True))
+    #TODO: add test
+
 

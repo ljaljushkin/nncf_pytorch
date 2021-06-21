@@ -15,7 +15,7 @@ class PTTargetPoint(TargetPoint):
         super().__init__(target_type)
         self.target_type = target_type
         if self.target_type not in [TargetType.PRE_LAYER_OPERATION, TargetType.POST_LAYER_OPERATION,
-                                    TargetType.OPERATION_WITH_WEIGHTS, TargetType.OPERATION_WITH_BN_PARAMS
+                                    TargetType.OPERATION_WITH_WEIGHTS, TargetType.OPERATION_WITH_BN_PARAMS,
                                     TargetType.OPERATOR_PRE_HOOK, TargetType.OPERATOR_POST_HOOK]:
             raise NotImplementedError("Unsupported target type: {}".format(target_type))
 

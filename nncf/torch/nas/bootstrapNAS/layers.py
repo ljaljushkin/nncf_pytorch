@@ -48,8 +48,9 @@ class ElasticLinearOp(nn.Module):
 # Unified operator for elastic kernel and width
 @COMPRESSION_MODULES.register() # TODO: Remove?
 class ElasticConv2DOp(nn.Module):
-    def __init__(self, max_kernel_size, max_in_channels, max_out_channels, scope): #, module_w):
+    def __init__(self, max_kernel_size, max_in_channels, max_out_channels, scope, config=None): #, module_w):
         super().__init__()
+        self.config = config
         self.scope = scope
         # Create kernel_size_list based on max module kernel size
         self.kernel_size_list = self.generate_kernel_size_list(max_kernel_size)
@@ -77,6 +78,9 @@ class ElasticConv2DOp(nn.Module):
 
     def generate_kernel_size_list(self, max_kernel_size):
         assert max_kernel_size % 2 > 0, 'kernel size should be odd number'
+        max_num_params = self.config.get('fine_tuner_params', -1)
+        if max_num_params != -1:
+            max_num_params = max_num_params.get('limit_num_elastic_param', -1)
         if max_kernel_size == 1:
             return [1]
         kernel = max_kernel_size
@@ -84,9 +88,14 @@ class ElasticConv2DOp(nn.Module):
         while kernel > 1:
             ks_list.append(kernel)
             kernel -= 2
+            if max_num_params == len(ks_list):
+                break
         return ks_list
 
     def generate_width_list(self, max_out_channels):
+        max_num_params = self.config.get('fine_tuner_params', -1)
+        if max_num_params != -1:
+            max_num_params = max_num_params.get('limit_num_elastic_param', -1)
         width_list = []
         if max_out_channels <= 32:
             width_list.append(max_out_channels)
@@ -96,6 +105,8 @@ class ElasticConv2DOp(nn.Module):
         while width >= 32:
             width_list.append(width)
             width -= 32
+            if max_num_params == len(width_list):
+                break
         return width_list
 
     def get_active_filter(self, out_channel, in_channel, kernel_size, weight):
