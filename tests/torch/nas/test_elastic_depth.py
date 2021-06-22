@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 from tests.torch.test_models.resnet import ResNet18
 from nncf.config import NNCFConfig
@@ -70,6 +71,7 @@ def test_skip_two_block_resnet18(mocker):
     assert id(spy_agent.call_args_list[2][0][1]) == id(spy_agent.call_args_list[1][0][1]) # TracedTensor
     assert id(spy_agent.call_args_list[8][0][1]) == id(spy_agent.call_args_list[9][0][1]) # TracedTensor
 
+    assert (spy_agent.call_args_list[2][0][1] == spy_agent.call_args_list[1][0][1]).sum() == np.prod(spy_agent.call_args_list[2][0][1].shape)
     spy_agent.reset_mock()
 
     ctx._elastic_depth = False 

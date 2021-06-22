@@ -84,7 +84,6 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
                 op_name = operator_info.name
                 op_address = ctx.get_caller_context(op_name)
                 str_op_address = str(op_address)
-
                 if ctx._elastic_depth and (ctx.in_skipped_block or str_op_address in ctx.start_node_name_of_skipped_block):
                     ctx.in_skipped_block = True
                     if str_op_address in ctx.end_node_name_of_skipped_block:
@@ -92,6 +91,11 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
                     #op_input = OperatorInput(list(args), kwargs)
                     #tensor_metas = make_tensor_metas(op_input)
                     #node = ctx.find_operator_node(tensor_metas, op_address)
+                    #from nncf.torch.dynamic_graph.trace_tensor import TensorWrapper
+                    #if isinstance(args[0], TensorWrapper):
+                    #    result = args[0]
+                    #else:
+                    #    result = TensorWrapper(args[0])
                     result = args[0]
                 else:
                     module_attrs = None
@@ -112,7 +116,6 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
 
                     tensor_metas = make_tensor_metas(processed_input)
                     node = ctx.find_operator_node(tensor_metas, op_address)
-
                     args = tuple(processed_input.op_args)
                     kwargs = processed_input.op_kwargs
                     result = operator(*args, **kwargs)
