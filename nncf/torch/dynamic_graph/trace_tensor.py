@@ -68,6 +68,48 @@ class TracedTensor(torch.Tensor):
     if hasattr(torch._C, "_disabled_torch_function_impl"):
         __torch_function__ = torch._C._disabled_torch_function_impl
 
+class TracedTensor(torch.Tensor):
+    # pylint: disable=abstract-method
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tensor_meta = None
+
+    @staticmethod
+    def from_torch_tensor(tensor, tensor_meta):
+        tensor.tensor_meta = tensor_meta
+        tensor.__class__ = TracedTensor
+        return tensor
+
+    def as_subclass(self, cls: 'TracedTensor') -> 'TracedTensor':
+        """
+        Required for PyTorch 1.7.0 compatibility - the handle_torch_function and __torch_function__
+        API in general calls this after a wrapped function call; need to preserve the tensor_meta extensions
+        """
+
+        return self
+
+    # NOTE: This disables the __torch_function__ API altogether when using NNCF.
+    # TODO: make NNCF utilize the __torch_function__ API instead.
+    #pylint:disable=protected-access
+    if hasattr(torch._C, "_disabled_torch_function_impl"):
+        __torch_function__ = torch._C._disabled_torch_function_impl
+
+
+class TensorWrapper(object):
+    def __init__(self, obj):
+        self._wrapped_obj = obj
+        self.tensor_meta = None
+
+    def __getattr__(self, attr):
+        if attr in self.__dict__:
+            return getattr(self, attr)
+        return getattr(self._wrapped_obj, attr)
+
+    #def __iadd__(self, other):
+    #    if isinstance(self, TracedTensor):
+    #        self += other._wrapped_ofj
+    #    if isinstance(self, TensorWrapper):
+    #        self._wrapped_obj += other
 
 def is_iterable(item):
     non_iterable_types = (str, bytes, bytearray, torch.Tensor, np.ndarray)
@@ -101,6 +143,18 @@ def trace_tensors(operator_output, node: 'DynamicGraphNode'):
         return TracedTensor.from_torch_tensor(operator_output, meta)
     raise ValueError("Unknown return type. Can not trace function call")
 
+
+def trace_tensors_in_skipped_block(operator_output, node: 'DynamicGraphNode'):
+    if isinstance(operator_output, (list, tuple)):
+        tensor_metas = []
+        for i, x in enumerate(operator_output):
+            meta = TensorMeta(node.node_id, i, x.shape)
+            tensor_metas.append(meta)
+        return tensor_metas
+    if isinstance(operator_output, torch.Tensor):
+        meta = TensorMeta(node.node_id, 0, operator_output.shape)
+        return meta
+    raise ValueError("Unknown return type. Can not trace function call")
 
 def make_tensor_metas(inputs: 'OperatorInput') -> List[Optional[TensorMeta]]:
     tensor_metas = []

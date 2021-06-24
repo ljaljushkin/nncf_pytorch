@@ -442,11 +442,12 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
         self._load_listener = None
         self._compressed_context.skipped_block = self.skipped_block
         if isinstance(skipped_block, list):
-            self._compressed_context.start_node_name_of_skipped_block = [l[0] for l in skipped_block]
-            self._compressed_context.end_node_name_of_skipped_block = [l[1] for l in skipped_block]
-        else:
-            self._compressed_context.start_node_name_of_skipped_block = [skipped_block[0]]
-            self._compressed_context.end_node_name_of_skipped_block = [skipped_block[1]]
+            if isinstance(skipped_block[0], list): # more one block
+                self._compressed_context.start_node_name_of_skipped_block = [l[0] for l in skipped_block]
+                self._compressed_context.end_node_name_of_skipped_block = [l[1] for l in skipped_block]
+            else:
+                self._compressed_context.start_node_name_of_skipped_block = [skipped_block[0]]
+                self._compressed_context.end_node_name_of_skipped_block = [skipped_block[1]]
 
     @debuggable_forward
     def forward(self, *args, **kwargs):
