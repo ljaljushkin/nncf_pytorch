@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import onnx
 
 from tests.torch.test_models.resnet import ResNet18
 from nncf.config import NNCFConfig
@@ -38,6 +39,9 @@ def test_skip_one_block_resnet18(mocker):
 
     assert len(spy_agent.call_args_list) == 20
     assert id(spy_agent.call_args_list[2][0][1]) == id(spy_agent.call_args_list[1][0][1]) # TracedTensor
+    
+    # check torch.tensor.data by element
+    assert (spy_agent.call_args_list[2][0][1] == spy_agent.call_args_list[1][0][1]).sum() == np.prod(spy_agent.call_args_list[2][0][1].shape)
 
 
     spy_agent.reset_mock()
@@ -71,7 +75,9 @@ def test_skip_two_block_resnet18(mocker):
     assert id(spy_agent.call_args_list[2][0][1]) == id(spy_agent.call_args_list[1][0][1]) # TracedTensor
     assert id(spy_agent.call_args_list[8][0][1]) == id(spy_agent.call_args_list[9][0][1]) # TracedTensor
 
+    # check torch.tensor.data by element
     assert (spy_agent.call_args_list[2][0][1] == spy_agent.call_args_list[1][0][1]).sum() == np.prod(spy_agent.call_args_list[2][0][1].shape)
+    assert (spy_agent.call_args_list[8][0][1] == spy_agent.call_args_list[9][0][1]).sum() == np.prod(spy_agent.call_args_list[9][0][1].shape)
     spy_agent.reset_mock()
 
     ctx._elastic_depth = False 
@@ -80,3 +86,27 @@ def test_skip_two_block_resnet18(mocker):
 
     assert id(spy_agent.call_args_list[2][0][1]) != id(spy_agent.call_args_list[1][0][1]) # TracedTensor
     assert id(spy_agent.call_args_list[8][0][1]) != id(spy_agent.call_args_list[9][0][1]) # TracedTensor
+
+
+def test_can_export_model_with_one_skipped_block_resnet18(mocker):
+    # TODO(asenina) Add a check that the model from pytorch and exported model from onnx gives the same inference result.
+    model = ResNet18()
+    nncf_config = get_basic_config()
+    data_loader = DefaultInitializingDataLoader(create_ones_mock_dataloader(nncf_config))
+    nncf_config = register_default_init_args(nncf_config, train_loader=data_loader)
+    nncf_config['skipped_blocks'] = ['ResNet/Sequential[layer1]/BasicBlock[0]/NNCFConv2d[conv1]/conv2d_0',
+                                     'ResNet/Sequential[layer1]/BasicBlock[0]/BatchNorm2d[bn2]/batch_norm_0']
+    compression_ctrl, compressed_model = create_compressed_model(model, nncf_config)
+
+    ctx = compressed_model._compressed_context
+
+    compression_ctrl.export_model("resnet18.onnx")
+    onnx_resnet18_orig = onnx.load_model("resnet18.onnx")
+
+    ctx._elastic_depth = True # activate mode with elastic depth
+    compression_ctrl.export_model("resnet18_with_one_skipped_block.onnx")
+    onnx_resnet18_without_one_block = onnx.load_model("resnet18_with_one_skipped_block.onnx")
+
+    #count of node in skipped block  == 5
+    assert len(onnx_resnet18_orig.graph.node) == 69
+    assert len(onnx_resnet18_without_one_block.graph.node) == 64
