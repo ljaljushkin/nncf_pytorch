@@ -68,11 +68,16 @@ class TracingContext:
         self._is_forwarding = False
         self._may_add_nodes = True
         self._input_comparators_per_scope = []
+
+
+        # ELASTIC DEPTH PARAMS
         self._elastic_depth = False
         self.skipped_block = list()
         self.in_skipped_block = False
         self.start_node_name_of_skipped_block = list()
         self.end_node_name_of_skipped_block = list()
+
+        self.cache_tensor_metas = {} # key is node, value is tensor_metas from this node
 
     def __enter__(self):
         global _CURRENT_CONTEXT

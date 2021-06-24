@@ -141,19 +141,26 @@ def trace_tensors(operator_output, node: 'DynamicGraphNode'):
     if isinstance(operator_output, torch.Tensor):
         meta = TensorMeta(node.node_id, 0, operator_output.shape)
         return TracedTensor.from_torch_tensor(operator_output, meta)
-    if isinstance(operator_output, TensorWrapper):
-        meta = TensorMeta(node.node_id, 0, operator_output.shape)
-        #retval = TensorWrapper(operator_output._wrapped_obj)
-        operator_output.tensor_meta = meta
-        return operator_output
     raise ValueError("Unknown return type. Can not trace function call")
 
+
+def trace_tensors_in_skipped_block(operator_output, node: 'DynamicGraphNode'):
+    if isinstance(operator_output, (list, tuple)):
+        tensor_metas = []
+        for i, x in enumerate(operator_output):
+            meta = TensorMeta(node.node_id, i, x.shape)
+            tensor_metas.append(meta)
+        return tensor_metas
+    if isinstance(operator_output, torch.Tensor):
+        meta = TensorMeta(node.node_id, 0, operator_output.shape)
+        return meta
+    raise ValueError("Unknown return type. Can not trace function call")
 
 def make_tensor_metas(inputs: 'OperatorInput') -> List[Optional[TensorMeta]]:
     tensor_metas = []
     for i, node_input_index_entry in enumerate(inputs):
         node_input = node_input_index_entry.getter()
-        if isinstance(node_input, (TracedTensor, TensorWrapper)):
+        if isinstance(node_input, TracedTensor):
             tensor_metas.append(node_input.tensor_meta)
         elif isinstance(node_input, torch.Tensor) and not isinstance(node_input, TracedTensor):
             meta = TensorMeta(None, i, node_input.shape)

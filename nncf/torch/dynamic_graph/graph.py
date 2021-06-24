@@ -552,3 +552,22 @@ class DynamicGraph:
 
             all_edges.append(dynamic_graph_edge)
         return all_edges
+
+    def get_next_nodes(self, node: DynamicGraphNode) -> List[DynamicGraphNode]:
+        nx_node_keys = dict(self._nx_graph.succ[self._node_id_to_key_dict[node.node_id]])
+        return [self._nx_node_to_dynamic_graph_node(self._nx_graph.nodes[key]) for key in nx_node_keys]
+
+    def get_previous_nodes(self, node: DynamicGraphNode) -> List[DynamicGraphNode]:
+        nx_node_keys = dict(self._nx_graph.pred[self._node_id_to_key_dict[node.node_id]])
+        return [self._nx_node_to_dynamic_graph_node(self._nx_graph.nodes[key]) for key in nx_node_keys]
+
+    @staticmethod
+    def _nx_node_to_dynamic_graph_node(nx_node) -> DynamicGraphNode:
+        module_attr = nx_node[DynamicGraph.MODULE_ATTRIBUTES] if DynamicGraph.MODULE_ATTRIBUTES in nx_node else None
+        return DynamicGraphNode(node_id=nx_node[DynamicGraph.ID_NODE_ATTR],
+                                node_key = nx_node[DynamicGraph.KEY_NODE_ATTR],
+                                op_exec_context=nx_node[DynamicGraph.OP_EXEC_CONTEXT_NODE_ATTR],
+                                is_in_iteration_scope=nx_node[DynamicGraph.IS_IN_ITERATION_SCOPE_NODE_ATTR],
+                                module_attributes=module_attr,
+                                ignored_algorithms=nx_node[DynamicGraph.IGNORED_ALGOS_NODE_ATTR]
+                                )

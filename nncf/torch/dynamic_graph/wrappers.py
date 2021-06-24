@@ -13,6 +13,7 @@
 
 import warnings
 from copy import deepcopy
+from collections import deque
 
 from torch.nn import Conv1d
 from torch.nn import Conv2d
@@ -32,7 +33,7 @@ from nncf.common.utils.logger import logger as nncf_logger
 from nncf.torch.debug import is_debug
 from nncf.torch.dynamic_graph.context import get_current_context
 from nncf.torch.dynamic_graph.op_input_processing import OperatorInput
-from nncf.torch.dynamic_graph.trace_tensor import make_tensor_metas
+from nncf.torch.dynamic_graph.trace_tensor import make_tensor_metas, trace_tensors_in_skipped_block
 from nncf.torch.dynamic_graph.trace_tensor import trace_tensors
 from nncf.torch.layer_utils import _NNCFModuleMixin
 from nncf.torch.layers import ITERATION_MODULES
@@ -85,18 +86,30 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
                 op_address = ctx.get_caller_context(op_name)
                 str_op_address = str(op_address)
                 if ctx._elastic_depth and (ctx.in_skipped_block or str_op_address in ctx.start_node_name_of_skipped_block):
-                    ctx.in_skipped_block = True
-                    if str_op_address in ctx.end_node_name_of_skipped_block:
-                        ctx.in_skipped_block = False
-                    #op_input = OperatorInput(list(args), kwargs)
-                    #tensor_metas = make_tensor_metas(op_input)
-                    #node = ctx.find_operator_node(tensor_metas, op_address)
-                    #from nncf.torch.dynamic_graph.trace_tensor import TensorWrapper
-                    #if isinstance(args[0], TensorWrapper):
+                    ctx.register_operator_call(op_address.operator_name, op_address.scope_in_model)
+                    if str_op_address in ctx.start_node_name_of_skipped_block: # start to skip block
+                        ctx.in_skipped_block = True
+                        op_input = OperatorInput(list(args), kwargs) # We have extra tensor_metas. Why??
+                        tensor_metas = make_tensor_metas(op_input) # from node input tensor
+                        node = ctx.find_operator_node(tensor_metas, op_address)
+
+                        ctx.cache_tensor_metas = deque()
+                        ctx.cache_tensor_metas.append(tensor_metas)
+                        result = args[0]
+                    elif ctx.in_skipped_block: # in block
+                        tensor_metas = ctx.cache_tensor_metas.pop()
+                        node = ctx.find_operator_node(tensor_metas, op_address)
+                        result = args[0]
+                        #ctx.cache_tensor_metas[node] = tensor_metas
+                    #if ctx.in_skipped_block:
+
+                    #if (ctx.in_skipped_block or str_op_address in ctx.start_node_name_of_skipped_block):
+                    #    ctx.in_skipped_block = True
+                    #    op_input = OperatorInput(list(args), kwargs)
+                    #    tensor_metas = make_tensor_metas(op_input)
+                    #    node = ctx.find_operator_node(tensor_metas, op_address)
                     #    result = args[0]
-                    #else:
-                    #    result = TensorWrapper(args[0])
-                    result = args[0]
+
                 else:
                     module_attrs = None
                     ignored_algos = []
@@ -113,8 +126,19 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
                     ctx.register_operator_call(op_address.operator_name, op_address.scope_in_model)
                     op_input = OperatorInput(list(args), kwargs)
                     processed_input = ctx.execute_pre_hooks(op_address, op_input)
+                    # add check that current node is next after end node of block
+                    if len(ctx.cache_tensor_metas)!= 0:
+                        tensor_metas = []
+                        while len(ctx.cache_tensor_metas) != 0:
+                            tm = ctx.cache_tensor_metas.popleft()
+                            if isinstance(tm, list):
+                                tensor_metas.append(tm[0])
+                            else:
+                                tensor_metas.append(tm)
+                    else:
+                        tensor_metas = make_tensor_metas(processed_input)
+                    
 
-                    tensor_metas = make_tensor_metas(processed_input)
                     node = ctx.find_operator_node(tensor_metas, op_address)
                     args = tuple(processed_input.op_args)
                     kwargs = processed_input.op_kwargs
@@ -128,8 +152,23 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
                         if is_debug():
                             ctx.register_node_call(node)
                         result = trace_tensors(result, node)
-                    if not ctx._elastic_depth:
                         result = ctx.execute_post_hooks(op_address, result)
+                if ctx.in_skipped_block:
+                    if node is not None:
+                        if is_debug():
+                            ctx.register_node_call(node)
+                        tensor_metas = trace_tensors_in_skipped_block(result, node)
+                        if not isinstance(tensor_metas, list):
+                            tensor_metas = [tensor_metas]
+                        outputs_from_node = ctx.graph.get_next_nodes(node)
+                        for next_node in outputs_from_node:
+                            prev_nodes = ctx.graph.get_previous_nodes(next_node)
+                            if len(prev_nodes) == 1:
+                                ctx.cache_tensor_metas.append(tensor_metas)
+                            else:
+                                ctx.cache_tensor_metas.appendleft(tensor_metas)
+                    if str_op_address in ctx.end_node_name_of_skipped_block:
+                        ctx.in_skipped_block = False
         except:
             # Looks like the __repr__ call made during IDE debug to display tensor contents does not exit properly,
             # but instead throws an exception. This try...except block handles such a situation.
