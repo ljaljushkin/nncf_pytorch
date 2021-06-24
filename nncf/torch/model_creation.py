@@ -108,7 +108,7 @@ def create_compressed_model(model: Module, config: NNCFConfig,
     scopes_without_shape_matching = config.get('scopes_without_shape_matching', [])
     ignored_scopes = config.get('ignored_scopes')
     target_scopes = config.get('target_scopes')
-    skipped_blocks = config.get('skipped_blocks')
+    skipped_blocks = config.get('skipped_blocks', [])
     compressed_model = NNCFNetwork(model, input_infos=input_info_list,
                                    dummy_forward_fn=dummy_forward_fn,
                                    wrap_inputs_fn=wrap_inputs_fn,

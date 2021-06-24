@@ -27,7 +27,7 @@ __all__ = [
 def _test_model(model_name):
     models = {
         'resnet50': [test_models.ResNet50(), [1, 3, 224, 224]],
-        'resnet18': [test_models.ResNet18(), [1, 3, 32, 32]],
+        'resnet18': [test_models.ResNet18(), [1, 3, 224, 224]],
         'vgg11': [test_models.VGG('VGG11'), [1, 3, 32, 32]],
         'vgg11_k7': [VGG11_K7(), [1, 3, 32, 32]], # for testing elastic kernel
     }

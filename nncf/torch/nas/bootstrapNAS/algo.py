@@ -47,7 +47,6 @@ from nncf.torch.nas.bootstrapNAS.layers import ElasticKernelPaddingAdjustment
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.utils import is_main_process
 from nncf.torch.dynamic_graph.scope import Scope
-# from nncf.torch.dynamic_graph.context import Scope
 
 
 @COMPRESSION_ALGORITHMS.register('bootstrapNAS')
@@ -125,25 +124,9 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
             #     continue
             nncf_logger.info("Adding Dynamic Conv2D Layer in scope: {}".format(str(conv_module_scope)))
 
-            # TODO: Use config ... width_step if progressive shrinking
-            # fine_tuner_param = self.config.get('fine_tuner_params', None)
-            # elastic_width_max_options = 0
-            # if fine_tuner_param is not None:
-            #     width_step = fine_tuner_param.get('width_step', None)
-            #     stage = fine_tuner_param.get('stage', None)
-            #     phase = fine_tuner_param.get('phase', None)
-            #     if stage == 'width':
-            #         if phase == '1':
-            #             elastic_width_max_options = 2
-            #         elif phase == '2':
-            #             elastic_width_max_options = 3
-            #
-
             conv_operation = self.create_elastic_k_w(conv_module, conv_module_scope, self.config)
             insertion_commands.append(
                 PTInsertionCommand(
-                    # PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS,
-                    #               module_scope=conv_module_scope),
                     PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS,
                                   target_node_name=conv_node.data['node_name']),
                     conv_operation
@@ -152,8 +135,6 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
             # Padding
             ap = ElasticKernelPaddingAdjustment(conv_operation)
             pad_op = UpdatePadding(ap).to(device)
-            # insertion_point = PTTargetPoint(target_type=TargetType.PRE_LAYER_OPERATION,
-            #                                 module_scope=conv_module_scope)
             insertion_point = PTTargetPoint(target_type=TargetType.PRE_LAYER_OPERATION,
                                             target_node_name=conv_node.data['node_name'])
             nncf_logger.warning('Padding will be adjusted for {}'.format(str(conv_module_scope)))
@@ -164,15 +145,12 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
             # Get BN in pair
             for conv_node_p, bn_node in conv2d_bn_node_pairs:
                 if conv_node == conv_node_p:
-                    # bn_module_scope = bn_node.ia_op_exec_context.scope_in_model
                     bn_module_scope = Scope.from_str(bn_node.data['layer_name'])
                     nncf_logger.info("Adding Elastic Kernel Op for BN in scope: {}".format(str(bn_module_scope)))
 
                     elastic_bn_kernel_op = self.create_elastic_bn_operation(conv_module, bn_module_scope)
                     insertion_commands.append(
                         PTInsertionCommand(
-                            # PTTargetPoint(TargetType.OPERATION_WITH_BN_PARAMS,
-                            #               module_scope=bn_module_scope),
                             PTTargetPoint(TargetType.OPERATION_WITH_BN_PARAMS,
                                           target_node_name=bn_node.data['node_name']),
                             elastic_bn_kernel_op
@@ -186,15 +164,12 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
 
         linear_nodes = nncf_graph.get_nodes_by_types(['linear'])
         for node in linear_nodes:
-            # linear_module_scope = node.ia_op_exec_context.scope_in_model
             linear_module_scope = Scope.from_str(node.data['layer_name'])
             module = target_model.get_module_by_scope(linear_module_scope)
             nncf_logger.info("Adding Dynamic Linear Layer in scope: {}".format(str(linear_module_scope)))
             linear_operation = self.create_elastic_linear_op(module, linear_module_scope)
             insertion_commands.append(
                 PTInsertionCommand(
-                    # PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS,
-                    #               module_scope=linear_module_scope),
                     PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS,
                                   target_node_name=node.data['node_name']),
                     linear_operation  # hook
@@ -264,10 +239,16 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             # kernel_config = config.get('kernel_config')
             # depth_config =
             # TODO 2. Load elastic kernel and depth used in previously finetuned network
+            # For now, we are using 'skipped blocks' taken into account once at initialization
+            # TODO Elastic Depth
+            if config.get('use_elastic_depth', False):
+                ctx = self.model._compressed_context
+                ctx._elastic_depth = True
 
             # self.reorganize_weights() # TODO: Automation
-            self.reorganize_weights_from_config()
-
+            # self.reorganize_weights_from_config() # TODO: Check issue #1
+            # Check accuracy of supernetwork
+            self.validate(0)
             self.train(validate_func=None)
 
     def _get_random_kernel_conf(self):
@@ -486,9 +467,9 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
 
     def validate(self, epoch):
-        # Reactivate supernet?
         config = self.config
         dynamic_net = self.target_model
+        dynamic_net.to('cuda')
         dynamic_net.eval()
 
         # TODO: Only validating active subnet for now setting for now.
@@ -548,7 +529,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
     def validate_single_setting(self, epoch):
         dynamic_net = self.target_model
-
+        dynamic_net.to('cuda')
         dynamic_net.eval()
 
         batch_time = AverageMeter()
@@ -651,7 +632,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
     # TODO: Generalize
     def reorganize_weights_from_config(self):
         # TODO: Refactor to reorg from config.
-        # Remove hardcoded Resnet50. Let advance user pass this function.
+        # Remove hardcoded Resnet50. Let advanced user pass this function.
         bottlenecks = [2, 3, 5, 2] # TODO: Check
         for layer in range(1, 5):
             for bottleneck in range(1, bottlenecks[layer-1]+1):
@@ -722,11 +703,25 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
     def get_supernet(self, save=False):
         self.reactivate_supernet()
-        # TODO export supernet
-        pass
+        # TODO export supernet if save
+        return self.target_model
 
     def get_subnet(self, config, save=False):
         self.set_active_subnet(config)
+        pass
+
+    def get_minimal_subnet(self, save=False):
+        for op in self.elastic_kernel_ops:
+            max_ks = min(op.kernel_size_list)
+            op.set_active_kernel_size(max_ks)
+
+        for op in self.elastic_width_ops:
+            max_w = min(op.width_list)
+            op.set_active_out_channels(max_w)
+        # TODO Save
+        return self.target_model
+
+    def find_subnets(self, req_config, save=False):
         pass
 
 
