@@ -79,42 +79,54 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
                 from nncf.torch.dynamic_graph.patch_pytorch import ForwardTraceOnly
                 result = ForwardTraceOnly()(operator, *args, **kwargs)
             else:
+                # If we are in a block, then we do not call the operator and return the input tensor
+                # Nested blocks are not supported.
                 op_name = operator_info.name
                 op_address = ctx.get_caller_context(op_name)
+                str_op_address = str(op_address)
 
-                layer_attrs = None
-                ignored_algos = []
-                # Collect module attributes, if required
-                if op_name in OP_NAMES_REQUIRING_MODULE_ATTRS:
-                    curr_module = ctx.get_current_module()
-                    if curr_module is None:
-                        raise RuntimeError("Operation {} requires module attributes, "
-                                           "but it was executed outside any module".format(op_name))
-                    layer_attrs = _get_layer_attributes(curr_module, op_name)
-                    if isinstance(curr_module, _NNCFModuleMixin):
-                        ignored_algos = deepcopy(curr_module.ignored_algorithms)
+                if ctx._elastic_depth and (ctx.in_skipped_block or str_op_address in ctx.start_node_name_of_skipped_block):
+                    ctx.in_skipped_block = True
+                    if str_op_address in ctx.end_node_name_of_skipped_block:
+                        ctx.in_skipped_block = False
+                    #op_input = OperatorInput(list(args), kwargs)
+                    #tensor_metas = make_tensor_metas(op_input)
+                    #node = ctx.find_operator_node(tensor_metas, op_address)
+                    result = args[0]
+                else:
+                    module_attrs = None
+                    ignored_algos = []
+                    # Collect module attributes, if required
+                    if op_name in OP_NAMES_REQUIRING_MODULE_ATTRS:
+                        curr_module = ctx.get_current_module()
+                        if curr_module is None:
+                            raise RuntimeError("Operation {} requires module attributes, "
+                                               "but it was executed outside any module".format(op_name))
+                        module_attrs = _get_layer_attributes(curr_module, op_name)
+                        if isinstance(curr_module, _NNCFModuleMixin):
+                            ignored_algos = deepcopy(curr_module.ignored_algorithms)
 
-                ctx.register_operator_call(op_address.operator_name, op_address.scope_in_model)
-                op_input = OperatorInput(list(args), kwargs)
-                processed_input = ctx.execute_pre_hooks(op_address, op_input)
+                    ctx.register_operator_call(op_address.operator_name, op_address.scope_in_model)
+                    op_input = OperatorInput(list(args), kwargs)
+                    processed_input = ctx.execute_pre_hooks(op_address, op_input)
 
-                tensor_metas = make_tensor_metas(processed_input)
-                node = ctx.find_operator_node(tensor_metas, op_address)
+                    tensor_metas = make_tensor_metas(processed_input)
+                    node = ctx.find_operator_node(tensor_metas, op_address)
 
-                args = tuple(processed_input.op_args)
-                kwargs = processed_input.op_kwargs
-                result = operator(*args, **kwargs)
+                    args = tuple(processed_input.op_args)
+                    kwargs = processed_input.op_kwargs
+                    result = operator(*args, **kwargs)
 
-                if isinstance(result, type(NotImplemented)):
-                    nncf_logger.debug("Operation {} returned NotImplemented".format(op_name))
-                elif node is None:
-                    node = ctx.maybe_add_node(processed_input, tensor_metas, op_address, layer_attrs, ignored_algos)
-
-                if node is not None:
-                    if is_debug():
-                        ctx.register_node_call(node)
-                    result = trace_tensors(result, node)
-                result = ctx.execute_post_hooks(op_address, result)
+                    if isinstance(result, type(NotImplemented)):
+                        nncf_logger.debug("Operation {} returned NotImplemented".format(op_name))
+                    elif node is None:
+                        node = ctx.maybe_add_node(processed_input, tensor_metas, op_address, module_attrs, ignored_algos)
+                    if node is not None:
+                        if is_debug():
+                            ctx.register_node_call(node)
+                        result = trace_tensors(result, node)
+                    if not ctx._elastic_depth:
+                        result = ctx.execute_post_hooks(op_address, result)
         except:
             # Looks like the __repr__ call made during IDE debug to display tensor contents does not exit properly,
             # but instead throws an exception. This try...except block handles such a situation.

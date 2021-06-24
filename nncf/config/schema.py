@@ -781,6 +781,27 @@ ROOT_NNCF_CONFIG_SCHEMA = {
                                                      "quantization schema. Optional."),
         "log_dir": with_attributes(_STRING,
                                    description="Log directory for NNCF-specific logging outputs"),
+        "elastic_depth": with_attributes(_BOOLEAN,
+                                         description="elastic_depth"),
+        "skipped_blocks": {
+                "oneOf": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                ],
+            },
     },
     "required": ["input_info"],
     "definitions": REF_VS_ALGO_SCHEMA,
