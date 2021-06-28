@@ -18,6 +18,7 @@ from typing import Union
 from typing import List
 from typing import Tuple
 from typing import TypeVar
+import contextlib
 
 import onnx
 import numpy as np
@@ -395,6 +396,18 @@ def get_all_inputs_for_graph_node(node: onnx.NodeProto, graph: onnx.GraphProto) 
     return retval
 
 
+def resolve_constant_node_inputs_to_values(node: onnx.NodeProto, graph: onnx.GraphProto) -> \
+        Dict[str, onnx.AttributeProto]:
+    retval = {}
+    for input_ in node.input:
+        constant_input_nodes = [x for x in graph.node if input_ in x.output and x.op_type == "Constant"]
+        for constant_input_node in constant_input_nodes:
+            assert len(constant_input_node.attribute) == 1
+            val = constant_input_node.attribute[0]
+            retval[input_] = numpy_helper.to_array(val.t)
+    return retval
+
+
 class Command(BaseCommand):
     def run(self, timeout=3600, assert_returncode_zero=True):
         if torch.cuda.is_available():
@@ -418,3 +431,11 @@ class DummyDataLoader(PTInitializingDataLoader):
 
 def register_bn_adaptation_init_args(config: NNCFConfig):
     config.register_extra_structs([BNAdaptationInitArgs(data_loader=DummyDataLoader(), device=None)])
+
+
+@contextlib.contextmanager
+def set_torch_seed(seed: int = 42):
+    saved_seed = torch.seed()
+    torch.manual_seed(seed)
+    yield
+    torch.manual_seed(saved_seed)
