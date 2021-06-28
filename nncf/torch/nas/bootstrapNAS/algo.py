@@ -111,10 +111,12 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
             bn_node = nncf_graph.get_node_by_key(output_node_key)
             conv2d_bn_node_pairs.append((conv_node, bn_node))
 
+        # This could be done with Ignore Scope and Target Scope.
         limit_elasticity = self.config.get('limit_elasticity', False)
         if limit_elasticity:
             layers_with_elasticity = self.config.get('layers_with_elasticity', [])
             conv2d_nodes = [node for node in conv2d_nodes if node.data['layer_name'] in layers_with_elasticity]
+
 
         for conv_node in conv2d_nodes:
             # conv_module_scope = conv_node.ia_op_exec_context.scope_in_model
@@ -300,6 +302,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             subnet_config['kernel'] = self._get_random_kernel_conf()
         elif stage == 'depth':
             raise ValueError('Depth dimension fine tuning has not been implemented, yet')
+            # subnet_config['depth'] = self._get_random_skip_block() # From a set passed in the config file.
+            # self.target_model.skipped_block = [...]
             # Set random elastic kernel
             # Set random elastic depth
         elif stage == 'width':
@@ -706,9 +710,11 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         # TODO export supernet if save
         return self.target_model
 
-    def get_subnet(self, config, save=False):
+    def get_subnet(self, config, save=False, filename='subnet.onnx'):
         self.set_active_subnet(config)
-        pass
+        if save:
+            self.export_model(filename)
+        return self.target_model
 
     def get_minimal_subnet(self, save=False):
         for op in self.elastic_kernel_ops:

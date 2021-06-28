@@ -441,7 +441,7 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
                                                           ShapeIgnoringTensorMetaComparator())
         self._load_listener = None
         self._compressed_context.skipped_block = self.skipped_block
-        if isinstance(skipped_block, list):
+        if isinstance(skipped_block, list) and skipped_block != []:
             if isinstance(skipped_block[0], list): # more one block
                 self._compressed_context.start_node_name_of_skipped_block = [l[0] for l in skipped_block]
                 self._compressed_context.end_node_name_of_skipped_block = [l[1] for l in skipped_block]
