@@ -32,14 +32,17 @@ def _test_model(model_name):
         'vgg11_k7': [VGG11_K7(), [1, 3, 32, 32]], # for testing elastic kernel
     }
     model = models[model_name][0]
+    print(model)
     config = get_empty_config(input_sample_sizes= models[model_name][1]) #[1, 3, 32, 32])
     input_info_list = create_input_infos(config)
     dummy_forward = create_dummy_forward_fn(input_info_list)
 
     compressed_model = NNCFNetwork(model, input_infos=input_info_list)
+    print(compressed_model)
     config["test_mode"] = True
     composite_builder = BootstrapNASBuilder(config)
     composite_builder.apply_to(compressed_model)
+    print(compressed_model)
     compression_ctrl = composite_builder.build_controller(compressed_model)
 
     return compressed_model, compression_ctrl, dummy_forward

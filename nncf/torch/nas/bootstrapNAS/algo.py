@@ -12,12 +12,15 @@
 """
 from collections import OrderedDict
 from copy import deepcopy
+
+
 import random
 import math
 from tqdm import tqdm
 import numpy as np
 import os
 import time
+import json
 import torch
 import torch.nn as nn
 
@@ -247,10 +250,15 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 ctx = self.model._compressed_context
                 ctx._elastic_depth = True
 
+            # Check accuracy of supernetwork
+            self.validate_single_setting(0)
             # self.reorganize_weights() # TODO: Automation
             # self.reorganize_weights_from_config() # TODO: Check issue #1
-            # Check accuracy of supernetwork
-            self.validate(0)
+            # self.set_running_statistics()
+            self.simple_set_running_statistics()
+            # Check accuracy of supernetwork with reorg weights.
+            # self.validate(0)
+            self.validate_single_setting(0)
             self.train(validate_func=None)
 
     def _get_random_kernel_conf(self):
@@ -330,42 +338,49 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
     def train(self, validate_func=None):
         config = self.config
-        if validate_func is None:
+        if validate_func is None: # TODO
             validate_func = self.validate
 
         for epoch in range(config['fine_tuner_params']['start_epoch'], config['fine_tuner_params']['epochs'] + config['fine_tuner_params']['warmup_epochs']):
             train_loss, (train_top1, train_top5) = self.train_one_epoch(epoch)
             if (epoch + 1) % config['fine_tuner_params']['validation_frequency'] == 0:
-                val_loss, val_acc, val_acc5, _val_log = validate_func(epoch)
-                # best_acc
-                is_best = val_acc > self.best_acc
-                self.best_acc = max(self.best_acc, val_acc)
-
+                # validate supernet
+                self.reactivate_supernet()
+                # val_loss, val_acc, val_acc5, _val_log = validate_func(epoch)
+                self.simple_set_running_statistics() # TODO
+                val_loss, val_acc, val_acc5, _val_log = self.validate_single_setting(epoch)
                 if is_main_process():
-                    val_log = 'Valid [{0}/{1}] loss={2:.3f}, top-1={3:.3f} ({4:.3f})'. \
-                        format(epoch + 1 - config['fine_tuner_params']['warmup_epochs'], config['fine_tuner_params']['epochs'], val_loss, val_acc,
-                               self.best_acc)
-                    val_log += ', Train top-1 {top1:.3f}, Train loss {loss:.3f}\t'.format(top1=train_top1, loss=train_loss)
-                    val_log += _val_log
-                    nncf_logger.info(val_log)
+                    nncf_logger.info(f"Supernet Val: [{epoch + 1 - config['fine_tuner_params']['warmup_epochs']}/{config['fine_tuner_params']['epochs'] + config['fine_tuner_params']['warmup_epochs']}], loss={val_loss:.3f}, top-1={val_acc:.3f}, top-5={val_acc5:.3f}")
+                    self.export_model(f'{self.main_path}/checkpoint/checkpoint.onnx')
+                    checkpoint_data = {
+                        'epoch': epoch + 1 - config['fine_tuner_params']['warmup_epochs'],
+                        'val_loss': val_loss,
+                        'val_acc': val_acc,
+                        'val_acc5': val_acc5
+                    }
+                    json.dump(checkpoint_data, open(f'{self.main_path}/checkpoint/checkpoint.json'))
+                # validate minimal subnet
+                self.get_minimal_subnet()
+                # val_loss, val_acc, val_acc5, _val_log = validate_func(epoch)
+                self.simple_set_running_statistics()  # TODO
+                val_loss, val_acc, val_acc5, _val_log = self.validate_single_setting(epoch)
+                if is_main_process():
+                    nncf_logger.info(
+                        f"Minimal Subnet Val: [{epoch + 1 - config['fine_tuner_params']['warmup_epochs']}/{config['fine_tuner_params']['epochs'] + config['fine_tuner_params']['warmup_epochs']}], loss={val_loss:.3f}, top-1={val_acc:.3f}, top-5={val_acc5:.3f}")
 
-                    # TODO: Add elastic parameters metadata
-                    torch.save({
-                        'epoch': epoch,
-                        'best_acc': self.best_acc,
-                        'optimizer': self.optimizer.state_dict(),
-                        'state_dict': self.target_model.state_dict(),
-                    }, os.path.join(os.path.join(self.main_path, 'checkpoint'), 'checkpoint.pth.tar'))
-                    # TODO: keep another copy if best.
+                    # best_acc for minimal subnet
+                    is_best = val_acc > self.best_acc
+                    self.best_acc = max(self.best_acc, val_acc)
                     if is_best:
-                        # TODO: Add elastic parameters
-                        torch.save({
-                            'epoch': epoch,
-                            'best_acc': self.best_acc,
-                            'optimizer': self.optimizer.state_dict(),
-                            'state_dict': self.target_model.state_dict(),
-                            # 'elastic_params'
-                        }, os.path.join(os.path.join(self.main_path, 'checkpoint'), 'model_best.pth.tar'))
+                        nncf_logger.info(f"New best acc {self.best_acc} for minimal subnet")
+                        self.export_model(f'{self.main_path}/checkpoint/min_subnet.onnx')
+                        min_subnet_data = {
+                            'epoch': epoch + 1 - config['fine_tuner_params']['warmup_epochs'],
+                            'val_loss': val_loss,
+                            'val_acc': val_acc,
+                            'val_acc5': val_acc5
+                        }
+                        json.dump(min_subnet_data, open(f'{self.main_path}/checkpoint/min_subnet.json'))
 
     def train_one_epoch(self, epoch):
         config = self.config
@@ -556,7 +571,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 top1.update(acc1, images.size(0))
                 top5.update(acc5, images.size(0))
                 if i % self.config['print_freq'] == 0:
-                    nncf_logger.info(
+                    nncf_logger.debug(
                     '{rank}'
                     'Val: [{0}/{1}] '
                     'Time: {batch_time.val:.3f} ({batch_time.avg:.3f}) '
@@ -568,7 +583,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                         rank='')) #{}:'.format(self.config['rank']) if self.config['multiprocessing_distributed'] else ''
                     # )) # TODO: Fix getting multiprocessing info
             nncf_logger.info(
-                'Val: [{0}/{1}] '
+                'Val: '
                 'Acc@1: {top1.val:.3f} ({top1.avg:.3f}) '
                 'Acc@5: {top5.val:.3f} ({top5.avg:.3f})'.format(
                     i, len_val_loader,
@@ -689,6 +704,71 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 config['width'].append(op.get_active_out_channels())
         return config
 
+    def get_net_device(self, net):
+        return net.parameters().__next__().device
+
+    # def set_running_statistics(model, data_loader, distributed=False):
+    # TODO: Fix.
+    def set_running_statistics(self):
+        bn_mean = {}
+        bn_var = {}
+
+        forward_model = deepcopy(self.target_model)
+        for name, m in forward_model.named_modules():
+            if isinstance(m, nn.BatchNorm2d):
+                bn_mean[name] = AverageMeter()
+                bn_var[name] = AverageMeter()
+
+                def new_forward(bn, mean_est, var_est):
+                    def lambda_forward(x):
+                        batch_mean = x.mean(0, keepdim=True).mean(2, keepdim=True).mean(3, keepdim=True)  # 1, C, 1, 1
+                        batch_var = (x - batch_mean) * (x - batch_mean)
+                        batch_var = batch_var.mean(0, keepdim=True).mean(2, keepdim=True).mean(3, keepdim=True)
+
+                        batch_mean = torch.squeeze(batch_mean)
+                        batch_var = torch.squeeze(batch_var)
+
+                        mean_est.update(batch_mean.data, x.size(0))
+                        var_est.update(batch_var.data, x.size(0))
+
+                        # bn forward using calculated mean & var
+                        _feature_dim = batch_mean.size(0)
+                        return F.batch_norm(
+                            x, batch_mean, batch_var, bn.weight[:_feature_dim],
+                            bn.bias[:_feature_dim], False,
+                            0.0, bn.eps,
+                        )
+
+                    return lambda_forward
+
+                m.forward = new_forward(m, bn_mean[name], bn_var[name])
+
+        if len(bn_mean) == 0:
+            # skip if there is no batch normalization layers in the network
+            return
+
+        with torch.no_grad():
+            ElasticBatchNormOp.SET_RUNNING_STATISTICS = True
+            for images, labels in self.train_loader: #data_loader:
+                images = images.to(self.get_net_device(forward_model))
+                forward_model(images)
+            ElasticBatchNormOp.SET_RUNNING_STATISTICS = False
+
+        for name, m in model.named_modules():
+            if name in bn_mean and bn_mean[name].count > 0:
+                feature_dim = bn_mean[name].avg.size(0)
+                assert isinstance(m, nn.BatchNorm2d)
+                m.running_mean.data[:feature_dim].copy_(bn_mean[name].avg)
+                m.running_var.data[:feature_dim].copy_(bn_var[name].avg)
+
+    def simple_set_running_statistics(self):
+        # https://discuss.pytorch.org/t/how-to-run-the-model-to-only-update-the-batch-normalization-statistics/20626
+        self.target_model.train()
+        for i, (images, _) in enumerate(self.train_loader):  # data_loader:
+            # print(i)
+            images = images.to(self.get_net_device(self.target_model))
+            self.target_model(images)
+
     # Search API
     def get_elastic_parameters(self, use_tuple_with_layer_name=False):
         elastic_params = {'kernel': [], 'width': []}
@@ -718,12 +798,12 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
     def get_minimal_subnet(self, save=False):
         for op in self.elastic_kernel_ops:
-            max_ks = min(op.kernel_size_list)
-            op.set_active_kernel_size(max_ks)
+            min_ks = min(op.kernel_size_list)
+            op.set_active_kernel_size(min_ks)
 
         for op in self.elastic_width_ops:
-            max_w = min(op.width_list)
-            op.set_active_out_channels(max_w)
+            min_w = min(op.width_list)
+            op.set_active_out_channels(min_w)
         # TODO Save
         return self.target_model
 
