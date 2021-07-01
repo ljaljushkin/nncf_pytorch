@@ -160,4 +160,5 @@ def create_compressed_model(model: Module, config: NNCFConfig,
                 "keep attention to that error")
             return compression_ctrl, compressed_model
 
+    compressed_model._compressed_context.set_elastic_blocks(skipped_blocks)
     return compression_ctrl, compressed_model
