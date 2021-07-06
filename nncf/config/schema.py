@@ -177,14 +177,7 @@ GENERIC_INITIALIZER_SCHEMA = {
                                                                              "adaptation procedure for the compressed "
                                                                              "model. The actual number of samples will "
                                                                              "be a closest multiple of the batch "
-                                                                             "size."),
-                    "num_bn_forget_samples": with_attributes(_NUMBER,
-                                                             description="Number of samples from the training "
-                                                                         "dataset to use for model inference during "
-                                                                         "the BatchNorm statistics adaptation "
-                                                                         "in the initial statistics forgetting step. "
-                                                                         "The actual number of samples will be a "
-                                                                         "closest multiple of the batch size."),
+                                                                             "size.")
                 },
                 "additionalProperties": False,
             },
@@ -276,11 +269,6 @@ QUANTIZATION_INITIALIZER_SCHEMA = {
                                                                              "durung the BatchNorm statistics "
                                                                              "adaptation procedure for the compressed "
                                                                              "model"),
-                    "num_bn_forget_samples": with_attributes(_NUMBER,
-                                                             description="Number of samples from the training "
-                                                                         "dataset to use for model inference during "
-                                                                         "the BatchNorm statistics adaptation "
-                                                                         "in the initial statistics forgetting step"),
                 },
                 "additionalProperties": False,
             },
@@ -661,8 +649,9 @@ FILTER_PRUNING_SCHEMA = {
         },
         "initializer": GENERIC_INITIALIZER_SCHEMA,
         "pruning_init": with_attributes(_NUMBER,
-                                        description="Initial value of the pruning level applied to the"
-                                                    " model. 0.0 by default."),
+                                        description="Initial value of the pruning level applied to the "
+                                                    "convolutions that can be pruned. "
+                                                    "0.0 by default."),
         "params":
             {
                 "type": "object",
@@ -672,7 +661,10 @@ FILTER_PRUNING_SCHEMA = {
                                                             " pruning level. Either `exponential`, `exponential_with"
                                                             "_bias`,  or `baseline`, by default it is `baseline`"),
                     "pruning_target": with_attributes(_NUMBER,
-                                                      description="Target value of the pruning level for the model."
+                                                      description="Target value of the pruning level for "
+                                                                  "the convolutions that can be pruned. "
+                                                                  "These convolutions are determined by the model "
+                                                                  "architecture."
                                                                   " 0.5 by default."),
                     "pruning_flops_target": with_attributes(_NUMBER,
                                                             description="Target value of the pruning level for model"
@@ -684,10 +676,14 @@ FILTER_PRUNING_SCHEMA = {
                                                      description="Number of epochs during which the pruning rate is"
                                                                  " increased from `pruning_init` to `pruning_target`"
                                                                  " value."),
-                    "weight_importance": with_attributes(_STRING,
+                    "filter_importance": with_attributes(_STRING,
                                                          description="The type of filter importance metric. Can be"
                                                                      " one of `L1`, `L2`, `geometric_median`."
                                                                      " `L2` by default."),
+                    "interlayer_ranking_type": with_attributes(_STRING,
+                                                               description="The type of filter ranking across the "
+                                                                           "layers. Can be one of `unweighted_ranking`"
+                                                                           " or `learned_ranking`."),
                     "all_weights": with_attributes(_BOOLEAN,
                                                    description="Whether to prune layers independently (choose filters"
                                                                " with the smallest importance in each layer separately)"
@@ -702,7 +698,7 @@ FILTER_PRUNING_SCHEMA = {
                                                         default=False
                                                         ),
                     "prune_last_conv": with_attributes(_BOOLEAN,
-                                                       description="whether to prune last Convolutional layers or not."
+                                                       description="Whether to prune last Convolutional layers or not."
                                                                    "  Last means that it is a Convolutional layer such"
                                                                    " that there is a path from this layer to the model"
                                                                    " output such that there are no other convolution"
@@ -710,13 +706,13 @@ FILTER_PRUNING_SCHEMA = {
                                                        default=False
                                                        ),
                     "prune_downsample_convs": with_attributes(_BOOLEAN,
-                                                              description="whether to prune downsample Convolutional"
+                                                              description="Whether to prune downsample Convolutional"
                                                                           " layers (with stride > 1) or not. `False`"
                                                                           " by default.",
                                                               default=False
                                                               ),
                     "prune_batch_norms": with_attributes(_BOOLEAN,
-                                                         description="whether to nullifies parameters of Batch Norm"
+                                                         description="Whether to nullifies parameters of Batch Norm"
                                                                      " layer corresponds to zeroed filters of"
                                                                      " convolution corresponding to this Batch Norm."
                                                                      " `False` by default.",
@@ -726,11 +722,43 @@ FILTER_PRUNING_SCHEMA = {
                                                  description="Whether to setting gradients corresponding to zeroed"
                                                              " filters to zero during training, `True` by default.",
                                                  default=True),
+                    "save_ranking_coeffs_path": with_attributes(_STRING),
+                    "load_ranking_coeffs_path": with_attributes(_STRING),
+                    "legr_params":
+                        {
+                            "type": "object",
+                            "properties": {
+                                "generations": with_attributes(_NUMBER,
+                                                               description="Number of generations for evolution"
+                                                                           "algorithm."),
+                                "train_steps": with_attributes(_NUMBER,
+                                                               description="Number of training steps to estimate"
+                                                                           "pruned model accuracy."),
+                                "max_pruning": with_attributes(_NUMBER,
+                                                               description="Maximum possible pruning level for "
+                                                                           "the model to train LeGR algo on it."),
+                                "random_seed": with_attributes(_NUMBER,
+                                                               description="Random seed for LeGR coefficients"
+                                                                           " generation.")
+                            }
+                        },
 
                 },
                 "additionalProperties": False,
             },
         **COMMON_COMPRESSION_ALGORITHM_PROPERTIES
+    },
+    "additionalProperties": False
+}
+
+KNOWLEDGE_DISTILLATION_ALGO_NAME_IN_CONFIG = 'knowledge_distillation'
+KNOWLEDGE_DISTILLATION_SCHEMA = {
+    **BASIC_COMPRESSION_ALGO_SCHEMA,
+    "properties": {
+        "algorithm": {
+            "const": KNOWLEDGE_DISTILLATION_ALGO_NAME_IN_CONFIG
+        },
+        "type": with_attributes(_STRING, description="Type of Knowledge Distillation Loss (mse/softmax)")
     },
     "additionalProperties": False
 }
@@ -751,6 +779,7 @@ ALL_SUPPORTED_ALGO_SCHEMA = [BINARIZATION_SCHEMA,
                              MAGNITUDE_SPARSITY_SCHEMA,
                              RB_SPARSITY_SCHEMA,
                              FILTER_PRUNING_SCHEMA,
+                             KNOWLEDGE_DISTILLATION_SCHEMA,
                              BOOTSTRAP_NAS_SCHEMA]
 
 REF_VS_ALGO_SCHEMA = {BINARIZATION_ALGO_NAME_IN_CONFIG: BINARIZATION_SCHEMA,
@@ -759,6 +788,7 @@ REF_VS_ALGO_SCHEMA = {BINARIZATION_ALGO_NAME_IN_CONFIG: BINARIZATION_SCHEMA,
                       MAGNITUDE_SPARSITY_ALGO_NAME_IN_CONFIG: MAGNITUDE_SPARSITY_SCHEMA,
                       RB_SPARSITY_ALGO_NAME_IN_CONFIG: RB_SPARSITY_SCHEMA,
                       FILTER_PRUNING_ALGO_NAME_IN_CONFIG: FILTER_PRUNING_SCHEMA,
+                      KNOWLEDGE_DISTILLATION_ALGO_NAME_IN_CONFIG: KNOWLEDGE_DISTILLATION_SCHEMA,
                       BOOTSTRAP_NAS_ALGO_NAME_IN_CONFIG: BOOTSTRAP_NAS_SCHEMA}
 
 TARGET_DEVICE_SCHEMA = {

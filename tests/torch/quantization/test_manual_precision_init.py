@@ -111,7 +111,7 @@ def test_hawq_manual_configs(manual_config_params):
     if manual_config_params.name != 'resnet18_cifar10_mixed_int_manual.json':
         pytest.skip("Propagation-based manual config TBA")
     config = manual_config_params.create_nncf_config()
-    config = register_default_init_args(config, train_loader=create_ones_mock_dataloader(config), criterion=None)
+    config = register_default_init_args(config, create_ones_mock_dataloader(config), criterion=None)
     model = manual_config_params.create_model(config['model'])
 
     _, compression_ctrl = create_compressed_model_and_algo_for_test(model, config)
@@ -125,7 +125,7 @@ def test_hawq_manual_configs(manual_config_params):
 
 
 class ManualSingleConvTestParams:
-    ACTIVATION_SCOPE = 'TargetType.OPERATOR_POST_HOOK /nncf_model_input_0'
+    ACTIVATION_SCOPE = '/nncf_model_input_0|OUTPUT'
 
     def __init__(self, name: str):
         self.name = name
@@ -179,8 +179,8 @@ def test_quantization_configs__with_precisions_list():
     config['compression']['initializer'].update({
         "precision": {
             "bitwidth_per_scope":
-                [[2, 'TargetType.OPERATION_WITH_WEIGHTS AddTwoConv/NNCFConv2d[conv1]/conv2d_0'],
-                 [4, 'TargetType.OPERATION_WITH_WEIGHTS AddTwoConv/NNCFConv2d[conv2]/conv2d_0']]
+                [[2, 'AddTwoConv/NNCFConv2d[conv1]/conv2d_0|WEIGHT'],
+                 [4, 'AddTwoConv/NNCFConv2d[conv2]/conv2d_0|WEIGHT']]
         }})
     config['target_device'] = 'TRIAL'
     config['compression']["activations"] = {"bits": 6}
@@ -214,15 +214,14 @@ def test_can_resume_with_manual_init(mocker):
     config['compression']['initializer'].update({
         'precision': {
             'bitwidth_per_scope':
-                [[2, 'TargetType.OPERATION_WITH_WEIGHTS AddTwoConv/NNCFConv2d[conv1]/conv2d_0'],
-                 [4, 'TargetType.OPERATION_WITH_WEIGHTS AddTwoConv/NNCFConv2d[conv2]/conv2d_0']]
+                [[2, 'AddTwoConv/NNCFConv2d[conv1]/conv2d_0|WEIGHT'],
+                 [4, 'AddTwoConv/NNCFConv2d[conv2]/conv2d_0|WEIGHT']]
         },
         'range': {
             'num_init_samples': 1
         },
         'batchnorm_adaptation': {
-            'num_bn_adaptation_samples': 1,
-            'num_bn_forget_samples': 1
+            'num_bn_adaptation_samples': 1
         },
     })
     config['target_device'] = 'TRIAL'
@@ -237,7 +236,7 @@ def test_can_resume_with_manual_init(mocker):
     apply_init = mocker.spy(ManualPrecisionInitializer, 'apply_init')
     all_mocks = [get_stats, parse_range_init, run_bn_adapt, apply_init]
 
-    config = register_default_init_args(config, train_loader=create_ones_mock_dataloader(config))
+    config = register_default_init_args(config, create_ones_mock_dataloader(config))
 
     model, _ = create_compressed_model_and_algo_for_test(AddTwoConv(), config)
 
