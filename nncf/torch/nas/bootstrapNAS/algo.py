@@ -34,10 +34,8 @@ from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.transformations.commands import TransformationPriority
 from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
 from nncf.torch.compression_method_api import PTCompressionAlgorithmController
-from nncf.common.graph.graph import NNCFNodeExpression as N
-# from nncf.torch.graph.graph_matching import search_all
-from nncf.common.graph.graph_matching import find_subgraphs_matching_expression
-from nncf.torch.graph.patterns import BN
+from nncf.common.graph.patterns import GraphPattern
+from nncf.common.graph.graph_matching import find_subgraphs_matching_pattern
 from nncf.torch.graph.transformations.layout import PTTransformationLayout
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.torch.graph.transformations.commands import PTTargetPoint
@@ -101,11 +99,14 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         device = next(target_model.parameters()).device
         insertion_commands = []
         pad_commands = []
-        conv_bn_pattern = N('conv2d') + BN
+        conv_bn_pattern = GraphPattern()
+        conv_node = conv_bn_pattern.add_node(type='conv2d')
+        bn_node = conv_bn_pattern.add_node(type='batch_norm')
+        conv_bn_pattern.add_edge(conv_node, bn_node)
+
         conv2d_nodes = nncf_graph.get_nodes_by_types(['conv2d'])
         nx_graph = deepcopy(nncf_graph.get_nx_graph_copy())
-        # matches = search_all(nx_graph, conv_bn_pattern)
-        matches = find_subgraphs_matching_expression(nx_graph, conv_bn_pattern)
+        matches = find_subgraphs_matching_pattern(nx_graph, conv_bn_pattern)
         conv2d_bn_node_pairs = []
         for match in matches:
             input_node_key = match[0]
