@@ -121,9 +121,9 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
                             else:
                                 tensor_metas.append(tm)
                     else:
-                        tensor_metas = make_tensor_metas(processed_input)
-                    
+                        tensor_metas = make_tensor_metas(processed_input)     
                     node = ctx.find_operator_node(tensor_metas, op_address)
+
                     args = tuple(processed_input.op_args)
                     kwargs = processed_input.op_kwargs
                     result = operator(*args, **kwargs)
@@ -138,8 +138,8 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
                         result = trace_tensors(result, node)
                         result = ctx.execute_post_hooks(op_address, result)
 
-                tensor_metas = trace_tensors_in_skipped_block(result, node)
                 if ctx.in_skipped_block:
+                    tensor_metas = trace_tensors_in_skipped_block(result, node)
                     if str_op_address in ctx.end_node_name_of_skipped_block:
                         ctx.in_skipped_block = False
                         result.tensor_meta = tensor_metas
@@ -147,9 +147,6 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
                         if node is not None:
                             if is_debug():
                                 ctx.register_node_call(node)
-                            #tensor_metas = trace_tensors_in_skipped_block(result, node)
-                            #if not isinstance(tensor_metas, list):
-                            #    tensor_metas = [tensor_metas]
                             outputs_from_node = ctx.graph.get_next_nodes(node)
                             for next_node in outputs_from_node:
                                 prev_nodes = ctx.graph.get_previous_nodes(next_node)

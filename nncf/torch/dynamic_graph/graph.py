@@ -566,11 +566,11 @@ class DynamicGraph:
 
     @staticmethod
     def _nx_node_to_dynamic_graph_node(nx_node) -> DynamicGraphNode:
-        module_attr = nx_node[DynamicGraph.MODULE_ATTRIBUTES] if DynamicGraph.MODULE_ATTRIBUTES in nx_node else None
+        layer_attr = nx_node[DynamicGraph.LAYER_ATTRIBUTES] if DynamicGraph.LAYER_ATTRIBUTES in nx_node else None
         return DynamicGraphNode(node_id=nx_node[DynamicGraph.ID_NODE_ATTR],
                                 node_key = nx_node[DynamicGraph.KEY_NODE_ATTR],
                                 op_exec_context=nx_node[DynamicGraph.OP_EXEC_CONTEXT_NODE_ATTR],
                                 is_in_iteration_scope=nx_node[DynamicGraph.IS_IN_ITERATION_SCOPE_NODE_ATTR],
-                                module_attributes=module_attr,
+                                layer_attributes=layer_attr,
                                 ignored_algorithms=nx_node[DynamicGraph.IGNORED_ALGOS_NODE_ATTR]
                                 )

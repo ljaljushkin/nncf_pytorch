@@ -27,8 +27,8 @@ def test_skip_one_block_resnet18(mocker):
     nncf_config = get_basic_config()
     data_loader = DefaultInitializingDataLoader(create_ones_mock_dataloader(nncf_config))
     nncf_config = register_default_init_args(nncf_config, train_loader=data_loader)
-    nncf_config['skipped_blocks'] = ['ResNet/Sequential[layer1]/BasicBlock[0]/RELU_0', # 1
-                                     'ResNet/Sequential[layer1]/BasicBlock[0]/BatchNorm2d[bn2]/batch_norm_0']
+    nncf_config['skipped_blocks'] = ['ResNet/Sequential[layer1]/BasicBlock[0]/relu_0', # 1
+                                     'ResNet/Sequential[layer1]/BasicBlock[0]/NNCFBatchNorm2d[bn2]/batch_norm_0']
     _, compressed_model = create_compressed_model(model, nncf_config)
 
     ctx = compressed_model._compressed_context
@@ -57,8 +57,8 @@ def test_can_export_model_with_one_skipped_block_resnet18(mocker):
     nncf_config = get_basic_config()
     data_loader = DefaultInitializingDataLoader(create_ones_mock_dataloader(nncf_config))
     nncf_config = register_default_init_args(nncf_config, train_loader=data_loader)
-    nncf_config['skipped_blocks'] = ['ResNet/Sequential[layer1]/BasicBlock[0]/RELU_0', # 1
-                                     'ResNet/Sequential[layer1]/BasicBlock[0]/BatchNorm2d[bn2]/batch_norm_0']
+    nncf_config['skipped_blocks'] = ['ResNet/Sequential[layer1]/BasicBlock[0]/relu_0', # 1
+                                     'ResNet/Sequential[layer1]/BasicBlock[0]/NNCFBatchNorm2d[bn2]/batch_norm_0']
     orig_onnx_model_path = "resnet18.onnx"
     onnx_model_without_block_path = "resnet18_with_one_skipped_block.onnx"
  
@@ -96,8 +96,8 @@ def test_skip_one_block_resnet50(mocker):
     nncf_config = get_basic_config()
     data_loader = DefaultInitializingDataLoader(create_ones_mock_dataloader(nncf_config))
     nncf_config = register_default_init_args(nncf_config, train_loader=data_loader)
-    nncf_config['skipped_blocks'] = ['ResNet/Sequential[layer1]/Bottleneck[1]/RELU_2', # 1
-                                     'ResNet/Sequential[layer1]/Bottleneck[2]/RELU_2']
+    nncf_config['skipped_blocks'] = ['ResNet/Sequential[layer1]/Bottleneck[1]/relu_2', # 1
+                                     'ResNet/Sequential[layer1]/Bottleneck[2]/relu_2']
     _, compressed_model = create_compressed_model(model, nncf_config)
 
     ctx = compressed_model._compressed_context
@@ -125,14 +125,14 @@ def test_skip_diff_blocks_on_resnet50(mocker):
     nncf_config = get_basic_config()
     data_loader = DefaultInitializingDataLoader(create_ones_mock_dataloader(nncf_config))
     nncf_config = register_default_init_args(nncf_config, train_loader=data_loader)
-    nncf_config['skipped_blocks'] = [['ResNet/Sequential[layer1]/Bottleneck[1]/RELU_2',
-                                      'ResNet/Sequential[layer1]/Bottleneck[2]/RELU_2'],
-                                     ['ResNet/Sequential[layer2]/Bottleneck[2]/RELU_2',
-                                      'ResNet/Sequential[layer2]/Bottleneck[3]/RELU_2'],
-                                     ['ResNet/Sequential[layer3]/Bottleneck[4]/RELU_2',
-                                      'ResNet/Sequential[layer3]/Bottleneck[5]/RELU_2'],
-                                     ['ResNet/Sequential[layer4]/Bottleneck[1]/RELU_2',
-                                      'ResNet/Sequential[layer4]/Bottleneck[2]/RELU_2']
+    nncf_config['skipped_blocks'] = [['ResNet/Sequential[layer1]/Bottleneck[1]/relu_2',
+                                      'ResNet/Sequential[layer1]/Bottleneck[2]/relu_2'],
+                                     ['ResNet/Sequential[layer2]/Bottleneck[2]/relu_2',
+                                      'ResNet/Sequential[layer2]/Bottleneck[3]/relu_2'],
+                                     ['ResNet/Sequential[layer3]/Bottleneck[4]/relu_2',
+                                      'ResNet/Sequential[layer3]/Bottleneck[5]/relu_2'],
+                                     ['ResNet/Sequential[layer4]/Bottleneck[1]/relu_2',
+                                      'ResNet/Sequential[layer4]/Bottleneck[2]/relu_2']
                                     ]
     _, compressed_model = create_compressed_model(model, nncf_config)
 
