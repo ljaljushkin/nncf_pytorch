@@ -13,7 +13,6 @@
 from collections import OrderedDict
 from copy import deepcopy
 
-
 import random
 import math
 from tqdm import tqdm
@@ -23,7 +22,7 @@ import time
 import json
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
 
 from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS, ZeroCompressionLoss
 from nncf.common.statistics import NNCFStatistics
@@ -45,6 +44,7 @@ from nncf.torch.nas.bootstrapNAS.layers import ElasticBatchNormOp
 from nncf.torch.nas.bootstrapNAS.layers import ElasticConv2DOp # Unified Operator
 from nncf.torch.nas.bootstrapNAS.layers import ElasticLinearOp
 from nncf.torch.nas.bootstrapNAS.layers import ElasticKernelPaddingAdjustment
+from nncf.torch.layers import NNCFBatchNorm2d
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.utils import is_main_process
 from nncf.torch.dynamic_graph.scope import Scope
@@ -66,6 +66,8 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         # Unified op
         self.scope_vs_elastic_op_map = OrderedDict()
 
+        # TODO: Read elastic parameters from previous checkpoints and decide the level of elasticity that should be applied to the model.
+
     def initialize(self, model: NNCFNetwork) -> None:
         pass
 
@@ -75,6 +77,7 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
         layout = PTTransformationLayout()
+        # TODO: Skip e_width and e_kernel if depth stage.
         commands = []
         commands.extend(self._elastic_k_w(target_model))
         for command in commands:
@@ -126,8 +129,6 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
             # conv_module_scope = conv_node.ia_op_exec_context.scope_in_model
             conv_module_scope = Scope.from_str(conv_node.data['layer_name'])
             conv_module = target_model.get_module_by_scope(conv_module_scope)
-            # if conv_module.kernel_size[0] <= 3:
-            #     continue
             nncf_logger.info("Adding Dynamic Conv2D Layer in scope: {}".format(str(conv_module_scope)))
 
             conv_operation = self.create_elastic_k_w(conv_module, conv_module_scope, self.config)
@@ -196,6 +197,9 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         self.elastic_kernel_ops = elastic_kernel_ops
         self.elastic_width_ops = elastic_width_ops
 
+        possible_skipped_blocks = self.config.get('skipped_blocks', [])
+        self.num_possible_skipped_blocks = len(possible_skipped_blocks)
+
         # KD
         kd_ratio = config.get('kd_ratio', 0)
         if kd_ratio > 0:
@@ -226,8 +230,10 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         self.init_lr = optimizer.param_groups[0]['lr']
 
         config = self.config
-        stage = config['fine_tuner_params']['stage']
-        stage = 'kernel' if stage is None else stage
+        stage = config.get('fine_tuner_params', None)
+        assert stage is not None, 'Missing fine_tuner_params in config'
+        stage = stage.get('stage', 'depth')  # Default stage is depth.
+        # stage = 'kernel' if stage is None else stage
 
         nncf_logger.info('Fine tuning stage = {}'.format(stage))
 
@@ -237,9 +243,14 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         if stage == 'kernel':
             self.train()
         elif stage == 'depth':
-            pass
-        # elif stage == 'expand':
-        #     pass
+            nncf_logger.info('Fine tuning depth dimension')
+            ctx = self.target_model._compressed_context
+            ctx._elastic_depth = True
+            # Check accuracy of supernetwork
+            # self.validate_single_setting(0)
+            self.train()
+        elif stage == 'expand':
+            raise NotImplementedError
         elif stage == 'width':
             # TODO 1. Load previously finetuned network.
             # kernel_config = config.get('kernel_config')
@@ -254,7 +265,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             # Check accuracy of supernetwork
             self.validate_single_setting(0)
             # self.reorganize_weights() # TODO: Automation
-            # self.reorganize_weights_from_config() # TODO: Check issue #1
+            self.reorganize_weights_from_config() # TODO: Check issue #1
             # self.set_running_statistics()
             self.simple_set_running_statistics()
             # Check accuracy of supernetwork with reorg weights.
@@ -269,6 +280,14 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             # TODO: Slow decreasing of sizes?
             kernel_conf.append(op.kernel_size_list[rand_i])
         return kernel_conf
+
+    def _get_random_depth_conf(self):
+        depth_conf = []
+        for i in range(0, self.num_possible_skipped_blocks):
+            skip = bool(random.getrandbits(1)) #random.randint(0, 1)
+            if skip:
+                depth_conf.append(i)
+        return depth_conf
 
     def _get_random_width_conf(self):
         #TODO: Generalize with clustering idea.
@@ -310,11 +329,9 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         if stage == 'kernel':
             subnet_config['kernel'] = self._get_random_kernel_conf()
         elif stage == 'depth':
-            raise ValueError('Depth dimension fine tuning has not been implemented, yet')
-            # subnet_config['depth'] = self._get_random_skip_block() # From a set passed in the config file.
-            # self.target_model.skipped_block = [...]
-            # Set random elastic kernel
+            # Set random elastic kernel # TODO
             # Set random elastic depth
+            subnet_config['depth'] = self._get_random_depth_conf() # Get blocks that will be skipped.
         elif stage == 'width':
             # Set random elastic kernel
             subnet_config['kernel'] = self._get_random_kernel_conf()
@@ -337,6 +354,12 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             for op, w in zip(self.elastic_width_ops, subnet_config['width']):
                 op.set_active_out_channels(w)
 
+        # depth
+        if 'depth' in subnet_config:
+            ctx = self.target_model._compressed_context
+            print(subnet_config['depth'])
+            ctx.set_active_skipped_block(subnet_config['depth'])
+
     def train(self, validate_func=None):
         config = self.config
         if validate_func is None: # TODO
@@ -355,11 +378,11 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                     self.export_model(f'{self.main_path}/checkpoint/checkpoint.onnx')
                     checkpoint_data = {
                         'epoch': epoch + 1 - config['fine_tuner_params']['warmup_epochs'],
-                        'val_loss': val_loss,
+                        'val_loss': val_loss.item(),
                         'val_acc': val_acc,
                         'val_acc5': val_acc5
                     }
-                    json.dump(checkpoint_data, open(f'{self.main_path}/checkpoint/checkpoint.json'))
+                    json.dump(checkpoint_data, open(f'{self.main_path}/checkpoint/checkpoint.json', 'w'), indent=4)
                 # validate minimal subnet
                 self.get_minimal_subnet()
                 # val_loss, val_acc, val_acc5, _val_log = validate_func(epoch)
@@ -377,11 +400,11 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                         self.export_model(f'{self.main_path}/checkpoint/min_subnet.onnx')
                         min_subnet_data = {
                             'epoch': epoch + 1 - config['fine_tuner_params']['warmup_epochs'],
-                            'val_loss': val_loss,
+                            'val_loss': val_loss.item(),
                             'val_acc': val_acc,
                             'val_acc5': val_acc5
                         }
-                        json.dump(min_subnet_data, open(f'{self.main_path}/checkpoint/min_subnet.json'))
+                        json.dump(min_subnet_data, open(f'{self.main_path}/checkpoint/min_subnet.json', 'w'), indent=4)
 
     def train_one_epoch(self, epoch):
         config = self.config
@@ -691,8 +714,11 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             max_w = max(op.width_list)
             op.set_active_out_channels(max_w)
 
+        ctx = self.target_model._compressed_context
+        ctx.set_active_skipped_block([])
+
     def get_active_config(self, use_tuple_with_layer_name=False):
-        config = {'kernel': [], 'width': []}
+        config = {'kernel': [], 'width': [], 'depth': []}
         for op in self.elastic_kernel_ops:
             if use_tuple_with_layer_name:
                 config['kernel'].append((str(op.scope), op.get_active_kernel_size()))
@@ -703,6 +729,9 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 config['width'].append((str(op.scope), op.get_active_out_channels()))
             else:
                 config['width'].append(op.get_active_out_channels())
+
+        ctx = self.target_model._compressed_context
+        config['depth'] = ctx.active_block_idxs
         return config
 
     def get_net_device(self, net):
@@ -714,9 +743,11 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         bn_mean = {}
         bn_var = {}
 
-        forward_model = deepcopy(self.target_model)
+        # forward_model = deepcopy(self.target_model)
+        forward_model = self.target_model
         for name, m in forward_model.named_modules():
-            if isinstance(m, nn.BatchNorm2d):
+            print(type(m))
+            if isinstance(m, nn.BatchNorm2d) or isinstance(m, NNCFBatchNorm2d):
                 bn_mean[name] = AverageMeter()
                 bn_var[name] = AverageMeter()
 
@@ -755,20 +786,24 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 forward_model(images)
             ElasticBatchNormOp.SET_RUNNING_STATISTICS = False
 
-        for name, m in model.named_modules():
+        # for name, m in model.named_modules():
+        for name, m in self.target_model.named_modules():
             if name in bn_mean and bn_mean[name].count > 0:
                 feature_dim = bn_mean[name].avg.size(0)
-                assert isinstance(m, nn.BatchNorm2d)
-                m.running_mean.data[:feature_dim].copy_(bn_mean[name].avg)
-                m.running_var.data[:feature_dim].copy_(bn_var[name].avg)
+                assert isinstance(m, nn.BatchNorm2d) or isinstance(m, NNCFBatchNorm2d)
+                # m.running_mean.data[:feature_dim].copy_(bn_mean[name].avg)
+                # m.running_var.data[:feature_dim].copy_(bn_var[name].avg)
+                m.running_mean.data[:feature_dim] = bn_mean[name].avg
+                m.running_var.data[:feature_dim] = bn_var[name].avg
 
     def simple_set_running_statistics(self):
         # https://discuss.pytorch.org/t/how-to-run-the-model-to-only-update-the-batch-normalization-statistics/20626
         self.target_model.train()
-        for i, (images, _) in enumerate(self.train_loader):  # data_loader:
-            # print(i)
-            images = images.to(self.get_net_device(self.target_model))
-            self.target_model(images)
+        for _ in range(0, 2):
+            for i, (images, _) in enumerate(self.train_loader):  # data_loader:
+                # print(i)
+                images = images.to(self.get_net_device(self.target_model))
+                self.target_model(images)
 
     # Search API
     def get_elastic_parameters(self, use_tuple_with_layer_name=False):
@@ -798,13 +833,17 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         return self.target_model
 
     def get_minimal_subnet(self, save=False):
-        for op in self.elastic_kernel_ops:
-            min_ks = min(op.kernel_size_list)
-            op.set_active_kernel_size(min_ks)
+        # TODO: If working on Depth, we are currently disabling elasticity in training. s
+        # for op in self.elastic_kernel_ops:
+        #     min_ks = min(op.kernel_size_list)
+        #     op.set_active_kernel_size(min_ks)
+        #
+        # for op in self.elastic_width_ops:
+        #     min_w = min(op.width_list)
+        #     op.set_active_out_channels(min_w)
 
-        for op in self.elastic_width_ops:
-            min_w = min(op.width_list)
-            op.set_active_out_channels(min_w)
+        ctx = self.target_model._compressed_context
+        ctx.set_active_skipped_block(list(range(0, self.num_possible_skipped_blocks)))
         # TODO Save
         return self.target_model
 

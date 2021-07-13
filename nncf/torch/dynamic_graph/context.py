@@ -378,6 +378,8 @@ class TracingContext:
 
     def set_elastic_blocks(self, blocks: List):
         import networkx as nx
+        if not blocks:
+            return
         if isinstance(blocks, list) and isinstance(blocks[0], str):
             self.skipped_blocks = [blocks]
         else:
