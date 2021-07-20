@@ -52,7 +52,7 @@ class NNCFConv1d(_NNCFModuleMixin, nn.Conv1d):
 
 
 class NNCFBatchNorm2d(_NNCFModuleMixin, nn.BatchNorm2d):
-    op_func_name = "batch_norm_2d"
+    op_func_name = "batch_norm"
 
     @staticmethod
     def from_module(module):
@@ -107,10 +107,11 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
     def _custom_forward_fn(self, input_):
         proxy_padding_value = getattr(self, NNCF_PADDING_VALUE_ATTR_NAME)  # hack to get value from ProxyModule
         proxy_weight = self.weight
+        proxy_bias = self.bias
         proxy_padding = self.padding
-        return self._conv_forward(input_, proxy_weight, proxy_padding_value, proxy_padding)
+        return self._conv_forward(input_, proxy_weight, proxy_bias, proxy_padding_value, proxy_padding)
 
-    def _conv_forward(self, input_, weight, padding_value, padding):
+    def _conv_forward(self, input_, weight, bias, padding_value, padding):
         self.get_padding_value_ref().data.fill_(padding_value.item())
 
         def _reverse_repeat_tuple(t, n):
@@ -126,12 +127,12 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
         if self.padding_mode != 'zeros':
             return F.conv2d(F.pad(input_, reversed_padding_repeated_twice, mode=self.padding_mode,
                                   value=self.get_padding_value_ref().item()),
-                            weight, self.bias, self.stride,
+                            weight, bias, self.stride,
                             (0, 0), self.dilation, self.groups)
         if not self.get_padding_value_ref():
-            return F.conv2d(input_, weight, self.bias, self.stride, padding, self.dilation, self.groups)
+            return F.conv2d(input_, weight, bias, self.stride, padding, self.dilation, self.groups)
         return F.conv2d(F.pad(input_, reversed_padding_repeated_twice, value=self.get_padding_value_ref().item()),
-                        weight, self.bias, self.stride,
+                        weight, bias, self.stride,
                         (0, 0), self.dilation, self.groups)
 
 
