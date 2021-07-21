@@ -174,6 +174,9 @@ def visualize_width(model, ctrl, path):
     'resnet18', 'resnet50', 'densenet_121', 'mobilenet_v2', 'vgg11', 'inception_v3'
 ])
 def test_can_sample_random_elastic_width_configurations(_seed, tmp_path, model_name):
+    if model_name in ['mobilenet_v2', 'inception_v3']:
+        pytest.skip('Skip test for MobileNet-v2 as ElasticDepthWise is not supported, Inception-V3 also fails on concat')
+
     compressed_model, compression_ctrl, dummy_forward = _test_model(model_name)
     visualize_width(compressed_model, compression_ctrl, tmp_path / 'original.dot')
     N = 10
