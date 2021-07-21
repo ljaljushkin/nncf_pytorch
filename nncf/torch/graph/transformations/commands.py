@@ -16,7 +16,7 @@ class PTTargetPoint(TargetPoint):
         self.target_node_name = target_node_name
         self.target_type = target_type
         if self.target_type not in [TargetType.PRE_LAYER_OPERATION, TargetType.POST_LAYER_OPERATION,
-                                    TargetType.OPERATION_WITH_WEIGHTS, TargetType.OPERATION_WITH_BN_PARAMS,
+                                    TargetType.OPERATION_WITH_WEIGHTS,
                                     TargetType.OPERATOR_PRE_HOOK, TargetType.OPERATOR_POST_HOOK]:
             raise NotImplementedError("Unsupported target type: {}".format(target_type))
 
@@ -30,7 +30,7 @@ class PTTargetPoint(TargetPoint):
         prefix = str(self.target_type)
         retval = prefix
         if self.target_type in [TargetType.PRE_LAYER_OPERATION, TargetType.POST_LAYER_OPERATION,
-                                TargetType.OPERATION_WITH_WEIGHTS, TargetType.OPERATION_WITH_BN_PARAMS]:
+                                TargetType.OPERATION_WITH_WEIGHTS]:
             retval += " {}".format(self.target_node_name)
         elif self.target_type in [TargetType.OPERATOR_PRE_HOOK, TargetType.OPERATOR_POST_HOOK]:
             if self.input_port_id is not None:

@@ -8,34 +8,56 @@ from nncf.torch.layer_utils import COMPRESSION_MODULES
 from nncf.torch.nas.bootstrapNAS.ofa_layers_utils import sub_filter_start_end
 
 
-@COMPRESSION_MODULES.register() # TODO: Remove?
-class ElasticLinearOp(nn.Module):
-    def __init__(self, max_in_features, max_out_features, bias, scope):
+@COMPRESSION_MODULES.register()
+class DynamicLinearInputOp(nn.Module):
+    def __init__(self, max_num_in_features: int, scope: str):
         super().__init__()
-        self.max_in_features = max_in_features
-        self.max_out_features = max_out_features
-        self.bias = bias
-        self.scope = scope
-
-        self.active_out_features = self.max_out_features
-
-    # TODO: Remove
-    def get_active_bias(self, out_features):
-      return self.linear.bias[:out_features] if self.bias else None
+        self._max_num_in_features = max_num_in_features
+        self._scope = scope
 
     def forward(self, weight, inputs):
-        nncf_logger.debug('Linear in scope={}'.format(self.scope))
-        in_features = inputs.size(1)
+        num_in_features = inputs.size(1)
+        if num_in_features > self._max_num_in_features:
+            raise RuntimeError('An unacceptably large number of input channels for Linear layer {}'.format(self._scope))
+        return weight[:, :num_in_features]
 
-        # TODO: Bias
 
-        return weight[:self.active_out_features, :in_features].contiguous()
+@COMPRESSION_MODULES.register()
+class ElasticLinearOp(nn.Module):
+    def __init__(self, max_num_out_channels: int, scope: str):
+        super().__init__()
+        self._max_num_out_channels = max_num_out_channels
+        self._active_num_out_channels = self._max_num_out_channels
+        self._scope = scope
+
+    def set_active_out_channels(self, num_out_channels: int):
+        if num_out_channels > self._max_num_out_channels:
+            raise RuntimeError(
+                'An unacceptably large number of output channels for Linear layer {}'.format(self._scope))
+
+    def forward(self, weight, bias, _):
+        new_bias = None if bias is None else bias[:self._active_num_out_channels].contiguous()
+        return weight[:self._active_num_out_channels, :].contiguous(), new_bias
+
+
+@COMPRESSION_MODULES.register()
+class DynamicConvInputOp(nn.Module):
+    def __init__(self, max_num_in_channels: int, scope: str):
+        super().__init__()
+        self._max_num_in_channels = max_num_in_channels
+        self._scope = scope
+
+    def forward(self, weight, inputs):
+        num_in_channels = inputs.size(1)
+        if num_in_channels > self._max_num_in_channels:
+            raise RuntimeError('An unacceptably large number of input channels for Conv layer {}'.format(self._scope))
+        return weight[:, :num_in_channels, :, :]
 
 
 # Unified operator for elastic kernel and width
-@COMPRESSION_MODULES.register() # TODO: Remove?
+@COMPRESSION_MODULES.register()
 class ElasticConv2DOp(nn.Module):
-    def __init__(self, max_kernel_size, max_in_channels, max_out_channels, scope, config=None): #, module_w):
+    def __init__(self, max_kernel_size, max_out_channels, scope, config=None):  # , module_w):
         super().__init__()
         self.config = config
         self.scope = scope
@@ -44,9 +66,8 @@ class ElasticConv2DOp(nn.Module):
         self._ks_set = list(set(self.kernel_size_list))
         self._ks_set.sort()
 
-        self.max_in_channels = max_in_channels
         self.max_out_channels = max_out_channels
-        self.active_out_channels = self.max_out_channels
+        self.active_num_out_channels = self.max_out_channels
 
         # TODO: Add granularity for width changes from config
         self.width_list = self.generate_width_list(self.max_out_channels)
@@ -88,7 +109,7 @@ class ElasticConv2DOp(nn.Module):
             width_list.append(max_out_channels)
             return width_list
 
-        width = 32*(max_out_channels // 32)
+        width = 32 * (max_out_channels // 32)
         while width >= 32:
             width_list.append(width)
             width -= 32
@@ -96,14 +117,14 @@ class ElasticConv2DOp(nn.Module):
                 break
         return width_list
 
-    def get_active_filter(self, out_channel, in_channel, kernel_size, weight):
+    def get_active_filter(self, out_channel, kernel_size, weight):
         # out_channel = in_channel
         max_kernel_size = max(self.kernel_size_list)
 
         start, end = sub_filter_start_end(max_kernel_size, kernel_size)
-        filters = weight[:out_channel, :in_channel, start:end, start:end]
+        filters = weight[:out_channel, :, start:end, start:end]
         if kernel_size < max_kernel_size:
-            start_filter = weight[:out_channel, :in_channel, :, :]  # start with max kernel
+            start_filter = weight[:out_channel, :, :, :]  # start with max kernel
             for i in range(len(self._ks_set) - 1, 0, -1):
                 src_ks = self._ks_set[i]
                 if src_ks <= kernel_size:
@@ -137,30 +158,32 @@ class ElasticConv2DOp(nn.Module):
             raise ValueError(
                 'invalid number of output channels to set. Should be within [{}, {}]'.format(0, self.max_out_channels))
         if num_channels not in self.width_list:
-            raise ValueError(f'{self.scope}: invalid number of output channels to set: {num_channels}. Should be a number in {self.width_list}')
-        self.active_out_channels = num_channels
+            raise ValueError(
+                f'{self.scope}: invalid number of output channels to set: {num_channels}. Should be a number in {self.width_list}')
+        self.active_num_out_channels = num_channels
 
     def get_active_kernel_size(self):
         return self.active_kernel_size
 
     def get_active_out_channels(self):
-        return self.active_out_channels
+        return self.active_num_out_channels
 
-    def forward(self, weight, inputs):
-        nncf_logger.debug('Conv2d with active kernel size={} and active number of out channels={} in scope={}'.format(self.active_kernel_size, self.active_out_channels, self.scope))
+    def forward(self, _, weight, bias):
+        nncf_logger.debug('Conv2d with active kernel size={} and active number of out channels={} in scope={}'.format(
+            self.active_kernel_size, self.active_num_out_channels, self.scope))
         kernel_size = self.active_kernel_size
-        out_channels = self.active_out_channels
-        in_channels = inputs.size(1)
+        num_out_channels = self.active_num_out_channels
+        new_bias = None if bias is None else bias[:num_out_channels].contiguous()
         if kernel_size > 1:
-            filters = self.get_active_filter(out_channels, in_channels, kernel_size, weight).contiguous()
-            return filters
+            filters = self.get_active_filter(num_out_channels, kernel_size, weight).contiguous()
+            return [filters, new_bias]
         else:
-            return weight[:self.active_out_channels, :in_channels, :, :].contiguous()
+            return [weight[:num_out_channels, :, :, :].contiguous(), new_bias]
 
 
 class ElasticKernelPaddingAdjustment:
     # def __init__(self, elastic_kernel_op: ElasticConv2DKernelOp):
-    def __init__(self, elastic_k_w_op: ElasticConv2DOp): # Using unified operator
+    def __init__(self, elastic_k_w_op: ElasticConv2DOp):  # Using unified operator
         self._elastic_k_w_op = elastic_k_w_op
         self._is_enabled = True
 
@@ -172,8 +195,8 @@ class ElasticKernelPaddingAdjustment:
             return previous_padding
 
 
-@COMPRESSION_MODULES.register()  # TODO: Remove?
-class ElasticBatchNormOp(nn.Module):
+@COMPRESSION_MODULES.register()
+class DynamicBatchNormInputOp(nn.Module):
     SET_RUNNING_STATISTICS = False
 
     def __init__(self, num_features, scope):
@@ -183,7 +206,7 @@ class ElasticBatchNormOp(nn.Module):
 
     def bn_forward(self, feature_dim, **bn_params):
         nncf_logger.debug('BN with active num_features={} in scope={}'.format(feature_dim, self.scope))
-        if self.num_features == feature_dim: # or ElasticBatchNormOp.SET_RUNNING_STATISTICS:
+        if self.num_features == feature_dim:  # or DynamicBatchNormInputOp.SET_RUNNING_STATISTICS:
             return list(bn_params.values())
         else:
             # exponential_average_factor = 0.0
@@ -206,4 +229,3 @@ class ElasticBatchNormOp(nn.Module):
     def forward(self, inputs, **bn_params):
         feature_dim = inputs.size(1)
         return self.bn_forward(feature_dim, **bn_params)
-
