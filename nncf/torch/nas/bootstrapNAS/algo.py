@@ -66,6 +66,8 @@ from nncf.torch.pruning.export_helpers import PTElementwise
 from nncf.torch.pruning.export_helpers import PT_PRUNING_OPERATOR_METATYPES
 from nncf.torch.pruning.structs import PrunedModuleInfo
 from nncf.torch.utils import is_main_process
+from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
+from nncf.config.extractors import extract_bn_adaptation_init_params
 
 
 class ElasticWidthInfo(NamedTuple):
@@ -74,6 +76,7 @@ class ElasticWidthInfo(NamedTuple):
     layer_name: str
     elastic_op: Callable
     node_id: int
+
 
 
 @COMPRESSION_ALGORITHMS.register('bootstrapNAS')
@@ -246,6 +249,10 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         possible_skipped_blocks = self.config.get('skipped_blocks', [])
         self.num_possible_skipped_blocks = len(possible_skipped_blocks)
 
+        bn_adaptation_params = extract_bn_adaptation_init_params(self.config)
+        print(bn_adaptation_params)
+        self.bn_adaptation = BatchnormAdaptationAlgorithm(**bn_adaptation_params)
+
         # KD
         kd_ratio = config.get('kd_ratio', 0)
         if kd_ratio > 0:
@@ -293,7 +300,12 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             ctx = self.target_model._compressed_context
             ctx._elastic_depth = True
             # Check accuracy of supernetwork
-            # self.validate_single_setting(0)
+            self.validate_single_setting(0)
+            # Check accuracy of minimal network.
+            self.get_minimal_subnet()
+            self.bn_adaptation.run(self.target_model)
+            # self.simple_set_running_statistics()
+            self.validate_single_setting(0)
             self.train()
         elif stage == 'expand':
             raise NotImplementedError
@@ -310,12 +322,17 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
             # Check accuracy of supernetwork
             self.validate_single_setting(0)
+
             # self.reorganize_weights() # TODO: Automation
             self.reorganize_weights_from_config() # TODO: Check issue #1
-            # self.set_running_statistics()
-            self.simple_set_running_statistics()
+
+            # self.simple_set_running_statistics()
+            self.bn_adaptation.run(self.target_model) # TODO: This is not recovering accuracy as much as the simple approach above.
             # Check accuracy of supernetwork with reorg weights.
-            # self.validate(0)
+            self.validate_single_setting(0)
+
+            self.get_minimal_subnet()
+            self.bn_adaptation.run(self.target_model)
             self.validate_single_setting(0)
             self.train(validate_func=None)
 
@@ -387,12 +404,14 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
     def get_active_config(self):
         subnet_config = {}
+        # kernel
         for op in self.elastic_kernel_ops:
             subnet_config['kernel'].append(op.active_kernel_size)
         # width
         for op in self.elastic_width_ops:
             subnet_config['width'].append(op.active_num_out_channels)
-
+        # detph
+        # TODO
         return subnet_config
 
     def sample_active_subnet(self, stage):
@@ -444,7 +463,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 # validate supernet
                 self.reactivate_supernet()
                 # val_loss, val_acc, val_acc5, _val_log = validate_func(epoch)
-                self.simple_set_running_statistics()  # TODO
+                self.bn_adaptation.run(self.target_model)
+                # self.simple_set_running_statistics() # TODO
                 val_loss, val_acc, val_acc5, _val_log = self.validate_single_setting(epoch)
                 if is_main_process():
                     nncf_logger.info(
@@ -460,7 +480,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 # validate minimal subnet
                 self.get_minimal_subnet()
                 # val_loss, val_acc, val_acc5, _val_log = validate_func(epoch)
-                self.simple_set_running_statistics()  # TODO
+                # self.simple_set_running_statistics()  # TODO
+                self.bn_adaptation.run(self.target_model)  # TODO
                 val_loss, val_acc, val_acc5, _val_log = self.validate_single_setting(epoch)
                 if is_main_process():
                     nncf_logger.info(
@@ -484,9 +505,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         config = self.config
         warmup_epochs = config['fine_tuner_params']['warmup_epochs']
 
-        dynamic_net = self.target_model
-        dynamic_net.to('cuda')
-        dynamic_net.train()
+        self.target_model.to('cuda')
+        self.target_model.train()
 
         batch_time = AverageMeter()
         data_time = AverageMeter()
@@ -525,7 +545,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                     soft_label = F.softmax(soft_logits, dim=1)
 
             # clean gradients
-            dynamic_net.zero_grad()
+            self.target_model.zero_grad()
 
             # compute output
             subnet_str = ''
@@ -539,7 +559,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                     self.sample_active_subnet(config['fine_tuner_params']['stage'])
                     nncf_logger.info(f'Fine tuning {self.get_active_config()}')
 
-                output = dynamic_net(images)
+
+                output = self.target_model(images)
                 if config['kd_ratio'] == 0:
                     loss = self.criterion(output, labels)
                     loss_type = 'ce'
@@ -584,9 +605,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
     def validate(self, epoch):
         config = self.config
-        dynamic_net = self.target_model
-        dynamic_net.to('cuda')
-        dynamic_net.eval()
+        self.target_model.to('cuda')
+        self.target_model.eval()
 
         # TODO: Only validating active subnet for now setting for now.
         return self.validate_single_setting(epoch=epoch)
@@ -656,7 +676,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
         with torch.no_grad():
             end = time.time()
-            for i, (images, labels) in enumerate(self.val_loader):  # data_loader):
+            for i, (images, labels) in enumerate(self.val_loader):
                 images, labels = images.cuda(), labels.cuda()
                 # compute output
                 output = dynamic_net(images)
@@ -812,71 +832,11 @@ class BootstrapNASController(PTCompressionAlgorithmController):
     def get_net_device(self, net):
         return net.parameters().__next__().device
 
-    # def set_running_statistics(model, data_loader, distributed=False):
-    # TODO: Fix.
-    def set_running_statistics(self):
-        bn_mean = {}
-        bn_var = {}
-
-        # forward_model = deepcopy(self.target_model)
-        forward_model = self.target_model
-        for name, m in forward_model.named_modules():
-            print(type(m))
-            if isinstance(m, nn.BatchNorm2d) or isinstance(m, NNCFBatchNorm2d):
-                bn_mean[name] = AverageMeter()
-                bn_var[name] = AverageMeter()
-
-                def new_forward(bn, mean_est, var_est):
-                    def lambda_forward(x):
-                        batch_mean = x.mean(0, keepdim=True).mean(2, keepdim=True).mean(3, keepdim=True)  # 1, C, 1, 1
-                        batch_var = (x - batch_mean) * (x - batch_mean)
-                        batch_var = batch_var.mean(0, keepdim=True).mean(2, keepdim=True).mean(3, keepdim=True)
-
-                        batch_mean = torch.squeeze(batch_mean)
-                        batch_var = torch.squeeze(batch_var)
-
-                        mean_est.update(batch_mean.data, x.size(0))
-                        var_est.update(batch_var.data, x.size(0))
-
-                        # bn forward using calculated mean & var
-                        _feature_dim = batch_mean.size(0)
-                        return F.batch_norm(
-                            x, batch_mean, batch_var, bn.weight[:_feature_dim],
-                            bn.bias[:_feature_dim], False,
-                            0.0, bn.eps,
-                        )
-
-                    return lambda_forward
-
-                m.forward = new_forward(m, bn_mean[name], bn_var[name])
-
-        if len(bn_mean) == 0:
-            # skip if there is no batch normalization layers in the network
-            return
-
-        with torch.no_grad():
-            DynamicBatchNormInputOp.SET_RUNNING_STATISTICS = True
-            for images, labels in self.train_loader:  # data_loader:
-                images = images.to(self.get_net_device(forward_model))
-                forward_model(images)
-            DynamicBatchNormInputOp.SET_RUNNING_STATISTICS = False
-
-        # for name, m in model.named_modules():
-        for name, m in self.target_model.named_modules():
-            if name in bn_mean and bn_mean[name].count > 0:
-                feature_dim = bn_mean[name].avg.size(0)
-                assert isinstance(m, nn.BatchNorm2d) or isinstance(m, NNCFBatchNorm2d)
-                # m.running_mean.data[:feature_dim].copy_(bn_mean[name].avg)
-                # m.running_var.data[:feature_dim].copy_(bn_var[name].avg)
-                m.running_mean.data[:feature_dim] = bn_mean[name].avg
-                m.running_var.data[:feature_dim] = bn_var[name].avg
-
     def simple_set_running_statistics(self):
         # https://discuss.pytorch.org/t/how-to-run-the-model-to-only-update-the-batch-normalization-statistics/20626
         self.target_model.train()
-        for _ in range(0, 2):
-            for i, (images, _) in enumerate(self.train_loader):  # data_loader:
-                # print(i)
+        for _ in range(0, 2): # TODO Use only a subset of the loader.
+            for i, (images, _) in enumerate(self.train_loader):
                 images = images.to(self.get_net_device(self.target_model))
                 self.target_model(images)
 
