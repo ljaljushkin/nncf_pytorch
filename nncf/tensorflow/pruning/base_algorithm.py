@@ -23,7 +23,7 @@ from nncf.common.graph import NNCFNodeName
 from nncf.common.graph.transformations.commands import TransformationPriority
 from nncf.common.pruning.clusterization import Cluster
 from nncf.common.pruning.clusterization import Clusterization
-from nncf.common.pruning.mask_propagation import MaskPropagationAlgorithm
+from nncf.common.pruning.mask_propagation import PruningPropagationAlgorithm
 from nncf.common.pruning.pruning_node_selector import PruningNodeSelector
 from nncf.common.pruning.statistics import PrunedLayerSummary
 from nncf.common.pruning.statistics import PrunedModelStatistics
@@ -151,7 +151,7 @@ class BasePruningAlgoBuilder(TFCompressionAlgorithmBuilder):
             self._pruned_layer_groups_info.add_cluster(cluster)
 
         # Propagating masks across the graph to detect spec_nodes that will be pruned
-        mask_propagator = MaskPropagationAlgorithm(self._graph, TF_PRUNING_OPERATOR_METATYPES)
+        mask_propagator = PruningPropagationAlgorithm(self._graph, TF_PRUNING_OPERATOR_METATYPES)
         mask_propagator.mask_propagation()
 
         # Add masks for all spec modules, because prunable batchnorm layers can be determines

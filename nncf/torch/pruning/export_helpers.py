@@ -19,9 +19,11 @@ from nncf.common.graph import NNCFGraph
 from nncf.common.graph import NNCFNode
 from nncf.common.graph.layer_attributes import GroupNormLayerAttributes
 from nncf.common.pruning.export_helpers import DefaultMetaOp
-from nncf.common.pruning.mask_propagation import MaskPropagationAlgorithm
+from nncf.common.pruning.mask_propagation import PruningPropagationAlgorithm
 from nncf.common.pruning.mask_propagation import get_input_masks
+from nncf.common.pruning.mask_propagation import get_input_widths
 from nncf.common.pruning.mask_propagation import identity_mask_propagation
+from nncf.common.pruning.mask_propagation import identity_width_propagation
 from nncf.common.pruning.utils import PruningOperationsMetatypeRegistry
 from nncf.common.pruning.utils import get_sources_of_node
 from nncf.common.pruning.utils import is_depthwise_conv
@@ -78,6 +80,19 @@ class PTDefaultMetaOp(DefaultMetaOp):
         raise NotImplementedError
 
     @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        """
+        Propagate width through a node using widths of all inputs and pruning width of current node (if any).
+        Should set the following attributes:
+            input_widths - list of widths of input nodes (None if there is no width in some input);
+            output_width - resulting width of node operation.
+
+        :param node: Node from NNCF graph to propagate width through it.
+        :param graph: Graph of model to prune.
+        """
+        raise NotImplementedError
+
+    @classmethod
     def input_prune(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
         """
         Prune node by input_masks (if masks is not none and operation support it).
@@ -118,6 +133,7 @@ class PTDefaultMetaOp(DefaultMetaOp):
         :param graph: Graph of model.
         """
 
+
 @PT_PRUNING_OPERATOR_METATYPES.register('model_input')
 class PTInput(PTDefaultMetaOp):
     subtypes = [PTInputNoopMetatype]
@@ -130,6 +146,11 @@ class PTInput(PTDefaultMetaOp):
     def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph):
         node.data['input_masks'] = []
         node.data['output_mask'] = None
+
+    @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        node.data['input_width'] = []
+        node.data['output_width'] = None
 
 
 @PT_PRUNING_OPERATOR_METATYPES.register('model_output')
@@ -145,6 +166,11 @@ class PTOutput(PTDefaultMetaOp):
         node.data['input_masks'] = []
         node.data['output_mask'] = None
 
+    @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        node.data['input_width'] = []
+        node.data['output_width'] = None
+
 
 @PT_PRUNING_OPERATOR_METATYPES.register('identity_mask_propagation')
 class PTIdentityMaskForwardOps(PTDefaultMetaOp):
@@ -159,6 +185,11 @@ class PTIdentityMaskForwardOps(PTDefaultMetaOp):
     @classmethod
     def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph):
         identity_mask_propagation(node, graph)
+
+    @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        node.data['input_width'] = []
+        node.data['output_width'] = None
 
 
 @PT_PRUNING_OPERATOR_METATYPES.register('convolution')
@@ -186,6 +217,20 @@ class PTConvolution(PTDefaultMetaOp):
 
         node.data['input_masks'] = input_masks
         node.data['output_mask'] = output_mask
+
+    @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        input_widths = get_input_widths(node, graph)
+        output_width = node.data.get('output_width', None)
+
+        # In case of group convs we can't prune by output filters
+        if is_grouped_conv(node):
+            output_width = None
+            if is_depthwise_conv(node):
+                output_width = input_widths[0]
+
+        node.data['input_widths'] = input_widths
+        node.data['output_width'] = output_width
 
     @classmethod
     def input_prune(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
@@ -245,7 +290,9 @@ class PTConvolution(PTDefaultMetaOp):
             return
         conv = model.get_containing_module(node.node_name)
         conv.weight.data = torch.index_select(conv.weight.data, 1, reorder_indexes)
-        nncf_logger.info('Reordered input channels (first 10 reorder indexes {}) of Convolution: {} '.format(reorder_indexes[:10], node.data['key']))
+        nncf_logger.info(
+            'Reordered input channels (first 10 reorder indexes {}) of Convolution: {} '.format(reorder_indexes[:10],
+                                                                                                node.data['key']))
 
     @classmethod
     def output_reorder(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
@@ -256,7 +303,9 @@ class PTConvolution(PTDefaultMetaOp):
         conv.weight.data = torch.index_select(conv.weight.data, 0, reorder_indexes)
         if conv.bias is not None:
             conv.bias.data = torch.index_select(conv.bias.data, 0, reorder_indexes)
-        nncf_logger.info('Reordered output channels (first 10 reorder indexes {}) of Convolution: {} '.format(reorder_indexes[:10], node.data['key']))
+        nncf_logger.info(
+            'Reordered output channels (first 10 reorder indexes {}) of Convolution: {} '.format(reorder_indexes[:10],
+                                                                                                 node.data['key']))
 
 
 @PT_PRUNING_OPERATOR_METATYPES.register('transpose_convolution')
@@ -284,6 +333,20 @@ class PTTransposeConvolution(PTDefaultMetaOp):
 
         node.data['input_masks'] = input_masks
         node.data['output_mask'] = output_mask
+
+    @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        input_widths = get_input_widths(node, graph)
+        output_width = node.data.get('output_width', None)
+
+        # In case of group convs we can't prune by output filters
+        if is_grouped_conv(node):
+            output_width = None
+            if is_depthwise_conv(node):
+                output_width = input_widths[0]
+
+        node.data['input_widths'] = input_widths
+        node.data['output_width'] = output_width
 
     @classmethod
     def input_prune(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
@@ -341,6 +404,10 @@ class PTBatchNorm(PTDefaultMetaOp):
         identity_mask_propagation(node, graph)
 
     @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        identity_width_propagation(node, graph)
+
+    @classmethod
     def input_prune(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
         input_mask = node.data['input_masks'][0]
         if input_mask is None:
@@ -374,7 +441,9 @@ class PTBatchNorm(PTDefaultMetaOp):
         bn.running_mean.data = torch.index_select(bn.running_mean.data, 0, reorder_indexes)
         bn.running_var.data = torch.index_select(bn.running_var.data, 0, reorder_indexes)
 
-        nncf_logger.info('Reordered channels (first 10 reorder indexes {}) of BatchNorm: {} '.format(reorder_indexes[:10], node.data['key']))
+        nncf_logger.info(
+            'Reordered channels (first 10 reorder indexes {}) of BatchNorm: {} '.format(reorder_indexes[:10],
+                                                                                        node.data['key']))
 
 
 @PT_PRUNING_OPERATOR_METATYPES.register('group_norm')
@@ -390,6 +459,10 @@ class GroupNorm(PTDefaultMetaOp):
     @classmethod
     def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph):
         identity_mask_propagation(node, graph)
+
+    @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        identity_width_propagation(node, graph)
 
     @classmethod
     def input_prune(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
@@ -422,7 +495,15 @@ class PTConcat(PTDefaultMetaOp):
         return True
 
     @classmethod
-    def check_concat(cls, node: NNCFNode, graph: NNCFGraph) -> bool:
+    def check_concat_mask(cls, node: NNCFNode, graph: NNCFGraph) -> bool:
+        return PTConcat._check_concat(node, graph, output_attr='output_mask')
+
+    @classmethod
+    def check_concat_width(cls, node: NNCFNode, graph: NNCFGraph) -> bool:
+        return PTConcat._check_concat(node, graph, output_attr='output_width')
+
+    @classmethod
+    def _check_concat(cls, node: NNCFNode, graph: NNCFGraph, output_attr) -> bool:
         """
         Return whether all input sources of node is convolutions or not.
 
@@ -433,7 +514,7 @@ class PTConcat(PTDefaultMetaOp):
 
         for input_node in graph.get_previous_nodes(node):
             # If input has mask ->  it went from convolution (source of this node is a convolution)
-            if input_node.data.get('output_mask', None) is None:
+            if input_node.data.get(output_attr, None) is None:
                 continue
 
             source_nodes = get_sources_of_node(input_node, graph, PTConvolution.get_all_op_aliases() +
@@ -471,17 +552,55 @@ class PTConcat(PTDefaultMetaOp):
         return filled_input_masks
 
     @classmethod
+    def fill_input_widths(cls, node: NNCFNode, graph: NNCFGraph) -> Union[List[int], None]:
+        """
+        Fill input widths with all None replaced by identity widths.
+        If all input widths is None return None.
+
+        :param node: Node to determine it's sources.
+        :param graph: NNCF graph to work with.
+        :return: Filled input widths.
+        """
+        input_edges = graph.get_input_edges(node)
+        previous_nodes = [edge.from_node for edge in input_edges]
+        input_widths = [input_node.data['output_width'] for input_node in previous_nodes]
+
+        if all(width is None for width in input_widths):
+            return None
+
+        filled_input_widths = []
+        for i, width in enumerate(input_widths):
+            if width is None:
+                width = input_edges[i].tensor_shape[1]
+            filled_input_widths.append(width)
+        return filled_input_widths
+
+    @classmethod
     def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph):
         input_masks = None
         output_mask = None
 
-        if cls.check_concat(node, graph):
+        if cls.check_concat_mask(node, graph):
             input_masks = cls.fill_input_masks(node, graph)
             if input_masks:
                 output_mask = torch.cat(input_masks)
 
         node.data['input_masks'] = input_masks
         node.data['output_mask'] = output_mask
+
+    @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        input_widths = None
+        output_width = None
+
+        if cls.check_concat_width(node, graph):
+            input_widths = cls.fill_input_widths(node, graph)
+            if input_widths:
+                # TODO: sum is a tricky part!
+                output_width = sum(input_widths)
+
+        node.data['input_widths'] = input_widths
+        node.data['output_width'] = output_width
 
 
 @PT_PRUNING_OPERATOR_METATYPES.register('elementwise')
@@ -502,6 +621,16 @@ class PTElementwise(PTDefaultMetaOp):
         node.data['output_mask'] = input_masks[0]
 
     @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        input_widths = get_input_widths(node, graph)
+
+        node.data['input_widths'] = input_widths
+        if input_widths[0] is not None:
+            # TODO: == is a tricky part
+            assert all(input_widths[0] == width for width in input_widths)
+        node.data['output_width'] = input_widths[0]
+
+    @classmethod
     def input_prune(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
         input_mask = node.data['input_masks'][0]
         if input_mask is None:
@@ -511,7 +640,7 @@ class PTElementwise(PTDefaultMetaOp):
         node_module = model.get_containing_module(node.node_name)
 
         if isinstance(node_module, tuple(NNCF_WRAPPED_USER_MODULES_DICT)):
-            assert node_module.target_weight_dim_for_compression == 0,\
+            assert node_module.target_weight_dim_for_compression == 0, \
                 "Implemented only for target_weight_dim_for_compression == 0"
             old_num_clannels = int(node_module.weight.size(0))
             new_num_channels = int(torch.sum(input_mask))
@@ -537,8 +666,15 @@ class PTStopMaskForwardOps(PTDefaultMetaOp):
         node.data['input_masks'] = input_masks
         node.data['output_mask'] = None
 
+    @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        input_widths = get_input_widths(node, graph)
 
-class ModelPruner(MaskPropagationAlgorithm):
+        node.data['input_widths'] = input_widths
+        node.data['output_width'] = None
+
+
+class ModelPruner(PruningPropagationAlgorithm):
     def __init__(self, model: NNCFNetwork, graph: NNCFGraph,
                  pruning_operator_metatypes: PruningOperationsMetatypeRegistry):
         super().__init__(graph, pruning_operator_metatypes)

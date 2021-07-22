@@ -61,3 +61,21 @@ def init_output_masks_in_graph(graph: NNCFGraph, nodes: List):
         mask = minfo.operand.binary_filter_pruning_mask
         nncf_node = graph.get_node_by_id(minfo.nncf_node_id)
         nncf_node.data['output_mask'] = mask
+
+
+def init_output_widths_in_graph(graph: NNCFGraph, nodes: List):
+    """
+    Initialize widths in groph for width propagation algorithm
+
+    :param graph: NNCFNetwork
+    :param nodes: list with pruned nodes
+    """
+    for node in graph.get_all_nodes():
+        node.data.pop('input_width', None)
+        node.data.pop('output_width', None)
+
+    for minfo in nodes:
+        # TODO: tricky part!!
+        width = minfo.operand.binary_filter_pruning_width
+        nncf_node = graph.get_node_by_id(minfo.nncf_node_id)
+        nncf_node.data['output_width'] = width

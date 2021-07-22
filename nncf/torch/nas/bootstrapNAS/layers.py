@@ -54,6 +54,20 @@ class DynamicConvInputOp(nn.Module):
         return weight[:, :num_in_channels, :, :]
 
 
+@COMPRESSION_MODULES.register()
+class DynamicDWConvInputOp(nn.Module):
+    def __init__(self, max_num_groups: int, scope: str):
+        super().__init__()
+        self._scope = scope
+        self._max_num_groups = max_num_groups
+
+    def forward(self, _, inputs):
+        num_in_channels = inputs.size(1)
+        if num_in_channels > self._max_num_groups:
+            raise RuntimeError('An unacceptably large number of groups for Depth-Wise Conv layer {}'.format(self._scope))
+        return num_in_channels
+
+
 # Unified operator for elastic kernel and width
 @COMPRESSION_MODULES.register()
 class ElasticConv2DOp(nn.Module):

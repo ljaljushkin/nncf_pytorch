@@ -13,13 +13,13 @@
 import torch
 
 from nncf.common.graph import NNCFGraph
-from nncf.common.pruning.mask_propagation import MaskPropagationAlgorithm
+from nncf.common.pruning.mask_propagation import PruningPropagationAlgorithm
 from nncf.common.pruning.utils import PruningOperationsMetatypeRegistry
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.common.utils.logger import logger as nncf_logger
 
 
-class FilterReorderingAlgorithm(MaskPropagationAlgorithm):
+class FilterReorderingAlgorithm(PruningPropagationAlgorithm):
     def __init__(self, model: NNCFNetwork, graph: NNCFGraph,
                  pruning_operator_metatypes: PruningOperationsMetatypeRegistry):
         super().__init__(graph, pruning_operator_metatypes)

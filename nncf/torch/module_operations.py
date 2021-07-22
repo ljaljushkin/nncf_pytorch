@@ -60,6 +60,11 @@ class UpdatePaddingValue(UpdateParameter):
         super().__init__(NNCF_PADDING_VALUE_ATTR_NAME, op)
 
 
+class UpdateNumGroups(UpdateParameter):
+    def __init__(self, op):
+        super().__init__('groups', op)
+
+
 class UpdatePadding(UpdateParameter):
     def __init__(self, op):
         super().__init__("padding", op)

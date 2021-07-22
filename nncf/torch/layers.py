@@ -109,10 +109,13 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
         proxy_weight = self.weight
         proxy_bias = self.bias
         proxy_padding = self.padding
-        return self._conv_forward(input_, proxy_weight, proxy_bias, proxy_padding_value, proxy_padding)
+        proxy_num_groups = self.groups
+        return self._conv_forward(input_,
+                                  proxy_weight, proxy_bias, proxy_padding_value, proxy_padding, proxy_num_groups)
 
-    def _conv_forward(self, input_, weight, bias, padding_value, padding):
+    def _conv_forward(self, input_, weight, bias, padding_value, padding, num_groups):
         self.get_padding_value_ref().data.fill_(padding_value.item())
+        self.groups = num_groups
 
         def _reverse_repeat_tuple(t, n):
             r"""Reverse the order of `t` and repeat each element for `n` times.

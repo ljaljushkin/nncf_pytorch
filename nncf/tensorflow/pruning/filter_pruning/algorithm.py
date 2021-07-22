@@ -24,7 +24,7 @@ from nncf.common.graph import NNCFNodeName
 from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
 from nncf.common.pruning.clusterization import Cluster
 from nncf.common.pruning.clusterization import Clusterization
-from nncf.common.pruning.mask_propagation import MaskPropagationAlgorithm
+from nncf.common.pruning.mask_propagation import PruningPropagationAlgorithm
 from nncf.common.pruning.schedulers import PRUNING_SCHEDULERS
 from nncf.common.pruning.statistics import FilterPruningStatistics
 from nncf.common.pruning.utils import calculate_in_out_channels_in_uniformly_pruned_model
@@ -282,7 +282,7 @@ class FilterPruningController(BasePruningAlgoController):
                 nncf_node.data['output_mask'] = filter_mask
 
         # 2. Propagating masks across the graph
-        mask_propagator = MaskPropagationAlgorithm(self._original_graph, TF_PRUNING_OPERATOR_METATYPES)
+        mask_propagator = PruningPropagationAlgorithm(self._original_graph, TF_PRUNING_OPERATOR_METATYPES)
         mask_propagator.mask_propagation()
 
         # 3. Apply masks to the model
@@ -329,7 +329,7 @@ class FilterPruningController(BasePruningAlgoController):
                 nncf_node.data['output_mask'] = filter_mask
 
         # 2. Propagate masks across the graph
-        mask_propagator = MaskPropagationAlgorithm(self._original_graph, TF_PRUNING_OPERATOR_METATYPES)
+        mask_propagator = PruningPropagationAlgorithm(self._original_graph, TF_PRUNING_OPERATOR_METATYPES)
         mask_propagator.mask_propagation()
 
         # 3. Apply masks to the model
@@ -404,7 +404,7 @@ class FilterPruningController(BasePruningAlgoController):
                         nncf_node = self._original_graph.get_node_by_id(node.nncf_node_id)
                         nncf_node.data['output_mask'] = masks[group.id]
 
-                mask_propagator = MaskPropagationAlgorithm(self._original_graph, TF_PRUNING_OPERATOR_METATYPES)
+                mask_propagator = PruningPropagationAlgorithm(self._original_graph, TF_PRUNING_OPERATOR_METATYPES)
                 mask_propagator.mask_propagation()
 
                 # 4. Set binary masks to the model

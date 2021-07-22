@@ -22,7 +22,7 @@ from nncf.common.pruning.utils import PruningOperationsMetatypeRegistry
 TensorType = TypeVar('TensorType')
 
 
-class MaskPropagationAlgorithm:
+class PruningPropagationAlgorithm:
     """
     Algorithm responsible for propagation masks across all nodes in the graph.
     Before call mask_propagation() you need set node.data['output_masks']
@@ -31,7 +31,7 @@ class MaskPropagationAlgorithm:
 
     def __init__(self, graph: NNCFGraph, pruning_operator_metatypes: PruningOperationsMetatypeRegistry):
         """
-        Initializes MaskPropagationAlgorithm.
+        Initializes PruningPropagationAlgorithm.
 
         :param graph: Graph to work with.
         :param pruning_operator_metatypes: Registry with operation metatypes pruning algorithm is aware of, i.e.
@@ -61,6 +61,15 @@ class MaskPropagationAlgorithm:
             cls = self.get_meta_operation_by_type_name(node.node_type)
             cls.mask_propagation(node, self._graph)
 
+    def width_propagation(self):
+        """
+        Width propagation in graph:
+        to propagate widths run method width_propagation (of metaop of current node) on all nodes in topological order.
+        """
+        for node in self._graph.topological_sort():
+            cls = self.get_meta_operation_by_type_name(node.node_type)
+            cls.width_propagation(node, self._graph)
+
 
 def get_input_masks(node: NNCFNode, graph: NNCFGraph) -> List[Union[TensorType, None]]:
     """
@@ -72,6 +81,16 @@ def get_input_masks(node: NNCFNode, graph: NNCFGraph) -> List[Union[TensorType, 
     return input_masks
 
 
+def get_input_widths(node: NNCFNode, graph: NNCFGraph) -> List[Union[int, None]]:
+    """
+    Returns number of input channels for all inputs of nx_node.
+
+    :return: list of integers that represents number of input channels of the given nodes.
+    """
+    input_widths = [input_node.data['output_width'] for input_node in graph.get_previous_nodes(node)]
+    return input_widths
+
+
 def identity_mask_propagation(node: NNCFNode, graph: NNCFGraph):
     """
     Propagates input mask through nx_node.
@@ -80,3 +99,13 @@ def identity_mask_propagation(node: NNCFNode, graph: NNCFGraph):
     assert len(input_masks) == 1
     node.data['input_masks'] = input_masks
     node.data['output_mask'] = input_masks[0]
+
+
+def identity_width_propagation(node: NNCFNode, graph: NNCFGraph):
+    """
+    Propagates num input channels through nx_node as is.
+    """
+    input_widths = get_input_widths(node, graph)
+    assert len(input_widths) == 1
+    node.data['input_width'] = input_widths
+    node.data['output_width'] = input_widths[0]

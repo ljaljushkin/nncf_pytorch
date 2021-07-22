@@ -97,7 +97,7 @@ def create_compressed_model(model: Module,
 
     # Compress model that will be deployed for the inference on target device. No need to compress parts of the
     # model that are used on training stage only (e.g. AuxLogits of Inception-v3 model) or unused modules with weights.
-    # As a consequence, no need to care about spoiling BN statistics, as there're disabled in eval mode.
+    # As a consequence, no need to care about spoiling BN statistics, as they're disabled in eval mode.
     model.eval()
 
     if dump_graphs:

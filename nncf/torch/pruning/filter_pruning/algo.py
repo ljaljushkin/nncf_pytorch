@@ -26,7 +26,7 @@ from nncf.common.accuracy_aware_training.training_loop import ADAPTIVE_COMPRESSI
 from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
 from nncf.common.graph import NNCFNodeName
 from nncf.common.pruning.clusterization import Clusterization
-from nncf.common.pruning.mask_propagation import MaskPropagationAlgorithm
+from nncf.common.pruning.mask_propagation import PruningPropagationAlgorithm
 from nncf.common.pruning.schedulers import PRUNING_SCHEDULERS
 from nncf.common.pruning.statistics import FilterPruningStatistics
 from nncf.common.pruning.statistics import PrunedLayerSummary
@@ -612,7 +612,7 @@ class FilterPruningController(BasePruningAlgoController):
         graph = self.model.get_original_graph()
 
         init_output_masks_in_graph(graph, self.pruned_module_groups_info.get_all_nodes())
-        MaskPropagationAlgorithm(graph, PT_PRUNING_OPERATOR_METATYPES).mask_propagation()
+        PruningPropagationAlgorithm(graph, PT_PRUNING_OPERATOR_METATYPES).mask_propagation()
 
         # 2. Apply the masks
         types_to_apply_mask = [v.op_func_name for v in NNCF_GENERAL_CONV_MODULES_DICT] + ['group_norm']

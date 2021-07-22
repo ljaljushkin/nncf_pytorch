@@ -41,6 +41,17 @@ class DefaultMetaOp:
         raise NotImplementedError
 
     @classmethod
+    def width_propagation(cls, node: NNCFNode, graph: NNCFGraph):
+        """
+        Propagates the pruning width through a node using pruning widths of all inputs and the current node (if any).
+
+        :param node: The graph node to propagate width through it
+        :param graph: The model graph to prune
+        """
+        raise NotImplementedError
+
+
+    @classmethod
     def get_all_op_aliases(cls):
         """
         :return: list of all aliases of types in metatype

@@ -31,6 +31,7 @@ from nncf.common.graph.transformations.commands import TransformationPriority
 from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
 from nncf.common.pruning.clusterization import Cluster
 from nncf.common.pruning.clusterization import Clusterization
+from nncf.common.pruning.mask_propagation import PruningPropagationAlgorithm
 from nncf.common.pruning.pruning_node_selector import PruningNodeSelector
 from nncf.common.schedulers import BaseCompressionScheduler
 from nncf.common.statistics import NNCFStatistics
@@ -43,19 +44,23 @@ from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
 from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 from nncf.torch.graph.operator_metatypes import BatchNormMetatype
 from nncf.torch.graph.operator_metatypes import Conv2dMetatype
+from nncf.torch.graph.operator_metatypes import DepthwiseConv2dSubtype
 from nncf.torch.graph.operator_metatypes import LinearMetatype
 from nncf.torch.graph.transformations.commands import PTInsertionCommand
 from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.graph.transformations.layout import PTTransformationLayout
 from nncf.torch.initialization import wrap_dataloader_for_init
 from nncf.torch.layers import NNCFConv2d
+from nncf.torch.layers import NNCF_GENERAL_CONV_MODULES_DICT
 from nncf.torch.module_operations import UpdateBatchNormParams
+from nncf.torch.module_operations import UpdateNumGroups
 from nncf.torch.module_operations import UpdatePadding
 from nncf.torch.module_operations import UpdateWeight
 from nncf.torch.module_operations import UpdateWeightAndOptionalBias
 from nncf.torch.nas.bootstrapNAS.filter_reorder import FilterReorderingAlgorithm
 from nncf.torch.nas.bootstrapNAS.layers import DynamicBatchNormInputOp
 from nncf.torch.nas.bootstrapNAS.layers import DynamicConvInputOp
+from nncf.torch.nas.bootstrapNAS.layers import DynamicDWConvInputOp
 from nncf.torch.nas.bootstrapNAS.layers import DynamicLinearInputOp
 from nncf.torch.nas.bootstrapNAS.layers import ElasticConv2DOp  # Unified Operator
 from nncf.torch.nas.bootstrapNAS.layers import ElasticKernelPaddingAdjustment
@@ -65,6 +70,7 @@ from nncf.torch.pruning.export_helpers import PT_PRUNING_OPERATOR_METATYPES
 from nncf.torch.pruning.filter_pruning.functions import FILTER_IMPORTANCE_FUNCTIONS
 from nncf.torch.pruning.filter_pruning.functions import tensor_l2_normalizer
 from nncf.torch.pruning.structs import PrunedModuleInfo
+from nncf.torch.pruning.utils import init_output_widths_in_graph
 from nncf.torch.utils import get_filters_num
 from nncf.torch.utils import is_main_process
 
@@ -123,6 +129,11 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         return UpdateWeight(dynamic_conv_input_op).to(device)
 
     @staticmethod
+    def create_dynamic_dw_conv_input_op(module: nn.Conv2d, scope, device):
+        dynamic_dw_conv_input_op = DynamicDWConvInputOp(module.groups, scope)
+        return UpdateNumGroups(dynamic_dw_conv_input_op).to(device)
+
+    @staticmethod
     def create_dynamic_bn_input_op(module: nn.BatchNorm2d, scope, device):
         dynamic_bn_input_op = DynamicBatchNormInputOp(module.num_features, scope)
         return UpdateBatchNormParams(dynamic_bn_input_op).to(device)
@@ -133,7 +144,7 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         return UpdateWeight(dynamic_linear_input_op).to(device)
 
     def _elastic_k_w(self, target_model: NNCFNetwork):
-        target_model_graph = target_model.get_original_graph()
+        graph = target_model.get_original_graph()
         device = next(target_model.parameters()).device
         insertion_commands = []
         pad_commands = []
@@ -151,7 +162,7 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
                                                     prune_last=True,
                                                     prune_downsample_convs=True)
 
-        groups_of_nodes_to_prune = pruning_node_selector.create_pruning_groups(target_model_graph)
+        groups_of_nodes_to_prune = pruning_node_selector.create_pruning_groups(graph)
         for i, group in enumerate(groups_of_nodes_to_prune.get_all_clusters()):
             group_minfos = []
             print(f'Group #{i}')
@@ -205,17 +216,34 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         if pad_commands:
             insertion_commands += pad_commands
 
-        op_name_vs_op_creator = {
-            Conv2dMetatype.name: self.create_dynamic_conv_input_op,
-            BatchNormMetatype.name: self.create_dynamic_bn_input_op,
-            LinearMetatype.name: self.create_dynamic_linear_input_op
+        # 2. Apply the masks
+        # types_to_apply_mask = [v.op_func_name for v in NNCF_GENERAL_CONV_MODULES_DICT] + ['group_norm']
+        # if self.prune_batch_norms:
+        #     types_to_apply_mask.append('batch_norm')
+        # set
+        # node_name, elastic_op
+        # node_module = self.model.get_containing_module(node.node_name)
+        # pruned_node_modules = list()
+        # for node in graph.get_all_nodes():
+        #     if node.node_type not in types_to_apply_mask:
+        #         continue
+        #     node_module = self.model.get_containing_module(node.node_name)
+        #     if node.data['output_mask'] is not None and node_module not in pruned_node_modules:
+        #         _apply_binary_mask_to_module_weight_and_bias(node_module, node.data['output_mask'], node.node_name)
+        #         pruned_node_modules.append(node_module)
+
+        metatype_vs_op_creator = {
+            Conv2dMetatype: self.create_dynamic_conv_input_op,
+            DepthwiseConv2dSubtype: self.create_dynamic_dw_conv_input_op,
+            BatchNormMetatype: self.create_dynamic_bn_input_op,
+            LinearMetatype: self.create_dynamic_linear_input_op
         }
 
-        for op_name, op_creator in op_name_vs_op_creator.items():
-            nodes = target_model_graph.get_nodes_by_types([op_name])
+        for metatype, op_creator in metatype_vs_op_creator.items():
+            nodes = graph.get_nodes_by_metatypes([metatype])
             for node in nodes:
                 node_name = node.node_name
-                nncf_logger.info("Adding Dynamic Input Op for {} in scope: {}".format(op_name, node_name))
+                nncf_logger.info("Adding Dynamic Input Op for {} in scope: {}".format(metatype.name, node_name))
                 module = target_model.get_containing_module(node_name)
                 update_module_params = op_creator(module, node_name, device)
                 insertion_commands.append(
@@ -345,6 +373,9 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             cluster = self.pruned_module_groups_info.get_cluster_by_id(cluster_id)
             for elastic_width_info in cluster.elements:
                 elastic_width_info.elastic_op.set_active_out_channels(width)
+
+        # init_output_widths_in_graph(graph, self.pruned_module_groups_info.get_all_nodes())
+        # PruningPropagationAlgorithm(graph, PT_PRUNING_OPERATOR_METATYPES).width_propagation()
 
     def activate_elastic_width_configuration_by_layer_names(self, layer_name_vs_width_map):
         not_processed_layers = list(layer_name_vs_width_map.keys())
