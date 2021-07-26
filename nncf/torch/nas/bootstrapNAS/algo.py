@@ -1,5 +1,5 @@
 """
- Copyright (c) 2019-2020 Intel Corporation
+ Copyright (c) 2019-2021 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -16,19 +16,16 @@ import os
 import random
 import time
 from collections import OrderedDict
-from copy import deepcopy
 from typing import Callable
 from typing import NamedTuple
 
 import torch
 import torch.nn as nn
-from nncf.torch.module_operations import UpdateWeight
-
-from nncf.torch.layers import NNCFConv2d
 import torch.nn.functional as F
 
+from nncf.torch.module_operations import UpdateWeight
+from nncf.torch.layers import NNCFConv2d
 from nncf.torch.graph.operator_metatypes import Conv2dMetatype
-
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler
 from nncf.common.graph import NNCFNodeName
@@ -60,7 +57,6 @@ from nncf.torch.nas.bootstrapNAS.layers import DynamicConvInputOp
 from nncf.torch.nas.bootstrapNAS.layers import DynamicLinearInputOp
 from nncf.torch.nas.bootstrapNAS.layers import ElasticConv2DOp  # Unified Operator
 from nncf.torch.nas.bootstrapNAS.layers import ElasticKernelPaddingAdjustment
-from nncf.torch.layers import NNCFBatchNorm2d
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.pruning.export_helpers import PTElementwise
 from nncf.torch.pruning.export_helpers import PT_PRUNING_OPERATOR_METATYPES
@@ -68,7 +64,8 @@ from nncf.torch.pruning.structs import PrunedModuleInfo
 from nncf.torch.utils import is_main_process
 from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
 from nncf.config.extractors import extract_bn_adaptation_init_params
-
+from nncf.torch.initialization import wrap_dataloader_for_init
+from nncf.config.structures import BNAdaptationInitArgs
 
 class ElasticWidthInfo(NamedTuple):
     node_name: NNCFNodeName
@@ -76,7 +73,6 @@ class ElasticWidthInfo(NamedTuple):
     layer_name: str
     elastic_op: Callable
     node_id: int
-
 
 
 @COMPRESSION_ALGORITHMS.register('bootstrapNAS')
@@ -249,9 +245,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         possible_skipped_blocks = self.config.get('skipped_blocks', [])
         self.num_possible_skipped_blocks = len(possible_skipped_blocks)
 
-        bn_adaptation_params = extract_bn_adaptation_init_params(self.config)
-        print(bn_adaptation_params)
-        self.bn_adaptation = BatchnormAdaptationAlgorithm(**bn_adaptation_params)
+        self.best_acc = 0
+        self.best_acc_min = 0
 
         # KD
         kd_ratio = config.get('kd_ratio', 0)
@@ -264,6 +259,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 self._create_output_folder(config)
             print("Created BootstrapNAS controller")
 
+        self.optimizer = None
+
     @property
     def loss(self) -> CompressionLoss:
         return self._loss
@@ -275,12 +272,19 @@ class BootstrapNASController(PTCompressionAlgorithmController):
     def statistics(self, quickly_collected_only: bool = False) -> NNCFStatistics:
         return NNCFStatistics()
 
-    def progressive_shrinking(self, optimizer, train_loader, val_loader, criterion):
+    def progressive_shrinking(self, optimizer, train_loader, val_loader, criterion, device):
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.criterion = criterion
         self.optimizer = optimizer
         self.init_lr = optimizer.param_groups[0]['lr']
+
+        self.config.register_extra_structs(
+            [BNAdaptationInitArgs(data_loader=wrap_dataloader_for_init(train_loader), device=device)])
+
+        bn_adaptation_params = extract_bn_adaptation_init_params(self.config)
+        self.bn_adaptation = BatchnormAdaptationAlgorithm(**bn_adaptation_params)
+
 
         config = self.config
         stage = config.get('fine_tuner_params', None)
@@ -289,8 +293,6 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         # stage = 'kernel' if stage is None else stage
 
         nncf_logger.info('Fine tuning stage = {}'.format(stage))
-
-        self.best_acc = 0
 
         # 1. Check stage and phase.
         if stage == 'kernel':
@@ -325,9 +327,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
             # self.reorganize_weights() # TODO: Automation
             self.reorganize_weights_from_config() # TODO: Check issue #1
-
-            # self.simple_set_running_statistics()
-            self.bn_adaptation.run(self.target_model) # TODO: This is not recovering accuracy as much as the simple approach above.
+            # self.simple_set_running_statistics(num_samples=300000, batch_size=64)
+            self.bn_adaptation.run(self.target_model)
             # Check accuracy of supernetwork with reorg weights.
             self.validate_single_setting(0)
 
@@ -477,6 +478,21 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                         'val_acc5': val_acc5
                     }
                     json.dump(checkpoint_data, open(f'{self.main_path}/checkpoint/checkpoint.json', 'w'), indent=4)
+                    # best_acc for supernet
+                    is_best = val_acc > self.best_acc
+                    self.best_acc = max(self.best_acc, val_acc)
+                    if is_best:
+                        nncf_logger.info(f"New best acc {self.best_acc_min} for Supernetwork")
+                        self.export_model(f'{self.main_path}/checkpoint/best_supernetwork.onnx')
+                        # TODO: Torch so we can load.
+                        supernet_data = {
+                            'epoch': epoch + 1 - config['fine_tuner_params']['warmup_epochs'],
+                            'val_loss': val_loss.item(),
+                            'val_acc': val_acc,
+                            'val_acc5': val_acc5
+                        }
+                        json.dump(supernet_data, open(f'{self.main_path}/checkpoint/best_supernetwork.json', 'w'), indent=4)
+                    self.save_supernet_checkpoint('/checkpoint/last_super.pth', epoch=epoch)
                 # validate minimal subnet
                 self.get_minimal_subnet()
                 # val_loss, val_acc, val_acc5, _val_log = validate_func(epoch)
@@ -488,18 +504,18 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                         f"Minimal Subnet Val: [{epoch + 1 - config['fine_tuner_params']['warmup_epochs']}/{config['fine_tuner_params']['epochs'] + config['fine_tuner_params']['warmup_epochs']}], loss={val_loss:.3f}, top-1={val_acc:.3f}, top-5={val_acc5:.3f}")
 
                     # best_acc for minimal subnet
-                    is_best = val_acc > self.best_acc
-                    self.best_acc = max(self.best_acc, val_acc)
-                    if is_best:
-                        nncf_logger.info(f"New best acc {self.best_acc} for minimal subnet")
-                        self.export_model(f'{self.main_path}/checkpoint/min_subnet.onnx')
+                    is_best_min = val_acc > self.best_acc_min
+                    self.best_acc_min = max(self.best_acc_min, val_acc)
+                    if is_best_min:
+                        nncf_logger.info(f"New best acc {self.best_acc_min} for minimal subnet")
+                        self.export_model(f'{self.main_path}/checkpoint/best_min_subnet.onnx')
                         min_subnet_data = {
                             'epoch': epoch + 1 - config['fine_tuner_params']['warmup_epochs'],
                             'val_loss': val_loss.item(),
                             'val_acc': val_acc,
                             'val_acc5': val_acc5
                         }
-                        json.dump(min_subnet_data, open(f'{self.main_path}/checkpoint/min_subnet.json', 'w'), indent=4)
+                        json.dump(min_subnet_data, open(f'{self.main_path}/checkpoint/best_min_subnet.json', 'w'), indent=4)
 
     def train_one_epoch(self, epoch):
         config = self.config
@@ -832,18 +848,54 @@ class BootstrapNASController(PTCompressionAlgorithmController):
     def get_net_device(self, net):
         return net.parameters().__next__().device
 
-    def simple_set_running_statistics(self):
+    def save_supernet_checkpoint(self, checkpoint_name, epoch=-1):
+        self.reactivate_supernet()
+        checkpoint_path = os.path.join(self.main_path, checkpoint_name + '.pth')
+        nncf_logger.info(f"Saving supernet checkpoint to {checkpoint_path}")
+        model_name = self.config.get('model_name', None)
+        assert self.target_model.state_dict is not None, "Model's state dict is None."
+        fine_tuner = self.config.get('fine_tuner', None)
+        fine_tuner_params = self.config.get('fine_tuner_params', None)
+        optimizer_state_dict = self.optimizer.state_dict() if self.optimizer is not None else None
+
+        checkpoint = {
+            'epoch': epoch,
+            'arch': model_name,
+            'state_dict': self.target_model.state_dict(),
+            'active_config': self.get_active_config(), #TODO, # USE API from Controller. Controller state and Builder state. Information of compression. TODO: Add logic in Builder...
+            'elastic_params': self.get_elastic_parameters(),
+            'best_acc1': self.best_acc,
+            'fine_tuner': fine_tuner,
+            'fine_tuner_params': fine_tuner_params,
+            'optimizer': optimizer_state_dict,
+        }
+
+        torch.save(checkpoint, checkpoint_path)
+
+    def load_supernet_checkpoint(self, checkpoint_path):
+        # checkpoint = torch.load(checkpoint_path)
+        # TODO
+        raise NotImplementedError
+
+
+    def simple_set_running_statistics(self, num_samples, batch_size):
         # https://discuss.pytorch.org/t/how-to-run-the-model-to-only-update-the-batch-normalization-statistics/20626
+        start_t = time.time()
         self.target_model.train()
-        for _ in range(0, 2): # TODO Use only a subset of the loader.
-            for i, (images, _) in enumerate(self.train_loader):
-                images = images.to(self.get_net_device(self.target_model))
-                self.target_model(images)
+        # for _ in range(0, 2): # TODO Use only a subset of the loader.
+        if num_samples/batch_size > len(self.train_loader):
+            nncf_logger.info("BN set stats: num of samples exceed the samples in loader. Using full loader")
+        for i, (images, _) in enumerate(self.train_loader):
+            images = images.to(self.get_net_device(self.target_model))
+            self.target_model(images)
+            if i > num_samples / batch_size:
+                nncf_logger.info(f"Finishing setting bn stats using {num_samples} and batch size of {batch_size}")
+                break
+        nncf_logger.info(f"It took {time.time()-start_t} seconds to set bn stats.")
 
     # Search API
     def get_elastic_parameters(self, use_tuple_with_layer_name=False):
-        elastic_params = {'kernel': [], 'width': []}
-        elastic_params = {'kernel': [], 'width': []}
+        elastic_params = {'kernel': [], 'width': [], 'depth': []}
         for op in self.elastic_kernel_ops:
             if use_tuple_with_layer_name:
                 elastic_params['kernel'].append((str(op.scope), op.kernel_size_list))
@@ -854,6 +906,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 elastic_params['width'].append((str(op.scope), op.width_list))
             else:
                 elastic_params['width'].append(op.width_list)
+        elastic_params['depth'] = self.config.get('skipped_blocks', [])
         return elastic_params
 
     def get_supernet(self, save=False):

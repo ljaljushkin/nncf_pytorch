@@ -43,7 +43,7 @@ def _test_model(model_name) -> Tuple[NNCFNetwork, BootstrapNASController, Callab
     }
     model = models[model_name][0]
     print(model)
-    config = get_empty_config(input_sample_sizes=models[model_name][1])  # [1, 3, 32, 32])
+    config = get_empty_config(input_sample_sizes=models[model_name][1])
     input_info_list = create_input_infos(config)
     dummy_forward = create_dummy_forward_fn(input_info_list)
 
@@ -178,11 +178,27 @@ def test_can_sample_random_elastic_width_configurations(_seed, tmp_path, model_n
         pytest.skip('Skip test for MobileNet-v2 as ElasticDepthWise is not supported, Inception-V3 also fails on concat')
 
     compressed_model, compression_ctrl, dummy_forward = _test_model(model_name)
-    visualize_width(compressed_model, compression_ctrl, tmp_path / 'original.dot')
+    visualize_width(compressed_model, compression_ctrl, tmp_path / f'{model_name}_original.dot')
     N = 10
     for i in range(N):
         cluster_id_vs_width_map = compression_ctrl._get_random_width_conf()
         print('Set random width configuration: {}'.format(cluster_id_vs_width_map.values()))
         compression_ctrl.activate_elastic_width_configuration_by_cluster_id(cluster_id_vs_width_map)
-        visualize_width(compressed_model, compression_ctrl, tmp_path / f'random_{i}.dot')
+        visualize_width(compressed_model, compression_ctrl, tmp_path / f'{model_name}_random_{i}.dot')
         dummy_forward(compressed_model)
+
+
+def test_restore_supernet_from_checkpoint(tmp_path):
+    compressed_model, compression_ctrl, dummy_forward = _test_model('resnet18')
+    compression_ctrl.main_path = tmp_path
+    compression_ctrl.config['fine_tuner'] = 'progressive_shrinking'
+    compression_ctrl.save_supernet_checkpoint(checkpoint_name='test', epoch=-1)
+    import torch
+    print(f'{tmp_path}/test.pth')
+    supernet = torch.load(f'{tmp_path}/test.pth')
+    print(supernet.keys())
+    assert supernet['fine_tuner'] == 'progressive_shrinking'
+    # compression_ctrl.load_supernet_checkpoint()
+
+
+
