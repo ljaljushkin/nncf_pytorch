@@ -768,6 +768,15 @@ KNOWLEDGE_DISTILLATION_SCHEMA = {
     "additionalProperties": False
 }
 
+BOOTSTRAP_NAS_ALGO_NAME_IN_CONFIG = 'bootstrapNAS'
+BOOTSTRAP_NAS_SCHEMA = {
+    **BASIC_COMPRESSION_ALGO_SCHEMA,
+    "properties": {
+        "algorithm": {
+            "const": BOOTSTRAP_NAS_ALGO_NAME_IN_CONFIG
+        },
+    }
+}
 
 ALL_SUPPORTED_ALGO_SCHEMA = [BINARIZATION_SCHEMA,
                              QUANTIZATION_SCHEMA,
@@ -775,7 +784,8 @@ ALL_SUPPORTED_ALGO_SCHEMA = [BINARIZATION_SCHEMA,
                              MAGNITUDE_SPARSITY_SCHEMA,
                              RB_SPARSITY_SCHEMA,
                              FILTER_PRUNING_SCHEMA,
-                             KNOWLEDGE_DISTILLATION_SCHEMA]
+                             KNOWLEDGE_DISTILLATION_SCHEMA,
+                             BOOTSTRAP_NAS_SCHEMA]
 
 REF_VS_ALGO_SCHEMA = {BINARIZATION_ALGO_NAME_IN_CONFIG: BINARIZATION_SCHEMA,
                       QUANTIZATION_ALGO_NAME_IN_CONFIG: QUANTIZATION_SCHEMA,
@@ -783,7 +793,8 @@ REF_VS_ALGO_SCHEMA = {BINARIZATION_ALGO_NAME_IN_CONFIG: BINARIZATION_SCHEMA,
                       MAGNITUDE_SPARSITY_ALGO_NAME_IN_CONFIG: MAGNITUDE_SPARSITY_SCHEMA,
                       RB_SPARSITY_ALGO_NAME_IN_CONFIG: RB_SPARSITY_SCHEMA,
                       FILTER_PRUNING_ALGO_NAME_IN_CONFIG: FILTER_PRUNING_SCHEMA,
-                      KNOWLEDGE_DISTILLATION_ALGO_NAME_IN_CONFIG: KNOWLEDGE_DISTILLATION_SCHEMA}
+                      KNOWLEDGE_DISTILLATION_ALGO_NAME_IN_CONFIG: KNOWLEDGE_DISTILLATION_SCHEMA,
+                      BOOTSTRAP_NAS_ALGO_NAME_IN_CONFIG: BOOTSTRAP_NAS_SCHEMA}
 
 TARGET_DEVICE_SCHEMA = {
     "type": "string",
@@ -828,6 +839,27 @@ ROOT_NNCF_CONFIG_SCHEMA = {
                                                      "quantization schema. Optional."),
         "log_dir": with_attributes(_STRING,
                                    description="Log directory for NNCF-specific logging outputs"),
+        "elastic_depth": with_attributes(_BOOLEAN,
+                                         description="elastic_depth"),
+        "skipped_blocks": {
+                "oneOf": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                ],
+            },
     },
     "required": ["input_info"],
     "definitions": REF_VS_ALGO_SCHEMA,

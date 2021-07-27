@@ -67,6 +67,7 @@ from nncf.torch.knowledge_distillation.knowledge_distillation_handler import Kno
 from nncf.torch.layers import NNCF_MODULES
 from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT
 from nncf.torch.module_operations import UpdateWeight
+from nncf.torch.module_operations import UpdateBatchNormParams
 from nncf.torch.quantization.layers import QUANTIZATION_MODULES
 from nncf.torch.utils import compute_FLOPs_hook
 from nncf.torch.utils import get_all_modules_by_type
@@ -157,7 +158,7 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
 
     def __init__(self, module, input_infos: List[ModelInputInfo],
                  dummy_forward_fn=None, wrap_inputs_fn=None, scopes_without_shape_matching=None,
-                 ignored_scopes=None, target_scopes=None, reset: bool = False, wrap_outputs_fn=None,
+                 ignored_scopes=None, target_scopes=None, reset: bool = False, wrap_outputs_fn=None, skipped_block=None,
                  original_model_accuracy=None):
         super().__init__()
         self._set_nncf_wrapped_model(module)
@@ -171,6 +172,8 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
         self._user_dummy_forward_fn = dummy_forward_fn
         self._kd_loss_handler = None
 
+
+        self.skipped_block = skipped_block
         try:
             device = next(module.parameters()).device
         except StopIteration:
@@ -234,6 +237,7 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
             self._compressed_context.add_node_comparators(scopes_without_shape_matching,
                                                           ShapeIgnoringTensorMetaComparator())
         self._load_listener = None
+        #self._compressed_context.set_elastic_blocks(self.skipped_block)
 
     @debuggable_forward
     def forward(self, *args, **kwargs):

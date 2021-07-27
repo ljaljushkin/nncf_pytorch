@@ -119,6 +119,7 @@ def create_compressed_model(model: Module,
     scopes_without_shape_matching = config.get('scopes_without_shape_matching', [])
     ignored_scopes = config.get('ignored_scopes')
     target_scopes = config.get('target_scopes')
+    skipped_blocks = config.get('skipped_blocks', [])
 
     original_model_accuracy = None
     if is_accuracy_aware_training(config):
@@ -134,6 +135,7 @@ def create_compressed_model(model: Module,
                                    ignored_scopes=ignored_scopes,
                                    target_scopes=target_scopes,
                                    scopes_without_shape_matching=scopes_without_shape_matching,
+                                   skipped_block=skipped_blocks,
                                    original_model_accuracy=original_model_accuracy)
 
     should_init = compression_state is None
@@ -175,6 +177,8 @@ def create_compressed_model(model: Module,
                 "If your training pipeline demands the processes be synchronized, please, "
                 "keep attention to that error")
             return compression_ctrl, compressed_model
+
+    compressed_model._compressed_context.set_elastic_blocks(skipped_blocks)
     return compression_ctrl, compressed_model
 
 

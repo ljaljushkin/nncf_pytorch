@@ -11,8 +11,11 @@
  limitations under the License.
 """
 
+from nncf.torch.dynamic_graph.graph import ShapeIgnoringTensorMetaComparator
 import warnings
 from copy import deepcopy
+from collections import deque
+from functools import reduce
 
 from torch.nn import Conv1d
 from torch.nn import Conv2d
@@ -32,7 +35,7 @@ from nncf.common.utils.logger import logger as nncf_logger
 from nncf.common.utils.debug import is_debug
 from nncf.torch.dynamic_graph.context import get_current_context
 from nncf.torch.dynamic_graph.op_input_processing import OperatorInput
-from nncf.torch.dynamic_graph.trace_tensor import make_tensor_metas
+from nncf.torch.dynamic_graph.trace_tensor import make_tensor_metas, trace_tensors_in_skipped_block, TracedTensor
 from nncf.torch.dynamic_graph.trace_tensor import trace_tensors
 from nncf.torch.layer_utils import _NNCFModuleMixin
 from nncf.torch.layers import ITERATION_MODULES
@@ -79,42 +82,84 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
                 from nncf.torch.dynamic_graph.patch_pytorch import ForwardTraceOnly
                 result = ForwardTraceOnly()(operator, *args, **kwargs)
             else:
+                # If we are in a block, then we do not call the operator and return the input tensor
+                # Nested blocks are not supported.
                 op_name = operator_info.name
                 op_address = ctx.get_caller_context(op_name)
+                str_op_address = str(op_address)
+                if ctx._elastic_depth and ctx.in_skipped_block:
+                    ctx.register_operator_call(op_address.operator_name, op_address.scope_in_model)
+                    count_traced_tensors = reduce(lambda count, i: count + isinstance(i, TracedTensor), args, 0)
+                    tensor_metas = [ctx.cache_tensor_metas.pop() for _ in range(count_traced_tensors)]
+                    tensor_metas.reverse()
+                    #ctx._input_comparators_per_scope.append((ShapeIgnoringTensorMetaComparator(), [str_op_address]))
+                    node = ctx.find_operator_node(tensor_metas, op_address)
+                    result = args[0]
+                else:
+                    module_attrs = None
+                    ignored_algos = []
+                    # Collect module attributes, if required
+                    if op_name in OP_NAMES_REQUIRING_MODULE_ATTRS:
+                        curr_module = ctx.get_current_module()
+                        if curr_module is None:
+                            raise RuntimeError("Operation {} requires module attributes, "
+                                               "but it was executed outside any module".format(op_name))
+                        module_attrs = _get_layer_attributes(curr_module, op_name)
+                        if isinstance(curr_module, _NNCFModuleMixin):
+                            ignored_algos = deepcopy(curr_module.ignored_algorithms)
 
-                layer_attrs = None
-                ignored_algos = []
-                # Collect module attributes, if required
-                if op_name in OP_NAMES_REQUIRING_MODULE_ATTRS:
-                    curr_module = ctx.get_current_module()
-                    if curr_module is None:
-                        raise RuntimeError("Operation {} requires module attributes, "
-                                           "but it was executed outside any module".format(op_name))
-                    layer_attrs = _get_layer_attributes(curr_module, op_name)
-                    if isinstance(curr_module, _NNCFModuleMixin):
-                        ignored_algos = deepcopy(curr_module.ignored_algorithms)
+                    ctx.register_operator_call(op_address.operator_name, op_address.scope_in_model)
+                    op_input = OperatorInput(list(args), kwargs)
+                    processed_input = ctx.execute_pre_hooks(op_address, op_input)
+                    # add check that current node is next after end node of block
+                    if len(ctx.cache_tensor_metas)!= 0:
+                        tensor_metas = []
+                        while len(ctx.cache_tensor_metas) != 0:
+                            tm = ctx.cache_tensor_metas.popleft()
+                            if isinstance(tm, list):
+                                tensor_metas.append(tm[0])
+                            else:
+                                tensor_metas.append(tm)
+                    else:
+                        tensor_metas = make_tensor_metas(processed_input)     
+                    node = ctx.find_operator_node(tensor_metas, op_address)
 
-                ctx.register_operator_call(op_address.operator_name, op_address.scope_in_model)
-                op_input = OperatorInput(list(args), kwargs)
-                processed_input = ctx.execute_pre_hooks(op_address, op_input)
+                    args = tuple(processed_input.op_args)
+                    kwargs = processed_input.op_kwargs
+                    result = operator(*args, **kwargs)
 
-                tensor_metas = make_tensor_metas(processed_input)
-                node = ctx.find_operator_node(tensor_metas, op_address)
+                    if isinstance(result, type(NotImplemented)):
+                        nncf_logger.debug("Operation {} returned NotImplemented".format(op_name))
+                    elif node is None:
+                        node = ctx.maybe_add_node(processed_input, tensor_metas, op_address, module_attrs, ignored_algos)
+                    if node is not None:
+                        if is_debug():
+                            ctx.register_node_call(node)
+                        result = trace_tensors(result, node)
+                        result = ctx.execute_post_hooks(op_address, result)
 
-                args = tuple(processed_input.op_args)
-                kwargs = processed_input.op_kwargs
-                result = operator(*args, **kwargs)
-
-                if isinstance(result, type(NotImplemented)):
-                    nncf_logger.debug("Operation {} returned NotImplemented".format(op_name))
-                elif node is None:
-                    node = ctx.maybe_add_node(processed_input, tensor_metas, op_address, layer_attrs, ignored_algos)
-
-                if node is not None:
-                    if is_debug():
-                        ctx.register_node_call(node)
-                    result = trace_tensors(result, node)
-                result = ctx.execute_post_hooks(op_address, result)
+                if ctx.in_skipped_block:
+                    tensor_metas = trace_tensors_in_skipped_block(result, node)
+                    if str_op_address in ctx.end_node_name_of_skipped_block:
+                        ctx.in_skipped_block = False
+                        result.tensor_meta = tensor_metas
+                    else:
+                        if node is not None:
+                            if is_debug():
+                                ctx.register_node_call(node)
+                            outputs_from_node = ctx.graph.get_next_nodes(node)
+                            for next_node in outputs_from_node:
+                                prev_nodes = ctx.graph.get_previous_nodes(next_node)
+                                if len(prev_nodes) == 1:
+                                    ctx.cache_tensor_metas.append(tensor_metas)
+                                else:
+                                    ctx.cache_tensor_metas.appendleft(tensor_metas)
+            if ctx._elastic_depth and str_op_address in ctx.start_node_name_of_skipped_block:
+                assert ctx.in_skipped_block == False # bad configuration of skipped blocks
+                ctx.in_skipped_block = True
+                count_output_edges = len(ctx.graph.get_next_nodes(node))
+                ctx.cache_tensor_metas.extend([result.tensor_meta] * count_output_edges)
+                # next operators will be skipped
         except:
             # Looks like the __repr__ call made during IDE debug to display tensor contents does not exit properly,
             # but instead throws an exception. This try...except block handles such a situation.

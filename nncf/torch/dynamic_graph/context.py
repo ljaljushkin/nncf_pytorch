@@ -18,12 +18,12 @@ from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
-
+from networkx.algorithms.simple_paths import all_simple_paths
 import torch
 
 from nncf.common.graph.layer_attributes import BaseLayerAttributes
 from nncf.common.utils.debug import is_debug
-from nncf.torch.dynamic_graph.graph import DynamicGraph
+from nncf.torch.dynamic_graph.graph import DynamicGraph, ShapeIgnoringTensorMetaComparator
 from nncf.torch.dynamic_graph.graph import DynamicGraphNode
 from nncf.torch.dynamic_graph.op_input_processing import OperatorInput
 from nncf.torch.dynamic_graph.operation_address import OperationAddress
@@ -69,6 +69,17 @@ class TracingContext:
         self._may_add_nodes = True
         self._input_comparators_per_scope = []
         self.global_buffer_store = {}
+
+        # ELASTIC DEPTH PARAMS
+        self._elastic_depth = False
+        self.skipped_blocks = list()
+        self.in_skipped_block = False
+        self.start_node_name_of_skipped_block = []
+        self.end_node_name_of_skipped_block = []
+        self.cache_tensor_metas = deque()
+        self._comparators_for_skipped_blocks = []
+        self.active_block_idxs = None
+
 
     def __enter__(self):
         global _CURRENT_CONTEXT
@@ -255,6 +266,13 @@ class TracingContext:
                              node_input_comparator: 'TensorMetaComparator' = None):
         self._input_comparators_per_scope.append((node_input_comparator, scopes_to_apply))
 
+    def delete_node_comporators(self, scopes_to_apply: List[str]):
+        idxs = list(filter(lambda i: self._input_comparators_per_scope[i][1] == scopes_to_apply,\
+             range(0, len(self._input_comparators_per_scope))))
+        for idx in idxs:
+            self._input_comparators_per_scope.pop(idx)
+
+
     @property
     def base_module_thread_local_replica(self):
         self._init_thread_local()
@@ -342,6 +360,46 @@ class TracingContext:
 
     def reset_graph(self):
         self.graph = DynamicGraph()
+
+    def set_active_skipped_block(self, block_idxs: List[int]):
+        if self.active_block_idxs is not None:
+            for block_idx in self.active_block_idxs:
+                self.delete_node_comporators(self.all_nodes_per_skipped_block_idxs[block_idx])
+            self.start_node_name_of_skipped_block = []
+            self.end_node_name_of_skipped_block = []
+        self.active_block_idxs = block_idxs
+        if self._elastic_depth:
+            for idx in block_idxs:
+                self.add_node_comparators(self.all_nodes_per_skipped_block_idxs[idx],
+                                          ShapeIgnoringTensorMetaComparator())
+                self.start_node_name_of_skipped_block.append(self.skipped_blocks[idx][0])
+                self.end_node_name_of_skipped_block.append(self.skipped_blocks[idx][1])
+
+
+    def set_elastic_blocks(self, blocks: List):
+        import networkx as nx
+        if not blocks:
+            return
+        if isinstance(blocks, list) and isinstance(blocks[0], str):
+            self.skipped_blocks = [blocks]
+        else:
+            self.skipped_blocks = blocks
+        self.all_nodes_per_skipped_block_idxs = {}
+        for idx, block in enumerate(self.skipped_blocks):
+            start_node, end_node = block
+            start_node_key, end_node_key = None, None
+            for node in self.graph._nx_graph._node.values():
+                if start_node == str(node['op_exec_context'].op_address):
+                    start_node_key = node['key']
+                if end_node == str(node['op_exec_context'].op_address):
+                    end_node_key = node['key']
+
+            simple_paths = nx.all_simple_paths(self.graph._nx_graph, start_node_key, end_node_key)
+            all_nodes_in_block = set()
+            for node_keys_in_path in simple_paths:
+                for node_key in node_keys_in_path:
+                    all_nodes_in_block.add(str(self.graph._nx_graph._node[node_key]['op_exec_context'].op_address))
+            self.all_nodes_per_skipped_block_idxs[idx] = list(all_nodes_in_block)
 
 
 @contextmanager

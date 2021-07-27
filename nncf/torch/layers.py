@@ -12,12 +12,12 @@
 """
 import math
 import numbers
+import warnings
 from typing import Optional
 from typing import Tuple
 
 import torch
 import torch.nn.functional as F
-import warnings
 from torch import nn
 from torch.nn import init
 from torch.nn.utils.rnn import PackedSequence
@@ -49,6 +49,19 @@ class NNCFConv1d(_NNCFModuleMixin, nn.Conv1d):
         )
         dict_update(nncf_conv.__dict__, module.__dict__)
         return nncf_conv
+
+
+class NNCFBatchNorm2d(_NNCFModuleMixin, nn.BatchNorm2d):
+    op_func_name = "batch_norm"
+
+    @staticmethod
+    def from_module(module):
+        assert module.__class__.__name__ == nn.BatchNorm2d.__name__
+        nncf_bn = NNCFBatchNorm2d(
+            module.num_features, module.eps, module.momentum, module.affine, module.track_running_stats
+        )
+        dict_update(nncf_bn.__dict__, module.__dict__)
+        return nncf_bn
 
 
 NNCF_PADDING_VALUE_ATTR_NAME = 'nncf_padding_value'
@@ -94,19 +107,32 @@ class NNCFConv2d(_NNCFModuleMixin, nn.Conv2d):
     def _custom_forward_fn(self, input_):
         proxy_padding_value = getattr(self, NNCF_PADDING_VALUE_ATTR_NAME)  # hack to get value from ProxyModule
         proxy_weight = self.weight
-        return self._conv_forward(input_, proxy_weight, proxy_padding_value)
+        proxy_bias = self.bias
+        proxy_padding = self.padding
+        return self._conv_forward(input_, proxy_weight, proxy_bias, proxy_padding_value, proxy_padding)
 
-    def _conv_forward(self, input_, weight, padding_value):
+    def _conv_forward(self, input_, weight, bias, padding_value, padding):
         self.get_padding_value_ref().data.fill_(padding_value.item())
+
+        def _reverse_repeat_tuple(t, n):
+            r"""Reverse the order of `t` and repeat each element for `n` times.
+
+            This can be used to translate padding arg used by Conv and Pooling modules
+            to the ones used by `F.pad`.
+            """
+            return tuple(x for x in reversed(t) for _ in range(n))
+
+        reversed_padding_repeated_twice = _reverse_repeat_tuple(self.padding, 2)
+
         if self.padding_mode != 'zeros':
-            return F.conv2d(F.pad(input_, self._reversed_padding_repeated_twice, mode=self.padding_mode,
+            return F.conv2d(F.pad(input_, reversed_padding_repeated_twice, mode=self.padding_mode,
                                   value=self.get_padding_value_ref().item()),
-                            weight, self.bias, self.stride,
+                            weight, bias, self.stride,
                             (0, 0), self.dilation, self.groups)
         if not self.get_padding_value_ref():
-            return F.conv2d(input_, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
-        return F.conv2d(F.pad(input_, self._reversed_padding_repeated_twice, value=self.get_padding_value_ref().item()),
-                        weight, self.bias, self.stride,
+            return F.conv2d(input_, weight, bias, self.stride, padding, self.dilation, self.groups)
+        return F.conv2d(F.pad(input_, reversed_padding_repeated_twice, value=self.get_padding_value_ref().item()),
+                        weight, bias, self.stride,
                         (0, 0), self.dilation, self.groups)
 
 
@@ -209,7 +235,8 @@ NNCF_MODULES_DICT = {
     NNCFConvTranspose2d: nn.ConvTranspose2d,
     NNCFConvTranspose3d: nn.ConvTranspose3d,
     NNCFEmbedding: nn.Embedding,
-    NNCFEmbeddingBag: nn.EmbeddingBag
+    NNCFEmbeddingBag: nn.EmbeddingBag,
+    NNCFBatchNorm2d: nn.BatchNorm2d
 }
 
 NNCF_MODULES_MAP = {k.__name__: v.__name__ for k, v in NNCF_MODULES_DICT.items()}
