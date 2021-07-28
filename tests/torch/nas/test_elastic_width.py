@@ -18,8 +18,10 @@ from torch import nn
 from torch.backends import cudnn
 
 from nncf.torch.nas.bootstrapNAS.visualization import WidthGraph
-from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.utils import manual_seed
+from tests.torch.helpers import create_compressed_model_and_algo_for_test
+from tests.torch.helpers import create_conv
+from tests.torch.helpers import get_empty_config
 from tests.torch.nas.test_nas import _test_model
 
 
@@ -73,77 +75,162 @@ def visualize_width(model, ctrl, path):
 @pytest.mark.parametrize('model_name', [
     'resnet18', 'resnet50', 'densenet_121', 'mobilenet_v2', 'vgg11', 'inception_v3'
 ])
-def test_can_sample_random_elastic_width_configurations(_seed, tmp_path, model_name):
-    if model_name in ['mobilenet_v2', 'inception_v3']:
-        pytest.skip(
-            'Skip test for MobileNet-v2 as ElasticDepthWise is not supported, Inception-V3 also fails on concat')
+class TestModelScope:
+    def test_can_sample_random_elastic_width_configurations(self, _seed, tmp_path, model_name):
+        if model_name in ['mobilenet_v2', 'inception_v3']:
+            pytest.skip(
+                'Skip test for MobileNet-v2 as ElasticDepthWise is not supported (60779), '
+                'Inception-V3 also fails because of 2 issues: '
+                'not able to set DynamicInputOp to train-only layers (60976) and '
+                'invalid padding update in elastic kernel (60990)')
 
-    compressed_model, compression_ctrl, dummy_forward = _test_model(model_name)
-    visualize_width(compressed_model, compression_ctrl, tmp_path / f'{model_name}_original.dot')
-    N = 10
-    for i in range(N):
-        cluster_id_vs_width_map = compression_ctrl._get_random_width_conf()
-        print('Set random width configuration: {}'.format(cluster_id_vs_width_map.values()))
-        compression_ctrl.activate_elastic_width_configuration_by_cluster_id(cluster_id_vs_width_map)
-        visualize_width(compressed_model, compression_ctrl, tmp_path / f'{model_name}_random_{i}.dot')
-        dummy_forward(compressed_model)
+        compressed_model, compression_ctrl, dummy_forward = _test_model(model_name)
+        visualize_width(compressed_model, compression_ctrl, tmp_path / f'{model_name}_original.dot')
+        N = 5
+        for i in range(N):
+            cluster_id_vs_width_map = compression_ctrl._get_random_width_conf()
+            print('Set random width configuration: {}'.format(cluster_id_vs_width_map.values()))
+            compression_ctrl.activate_elastic_width_configuration_by_cluster_id(cluster_id_vs_width_map)
+            visualize_width(compressed_model, compression_ctrl, tmp_path / f'{model_name}_random_{i}.dot')
+            dummy_forward(compressed_model)
 
+    def test_weight_reorg(self, model_name):
+        if model_name in ['inception_v3']:
+            pytest.skip('Skip test for Inception-V3 because of invalid padding update in elastic kernel (60990)')
 
-def test_restore_supernet_from_checkpoint(tmp_path):
-    compressed_model, compression_ctrl, dummy_forward = _test_model('resnet18')
-    compression_ctrl.main_path = tmp_path
-    compression_ctrl.config['fine_tuner'] = 'progressive_shrinking'
-    compression_ctrl.save_supernet_checkpoint(checkpoint_name='test', epoch=-1)
-    import torch
-    print(f'{tmp_path}/test.pth')
-    supernet = torch.load(f'{tmp_path}/test.pth')
-    print(supernet.keys())
-    assert supernet['fine_tuner'] == 'progressive_shrinking'
-    # compression_ctrl.load_supernet_checkpoint()
-
-
-def adjust_bn_according_to_idx(bn, idx):
-    bn.weight.data = torch.index_select(bn.weight.data, 0, idx)
-    bn.bias.data = torch.index_select(bn.bias.data, 0, idx)
-    if type(bn) in [nn.BatchNorm1d, nn.BatchNorm2d]:
-        bn.running_mean.data = torch.index_select(bn.running_mean.data, 0, idx)
-        bn.running_var.data = torch.index_select(bn.running_var.data, 0, idx)
+        compressed_model, compression_ctrl, dummy_forward = _test_model(model_name)
+        before_reorg = dummy_forward(compressed_model)
+        # ctrl.reorg()
+        after_reorg = dummy_forward(compressed_model)
+        assert torch.allclose(before_reorg, after_reorg)
 
 
-def manual_weight_reorganization(compressed_model: NNCFNetwork):
-    bottlenecks = [2, 3, 5, 2]
-    for layer in range(1, 5):
-        for bottleneck in range(1, bottlenecks[layer - 1] + 1):
-            from nncf.torch.dynamic_graph.scope import Scope
+class TwoSequentialConvBNTestModel(nn.Module):
+    """
+    conv1 -> bn1 -> conv2 -> bn2
+    """
+    INPUT_SIZE = [1, 1, 1, 1]
 
-            conv3 = compressed_model.get_module_by_scope(
-                Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[conv3]'))
-            conv2 = compressed_model.get_module_by_scope(
-                Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[conv2]'))
-            bn2 = compressed_model.get_module_by_scope(
-                Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[bn2]'))
-            conv1 = compressed_model.get_module_by_scope(
-                Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[conv1]'))
-            bn1 = compressed_model.get_module_by_scope(
-                Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[bn1]'))
+    def __init__(self):
+        super().__init__()
+        self.conv1 = create_conv(1, 3, 1)
+        self.bn1 = nn.BatchNorm2d(3)
 
-            # conv3 -> conv2
-            importance = torch.sum(torch.abs(conv3.weight.data), dim=(0, 2, 3))
-            sorted_importance, sorted_idx = torch.sort(importance, dim=0, descending=True)
-            conv3.weight.data = torch.index_select(conv3.weight.data, 1, sorted_idx)
-            adjust_bn_according_to_idx(bn2, sorted_idx)
-            conv2.weight.data = torch.index_select(conv2.weight.data, 0, sorted_idx)
+        bias = torch.Tensor([3, 1, 2])
+        weights = bias.reshape(3, 1, 1, 1)
+        self.set_params(bias, weights, self.conv1, self.bn1)
 
-            # conv2 -> conv1
-            importance = torch.sum(torch.abs(conv2.weight.data), dim=(0, 2, 3))
-            sorted_importance, sorted_idx = torch.sort(importance, dim=0, descending=True)
+        self.conv2 = create_conv(3, 2, 1)
+        self.bn2 = nn.BatchNorm2d(3)
 
-            conv2.weight.data = torch.index_select(conv2.weight.data, 1, sorted_idx)
-            adjust_bn_according_to_idx(bn1, sorted_idx)
-            conv1.weight.data = torch.index_select(conv1.weight.data, 0, sorted_idx)
+        weight = torch.Tensor([[1, 2],
+                               [2, 3],
+                               [0, 0]]).reshape(2, 3, 1, 1)
+        bias = torch.Tensor([1, 2])
+        self.set_params(bias, weight, self.conv2, self.bn2)
+
+        self.all_layers = nn.Sequential(self.conv1, self.bn1, nn.ReLU(), self.conv2, self.bn2, nn.ReLU())
+
+    @staticmethod
+    def set_params(bias, weight, conv, bn):
+        conv.weight.data = weight
+        list_params = TwoSequentialConvBNTestModel.get_bias_like_params(bn, conv)
+        for param in list_params:
+            param.data = bias
+
+    @staticmethod
+    def compare_params(bias, weight, conv, bn):
+        assert torch.allclose(conv.weight, weight)
+        list_params = TwoSequentialConvBNTestModel.get_bias_like_params(bn, conv)
+        for param in list_params:
+            assert torch.allclose(param, bias)
+
+    @staticmethod
+    def get_bias_like_params(bn, conv):
+        list_params = [conv.bias, bn.weight, bn.bias, bn.running_mean, bn.running_var]
+        return list_params
+
+    def check_reorg(self):
+        ref_bias_1 = torch.Tensor([3, 2, 1])
+        ref_weights_1 = ref_bias_1.reshape(3, 1, 1, 1)
+        ref_bias_2 = torch.Tensor([2, 1])
+        ref_weights_2 = torch.Tensor([[2, 1],
+                                      [0, 0],
+                                      [3, 2]]).reshape(2, 3, 1, 1)
+        TwoSequentialConvBNTestModel.compare_params(ref_bias_1, ref_weights_1, self.conv1, self.bn1)
+        TwoSequentialConvBNTestModel.compare_params(ref_bias_2, ref_weights_2, self.conv2, self.bn2)
+
+    def forward(self, x):
+        return self.all_layers(x)
 
 
-def test_weight_reorg():
-    compressed_model, compression_ctrl, dummy_forward = _test_model('resnet50')
-    manual_weight_reorganization(compressed_model)
-    dummy_forward(compressed_model)
+class TwoConvAddConvTestModel(nn.Module):
+    """
+    conv1  conv2
+        \ /
+        add
+    """
+    INPUT_SIZE = [1, 1, 1, 1]
+
+    def __init__(self):
+        super().__init__()
+
+        bias1 = torch.Tensor([3, 1, 2])
+        bias2 = torch.Tensor([1, 2, 3])
+
+        self.conv1 = create_conv(1, 3, 1)
+        weight1 = bias1.reshape(3, 1, 1, 1)
+        self.conv1.weight.data = weight1
+        self.conv1.bias.data = bias1
+
+        self.conv2 = create_conv(1, 3, 1)
+        weight1 = bias2.reshape(3, 1, 1, 1)
+        self.conv1.weight.data = weight1
+        self.conv1.bias.data = bias2
+
+        self.all_layers = nn.Sequential(self.conv1, self.conv2)
+
+    @staticmethod
+    def compare_params(bias, weight, conv, bn):
+        assert torch.allclose(conv.weight, weight)
+        list_params = TwoSequentialConvBNTestModel.get_bias_like_params(bn, conv)
+        for param in list_params:
+            assert torch.allclose(param, bias)
+
+    @staticmethod
+    def get_bias_like_params(bn, conv):
+        list_params = [conv.bias, bn.weight, bn.bias, bn.running_mean, bn.running_var]
+        return list_params
+
+    def check_reorg(self):
+        ref_bias_1 = torch.Tensor([2, 3, 1])
+        ref_bias_2 = torch.Tensor([3, 1, 2])
+
+        ref_weights_1 = ref_bias_1.reshape(3, 1, 1, 1)
+        ref_weights_2 = ref_bias_2.reshape(3, 1, 1, 1)
+
+        assert torch.allclose(self.conv1.weight, ref_weights_1)
+        assert torch.allclose(self.conv1.bias, ref_bias_1)
+        assert torch.allclose(self.conv2.weight, ref_weights_2)
+        assert torch.allclose(self.conv2.bias, ref_bias_2)
+
+    def forward(self, x):
+        return self.conv1(x) + self.conv2(x)
+
+
+@pytest.mark.parametrize('model_cls', (TwoConvAddConvTestModel, TwoSequentialConvBNTestModel))
+def test_width_reorg_for_basic_models(model_cls):
+    model = model_cls()
+    config = get_empty_config(input_sample_sizes=model_cls.INPUT_SIZE)
+    config['compression'] = {'algorithm': 'bootstrapNAS'}
+    config["test_mode"] = True
+    model, ctrl = create_compressed_model_and_algo_for_test(model, config)
+
+    model.eval()
+    dummy_input = torch.Tensor([1]).reshape(model_cls.INPUT_SIZE)
+    before_reorg = model(dummy_input)
+    # ctrl.reorg()
+    after_reorg = model(dummy_input)
+
+    assert torch.allclose(before_reorg, after_reorg)
+    model.get_nncf_wrapped_model().check_reorg()

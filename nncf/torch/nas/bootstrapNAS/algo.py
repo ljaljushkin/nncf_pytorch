@@ -797,19 +797,28 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                     Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[bn1]'))
 
                 # conv3 -> conv2
+                # TODO: l1 importance. L2 and geomean is possible
                 importance = torch.sum(torch.abs(conv3.weight.data), dim=(0, 2, 3))
-                sorted_importance, sorted_idx = torch.sort(importance, dim=0, descending=True)
-                conv3.weight.data = torch.index_select(conv3.weight.data, 1, sorted_idx)
-                self.adjust_bn_according_to_idx(bn2, sorted_idx)
-                conv2.weight.data = torch.index_select(conv2.weight.data, 0, sorted_idx)
-
+                # TODO: calculate and set all output masks
+                #  - it should be common and cumulative for the group
+                sorted_importance, sorted_idx_1 = torch.sort(importance, dim=0, descending=True)
                 # conv2 -> conv1
                 importance = torch.sum(torch.abs(conv2.weight.data), dim=(0, 2, 3))
-                sorted_importance, sorted_idx = torch.sort(importance, dim=0, descending=True)
+                sorted_importance, sorted_idx_2 = torch.sort(importance, dim=0, descending=True)
 
-                conv2.weight.data = torch.index_select(conv2.weight.data, 1, sorted_idx)
-                self.adjust_bn_according_to_idx(bn1, sorted_idx)
-                conv1.weight.data = torch.index_select(conv1.weight.data, 0, sorted_idx)
+                # TODO: propagate output/input masks in the graph/node
+
+                # TODO: apply output mask in place. node -> module -> get function by type (export helpers?)
+                conv2.weight.data = torch.index_select(conv2.weight.data, 1, sorted_idx_2)
+                conv3.weight.data = torch.index_select(conv3.weight.data, 1, sorted_idx_1)
+                self.adjust_bn_according_to_idx(bn1, sorted_idx_2)
+                self.adjust_bn_according_to_idx(bn2, sorted_idx_1)
+
+                # TODO: apply input mask for input channel dimension - per type.
+                conv1.weight.data = torch.index_select(conv1.weight.data, 0, sorted_idx_2)
+                conv2.weight.data = torch.index_select(conv2.weight.data, 0, sorted_idx_1)
+
+
 
     def set_logger_level(self, level):
         nncf_logger.setLevel(level)

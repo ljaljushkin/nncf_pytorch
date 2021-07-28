@@ -27,13 +27,13 @@ from tests.torch.nas.test_nas_helpers import VGG11_K7
 
 def _test_model(model_name) -> Tuple[NNCFNetwork, BootstrapNASController, Callable]:
     models = {
-        'resnet50': [test_models.ResNet50(), [1, 3, 224, 224]],
-        'resnet18': [test_models.ResNet18(), [1, 3, 224, 224]],
+        'resnet50': [test_models.ResNet50(), [1, 3, 32, 32]],
+        'resnet18': [test_models.ResNet18(), [1, 3, 32, 32]],
         'inception_v3': [test_models.Inception3(num_classes=10), [1, 3, 299, 299]],
         'vgg11': [test_models.VGG('VGG11'), [1, 3, 32, 32]],
         'vgg11_k7': [VGG11_K7(), [1, 3, 32, 32]],  # for testing elastic kernel
         'densenet_121': [test_models.DenseNet121(), [1, 3, 32, 32]],
-        'mobilenet_v2': [mobilenet_v2(), [2, 3, 32, 32]]
+        'mobilenet_v2': [mobilenet_v2(), [2, 3, 32, 32]],
     }
     model = models[model_name][0]
     print(model)
@@ -64,3 +64,15 @@ def test_activate_subnet():
 def test_reactivate_supernet():
     # TODO
     pass
+
+def test_restore_supernet_from_checkpoint(tmp_path):
+    compressed_model, compression_ctrl, dummy_forward = _test_model('resnet18')
+    compression_ctrl.main_path = tmp_path
+    compression_ctrl.config['fine_tuner'] = 'progressive_shrinking'
+    compression_ctrl.save_supernet_checkpoint(checkpoint_name='test', epoch=-1)
+    import torch
+    print(f'{tmp_path}/test.pth')
+    supernet = torch.load(f'{tmp_path}/test.pth')
+    print(supernet.keys())
+    assert supernet['fine_tuner'] == 'progressive_shrinking'
+    # compression_ctrl.load_supernet_checkpoint()
