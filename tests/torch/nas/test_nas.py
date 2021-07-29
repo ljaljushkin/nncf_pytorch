@@ -39,6 +39,7 @@ def _test_model(model_name) -> Tuple[NNCFNetwork, BootstrapNASController, Callab
     print(model)
     config = get_empty_config(input_sample_sizes=models[model_name][1])
     config['compression'] = {'algorithm': 'bootstrapNAS'}
+    config['input_info'][0].update({'filler': 'random'})
     input_info_list = create_input_infos(config)
     dummy_forward = create_dummy_forward_fn(input_info_list)
 

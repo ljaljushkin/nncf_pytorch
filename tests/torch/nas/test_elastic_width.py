@@ -105,7 +105,8 @@ class TestModelScope:
         before_reorg = dummy_forward(compressed_model)
         compression_ctrl.reorganize_weights()
         after_reorg = dummy_forward(compressed_model)
-        compare_vectors_ignoring_the_order(after_reorg, before_reorg, atol=1e-3)
+        # TODO(nlyalyus): should tolerance be less than 1e-2?
+        compare_vectors_ignoring_the_order(after_reorg, before_reorg, atol=1e-2)
 
 
 class TwoSequentialConvBNTestModel(nn.Module):
