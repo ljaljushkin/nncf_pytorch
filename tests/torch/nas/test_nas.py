@@ -33,7 +33,7 @@ def _test_model(model_name) -> Tuple[NNCFNetwork, BootstrapNASController, Callab
         'vgg11': [test_models.VGG('VGG11'), [1, 3, 32, 32]],
         'vgg11_k7': [VGG11_K7(), [1, 3, 32, 32]],  # for testing elastic kernel
         'densenet_121': [test_models.DenseNet121(), [1, 3, 32, 32]],
-        'mobilenet_v2': [mobilenet_v2(), [2, 3, 32, 32]],
+        'mobilenet_v2': [mobilenet_v2(), [1, 3, 32, 32]],
     }
     model = models[model_name][0]
     print(model)

@@ -238,6 +238,8 @@ class PTConvolution(PTDefaultMetaOp):
 
     @classmethod
     def input_reorder(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
+        if is_depthwise_conv(node):
+            return
         reorder_indexes = node.data['input_masks'][0]
         if reorder_indexes is None:
             return

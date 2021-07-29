@@ -101,6 +101,7 @@ class TestModelScope:
             pytest.skip('Skip test for Inception-V3 because of invalid padding update in elastic kernel (60990)')
 
         compressed_model, compression_ctrl, dummy_forward = _test_model(model_name)
+        compressed_model.eval()
         before_reorg = dummy_forward(compressed_model)
         compression_ctrl.reorganize_weights()
         after_reorg = dummy_forward(compressed_model)
