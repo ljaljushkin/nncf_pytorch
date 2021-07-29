@@ -10,57 +10,55 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-from typing import Union
 from typing import List
+from typing import Union
 
 import torch
 
 from nncf.common.graph import NNCFGraph
 from nncf.common.graph import NNCFNode
-from nncf.common.pruning.export_helpers import DefaultMetaOp
-from nncf.common.pruning.utils import is_grouped_conv
-from nncf.common.pruning.utils import get_sources_of_node
-from nncf.common.pruning.utils import PruningOperationsMetatypeRegistry
-from nncf.common.pruning.mask_propagation import identity_mask_propagation
-from nncf.common.pruning.mask_propagation import get_input_masks
-from nncf.common.pruning.mask_propagation import MaskPropagationAlgorithm
 from nncf.common.graph.layer_attributes import GroupNormLayerAttributes
-from nncf.torch.graph.operator_metatypes import (
-    AddMetatype,
-    AvgPool2dMetatype,
-    BatchNormMetatype,
-    CatMetatype,
-    Conv1dMetatype,
-    Conv2dMetatype,
-    Conv3dMetatype,
-    ConvTranspose2dMetatype,
-    ConvTranspose3dMetatype,
-    DivMetatype,
-    DropoutMetatype,
-    ELUMetatype,
-    GELUMetatype,
-    GroupNormMetatype,
-    HardTanhMetatype,
-    PTInputNoopMetatype,
-    LinearMetatype,
-    MatMulMetatype,
-    MaxMetatype,
-    MaxPool2dMetatype,
-    MeanMetatype,
-    MinMetatype,
-    MulMetatype,
-    PTOutputNoopMetatype,
-    PRELUMetatype,
-    RELUMetatype,
-    SigmoidMetatype,
-    SoftmaxMetatype,
-    SubMetatype,
-    TanhMetatype,
-)
-from nncf.common.utils.logger import logger as nncf_logger
-from nncf.torch.nncf_network import NNCFNetwork
-from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT
+from nncf.common.pruning.export_helpers import DefaultMetaOp
+from nncf.common.pruning.mask_propagation import MaskPropagationAlgorithm
+from nncf.common.pruning.mask_propagation import get_input_masks
+from nncf.common.pruning.mask_propagation import identity_mask_propagation
+from nncf.common.pruning.utils import PruningOperationsMetatypeRegistry
+from nncf.common.pruning.utils import get_sources_of_node
 from nncf.common.pruning.utils import is_depthwise_conv
+from nncf.common.pruning.utils import is_grouped_conv
+from nncf.common.utils.logger import logger as nncf_logger
+from nncf.torch.graph.operator_metatypes import AddMetatype
+from nncf.torch.graph.operator_metatypes import AvgPool2dMetatype
+from nncf.torch.graph.operator_metatypes import BatchNormMetatype
+from nncf.torch.graph.operator_metatypes import CatMetatype
+from nncf.torch.graph.operator_metatypes import Conv1dMetatype
+from nncf.torch.graph.operator_metatypes import Conv2dMetatype
+from nncf.torch.graph.operator_metatypes import Conv3dMetatype
+from nncf.torch.graph.operator_metatypes import ConvTranspose2dMetatype
+from nncf.torch.graph.operator_metatypes import ConvTranspose3dMetatype
+from nncf.torch.graph.operator_metatypes import DivMetatype
+from nncf.torch.graph.operator_metatypes import DropoutMetatype
+from nncf.torch.graph.operator_metatypes import ELUMetatype
+from nncf.torch.graph.operator_metatypes import GELUMetatype
+from nncf.torch.graph.operator_metatypes import GroupNormMetatype
+from nncf.torch.graph.operator_metatypes import HardTanhMetatype
+from nncf.torch.graph.operator_metatypes import LinearMetatype
+from nncf.torch.graph.operator_metatypes import MatMulMetatype
+from nncf.torch.graph.operator_metatypes import MaxMetatype
+from nncf.torch.graph.operator_metatypes import MaxPool2dMetatype
+from nncf.torch.graph.operator_metatypes import MeanMetatype
+from nncf.torch.graph.operator_metatypes import MinMetatype
+from nncf.torch.graph.operator_metatypes import MulMetatype
+from nncf.torch.graph.operator_metatypes import PRELUMetatype
+from nncf.torch.graph.operator_metatypes import PTInputNoopMetatype
+from nncf.torch.graph.operator_metatypes import PTOutputNoopMetatype
+from nncf.torch.graph.operator_metatypes import RELUMetatype
+from nncf.torch.graph.operator_metatypes import SigmoidMetatype
+from nncf.torch.graph.operator_metatypes import SoftmaxMetatype
+from nncf.torch.graph.operator_metatypes import SubMetatype
+from nncf.torch.graph.operator_metatypes import TanhMetatype
+from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT
+from nncf.torch.nncf_network import NNCFNetwork
 
 PT_PRUNING_OPERATOR_METATYPES = PruningOperationsMetatypeRegistry("operator_metatypes")
 
@@ -90,6 +88,17 @@ class PTDefaultMetaOp(DefaultMetaOp):
         """
 
     @classmethod
+    def input_reorder(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
+        """
+        Reorder input channels of node by input_masks (if masks is not none and operation support it).
+        It's needed to make an equivalent network after sorting filters by importance in the previous layer.
+
+        :param model: NNCF network.
+        :param node: Node from NNCF graph that will reorder input channels.
+        :param graph: Graph of model.
+        """
+
+    @classmethod
     def output_prune(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
         """
         Prune node by output_mask (if mask is not none and operation support it).
@@ -99,6 +108,15 @@ class PTDefaultMetaOp(DefaultMetaOp):
         :param graph: Graph of model.
         """
 
+    @classmethod
+    def output_reorder(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
+        """
+        Reorder output channels of node by output_mask (if masks is not none and operation support it).
+        It's needed for performing pruning of filters by simple crop of the last important elements.
+        :param model: NNCF network.
+        :param node: Node from NNCF graph that will reorder output channels.
+        :param graph: Graph of model.
+        """
 
 @PT_PRUNING_OPERATOR_METATYPES.register('model_input')
 class PTInput(PTDefaultMetaOp):
@@ -218,6 +236,26 @@ class PTConvolution(PTDefaultMetaOp):
         nncf_logger.info('Pruned Convolution {} by pruning mask. Old output filters number: {}, new filters number:'
                          ' {}.'.format(node.data['key'], old_num_clannels, node_module.out_channels))
 
+    @classmethod
+    def input_reorder(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
+        reorder_indexes = node.data['input_masks'][0]
+        if reorder_indexes is None:
+            return
+        conv = model.get_containing_module(node.node_name)
+        conv.weight.data = torch.index_select(conv.weight.data, 1, reorder_indexes)
+        nncf_logger.info('Reordered input channels (first 10 reorder indexes {}) of Convolution: {} '.format(reorder_indexes[:10], node.data['key']))
+
+    @classmethod
+    def output_reorder(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
+        reorder_indexes = node.data['output_mask']
+        if reorder_indexes is None:
+            return
+        conv = model.get_containing_module(node.node_name)
+        conv.weight.data = torch.index_select(conv.weight.data, 0, reorder_indexes)
+        if conv.bias is not None:
+            conv.bias.data = torch.index_select(conv.bias.data, 0, reorder_indexes)
+        nncf_logger.info('Reordered output channels (first 10 reorder indexes {}) of Convolution: {} '.format(reorder_indexes[:10], node.data['key']))
+
 
 @PT_PRUNING_OPERATOR_METATYPES.register('transpose_convolution')
 class PTTransposeConvolution(PTDefaultMetaOp):
@@ -320,6 +358,21 @@ class PTBatchNorm(PTDefaultMetaOp):
 
         nncf_logger.info('Pruned BatchNorm {} by input mask. Old num features: {}, new num features:'
                          ' {}.'.format(node.data['key'], old_num_clannels, new_num_channels))
+
+    @classmethod
+    def input_reorder(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
+        reorder_indexes = node.data['input_masks'][0]
+        if reorder_indexes is None:
+            return
+
+        bn = model.get_containing_module(node.node_name)
+
+        bn.weight.data = torch.index_select(bn.weight.data, 0, reorder_indexes)
+        bn.bias.data = torch.index_select(bn.bias.data, 0, reorder_indexes)
+        bn.running_mean.data = torch.index_select(bn.running_mean.data, 0, reorder_indexes)
+        bn.running_var.data = torch.index_select(bn.running_var.data, 0, reorder_indexes)
+
+        nncf_logger.info('Reordered channels (first 10 reorder indexes {}) of BatchNorm: {} '.format(reorder_indexes[:10], node.data['key']))
 
 
 @PT_PRUNING_OPERATOR_METATYPES.register('group_norm')

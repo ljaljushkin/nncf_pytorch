@@ -17,7 +17,9 @@ import torch
 from torch import nn
 from torch.backends import cudnn
 
+from nncf.torch.nas.bootstrapNAS.algo import BootstrapNASController
 from nncf.torch.nas.bootstrapNAS.visualization import WidthGraph
+from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.utils import manual_seed
 from tests.torch.helpers import create_compressed_model_and_algo_for_test
 from tests.torch.helpers import create_conv
@@ -94,15 +96,15 @@ class TestModelScope:
             visualize_width(compressed_model, compression_ctrl, tmp_path / f'{model_name}_random_{i}.dot')
             dummy_forward(compressed_model)
 
-    def test_weight_reorg(self, model_name):
+    def test_weight_reorg(self, model_name, _seed):
         if model_name in ['inception_v3']:
             pytest.skip('Skip test for Inception-V3 because of invalid padding update in elastic kernel (60990)')
 
         compressed_model, compression_ctrl, dummy_forward = _test_model(model_name)
         before_reorg = dummy_forward(compressed_model)
-        # ctrl.reorg()
+        compression_ctrl.reorganize_weights()
         after_reorg = dummy_forward(compressed_model)
-        assert torch.allclose(before_reorg, after_reorg)
+        compare_vectors_ignoring_the_order(after_reorg, before_reorg, atol=1e-3)
 
 
 class TwoSequentialConvBNTestModel(nn.Module):
@@ -123,9 +125,8 @@ class TwoSequentialConvBNTestModel(nn.Module):
         self.conv2 = create_conv(3, 2, 1)
         self.bn2 = nn.BatchNorm2d(3)
 
-        weight = torch.Tensor([[1, 2],
-                               [2, 3],
-                               [0, 0]]).reshape(2, 3, 1, 1)
+        weight = torch.Tensor([[1, 2, 0],
+                               [2, 3, 0]]).reshape(2, 3, 1, 1)
         bias = torch.Tensor([1, 2])
         self.set_params(bias, weight, self.conv2, self.bn2)
 
@@ -154,9 +155,8 @@ class TwoSequentialConvBNTestModel(nn.Module):
         ref_bias_1 = torch.Tensor([3, 2, 1])
         ref_weights_1 = ref_bias_1.reshape(3, 1, 1, 1)
         ref_bias_2 = torch.Tensor([2, 1])
-        ref_weights_2 = torch.Tensor([[2, 1],
-                                      [0, 0],
-                                      [3, 2]]).reshape(2, 3, 1, 1)
+        ref_weights_2 = torch.Tensor([[2, 0, 3],
+                                      [1, 0, 2]]).reshape(2, 3, 1, 1)
         TwoSequentialConvBNTestModel.compare_params(ref_bias_1, ref_weights_1, self.conv1, self.bn1)
         TwoSequentialConvBNTestModel.compare_params(ref_bias_2, ref_weights_2, self.conv2, self.bn2)
 
@@ -174,21 +174,17 @@ class TwoConvAddConvTestModel(nn.Module):
 
     def __init__(self):
         super().__init__()
-
-        bias1 = torch.Tensor([3, 1, 2])
-        bias2 = torch.Tensor([1, 2, 3])
-
         self.conv1 = create_conv(1, 3, 1)
-        weight1 = bias1.reshape(3, 1, 1, 1)
-        self.conv1.weight.data = weight1
-        self.conv1.bias.data = bias1
-
         self.conv2 = create_conv(1, 3, 1)
-        weight1 = bias2.reshape(3, 1, 1, 1)
-        self.conv1.weight.data = weight1
-        self.conv1.bias.data = bias2
-
+        self._init_params(self.conv1, torch.Tensor([3, 1, 2]))
+        self._init_params(self.conv2, torch.Tensor([1, 2, 4]))
         self.all_layers = nn.Sequential(self.conv1, self.conv2)
+
+    @staticmethod
+    def _init_params(conv, data):
+        conv.bias.data = data
+        weight = data.reshape(3, 1, 1, 1)
+        conv.weight.data = weight
 
     @staticmethod
     def compare_params(bias, weight, conv, bn):
@@ -204,7 +200,7 @@ class TwoConvAddConvTestModel(nn.Module):
 
     def check_reorg(self):
         ref_bias_1 = torch.Tensor([2, 3, 1])
-        ref_bias_2 = torch.Tensor([3, 1, 2])
+        ref_bias_2 = torch.Tensor([4, 1, 2])
 
         ref_weights_1 = ref_bias_1.reshape(3, 1, 1, 1)
         ref_weights_2 = ref_bias_2.reshape(3, 1, 1, 1)
@@ -218,19 +214,27 @@ class TwoConvAddConvTestModel(nn.Module):
         return self.conv1(x) + self.conv2(x)
 
 
+def compare_vectors_ignoring_the_order(vec1: torch.Tensor, vec2: torch.Tensor, rtol=1e-05, atol=1e-08):
+    vec1 = vec1.squeeze()
+    vec2 = vec2.squeeze()
+    if len(vec1.shape) > 1 or len(vec2.shape) > 1:
+        raise ValueError('Tensor is expected to have only one dimension not equal to 1')
+    assert torch.allclose(torch.sort(vec1)[0], torch.sort(vec2)[0], rtol=rtol, atol=atol)
+
+
 @pytest.mark.parametrize('model_cls', (TwoConvAddConvTestModel, TwoSequentialConvBNTestModel))
 def test_width_reorg_for_basic_models(model_cls):
     model = model_cls()
     config = get_empty_config(input_sample_sizes=model_cls.INPUT_SIZE)
     config['compression'] = {'algorithm': 'bootstrapNAS'}
     config["test_mode"] = True
-    model, ctrl = create_compressed_model_and_algo_for_test(model, config)
+    model, ctrl = create_compressed_model_and_algo_for_test(model, config)  # type: NNCFNetwork, BootstrapNASController
 
     model.eval()
     dummy_input = torch.Tensor([1]).reshape(model_cls.INPUT_SIZE)
     before_reorg = model(dummy_input)
-    # ctrl.reorg()
+    ctrl.reorganize_weights()
     after_reorg = model(dummy_input)
 
-    assert torch.allclose(before_reorg, after_reorg)
+    compare_vectors_ignoring_the_order(after_reorg, before_reorg)
     model.get_nncf_wrapped_model().check_reorg()
