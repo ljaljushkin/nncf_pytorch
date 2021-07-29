@@ -23,35 +23,37 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from nncf.torch.module_operations import UpdateWeight
-from nncf.torch.layers import NNCFConv2d
-from nncf.torch.graph.operator_metatypes import Conv2dMetatype
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler
 from nncf.common.graph import NNCFNodeName
-from nncf.common.graph.graph_matching import find_subgraphs_matching_pattern
-from nncf.common.graph.patterns import GraphPattern
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.transformations.commands import TransformationPriority
+from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
 from nncf.common.pruning.clusterization import Cluster
 from nncf.common.pruning.clusterization import Clusterization
 from nncf.common.pruning.pruning_node_selector import PruningNodeSelector
 from nncf.common.schedulers import BaseCompressionScheduler
 from nncf.common.statistics import NNCFStatistics
 from nncf.common.utils.logger import logger as nncf_logger
+from nncf.config.extractors import extract_bn_adaptation_init_params
+from nncf.config.structures import BNAdaptationInitArgs
 from nncf.torch.algo_selector import COMPRESSION_ALGORITHMS
 from nncf.torch.algo_selector import ZeroCompressionLoss
 from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
 from nncf.torch.compression_method_api import PTCompressionAlgorithmController
-from nncf.torch.dynamic_graph.scope import Scope
 from nncf.torch.graph.operator_metatypes import BatchNormMetatype
+from nncf.torch.graph.operator_metatypes import Conv2dMetatype
 from nncf.torch.graph.operator_metatypes import LinearMetatype
 from nncf.torch.graph.transformations.commands import PTInsertionCommand
 from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.graph.transformations.layout import PTTransformationLayout
+from nncf.torch.initialization import wrap_dataloader_for_init
+from nncf.torch.layers import NNCFConv2d
 from nncf.torch.module_operations import UpdateBatchNormParams
 from nncf.torch.module_operations import UpdatePadding
+from nncf.torch.module_operations import UpdateWeight
 from nncf.torch.module_operations import UpdateWeightAndOptionalBias
+from nncf.torch.nas.bootstrapNAS.filter_reorder import FilterReorderingAlgorithm
 from nncf.torch.nas.bootstrapNAS.layers import DynamicBatchNormInputOp
 from nncf.torch.nas.bootstrapNAS.layers import DynamicConvInputOp
 from nncf.torch.nas.bootstrapNAS.layers import DynamicLinearInputOp
@@ -60,12 +62,12 @@ from nncf.torch.nas.bootstrapNAS.layers import ElasticKernelPaddingAdjustment
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.pruning.export_helpers import PTElementwise
 from nncf.torch.pruning.export_helpers import PT_PRUNING_OPERATOR_METATYPES
+from nncf.torch.pruning.filter_pruning.functions import FILTER_IMPORTANCE_FUNCTIONS
+from nncf.torch.pruning.filter_pruning.functions import tensor_l2_normalizer
 from nncf.torch.pruning.structs import PrunedModuleInfo
+from nncf.torch.utils import get_filters_num
 from nncf.torch.utils import is_main_process
-from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
-from nncf.config.extractors import extract_bn_adaptation_init_params
-from nncf.torch.initialization import wrap_dataloader_for_init
-from nncf.config.structures import BNAdaptationInitArgs
+
 
 class ElasticWidthInfo(NamedTuple):
     node_name: NNCFNodeName
@@ -93,7 +95,6 @@ class BootstrapNASBuilder(PTCompressionAlgorithmBuilder):
         self.pruned_module_groups_info = Clusterization[PrunedModuleInfo](id_fn=lambda x: x.node_name)
 
         # TODO: Read elastic parameters from previous checkpoints and decide the level of elasticity that should be applied to the model.
-
 
     def initialize(self, model: NNCFNetwork) -> None:
         pass
@@ -260,6 +261,9 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             print("Created BootstrapNAS controller")
 
         self.optimizer = None
+        params = self.config.get('params', {})
+        self.filter_importance = FILTER_IMPORTANCE_FUNCTIONS.get(params.get('filter_importance', 'L1'))
+        self.weights_normalizer = tensor_l2_normalizer  # for all weights in common case
 
     @property
     def loss(self) -> CompressionLoss:
@@ -284,7 +288,6 @@ class BootstrapNASController(PTCompressionAlgorithmController):
 
         bn_adaptation_params = extract_bn_adaptation_init_params(self.config)
         self.bn_adaptation = BatchnormAdaptationAlgorithm(**bn_adaptation_params)
-
 
         config = self.config
         stage = config.get('fine_tuner_params', None)
@@ -326,7 +329,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             self.validate_single_setting(0)
 
             # self.reorganize_weights() # TODO: Automation
-            self.reorganize_weights_from_config() # TODO: Check issue #1
+            self.reorganize_weights_from_config()  # TODO: Check issue #1
             # self.simple_set_running_statistics(num_samples=300000, batch_size=64)
             self.bn_adaptation.run(self.target_model)
             # Check accuracy of supernetwork with reorg weights.
@@ -382,7 +385,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
     def _get_random_depth_conf(self):
         depth_conf = []
         for i in range(0, self.num_possible_skipped_blocks):
-            skip = bool(random.getrandbits(1)) #random.randint(0, 1)
+            skip = bool(random.getrandbits(1))  # random.randint(0, 1)
             if skip:
                 depth_conf.append(i)
         return depth_conf
@@ -423,7 +426,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         elif stage == 'depth':
             # Set random elastic kernel # TODO
             # Set random elastic depth
-            subnet_config['depth'] = self._get_random_depth_conf() # Get blocks that will be skipped.
+            subnet_config['depth'] = self._get_random_depth_conf()  # Get blocks that will be skipped.
         elif stage == 'width':
             # Set random elastic kernel
             subnet_config['kernel'] = self._get_random_kernel_conf()
@@ -491,7 +494,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                             'val_acc': val_acc,
                             'val_acc5': val_acc5
                         }
-                        json.dump(supernet_data, open(f'{self.main_path}/checkpoint/best_supernetwork.json', 'w'), indent=4)
+                        json.dump(supernet_data, open(f'{self.main_path}/checkpoint/best_supernetwork.json', 'w'),
+                                  indent=4)
                     self.save_supernet_checkpoint('/checkpoint/last_super.pth', epoch=epoch)
                 # validate minimal subnet
                 self.get_minimal_subnet()
@@ -515,7 +519,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                             'val_acc': val_acc,
                             'val_acc5': val_acc5
                         }
-                        json.dump(min_subnet_data, open(f'{self.main_path}/checkpoint/best_min_subnet.json', 'w'), indent=4)
+                        json.dump(min_subnet_data, open(f'{self.main_path}/checkpoint/best_min_subnet.json', 'w'),
+                                  indent=4)
 
     def train_one_epoch(self, epoch):
         config = self.config
@@ -574,7 +579,6 @@ class BootstrapNASController(PTCompressionAlgorithmController):
                 else:
                     self.sample_active_subnet(config['fine_tuner_params']['stage'])
                     nncf_logger.info(f'Fine tuning {self.get_active_config()}')
-
 
                 output = self.target_model(images)
                 if config['kd_ratio'] == 0:
@@ -767,9 +771,6 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             raise ValueError('do not support: %s' % lr_schedule_type)
         return lr
 
-    def reorganize_weights(self):
-        pass
-
     @staticmethod
     def adjust_bn_according_to_idx(bn, idx):
         bn.weight.data = torch.index_select(bn.weight.data, 0, idx)
@@ -778,38 +779,41 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             bn.running_mean.data = torch.index_select(bn.running_mean.data, 0, idx)
             bn.running_var.data = torch.index_select(bn.running_var.data, 0, idx)
 
-    # TODO: Generalize
-    def reorganize_weights_from_config(self):
-        # TODO: Refactor to reorg from config.
-        # Remove hardcoded Resnet50. Let advanced user pass this function.
-        bottlenecks = [2, 3, 5, 2]  # TODO: Check
-        for layer in range(1, 5):
-            for bottleneck in range(1, bottlenecks[layer - 1] + 1):
-                conv3 = self.target_model.get_module_by_scope(
-                    Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[conv3]'))
-                conv2 = self.target_model.get_module_by_scope(
-                    Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[conv2]'))
-                bn2 = self.target_model.get_module_by_scope(
-                    Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[bn2]'))
-                conv1 = self.target_model.get_module_by_scope(
-                    Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[conv1]'))
-                bn1 = self.target_model.get_module_by_scope(
-                    Scope.from_str(f'ResNet/Sequential[layer{layer}]/Bottleneck[{bottleneck}]/NNCFConv2d[bn1]'))
+    def reorganize_weights(self):
+        graph = self.target_model.get_original_graph()
 
-                # conv3 -> conv2
-                importance = torch.sum(torch.abs(conv3.weight.data), dim=(0, 2, 3))
-                sorted_importance, sorted_idx = torch.sort(importance, dim=0, descending=True)
-                conv3.weight.data = torch.index_select(conv3.weight.data, 1, sorted_idx)
-                self.adjust_bn_according_to_idx(bn2, sorted_idx)
-                conv2.weight.data = torch.index_select(conv2.weight.data, 0, sorted_idx)
+        # TODO(nlyalyus): is it needed to setup output/input masks for all nodes?
+        #  maybe need to reset from previous run
+        for node in graph.get_all_nodes():
+            node.data['input_masks'] = None
+            node.data['output_mask'] = None
 
-                # conv2 -> conv1
-                importance = torch.sum(torch.abs(conv2.weight.data), dim=(0, 2, 3))
-                sorted_importance, sorted_idx = torch.sort(importance, dim=0, descending=True)
+        # 1. Calculate filter importance for all groups of prunable layers
+        for group in self.pruned_module_groups_info.get_all_clusters():
+            # TODO(nlyalyus): code duplication with pruning!
+            filters_num = torch.tensor([get_filters_num(minfo.module) for minfo in group.elements])
+            assert torch.all(filters_num == filters_num[0])
+            device = group.elements[0].module.weight.device
 
-                conv2.weight.data = torch.index_select(conv2.weight.data, 1, sorted_idx)
-                self.adjust_bn_according_to_idx(bn1, sorted_idx)
-                conv1.weight.data = torch.index_select(conv1.weight.data, 0, sorted_idx)
+            cumulative_filters_importance = torch.zeros(filters_num[0]).to(device)
+            # 1.1 Calculate cumulative importance for all filters in this group
+            for minfo in group.elements:
+                # TODO(nlyalyus): is normalization of weights needed?
+                not_normalized_weight = minfo.module.weight
+                # normalized_weight = self.weights_normalizer(minfo.module.weight)
+                filters_importance = self.filter_importance(not_normalized_weight,
+                                                            minfo.module.target_weight_dim_for_compression)
+                cumulative_filters_importance += filters_importance
+
+            _, reorder_indexes = torch.sort(cumulative_filters_importance, dim=0, descending=True)
+
+            # 1.2 Setup reorder indexes as output mask to reorganize filters
+            for minfo in group.elements:
+                node = graph.get_node_by_id(minfo.node_id)
+                node.data['output_mask'] = reorder_indexes
+
+        # 2. Propagating masks across the graph
+        FilterReorderingAlgorithm(self.target_model, graph, PT_PRUNING_OPERATOR_METATYPES).reorder_filters()
 
     def set_logger_level(self, level):
         nncf_logger.setLevel(level)
@@ -862,7 +866,8 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             'epoch': epoch,
             'arch': model_name,
             'state_dict': self.target_model.state_dict(),
-            'active_config': self.get_active_config(), #TODO, # USE API from Controller. Controller state and Builder state. Information of compression. TODO: Add logic in Builder...
+            # TODO, # USE API from Controller. Controller state and Builder state. Information of compression. TODO: Add logic in Builder...
+            'active_config': self.get_active_config(),
             'elastic_params': self.get_elastic_parameters(),
             'best_acc1': self.best_acc,
             'fine_tuner': fine_tuner,
@@ -877,13 +882,12 @@ class BootstrapNASController(PTCompressionAlgorithmController):
         # TODO
         raise NotImplementedError
 
-
     def simple_set_running_statistics(self, num_samples, batch_size):
         # https://discuss.pytorch.org/t/how-to-run-the-model-to-only-update-the-batch-normalization-statistics/20626
         start_t = time.time()
         self.target_model.train()
         # for _ in range(0, 2): # TODO Use only a subset of the loader.
-        if num_samples/batch_size > len(self.train_loader):
+        if num_samples / batch_size > len(self.train_loader):
             nncf_logger.info("BN set stats: num of samples exceed the samples in loader. Using full loader")
         for i, (images, _) in enumerate(self.train_loader):
             images = images.to(self.get_net_device(self.target_model))
@@ -891,7 +895,7 @@ class BootstrapNASController(PTCompressionAlgorithmController):
             if i > num_samples / batch_size:
                 nncf_logger.info(f"Finishing setting bn stats using {num_samples} and batch size of {batch_size}")
                 break
-        nncf_logger.info(f"It took {time.time()-start_t} seconds to set bn stats.")
+        nncf_logger.info(f"It took {time.time() - start_t} seconds to set bn stats.")
 
     # Search API
     def get_elastic_parameters(self, use_tuple_with_layer_name=False):
