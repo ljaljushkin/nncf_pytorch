@@ -79,14 +79,14 @@ def visualize_width(model, ctrl, path):
 ])
 class TestModelScope:
     def test_can_sample_random_elastic_width_configurations(self, _seed, tmp_path, model_name):
-        if model_name in ['mobilenet_v2', 'inception_v3']:
+        if model_name in ['inception_v3']:
             pytest.skip(
-                'Skip test for MobileNet-v2 as ElasticDepthWise is not supported (60779), '
-                'Inception-V3 also fails because of 2 issues: '
+                'Skip test for Inception-V3 as it fails because of 2 issues: '
                 'not able to set DynamicInputOp to train-only layers (60976) and '
                 'invalid padding update in elastic kernel (60990)')
 
         compressed_model, compression_ctrl, dummy_forward = _test_model(model_name)
+        compressed_model.eval()
         visualize_width(compressed_model, compression_ctrl, tmp_path / f'{model_name}_original.dot')
         N = 5
         for i in range(N):
