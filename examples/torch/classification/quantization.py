@@ -32,10 +32,11 @@ def download_tinyImg200(path,
     zip_ref.close()
 
 
-if not os.path.exists('tiny-imagenet-200'):
-    download_tinyImg200('.')
+DATASET_DIR = '/media/ssd'
+WORKING_DIR = '/home/nlyalyus/Developer/sandbox/tmp/int8_tutorial'
 
-PATH = '/home/nlyalyus/Developer/sandbox/tmp/int8_tutorial'
+if not os.path.exists(os.path.join(DATASET_DIR, 'tiny-imagenet-200')):
+    download_tinyImg200('/media/ssd')
 
 
 def main(params):
@@ -268,9 +269,9 @@ def validate(val_loader, model, criterion):
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
-    torch.save(state, os.path.join(PATH, filename))
+    torch.save(state, os.path.join(WORKING_DIR, filename))
     if is_best:
-        shutil.copyfile(os.path.join(PATH, filename), os.path.join(PATH, 'model_best.pth.tar'))
+        shutil.copyfile(os.path.join(WORKING_DIR, filename), os.path.join(WORKING_DIR, 'model_best.pth.tar'))
 
 
 class AverageMeter(object):
@@ -376,67 +377,6 @@ def create_json_files(batch_size, input_size):
         }
     }
 
-    # Filter pruning
-    # https://github.com/openvinotoolkit/nncf/blob/develop/docs/compression_algorithms/Pruning.md
-    configs['pruning.json'] = {
-
-        "input_info": {
-            "sample_size": [batch_size, 3, input_size, input_size]
-        },
-
-        "epochs": 1,  # number of epochs to tune
-
-        "optimizer": {
-            "base_lr": 1e-3  # learning rate for the optimizer during tuning
-        },
-
-        "compression": {
-            "algorithm": "filter_pruning",
-        }
-    }
-
-    # Sparsity
-    # https://github.com/openvinotoolkit/nncf/blob/develop/docs/compression_algorithms/Sparsity.md
-    configs['sparsity.json'] = {
-
-        "input_info": {
-            "sample_size": [batch_size, 3, input_size, input_size]
-        },
-
-        "epochs": 50,  # number of epochs to tune
-
-        "optimizer": {
-            "base_lr": 1e-3  # learning rate for the optimizer during tuning
-        },
-
-        "compression": {
-            "algorithm": "magnitude_sparsity",
-            "sparsity_init": 0.1,
-            # Initial value of the sparsity level applied to the model in 'create_compressed_model' function
-            "params": {
-                "schedule": "multistep",
-                # The type of scheduling to use for adjusting the target sparsity level
-                "multistep_steps": [
-                    # A list of scheduler steps at which to transition to the next scheduled sparsity level (multistep scheduler only).
-                    5,
-                    10,
-                    20,
-                    30,
-                    40
-                ],
-                "multistep_sparsity_levels": [
-                    # Levels of sparsity to use at each step of the scheduler as specified in the 'multistep_steps' attribute. The first sparsity level will be applied immediately, so the length of this list should be larger than the length of the 'steps' by one."
-                    0.1,
-                    0.2,
-                    0.3,
-                    0.4,
-                    0.5,
-                    0.6
-                ],
-            }
-        }
-    }
-
     # create json files, that will be used by nncf later
     for config_key, config_val in configs.items():
         write_json(config_val, config_key)
@@ -457,7 +397,7 @@ params['start_epoch'] = 0  # updated automatically if training is resumed
 params['epochs'] = 15  # 15 is for full precision training, will be updated (increased) in case of tuning with nncf
 params['pretrained'] = True  # pretrained model on Imagenet
 
-params['resume'] = PATH + 'model_best.pth.tar'  # path to latest checkpoint (or None)
+params['resume'] = WORKING_DIR + 'model_best.pth.tar'  # path to latest checkpoint (or None)
 params['checkpoint_compressed'] = False
 
 params['evaluate'] = False
@@ -476,15 +416,10 @@ if params['use_nncf']:
     params['init_lr'] = configs[algorithm_config]['optimizer']['base_lr']
     params['epochs'] = params['epochs'] + configs[algorithm_config]['epochs']
 
-# Run certain algorithm once
-main(params)
-
 # Iterate over algorithms
-algorithm_configs = ['quantization.json', 'pruning.json', 'sparsity.json']
-for algorithm_config in algorithm_configs:
-    # Run the tuning procedure:
-    # print(algorithm_config)
-    # params['nncf_config_file'] = 'config_files/' + algorithm_config
-    # update tune params
-    # main(params)
-    pass
+algorithm_config = 'quantization.json'
+# Run the tuning procedure:
+print(algorithm_config)
+params['nncf_config_file'] = 'config_files/' + algorithm_config
+# update tune params
+main(params)

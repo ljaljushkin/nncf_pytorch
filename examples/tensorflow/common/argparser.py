@@ -54,7 +54,7 @@ def get_common_argument_parser(**flags):
             condition=flags.get('resume', True),
             parameters=argument_parameters(
                 '--resume',
-                metavar='PATH',
+                metavar='WORKING_DIR',
                 type=str,
                 default=None,
                 dest='ckpt_path',
@@ -76,7 +76,7 @@ def get_common_argument_parser(**flags):
         condition=flags.get('checkpoint_save_dir', True),
         parameters=argument_parameters(
             '--checkpoint-save-dir',
-            metavar='PATH',
+            metavar='WORKING_DIR',
             type=str,
             default=None,
             help='Specifies the directory for the trained model checkpoints to be saved to.'))
@@ -180,7 +180,7 @@ def get_common_argument_parser(**flags):
             parameters=argument_parameters(
                 '--to-frozen-graph',
                 type=str,
-                metavar='PATH',
+                metavar='WORKING_DIR',
                 default=None,
                 help='Export the compressed model to the Frozen Graph by given path.'))
 
@@ -190,7 +190,7 @@ def get_common_argument_parser(**flags):
             parameters=argument_parameters(
                 '--to-saved-model',
                 type=str,
-                metavar='PATH',
+                metavar='WORKING_DIR',
                 default=None,
                 help='Export the compressed model to the TensorFlow SavedModel format '
                      'by given path.'))
@@ -201,7 +201,7 @@ def get_common_argument_parser(**flags):
             parameters=argument_parameters(
                 '--to-h5',
                 type=str,
-                metavar='PATH',
+                metavar='WORKING_DIR',
                 default=None,
                 help='Export the compressed model to the Keras H5 format by given path.'))
 

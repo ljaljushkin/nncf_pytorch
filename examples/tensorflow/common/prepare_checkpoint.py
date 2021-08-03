@@ -142,7 +142,7 @@ def main(argv):
 
     parser.add_argument(
         '--resume',
-        metavar='PATH',
+        metavar='WORKING_DIR',
         type=str,
         default=None,
         dest='ckpt_path',

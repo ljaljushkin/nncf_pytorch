@@ -151,7 +151,7 @@ class TestSotaCheckpoints:
             env['PYTHONPATH'] = str(PROJECT_ROOT)
         if venv:
             env['VIRTUAL_ENV'] = str(venv)
-            env['PATH'] = str(f'{venv}/bin') + ':' + env['PATH']
+            env['WORKING_DIR'] = str(f'{venv}/bin') + ':' + env['WORKING_DIR']
 
         result = subprocess.Popen(com_line, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   cwd=cwd, env=env)

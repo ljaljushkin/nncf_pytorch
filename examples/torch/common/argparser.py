@@ -42,7 +42,7 @@ def get_common_argument_parser():
     model_init_mode = parser.add_mutually_exclusive_group()
     model_init_mode.add_argument(
         "--resume",
-        metavar='PATH',
+        metavar='WORKING_DIR',
         type=str,
         default=None,
         dest='resuming_checkpoint_path',
@@ -52,7 +52,7 @@ def get_common_argument_parser():
              "must have all necessary optimizer/compression algorithm/metric states required.")
     model_init_mode.add_argument(
         "--weights",
-        metavar='PATH',
+        metavar='WORKING_DIR',
         type=str,
         default=None,
         help="Attempt to load the model state from the specified .pth file. "
@@ -60,7 +60,7 @@ def get_common_argument_parser():
 
     parser.add_argument(
         "--checkpoint-save-dir",
-        metavar='PATH',
+        metavar='WORKING_DIR',
         type=str,
         default=None,
         help="Specifies the directory for the trained model checkpoints to be saved to")
@@ -165,7 +165,7 @@ def get_common_argument_parser():
     parser.add_argument('--save-freq', default=5, type=int,
                         help='Checkpoint save frequency (epochs). Default: 5')
 
-    parser.add_argument('--to-onnx', type=str, metavar='PATH', default=None,
+    parser.add_argument('--to-onnx', type=str, metavar='WORKING_DIR', default=None,
                         help='Export to ONNX model by given path')
 
     # Display
