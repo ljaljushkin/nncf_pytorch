@@ -1,6 +1,7 @@
-import json
 import os
+import shutil
 import time
+from datetime import datetime
 from urllib.request import urlretrieve
 
 import torch
@@ -12,6 +13,7 @@ import torch.utils.data.distributed
 import torchvision.datasets as datasets
 import torchvision.models as models
 import torchvision.transforms as transforms
+from torch.utils.tensorboard import SummaryWriter
 
 from nncf import NNCFConfig
 from nncf.torch import create_compressed_model
@@ -34,9 +36,14 @@ def download_tinyImg200(path,
 
 DATASET_DIR = 'tiny-imagenet-200'
 DOWNLOAD_DIR = '/media/ssd'
+WORKING_DIR = '/home/nlyalyus/Developer/sandbox/tmp/int8_tutorial'
 
 if not os.path.exists(DATASET_DIR):
     download_tinyImg200(DOWNLOAD_DIR)
+
+d = datetime.now()
+run_id = '{:%Y-%m-%d__%H-%M-%S}'.format(d)
+LOG_DIR = os.path.join(WORKING_DIR, run_id)
 
 
 def main():
@@ -44,18 +51,19 @@ def main():
     init_lr = 1e-4
     batch_size = 256
     workers = 4
-    data = DATASET_DIR  # path to data
+    image_size = 64
+    data = DATASET_DIR
     start_epoch = 0
-    epochs = 1  # 15 is for full precision training, will be updated (increased) in case of tuning with nncf
+    epochs = 4
+
+    tb = SummaryWriter(LOG_DIR)
 
     # create model
     model = models.resnet18(pretrained=True)
     # update the last FC layer for tiny-imagenet number of classes
-    model.fc.num_features = num_classes
-    # self.fc = nn.Linear(512 * block.expansion, num_classes)
-    # model.fc = nn.Linear(in_features=512, out_features=num_classes, bias=True)
+    model.fc = nn.Linear(in_features=512, out_features=num_classes, bias=True)
     model.cuda()
-    # model.fc = model.fc.cuda()
+    model.fc = model.fc.cuda()
 
     # Data loading code
     train_dir = os.path.join(data, 'train')
@@ -65,7 +73,7 @@ def main():
     dataset = datasets.ImageFolder(
         train_dir,
         transforms.Compose([
-            transforms.Resize(224),
+            transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
@@ -83,17 +91,39 @@ def main():
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=init_lr)
-    validate(val_loader, model, criterion)
+
+    best_acc1 = 0
+    acc1 = 0
+    for epoch in range(start_epoch, epochs):
+        # adjust_learning_rate(optimizer, epoch, init_lr)
+
+        # train for one epoch with nncf
+        train(train_loader, model, criterion, optimizer, epoch, tb)
+
+        # evaluate on validation set
+        acc1 = validate(val_loader, model, criterion, tb, epoch)
+
+        # remember best acc@1 and save checkpoint
+        is_best = acc1 > best_acc1
+        best_acc1 = max(acc1, best_acc1)
+
+        save_checkpoint({
+            'epoch': epoch + 1,
+            'state_dict': model.state_dict(),
+            'acc1': acc1,
+            'optimizer': optimizer.state_dict(),
+        }, is_best)
+
+    print(f'Accuracy of FP32 model: {acc1:.3f}')
 
     nncf_config_dict = {
         "input_info": {
-            "sample_size": [1, 3, 224, 224]
+            "sample_size": [1, 3, image_size, image_size]
         },
         "compression": {
             "algorithm": "quantization",  # specify the algorithm here
         }
     }
-
     # Load a configuration file to specify compression
     nncf_config = NNCFConfig.from_dict(nncf_config_dict)
     # Provide data loaders for compression algorithm initialization, if necessary
@@ -101,17 +131,30 @@ def main():
 
     compression_ctrl, model = create_compressed_model(model, nncf_config)
 
-    for epoch in range(start_epoch, epochs):
-        adjust_learning_rate(optimizer, epoch, init_lr)
+    # evaluate on validation set after initialization of quantization (POT case)
+    acc1 = validate(val_loader, model, criterion, tb, epoch=4)
+    print(f'Accuracy of initialized INT8 model: {acc1:.3f}')
 
-        # train for one epoch with nncf
-        train(train_loader, model, criterion, optimizer, epoch)
+    # for param_group in optimizer.param_groups:
+    #     param_group['lr'] = init_lr * 0.1
 
-        # evaluate on validation set
-        validate(val_loader, model, criterion)
+    # train for one epoch with NNCF
+    train(train_loader, model, criterion, optimizer, epoch=4, tb=tb)
+
+    # evaluate on validation set after Quantization-Aware Training (QAT case)
+    acc1 = validate(val_loader, model, criterion, tb, epoch=5)
+    print(f'Accuracy of tuned INT8 model: {acc1:.3f}')
+
+    compression_ctrl.export_model("resnet_int8.onnx")
 
 
-def train(train_loader, model, criterion, optimizer, epoch):
+def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+    torch.save(state, os.path.join(LOG_DIR, filename))
+    if is_best:
+        shutil.copyfile(os.path.join(LOG_DIR, filename), os.path.join(LOG_DIR, 'model_best.pth.tar'))
+
+
+def train(train_loader, model, criterion, optimizer, epoch, tb):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -153,12 +196,18 @@ def train(train_loader, model, criterion, optimizer, epoch):
         batch_time.update(time.time() - end)
         end = time.time()
 
-        print_frequency = 10
+        print_frequency = 50
         if i % print_frequency == 0:
             progress.display(i)
 
+        global_step = len(train_loader) * epoch
+        tb.add_scalar("train/learning_rate", optimizer.param_groups[0]['lr'], i + global_step)
+        tb.add_scalar("train/loss", losses.avg, i + global_step)
+        tb.add_scalar("train/top1", top1.avg, i + global_step)
+        tb.add_scalar("train/top5", top5.avg, i + global_step)
 
-def validate(val_loader, model, criterion):
+
+def validate(val_loader, model, criterion, tb, epoch):
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
@@ -198,6 +247,9 @@ def validate(val_loader, model, criterion):
 
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
+        tb.add_scalar("val/loss", losses.avg, len(val_loader) * epoch)
+        tb.add_scalar("val/top1", top1.avg, len(val_loader) * epoch)
+        tb.add_scalar("val/top5", top5.avg, len(val_loader) * epoch)
 
     return top1.avg
 
@@ -245,8 +297,8 @@ class ProgressMeter(object):
 
 
 def adjust_learning_rate(optimizer, epoch, init_lr):
-    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-    lr = init_lr * (0.1 ** (epoch // 30))
+    """Sets the learning rate to the initial LR decayed by 10 every 4 epochs"""
+    lr = init_lr * (0.1 ** (epoch // 4))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
@@ -266,50 +318,6 @@ def accuracy(output, target, topk=(1,)):
             correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
-
-
-def create_json_files(batch_size, input_size):
-    """
-    Define configurations for compression algorithms
-    Create the json files
-    Return the configurations as dictinary objects
-    """
-
-    config_dir = 'config_files'
-    if not os.path.exists(config_dir):
-        os.makedirs(config_dir)
-
-    def write_json(json_obj, json_name):
-        with open(os.path.join(config_dir, json_name), 'w') as jsonFile:
-            json.dump(json_obj, jsonFile)
-
-    # Define config objects below
-    configs = {}
-
-    # Quantization int8
-    # https://github.com/openvinotoolkit/nncf/blob/develop/docs/compression_algorithms/Quantization.md
-    configs['quantization.json'] = {
-
-        "input_info": {
-            "sample_size": [batch_size, 3, input_size, input_size]
-        },
-
-        "epochs": 1,  # number of epochs to tune
-
-        "optimizer": {
-            "base_lr": 1e-5  # learning rate for the optimizer during tuning
-        },
-
-        "compression": {
-            "algorithm": "quantization",  # specify the algorithm here
-        }
-    }
-
-    # create json files, that will be used by nncf later
-    for config_key, config_val in configs.items():
-        write_json(config_val, config_key)
-
-    return configs
 
 
 main()
