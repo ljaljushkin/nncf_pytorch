@@ -1,7 +1,5 @@
 import os
-import shutil
 import time
-from datetime import datetime
 from urllib.request import urlretrieve
 
 import torch
@@ -13,14 +11,13 @@ import torch.utils.data.distributed
 import torchvision.datasets as datasets
 import torchvision.models as models
 import torchvision.transforms as transforms
-from torch.utils.tensorboard import SummaryWriter
 
 from nncf import NNCFConfig
 from nncf.torch import create_compressed_model
 from nncf.torch import register_default_init_args
 
 
-def download_tinyImg200(path,
+def download_tiny_imagenet_200(path,
                         url='http://cs231n.stanford.edu/tiny-imagenet-200.zip',
                         tarname='tiny-imagenet-200.zip'):
     if not os.path.exists(path):
@@ -36,37 +33,26 @@ def download_tinyImg200(path,
 
 DATASET_DIR = 'tiny-imagenet-200'
 DOWNLOAD_DIR = '/media/ssd'
-WORKING_DIR = '/home/nlyalyus/Developer/sandbox/tmp/int8_tutorial'
 
 if not os.path.exists(DATASET_DIR):
-    download_tinyImg200(DOWNLOAD_DIR)
-
-d = datetime.now()
-run_id = '{:%Y-%m-%d__%H-%M-%S}'.format(d)
-LOG_DIR = os.path.join(WORKING_DIR, run_id)
+    download_tiny_imagenet_200(DOWNLOAD_DIR)
 
 
 def main():
     num_classes = 200  # 200 is for tiny-imagenet, default is 1000 for imagenet
     init_lr = 1e-4
     batch_size = 256
-    workers = 4
     image_size = 64
-    data = DATASET_DIR
-    start_epoch = 0
     epochs = 4
-
-    tb = SummaryWriter(LOG_DIR)
 
     # create model
     model = models.resnet18(pretrained=True)
     # update the last FC layer for tiny-imagenet number of classes
     model.fc = nn.Linear(in_features=512, out_features=num_classes, bias=True)
     model.cuda()
-    model.fc = model.fc.cuda()
 
     # Data loading code
-    train_dir = os.path.join(data, 'train')
+    train_dir = os.path.join(DATASET_DIR, 'train')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -82,39 +68,26 @@ def main():
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True,
-        num_workers=workers, pin_memory=True, sampler=None)
+        num_workers=4, pin_memory=True, sampler=None)
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False,
-        num_workers=workers, pin_memory=True)
+        num_workers=4, pin_memory=True)
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=init_lr)
 
-    best_acc1 = 0
     acc1 = 0
-    for epoch in range(start_epoch, epochs):
-        # adjust_learning_rate(optimizer, epoch, init_lr)
-
-        # train for one epoch with nncf
-        train(train_loader, model, criterion, optimizer, epoch, tb)
+    print('Pre-training the floating-point model')
+    # Training loop
+    for epoch in range(0, epochs):
+        # run a single training epoch
+        train(train_loader, model, criterion, optimizer, epoch)
 
         # evaluate on validation set
-        acc1 = validate(val_loader, model, criterion, tb, epoch)
-
-        # remember best acc@1 and save checkpoint
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
-
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'acc1': acc1,
-            'optimizer': optimizer.state_dict(),
-        }, is_best)
-
-    print(f'Accuracy of FP32 model: {acc1:.3f}')
+        acc1 = validate(val_loader, model, criterion)
+    fp32_acc1 = acc1
 
     nncf_config_dict = {
         "input_info": {
@@ -129,35 +102,31 @@ def main():
     # Provide data loaders for compression algorithm initialization, if necessary
     nncf_config = register_default_init_args(nncf_config, train_loader)
 
+    print('Quantization model without fine-tuning (initialization only)')
     compression_ctrl, model = create_compressed_model(model, nncf_config)
 
-    # evaluate on validation set after initialization of quantization (POT case)
-    acc1 = validate(val_loader, model, criterion, tb, epoch=4)
-    print(f'Accuracy of initialized INT8 model: {acc1:.3f}')
+    # evaluate on validation set after initialization of quantization
+    int8_init_acc1 = validate(val_loader, model, criterion)
 
-    # for param_group in optimizer.param_groups:
-    #     param_group['lr'] = init_lr * 0.1
-
+    print('Quantization model with fine-tuning')
     # train for one epoch with NNCF
-    train(train_loader, model, criterion, optimizer, epoch=4, tb=tb)
+    train(train_loader, model, criterion, optimizer, epoch=epochs)
 
     # evaluate on validation set after Quantization-Aware Training (QAT case)
-    acc1 = validate(val_loader, model, criterion, tb, epoch=5)
-    print(f'Accuracy of tuned INT8 model: {acc1:.3f}')
+    int8_qat_acc1 = validate(val_loader, model, criterion)
 
+    # Export to ONNX that is supported by the OpenVINO™ toolkit
     compression_ctrl.export_model("resnet_int8.onnx")
 
-
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
-    torch.save(state, os.path.join(LOG_DIR, filename))
-    if is_best:
-        shutil.copyfile(os.path.join(LOG_DIR, filename), os.path.join(LOG_DIR, 'model_best.pth.tar'))
+    print(f'Accuracy of FP32 model: {fp32_acc1:.3f}')
+    print(f'Accuracy of initialized INT8 model: {int8_init_acc1:.3f}')
+    print(f'Accuracy of tuned INT8 model: {int8_qat_acc1:.3f}')
 
 
-def train(train_loader, model, criterion, optimizer, epoch, tb):
+def train(train_loader, model, criterion, optimizer, epoch):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
-    losses = AverageMeter('Loss', ':.4e')
+    losses = AverageMeter('Loss', ':6.3f')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
     progress = ProgressMeter(
@@ -200,16 +169,10 @@ def train(train_loader, model, criterion, optimizer, epoch, tb):
         if i % print_frequency == 0:
             progress.display(i)
 
-        global_step = len(train_loader) * epoch
-        tb.add_scalar("train/learning_rate", optimizer.param_groups[0]['lr'], i + global_step)
-        tb.add_scalar("train/loss", losses.avg, i + global_step)
-        tb.add_scalar("train/top1", top1.avg, i + global_step)
-        tb.add_scalar("train/top5", top5.avg, i + global_step)
 
-
-def validate(val_loader, model, criterion, tb, epoch):
+def validate(val_loader, model, criterion):
     batch_time = AverageMeter('Time', ':6.3f')
-    losses = AverageMeter('Loss', ':.4e')
+    losses = AverageMeter('Loss', ':6.3f')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
     progress = ProgressMeter(
@@ -247,10 +210,6 @@ def validate(val_loader, model, criterion, tb, epoch):
 
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
-        tb.add_scalar("val/loss", losses.avg, len(val_loader) * epoch)
-        tb.add_scalar("val/top1", top1.avg, len(val_loader) * epoch)
-        tb.add_scalar("val/top5", top5.avg, len(val_loader) * epoch)
-
     return top1.avg
 
 
@@ -294,13 +253,6 @@ class ProgressMeter(object):
         num_digits = len(str(num_batches // 1))
         fmt = '{:' + str(num_digits) + 'd}'
         return '[' + fmt + '/' + fmt.format(num_batches) + ']'
-
-
-def adjust_learning_rate(optimizer, epoch, init_lr):
-    """Sets the learning rate to the initial LR decayed by 10 every 4 epochs"""
-    lr = init_lr * (0.1 ** (epoch // 4))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
 
 
 def accuracy(output, target, topk=(1,)):
