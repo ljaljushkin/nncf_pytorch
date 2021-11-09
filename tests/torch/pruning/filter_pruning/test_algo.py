@@ -32,6 +32,7 @@ from tests.torch.pruning.helpers import BigPruningTestModel
 from tests.torch.pruning.helpers import TestModelMultipleForward
 from tests.torch.pruning.helpers import PruningTestModelConcatBN
 from tests.torch.pruning.helpers import DisconectedGraphModel
+from tests.torch.pruning.test_model_pruning_analysis import ModelWithNotRegUserModule
 
 
 def create_pruning_algo_with_config(config):
@@ -449,3 +450,12 @@ def test_disconnected_graph():
 
     assert sum(conv1.data['output_mask'].tensor) == 8
     assert sum(conv2.data['output_mask'].tensor) == 8
+
+
+def test_not_registered_user_module_with_prunable_op():
+    config = get_basic_pruning_config([1, 1, 1, 1])
+    config['compression']['algorithm'] = 'filter_pruning'
+    config['compression']['params']['prune_first_conv'] = True
+    config['compression']['params']['prune_last_conv'] = True
+    # TODO: expects warning?
+    pruned_model, _ = create_compressed_model_and_algo_for_test(ModelWithNotRegUserModule(), config)

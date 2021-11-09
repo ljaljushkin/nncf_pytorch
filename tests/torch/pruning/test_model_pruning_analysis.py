@@ -21,20 +21,22 @@ from typing import Type
 import pytest
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from nncf.common.graph import NNCFNodeName
 from nncf.common.pruning.clusterization import Cluster
 from nncf.common.pruning.clusterization import Clusterization
 from nncf.common.pruning.model_analysis import ModelAnalyzer
 from nncf.common.pruning.model_analysis import cluster_special_ops
+from nncf.common.pruning.pruning_node_selector import PruningNodeSelector
+from nncf.common.pruning.utils import is_prunable_depthwise_conv
 from nncf.torch.dynamic_graph.graph_tracer import ModelInputInfo
 from nncf.torch.layers import NNCF_PRUNING_MODULES_DICT
 from nncf.torch.nncf_network import NNCFNetwork
+from nncf.torch.pruning.filter_pruning.algo import FilterPruningBuilder
 from nncf.torch.pruning.operations import PTElementwisePruningOp
 from nncf.torch.pruning.operations import PTIdentityMaskForwardPruningOp
 from nncf.torch.pruning.operations import PT_PRUNING_OPERATOR_METATYPES
-from nncf.common.pruning.utils import is_prunable_depthwise_conv
-from nncf.torch.pruning.filter_pruning.algo import FilterPruningBuilder
 from tests.torch.helpers import create_compressed_model_and_algo_for_test
 from tests.torch.helpers import create_nncf_model_and_single_algo_builder
 from tests.torch.pruning.helpers import DepthwiseConvolutionModel
@@ -238,6 +240,44 @@ def test_pruning_node_selector(test_input_info_struct_: GroupPruningModulesTestS
         cluster_node_ids.sort()
 
         assert Counter(cluster_node_ids) == Counter(group_by_id)
+
+
+class NotRegisteredUserModule(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, **kwargs):
+        super().__init__(in_channels, out_channels, kernel_size, stride, **kwargs)
+
+    def forward(self, x):
+        return F.conv2d(x, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+
+
+class ModelWithNotRegUserModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.user_module = NotRegisteredUserModule(1,1,1)
+
+    def forward(self, x):
+        x = self.user_module(x)
+        return x
+
+
+def test_not_registered_user_module_with_prunable_op(tmp_path):
+    pruning_operations = [v.op_func_name for v in NNCF_PRUNING_MODULES_DICT]
+    # TODO DummyElementwiseMetatype??
+    pruning_node_selector = PruningNodeSelector(PT_PRUNING_OPERATOR_METATYPES,
+                                                pruning_operations,
+                                                [],
+                                                None,
+                                                None,
+                                                True,
+                                                True,
+                                                False)
+    nncf_network = NNCFNetwork(ModelWithNotRegUserModule(), input_infos=[ModelInputInfo([1, 1, 1, 1])])
+    graph = nncf_network.get_original_graph()
+    pruning_groups = pruning_node_selector.create_pruning_groups(graph)
+    # TODO: expect empty clustering
+    for cluster in pruning_groups.get_all_clusters():
+        for element in cluster.elements:
+            print(element)
 
 
 class GroupSpecialModulesTestStruct:

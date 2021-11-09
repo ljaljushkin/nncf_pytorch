@@ -357,6 +357,49 @@ class TestInsertionCommands:
             self.check_order(list(module.post_ops.values()), hook_list, order)
 
 
+class NotRegisteredUserModule(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.ones([1]))
+
+    def forward(self, input_):
+        return input_ * self.weight
+
+
+class TwoConvTestModelWithNotRegUserModule(TwoConvTestModel):
+    def __init__(self):
+        super().__init__()
+        self.user_module = NotRegisteredUserModule()
+
+    def forward(self, x):
+        x = super().forward(x)
+        x = self.user_module(x)
+        return x
+
+
+def test_insert_at_not_registered_module(tmp_path):
+    compressed_model = NNCFNetwork(TwoConvTestModelWithNotRegUserModule(), [ModelInputInfo([1,1,4,4])])
+    hook = BaseOp(lambda x: x)
+    node_name = 'TwoConvTestModelWithNotRegUserModule/NotRegisteredUserModule[user_module]/__mul___0'
+    point = PTTargetPoint(target_type=TargetType.OPERATION_WITH_WEIGHTS, target_node_name=node_name)
+    command = PTInsertionCommand(point, hook, TransformationPriority.DEFAULT_PRIORITY)
+    layout = PTTransformationLayout()
+    layout.register(command)
+    with pytest.raises(RuntimeError):
+        PTModelTransformer(compressed_model).transform(layout)
+
+
+def test_can_insert_to_registered_module(tmp_path):
+    compressed_model = NNCFNetwork(TwoConvTestModelWithUserModule(), [ModelInputInfo([1, 1, 4, 4])])
+    hook = BaseOp(lambda x: x)
+    node_name = 'TwoConvTestModelWithUserModule/NNCFUserModuleOfUser[user_module]/__mul___0'
+    point = PTTargetPoint(target_type=TargetType.OPERATION_WITH_WEIGHTS, target_node_name=node_name)
+    command = PTInsertionCommand(point, hook, TransformationPriority.DEFAULT_PRIORITY)
+    layout = PTTransformationLayout()
+    layout.register(command)
+    PTModelTransformer(compressed_model).transform(layout)
+
+
 def mark_input_ports_lexicographically_based_on_input_node_key(graph: nx.DiGraph):
     for node_key in graph.nodes:
         input_edges = graph.in_edges(node_key)

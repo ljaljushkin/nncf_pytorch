@@ -64,6 +64,7 @@ from nncf.torch.graph.transformations.commands import PTInsertionCommand
 from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.graph.transformations.layout import PTTransformationLayout
 from nncf.torch.knowledge_distillation.knowledge_distillation_handler import KnowledgeDistillationLossHandler
+from nncf.torch.layer_utils import _NNCFModuleMixin
 from nncf.torch.layers import NNCF_MODULES
 from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT
 from nncf.torch.module_operations import UpdateWeight
@@ -324,6 +325,9 @@ class NNCFNetwork(nn.Module, PostGraphBuildActing):
             self._compressed_context.register_post_hooks(fn_list, point.op_address)
         elif point.insertion_type in [PTInsertionType.NNCF_MODULE_PRE_OP,
                                       PTInsertionType.NNCF_MODULE_POST_OP]:
+            nncf_module = self.get_module_by_scope(point.module_scope)
+            if not isinstance(nncf_module, _NNCFModuleMixin):
+                raise RuntimeError('Internal error: failed to insert pre/post op for the module not wrapped by NNCF')
             norm_target_scope = self._normalize_variable_recurrent_scope(point.module_scope)
             norm_nncf_scopes = [self._normalize_variable_recurrent_scope(x) for x in self._nncf_module_scopes]
             assert norm_target_scope in norm_nncf_scopes  # Required for proper Recurrent/VariableRecurrent addressing
