@@ -281,6 +281,12 @@ def main_worker(current_gpu, config: SampleConfig):
                   train_loader, train_sampler, val_loader, best_acc1)
 
     if 'test' in config.mode:
+        checkpoint_path = Path(resuming_checkpoint_path).parent / 'model_vs_compression_states.pth'
+        checkpoint = {
+            MODEL_STATE_ATTR: model.state_dict(),
+            COMPRESSION_STATE_ATTR: compression_ctrl.get_compression_state(),
+        }
+        torch.save(checkpoint, checkpoint_path)
         validate(val_loader, model, criterion, config)
 
     config.mlflow.end_run()

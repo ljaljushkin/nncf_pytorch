@@ -98,7 +98,7 @@ class HAWQPrecisionInitParams(BasePrecisionInitParams):
             iter_number=hawq_init_config_dict.get('iter_number', 200),
             tolerance=hawq_init_config_dict.get('tolerance', 1e-4),
             compression_ratio=hawq_init_config_dict.get('compression_ratio', 1.5),
-            dump_hawq_data=hawq_init_config_dict.get('dump_init_precision_data', False),
+            dump_hawq_data=hawq_init_config_dict.get('dump_init_precision_data', True),
             bitwidth_assignment_mode=BitwidthAssignmentMode.from_str(
                 hawq_init_config_dict.get('bitwidth_assignment_mode', BitwidthAssignmentMode.LIBERAL.value)
             )
