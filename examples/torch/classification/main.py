@@ -209,10 +209,10 @@ def main_worker(current_gpu, config: SampleConfig):
     resuming_checkpoint = None
     if resuming_checkpoint_path is not None:
         resuming_checkpoint = load_resuming_checkpoint(resuming_checkpoint_path)
-    model_state_dict, compression_state = extract_model_and_compression_states(resuming_checkpoint)
-    compression_ctrl, model = create_compressed_model(model, nncf_config, compression_state)
-    if model_state_dict is not None:
-        load_state(model, model_state_dict, is_resume=True)
+    # model_state_dict, compression_state = extract_model_and_compression_states(resuming_checkpoint)
+    compression_ctrl, model = create_compressed_model(model, nncf_config)
+    if resuming_checkpoint is not None:
+        load_state(model, resuming_checkpoint, is_resume=True)
 
     if is_export_only:
         compression_ctrl.export_model(config.to_onnx)
