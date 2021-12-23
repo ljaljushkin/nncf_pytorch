@@ -13,42 +13,37 @@
 
 import sys
 from argparse import ArgumentParser
+from os import replace
 
 import torch
 from os import listdir, makedirs
 from os.path import isfile, join, exists
 
+from pathlib import Path
+
 
 def main(argv):
     parser = ArgumentParser()
-    parser.add_argument('-i', '--input-folder', help='Path to directory with given checkpoints to modify',
-                        required=True)
-    parser.add_argument('-o', '--output-folder', help='Path to directory to save modified checkpoints', required=True)
+    parser.add_argument('-i', required=True)
     args = parser.parse_args(args=argv)
 
-    src_dir = args.input_folder
-    dst_dir = args.output_folder
-    if not exists(dst_dir):
-        makedirs(dst_dir)
+    sd = torch.load(args.i)
+    if 'state_dict' in sd:
+        sd = sd['state_dict']
 
-    pth_files = [(join(src_dir, f), join(dst_dir, f)) for f in listdir(src_dir) if
-                 isfile(join(src_dir, f)) and ('.pth' in f or '.sd' in f)]
+    new_sd = {}
+    for k, v in sd.items():
+        old_k = k
+        if 'activation_quantizers' in k and 'INPUT' not in k:
+            key_split = k.split('.')
+            key_split[-2] += '|OUTPUT'
+            k = '.'.join(key_split)
+            # k = k.replace('ConvBNReLU', 'ConvBNActivation')
+            k = k.replace('activation_quantizers', 'external_quantizers')
+            print(f'{old_k} -> {k}')
+        new_sd[k] = v
+    torch.save(new_sd, Path(args.i).parent / 'model_patched.sd')
 
-    for pair in pth_files:
-        src_file, dst_file = pair
-        sd = pth = torch.load(src_file)
-        if 'state_dict' in pth:
-            sd = pth['state_dict']
-
-        new_sd = {}
-        for k, v in sd.items():
-            if 'activation_quantizers' in k and 'INPUT' not in k:
-                key_split = k.split('.')
-                key_split[-2] += '|OUTPUT'
-                k = '.'.join(key_split)
-            new_sd[k] = v
-        pth['state_dict'] = new_sd
-        torch.save(pth, dst_file)
 
 if __name__ == '__main__':
     main(sys.argv[1:])

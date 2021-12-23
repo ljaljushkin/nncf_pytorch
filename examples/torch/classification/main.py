@@ -209,10 +209,10 @@ def main_worker(current_gpu, config: SampleConfig):
     resuming_checkpoint = None
     if resuming_checkpoint_path is not None:
         resuming_checkpoint = load_resuming_checkpoint(resuming_checkpoint_path)
-    # model_state_dict, compression_state = extract_model_and_compression_states(resuming_checkpoint)
-    compression_ctrl, model = create_compressed_model(model, nncf_config)
-    if resuming_checkpoint is not None:
-        load_state(model, resuming_checkpoint, is_resume=True)
+    model_state_dict, compression_state = extract_model_and_compression_states(resuming_checkpoint)
+    compression_ctrl, model = create_compressed_model(model, nncf_config, compression_state)
+    if model_state_dict is not None:
+        load_state(model, model_state_dict, is_resume=True)
 
     if is_export_only:
         compression_ctrl.export_model(config.to_onnx)
@@ -281,6 +281,12 @@ def main_worker(current_gpu, config: SampleConfig):
                   train_loader, train_sampler, val_loader, best_acc1)
 
     if 'test' in config.mode:
+        # checkpoint_path = Path(resuming_checkpoint_path).parent / 'model_vs_compression_states.pth'
+        # checkpoint = {
+        #     MODEL_STATE_ATTR: model.state_dict(),
+        #     COMPRESSION_STATE_ATTR: compression_ctrl.get_compression_state(),
+        # }
+        # torch.save(checkpoint, checkpoint_path)
         validate(val_loader, model, criterion, config)
 
     config.mlflow.end_run()
