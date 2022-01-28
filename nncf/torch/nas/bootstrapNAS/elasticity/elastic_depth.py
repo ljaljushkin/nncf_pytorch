@@ -75,7 +75,7 @@ class ElasticDepthHandler(SingleElasticHandler):
         if not self._is_search_space_obsolete:
             return self._cached_search_space
         range_block_ids = range(0, len(self._skipped_blocks))
-        # TODO(nlyalyus): can be a huge search space. no need to iterate and filter all of them?
+        # TODO(nlyalyus): can be a huge search space. no need to iterate and filter all of them. (ticket 69746)
         possible_depth_configs = [list(combinations(range_block_ids, i + 1)) for i in range_block_ids]
         possible_depth_configs = [y for x in possible_depth_configs for y in x]
         valid_depth_configs = []

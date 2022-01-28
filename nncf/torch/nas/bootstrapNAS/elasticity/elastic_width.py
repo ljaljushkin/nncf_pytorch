@@ -72,6 +72,8 @@ from nncf.torch.pruning.filter_pruning.functions import tensor_l2_normalizer
 from nncf.torch.pruning.operations import PTElementwisePruningOp
 from nncf.torch.pruning.operations import PT_PRUNING_OPERATOR_METATYPES
 from nncf.torch.pruning.tensor_processor import PTNNCFPruningTensorProcessor
+from nncf.torch.pruning.utils import collect_input_shapes
+from nncf.torch.pruning.utils import collect_output_shapes
 from nncf.torch.tensor import PTNNCFTensor
 from nncf.torch.utils import get_filters_num
 
@@ -362,7 +364,8 @@ class ElasticWidthHandler(SingleElasticHandler):
 
     def get_kwargs_for_flops_counting(self) -> Dict[str, Any]:
         graph = self._target_model.get_graph()
-        modules_in_shapes, modules_out_shapes = self._calculate_module_io_shapes(graph)
+        modules_out_shapes = collect_output_shapes(graph)
+        modules_in_shapes = collect_input_shapes(graph)
 
         GENERAL_CONV_LAYER_METATYPES = [
             PTConv1dMetatype,
@@ -390,8 +393,6 @@ class ElasticWidthHandler(SingleElasticHandler):
             for elastic_width_info in group.elements:
                 tmp_out_channels[elastic_width_info.node_name] = new_out_channels_num
 
-            # TODO(nlyalyus): next_nodes is complicated!!! maybe to couple dynamic input operation??
-            #  Is it added separately??
             # Prune in_channels in all next nodes of cluster
             for node_name in self._cluster_next_nodes[group.id]:
                 tmp_in_channels[node_name] -= num_of_pruned_elems
@@ -412,7 +413,6 @@ class ElasticWidthHandler(SingleElasticHandler):
 
         # 1. Calculate filter importance for all groups of prunable layers
         for group in self._pruned_module_groups_info.get_all_clusters():
-            # TODO(nlyalyus): some code duplication with pruning!
             filters_num = torch.tensor([get_filters_num(minfo.module) for minfo in group.elements])
             assert torch.all(filters_num == filters_num[0])
             device = group.elements[0].module.weight.device
@@ -470,27 +470,6 @@ class ElasticWidthHandler(SingleElasticHandler):
                 nncf_logger.warning(f'Pair of nodes [{start_node_name, end_node_name}] has a different width: '
                                     f'{start_width} != {end_width}')
         return pair_indexes
-
-    @staticmethod
-    def _calculate_module_io_shapes(graph) -> Tuple[Dict[str, int], Dict[str, int]]:
-        modules_out_shapes = dict()
-        modules_in_shapes = dict()
-        for node in graph.get_nodes_by_types([v.op_func_name for v in NNCF_GENERAL_CONV_MODULES_DICT]):
-            out_edge = graph.get_output_edges(node)[0]
-            out_shape = out_edge.tensor_shape
-            modules_out_shapes[node.node_name] = out_shape[2:]
-        for node in graph.get_nodes_by_types([v.op_func_name for v in NNCF_LINEAR_MODULES_DICT]):
-            out_edge = graph.get_output_edges(node)[0]
-            out_shape = out_edge.tensor_shape
-            modules_out_shapes[node.node_name] = out_shape[-1]
-
-            in_edge = graph.get_input_edges(node)[0]
-            in_shape = in_edge.tensor_shape
-            if len(in_shape) == 1:
-                modules_in_shapes[node.node_name] = in_shape[0]
-            else:
-                modules_in_shapes[node.node_name] = in_shape[1:]
-        return modules_in_shapes, modules_out_shapes
 
 
 class EWBuilderStateNames:
