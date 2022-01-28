@@ -99,7 +99,7 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
         """
         super().load_state(state)
         list_stage_descriptors = state[self._state_names.LIST_STAGE_DESCRIPTIONS]
-        # TODO(nlyalyus): no conflict resolving between value in state and in config. It's always overridden by state
+        # No conflict resolving with the related config options, parameters are overridden by compression state
         self.list_stage_descriptors = list(map(lambda x: StageDescriptor.from_state(x), list_stage_descriptors))
 
     def get_state(self) -> Dict[str, Any]:

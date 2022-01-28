@@ -136,5 +136,5 @@ class ElasticityBuilder(PTCompressionAlgorithmBuilder):
         self._builder_states = state_without_name[self._state_names.BUILDER_STATES]
         enabled_elasticity_dims_state = state_without_name[self._state_names.ENABLED_ELASTICITY_DIMS]
 
-        # TODO(nlyalyus): no conflict resolving with config, it's overridden by state now
+        # No conflict resolving with the related config options, parameters are overridden by compression state
         self._enabled_elasticity_dims = list(map(lambda x: ElasticityDim.from_str(x), enabled_elasticity_dims_state))

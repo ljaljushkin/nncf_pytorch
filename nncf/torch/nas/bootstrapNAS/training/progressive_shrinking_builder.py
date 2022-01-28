@@ -95,5 +95,5 @@ class ProgressiveShrinkingBuilder(PTCompressionAlgorithmBuilder):
         elasticity_builder_state = state_without_name[self._state_names.ELASTICITY_BUILDER_STATE]
         self._elasticity_builder.load_state(elasticity_builder_state)
         progressivity_of_elasticity = state_without_name[self._state_names.PROGRESSIVITY_OF_ELASTICITY]
-        # TODO(nlyalyus): no conflict resolving between value in state and in config. It's always overridden by state
+        # No conflict resolving with the related config options, parameters are overridden by compression state
         self._progressivity_of_elasticity = [ElasticityDim.from_str(dim) for dim in progressivity_of_elasticity]
