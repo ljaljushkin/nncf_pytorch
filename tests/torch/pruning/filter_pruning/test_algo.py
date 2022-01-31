@@ -25,6 +25,7 @@ from nncf.torch.pruning.filter_pruning.layers import apply_filter_binary_mask
 from nncf.common.pruning.utils import calculate_in_out_channels_by_masks
 from nncf.common.pruning.utils import count_flops_and_weights
 from nncf.common.pruning.schedulers import ExponentialPruningScheduler
+from nncf.torch.pruning.utils import _calculate_output_shape
 from nncf.torch.tensor_statistics.collectors import PTNNCFCollectorTensorProcessor
 from nncf.torch.pruning.filter_pruning.algo import GENERAL_CONV_LAYER_METATYPES
 from nncf.torch.pruning.filter_pruning.algo import LINEAR_LAYER_METATYPES
@@ -436,7 +437,7 @@ def test_clusters_for_multiple_forward(repeat_seq_of_shared_convs,
         PruningTestModelConcatBN
     )
 )
-def test_func_calulation_flops_for_conv(model):
+def test_func_calculation_flops_for_conv(model):
     # Check _calculate_output_shape that used for disconnected graph
     config = get_basic_pruning_config([1, 1, 8, 8])
     config['compression']['algorithm'] = 'filter_pruning'
@@ -451,7 +452,7 @@ def test_func_calulation_flops_for_conv(model):
     for node_name, ref_shape in pruning_algo._modules_out_shapes.items():
         # ref_shape get from tracing graph
         node = graph.get_node_by_name(node_name)
-        shape = pruning_algo._calculate_output_shape(graph, node)
+        shape = _calculate_output_shape(graph, node)
         assert ref_shape == shape, f"Incorrect calculation output name for {node_name}"
 
 
