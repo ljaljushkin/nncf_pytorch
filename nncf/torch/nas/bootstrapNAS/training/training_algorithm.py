@@ -108,7 +108,7 @@ class EpochBasedTrainingAlgorithm:
 
             compression_stage = self._training_ctrl.compression_stage()
 
-            self._training_ctrl.multi_elasticity_handler.activate_minimal_subnet()
+            self._training_ctrl.multi_elasticity_handler.activate_minimum_subnet()
             min_subnet_acc1, acc5, loss = self._validate_subnet(val_fn, val_loader)
             if log_validation_info:
                 nncf_logger.info('* Acc@1 {:.3f} Acc@5 {:.3f} for Minimal SubNet={}'.format(

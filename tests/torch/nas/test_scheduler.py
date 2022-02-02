@@ -18,7 +18,7 @@ from typing import List
 import pytest
 
 from nncf.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
-from nncf.torch.nas.bootstrapNAS.elasticity.base_handler import SingleElasticHandler
+from nncf.torch.nas.bootstrapNAS.elasticity.base_handler import SingleElasticityHandler
 from nncf.torch.nas.bootstrapNAS.elasticity.elastic_depth import ElasticDepthHandler
 from nncf.torch.nas.bootstrapNAS.elasticity.elastic_width import ElasticWidthHandler
 from nncf.torch.nas.bootstrapNAS.elasticity.multi_elasticity_handler import MultiElasticityHandler
@@ -96,7 +96,7 @@ class TestScheduler:
         mock_model = MockModel()
         mock_width_handler = mocker.MagicMock(spec=ElasticWidthHandler)
         mock_depth_handler = mocker.MagicMock(spec=ElasticDepthHandler)
-        mock_kernel_handler = mocker.MagicMock(spec=SingleElasticHandler)
+        mock_kernel_handler = mocker.MagicMock(spec=SingleElasticityHandler)
         handlers = OrderedDict({
             ElasticityDim.WIDTH: mock_width_handler,
             ElasticityDim.KERNEL: mock_kernel_handler,
@@ -110,35 +110,35 @@ class TestScheduler:
                                                        schedule_params)
         scheduler = training_algo.scheduler
         scheduler.epoch_step()
-        mock_width_handler.activate.assert_not_called()
-        mock_depth_handler.activate.assert_not_called()
-        mock_kernel_handler.activate.assert_called()
+        mock_width_handler.enable.assert_not_called()
+        mock_depth_handler.enable.assert_not_called()
+        mock_kernel_handler.enable.assert_called()
 
         scheduler.epoch_step()
-        mock_width_handler.activate.assert_not_called()
-        mock_depth_handler.activate.assert_called()
-        mock_kernel_handler.activate.assert_called()
+        mock_width_handler.enable.assert_not_called()
+        mock_depth_handler.enable.assert_called()
+        mock_kernel_handler.enable.assert_called()
         assert mock_depth_handler.depth_indicator == 1
 
         scheduler.epoch_step()
-        mock_width_handler.activate.assert_not_called()
-        mock_depth_handler.activate.assert_called()
-        mock_kernel_handler.activate.assert_called()
+        mock_width_handler.enable.assert_not_called()
+        mock_depth_handler.enable.assert_called()
+        mock_kernel_handler.enable.assert_called()
         assert mock_depth_handler.depth_indicator == 2
 
         scheduler.epoch_step()
-        mock_width_handler.activate.assert_called()
+        mock_width_handler.enable.assert_called()
         mock_width_handler.reorganize_weights.assert_called()
         assert mock_width_handler.width_num_params_indicator == 2
 
         scheduler.epoch_step()
-        mock_width_handler.activate.assert_called()
+        mock_width_handler.enable.assert_called()
         mock_width_handler.reorganize_weights.assert_called()
         assert mock_width_handler.width_num_params_indicator == 3
 
     def test_get_total_training_epochs(self, schedule_params, mocker):
         scheduler = BootstrapNASScheduler(mocker.stub(), schedule_params,
-                                          enabled_elasticity_dims=LIST_DIMS__KDW,
+                                          available_elasticity_dims=LIST_DIMS__KDW,
                                           progressivity_of_elasticity=LIST_DIMS__KDW)
         assert scheduler.get_total_training_epochs() == 5
 

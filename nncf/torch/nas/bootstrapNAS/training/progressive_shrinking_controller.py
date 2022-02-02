@@ -46,12 +46,9 @@ class ProgressiveShrinkingController(BNASTrainingController):
         self._bn_adaptation = bn_adaptation
         self._progressivity_of_elasticity = progressivity_of_elasticity
         self._target_model = target_model
-        width_handler = self.multi_elasticity_handler.width_handler
-        if width_handler is not None:
-            width_handler.width_num_params_indicator = 1
         self._loss = ZeroCompressionLoss(next(target_model.parameters()).device)
-        self._enabled_elasticity_dims = self.multi_elasticity_handler.get_enabled_elasticity_dims()
-        self._scheduler = BootstrapNASScheduler(self, schedule_params, self._enabled_elasticity_dims,
+        self._available_elasticity_dims = self.multi_elasticity_handler.get_available_elasticity_dims()
+        self._scheduler = BootstrapNASScheduler(self, schedule_params, self._available_elasticity_dims,
                                                 self._progressivity_of_elasticity)
 
     @property
@@ -82,11 +79,11 @@ class ProgressiveShrinkingController(BNASTrainingController):
         return self._scheduler.get_total_training_epochs()
 
     def set_stage(self, stage_desc: StageDescriptor):
-        for elasticity_dim in self._enabled_elasticity_dims:
+        for elasticity_dim in self._available_elasticity_dims:
             if elasticity_dim in stage_desc.train_dims:
-                self.multi_elasticity_handler.activate_elasticity(elasticity_dim)
+                self.multi_elasticity_handler.enable_elasticity(elasticity_dim)
             else:
-                self.multi_elasticity_handler.deactivate_elasticity(elasticity_dim)
+                self.multi_elasticity_handler.disable_elasticity(elasticity_dim)
 
         width_handler = self.multi_elasticity_handler.width_handler
         depth_handler = self.multi_elasticity_handler.depth_handler

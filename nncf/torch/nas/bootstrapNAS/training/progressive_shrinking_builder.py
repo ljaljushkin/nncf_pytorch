@@ -70,7 +70,7 @@ class ProgressiveShrinkingBuilder(PTCompressionAlgorithmBuilder):
             target_model, elasticity_ctrl, self._bn_adaptation, self._progressivity_of_elasticity, schedule_params)
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
-        enabled_elasticity_dims = self._elasticity_builder.get_enabled_elasticity_dims()
+        enabled_elasticity_dims = self._elasticity_builder.get_available_elasticity_dims()
         self.check_elasticity_dims_consistency(enabled_elasticity_dims, self._progressivity_of_elasticity)
         return self._elasticity_builder.get_transformation_layout(target_model)
 

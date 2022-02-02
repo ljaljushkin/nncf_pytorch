@@ -30,12 +30,12 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
 
     def __init__(self, training_ctrl: 'ProgressiveShrinkingController',
                  params: Dict[str, List[Dict]],
-                 enabled_elasticity_dims: List[ElasticityDim],
+                 available_elasticity_dims: List[ElasticityDim],
                  progressivity_of_elasticity: List[ElasticityDim]):
         super().__init__()
         self._training_ctrl = training_ctrl
         self._params = params if params else self._get_default_params()
-        self._enabled_elasticity_dims = enabled_elasticity_dims
+        self._available_elasticity_dims = available_elasticity_dims
         self._progressivity_of_elasticity = progressivity_of_elasticity
 
         list_stage_descriptions = self._params.get('list_stage_descriptions', [])
@@ -50,14 +50,14 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
     @property
     def list_stage_descriptors(self) -> List[StageDescriptor]:
         if not self._is_elasticity_dims_validated:
-            self._validate_elasticity_dims(self._enabled_elasticity_dims, self._progressivity_of_elasticity)
+            self._validate_elasticity_dims(self._available_elasticity_dims, self._progressivity_of_elasticity)
         self._is_elasticity_dims_validated = True
         return self._list_stage_descriptors
 
     @list_stage_descriptors.setter
     def list_stage_descriptors(self, stage_descriptors: List[StageDescriptor]):
         self._list_stage_descriptors = stage_descriptors
-        self._validate_elasticity_dims(self._enabled_elasticity_dims, self._progressivity_of_elasticity)
+        self._validate_elasticity_dims(self._available_elasticity_dims, self._progressivity_of_elasticity)
         self._is_elasticity_dims_validated = True
 
     def is_final_stage(self) -> bool:
