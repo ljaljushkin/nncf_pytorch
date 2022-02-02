@@ -113,7 +113,7 @@ LIST_OF_ME_DESCS = [
             supernet=ModelStats(1_776_701_440, 6_872_768),
             kernel_stage=ModelStats(1_776_701_440, 6_872_768),
             depth_stage=ModelStats(472_272_896, 3_145_408),
-            width_stage=ModelStats(101_142_528, 722_784)
+            width_stage=ModelStats(415_191_040, 1_769_312)
         ),
         is_auto_skipped_blocks=True,
     ),

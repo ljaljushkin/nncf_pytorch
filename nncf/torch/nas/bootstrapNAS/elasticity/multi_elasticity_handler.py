@@ -33,7 +33,14 @@ from nncf.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
 SubnetConfig = OrderedDictType[ElasticityDim, ElasticityConfig]
 
 
+class MEHandlerStateNames:
+    IS_HANDLER_ENABLED_MAP = 'is_handler_enabled_map'
+    STATES_OF_HANDLERS = 'states_of_handlers'
+
+
 class MultiElasticityHandler(ElasticityHandler):
+    _state_names = MEHandlerStateNames
+
     def __init__(self, handlers: OrderedDictType[ElasticityDim, SingleElasticityHandler]):
         self._handlers = handlers
         self._is_handler_enabled_map = {elasticity_dim: True for elasticity_dim in handlers}
@@ -126,10 +133,17 @@ class MultiElasticityHandler(ElasticityHandler):
 
         :param state: Output of `get_state()` method.
         """
-        for dim_str, handler_state in state.items():
+        states_of_handlers = state[self._state_names.STATES_OF_HANDLERS]
+        is_handler_enabled_map = state[self._state_names.IS_HANDLER_ENABLED_MAP]
+
+        for dim_str, handler_state in states_of_handlers.items():
             dim = ElasticityDim.from_str(dim_str)
             if dim in self._handlers:
                 self._handlers[dim].load_state(handler_state)
+
+        for dim_str, is_enabled in is_handler_enabled_map.items():
+            dim = ElasticityDim.from_str(dim_str)
+            self._is_handler_enabled_map[dim] = is_enabled
 
     def get_state(self) -> Dict[str, Any]:
         """
@@ -138,7 +152,12 @@ class MultiElasticityHandler(ElasticityHandler):
 
         :return: state of the object
         """
-        return {dim.value: handler.get_state() for dim, handler in self._handlers.items()}
+        states_of_handlers = {dim.value: handler.get_state() for dim, handler in self._handlers.items()}
+        is_handler_enabled_map = {dim.value: is_enabled for dim, is_enabled in self._is_handler_enabled_map.items()}
+        return {
+            self._state_names.STATES_OF_HANDLERS: states_of_handlers,
+            self._state_names.IS_HANDLER_ENABLED_MAP: is_handler_enabled_map
+        }
 
     def enable_all(self):
         self._is_handler_enabled_map = {elasticity_dim: True for elasticity_dim in self._is_handler_enabled_map}

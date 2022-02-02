@@ -275,8 +275,7 @@ REF_COMPRESSION_STATE_FOR_TWO_CONV = {
             },
             'multi_elasticity_handler_state': {
                 'depth': {
-                    'active_config': [0],
-                    'is_active': True
+                    'active_config': [0]
                 },
                 'width': {
                     'active_config': {0: 1},
