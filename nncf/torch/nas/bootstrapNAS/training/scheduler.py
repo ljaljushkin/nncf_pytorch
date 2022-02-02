@@ -18,6 +18,7 @@ from typing import Tuple
 
 from nncf.common.schedulers import BaseCompressionScheduler
 from nncf.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
+from nncf.torch.nas.bootstrapNAS.training.base_training import BNASTrainingAlgorithm
 from nncf.torch.nas.bootstrapNAS.training.stage_descriptor import StageDescriptor
 
 
@@ -26,9 +27,14 @@ class BNASSchedulerStateNames:
 
 
 class BootstrapNASScheduler(BaseCompressionScheduler):
+    """
+    The cornerstone of supernet training within a NAS algorithm. The `step()` and `epoch_step()` methods of the
+    compression scheduler must be called in the beginning of each training step and epoch, respectively.
+    These methods trigger a subnet activations, elasticity configuration during the training.
+    """
     _state_names = BNASSchedulerStateNames
 
-    def __init__(self, training_ctrl: 'ProgressiveShrinkingController',
+    def __init__(self, training_ctrl: BNASTrainingAlgorithm,
                  params: Dict[str, List[Dict]],
                  available_elasticity_dims: List[ElasticityDim],
                  progressivity_of_elasticity: List[ElasticityDim]):
@@ -49,32 +55,60 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
 
     @property
     def list_stage_descriptors(self) -> List[StageDescriptor]:
+        """
+        :return: a list of stage descriptors (parameters of the training stage).
+        """
         if not self._is_elasticity_dims_validated:
             self._validate_elasticity_dims(self._available_elasticity_dims, self._progressivity_of_elasticity)
         self._is_elasticity_dims_validated = True
         return self._list_stage_descriptors
 
     @list_stage_descriptors.setter
-    def list_stage_descriptors(self, stage_descriptors: List[StageDescriptor]):
+    def list_stage_descriptors(self, stage_descriptors: List[StageDescriptor]) -> None:
+        """
+        Sets a given stage descriptors to the schedule. Can be used on loading state from a checkpoint.
+
+        :param stage_descriptors: list of stage descriptors
+        """
         self._list_stage_descriptors = stage_descriptors
         self._validate_elasticity_dims(self._available_elasticity_dims, self._progressivity_of_elasticity)
         self._is_elasticity_dims_validated = True
 
-    def is_final_stage(self) -> bool:
-        return self.current_stage_idx == len(self.list_stage_descriptors) - 1
-
     def step(self, next_step: Optional[int] = None) -> None:
+        """
+        Should be called at the beginning of each training step to prepare
+        the compression method to continue training the model in the `next_step`.
+
+        :param next_step: The global step index for which the compression scheduler
+            will update the state of the compression method.
+        """
         self._training_ctrl.step()
 
     def epoch_step(self, next_epoch: Optional[int] = None) -> None:
+        """
+        Should be called at the beginning of each training epoch to prepare
+        the compression method to continue training the model in the `next_epoch`.
+
+        :param next_epoch: The epoch index for which the compression scheduler
+            will update the state of the compression method.
+        """
         super().epoch_step(next_epoch)
-        stage_desc, stage_desc_idx = self.get_train_dims_for_epoch()
+        stage_desc, stage_desc_idx = self.get_current_stage_desc()
         if stage_desc is not None:
             if stage_desc_idx != self.current_stage_idx:
                 self._training_ctrl.set_stage(stage_desc)
                 self.current_stage_idx = stage_desc_idx
 
-    def get_train_dims_for_epoch(self) -> Tuple[Optional[StageDescriptor], int]:
+    def is_final_stage(self) -> bool:
+        """
+        :return: True, if final stage has been reached, False - otherwise
+        """
+        return self.current_stage_idx == len(self.list_stage_descriptors) - 1
+
+    def get_current_stage_desc(self) -> Tuple[Optional[StageDescriptor], int]:
+        """
+        :return: current stage descriptor and its index in the list of all descriptors
+        """
         partial_epochs = 0
         stage_desc_idx = 0
         for stage_desc in self.list_stage_descriptors:
@@ -84,7 +118,12 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
             stage_desc_idx += 1
         return None, -1
 
-    def get_total_training_epochs(self):
+    def get_total_training_epochs(self) -> int:
+        """
+        Returns total number of epochs required for the supernet training.
+
+        :return: number of epochs
+        """
         total_epochs = 0
         for stage_desc in self.list_stage_descriptors:
             total_epochs += stage_desc.epochs

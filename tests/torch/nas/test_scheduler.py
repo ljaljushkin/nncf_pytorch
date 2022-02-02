@@ -67,14 +67,14 @@ class TestScheduler:
 
         scheduler.current_epoch = 0
         ref_desc = StageDescriptor(train_dims=[ElasticityDim.KERNEL], epochs=1)
-        act_desc, act_idx = scheduler.get_train_dims_for_epoch()
+        act_desc, act_idx = scheduler.get_current_stage_desc()
         assert ref_desc == act_desc
         assert act_idx == 0
 
         scheduler.current_epoch = 2
         ref_desc.train_dims.append(ElasticityDim.DEPTH)
         ref_desc.depth_indicator = 2
-        act_desc, act_idx = scheduler.get_train_dims_for_epoch()
+        act_desc, act_idx = scheduler.get_current_stage_desc()
         assert ref_desc == act_desc
         assert act_idx == 2
 
@@ -82,13 +82,13 @@ class TestScheduler:
         ref_desc.train_dims.append(ElasticityDim.WIDTH)
         ref_desc.reorg_weights = True
         ref_desc.width_indicator = 2
-        act_desc, act_idx = scheduler.get_train_dims_for_epoch()
+        act_desc, act_idx = scheduler.get_current_stage_desc()
         assert ref_desc == act_desc
         assert act_idx == 3
 
         scheduler.current_epoch = 4
         ref_desc.width_indicator = 3
-        act_desc, act_idx = scheduler.get_train_dims_for_epoch()
+        act_desc, act_idx = scheduler.get_current_stage_desc()
         assert ref_desc == act_desc
         assert act_idx == 4
 
