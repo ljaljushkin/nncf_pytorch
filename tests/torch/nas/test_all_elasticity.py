@@ -147,8 +147,11 @@ def test_random_multi_elasticity(_seed, nas_model_name):
     check_subnet_visualization(multi_elasticity_handler, model, nas_model_name, stage='depth')
 
     multi_elasticity_handler.enable_elasticity(ElasticityDim.WIDTH)
+    multi_elasticity_handler.width_handler.width_num_params_indicator = 1
     multi_elasticity_handler.activate_random_subnet()
     model.do_dummy_forward()
+    # TODO(nlyalyus): some blocks are not skipped because they fail a conflict resolving with elastic width: start or
+    #  end block can be out of pruning scope and can't retrieve width in the propagation graph: mask = None
     check_subnet_visualization(multi_elasticity_handler, model, nas_model_name, stage='width')
 
 
@@ -274,12 +277,17 @@ REF_COMPRESSION_STATE_FOR_TWO_CONV = {
                 'scheduler_state': {'current_epoch': -1, 'current_step': -1}
             },
             'multi_elasticity_handler_state': {
-                'depth': {
-                    'active_config': [0]
+                'is_handler_enabled_map': {
+                    'depth': True,
+                    'width': True
                 },
-                'width': {
-                    'active_config': {0: 1},
-                    'is_active': True
+                'states_of_handlers': {
+                    'depth': {
+                        'active_config': [0]
+                    },
+                    'width': {
+                        'active_config': {0: 1}
+                    }
                 }
             }
         },
