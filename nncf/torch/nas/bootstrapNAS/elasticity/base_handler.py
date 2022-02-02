@@ -132,18 +132,31 @@ class SEHandlerStateNames:
 
 
 class SingleElasticityHandler(ElasticityHandler, ABC):
+    """
+    An interface for handling a single elasticity dimension in the network, e.g. elastic width or depth.
+    """
     _state_names = SEHandlerStateNames
 
     @abstractmethod
     def get_search_space(self) -> ElasticSearchSpace:
+        """
+        :return: search space that can be produced by iterating over all elastic parameters
+        """
         pass
 
     @abstractmethod
     def get_kwargs_for_flops_counting(self) -> Dict[str, Any]:
+        """
+        Provides arguments for counting flops of the currently activated subnet.
+        :return: mapping of parameters to its values
+        """
         pass
 
     @abstractmethod
     def get_transformation_commands(self) -> List[TransformationCommand]:
+        """
+        :return: transformation commands for introducing the elasticity to NNCFNetwork
+        """
         pass
 
     @abstractmethod
@@ -189,6 +202,10 @@ class SEHBuilderStateNames:
 
 
 class SingleElasticityBuilder:
+    """
+    Determines which modifications should be made to the original FP32 model in order to introduce elasticity
+    to the model.
+    """
     _state_names = SEHBuilderStateNames
 
     def __init__(self,
@@ -200,8 +217,14 @@ class SingleElasticityBuilder:
         self._elasticity_params = {} if elasticity_params is None else elasticity_params
 
     @abstractmethod
-    def build(self, target_model: NNCFNetwork, **kwargs) -> SingleElasticityHandler:
-        pass
+    def build(self, target_model: NNCFNetwork) -> SingleElasticityHandler:
+        """
+        Creates modifications to the given NNCFNetwork for introducing elasticity and creates a handler object that
+        can manipulate this elasticity.
+
+        :param target_model: a target NNCFNetwork for adding modifications
+        :return: a handler object that can manipulate the elasticity.
+        """
 
     @abstractmethod
     def get_state(self) -> Dict[str, Any]:

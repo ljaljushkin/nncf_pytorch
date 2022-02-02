@@ -42,6 +42,10 @@ ElasticDepthSearchSpace = List[ElasticDepthConfig]  # grouped list of block inde
 
 
 class ElasticDepthHandler(SingleElasticityHandler):
+    """
+    An interface for handling elastic depth dimension in the network, i.e. skip some layers in the model.
+    """
+
     def __init__(self, target_model: NNCFNetwork,
                  skipped_blocks: BUILDING_BLOCKS,
                  skip_dependencies: GROUPED_BLOCK_IDS,
@@ -59,6 +63,9 @@ class ElasticDepthHandler(SingleElasticityHandler):
         self._cached_search_space = None
 
     def get_transformation_commands(self) -> List[TransformationCommand]:
+        """
+        :return: transformation commands for introducing the elasticity to NNCFNetwork
+        """
         return []
 
     @property
@@ -243,8 +250,14 @@ class ElasticDepthBuilder(SingleElasticityBuilder):
             self._skip_dependencies = self._elasticity_params.get('skipped_blocks_dependencies', {})
             self._ordinal_ids = self._elasticity_params.get('ordinal_ids', None)
 
-    def build(self, target_model: NNCFNetwork,
-              width_handler: Optional[ElasticWidthHandler] = None) -> ElasticDepthHandler:
+    def build(self, target_model: NNCFNetwork) -> ElasticDepthHandler:
+        """
+        Creates modifications to the given NNCFNetwork for introducing elastic depth and creates a handler object that
+        can manipulate this elasticity.
+
+        :param target_model: a target NNCFNetwork for adding modifications
+        :return: a handler object that can manipulate the elastic depth.
+        """
         tracing_context = target_model.get_tracing_context()
         tracing_context._elastic_depth = True
 

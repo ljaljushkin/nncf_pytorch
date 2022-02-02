@@ -10,7 +10,6 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-import time
 from pathlib import Path
 from shutil import copyfile
 from typing import Any

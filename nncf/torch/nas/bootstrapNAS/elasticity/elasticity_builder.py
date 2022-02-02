@@ -34,6 +34,10 @@ class EBuilderStateNames:
 
 @PT_COMPRESSION_ALGORITHMS.register('elasticity')
 class ElasticityBuilder(PTCompressionAlgorithmBuilder):
+    """
+    Determines which modifications should be made to the original FP32 model in order to introduce elasticity
+    to the model.
+    """
     _state_names = EBuilderStateNames
 
     # NOTE: This is the order of activation elasticity dimensions when multiple of them are enabled.
@@ -66,9 +70,18 @@ class ElasticityBuilder(PTCompressionAlgorithmBuilder):
         self._builder_states = None
 
     def initialize(self, model: NNCFNetwork) -> None:
+        """
+        Initialize model parameters before training
+
+        :param model: The model with additional modifications necessary to enable
+            algorithm-specific compression during fine-tuning.
+        """
         pass
 
     def get_available_elasticity_dims(self) -> List[ElasticityDim]:
+        """
+        :return: list of available elasticity dimensions
+        """
         return self._available_elasticity_dims
 
     def _get_algo_specific_config_section(self) -> Dict:
@@ -97,12 +110,7 @@ class ElasticityBuilder(PTCompressionAlgorithmBuilder):
 
         elasticity_handlers = OrderedDict()
         for dim, builder in self._elasticity_builders.items():
-            if dim == ElasticityDim.DEPTH:
-                # width handler should be built before, if enabled, because of pre-defined execution order
-                width_handler = elasticity_handlers.get(ElasticityDim.WIDTH)
-                handler = builder.build(target_model, width_handler=width_handler)
-            else:
-                handler = builder.build(target_model)
+            handler = builder.build(target_model)
             elasticity_handlers[dim] = handler
         self._multi_elasticity_handler = MultiElasticityHandler(elasticity_handlers)
 

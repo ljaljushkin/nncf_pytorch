@@ -234,6 +234,9 @@ class ElasticWidthConv2DOp(ElasticWidthOp, nn.Module):
 
 
 class ElasticWidthHandler(SingleElasticityHandler):
+    """
+    An interface for handling elastic width dimension in the network, i.e. define number of channels in the layers.
+    """
     def __init__(self, target_model: NNCFNetwork,
                  filter_importance: Callable,
                  weights_normalizer: Callable,
@@ -271,6 +274,9 @@ class ElasticWidthHandler(SingleElasticityHandler):
         return self._propagation_graph
 
     def get_transformation_commands(self) -> List[TransformationCommand]:
+        """
+        :return: transformation commands for introducing the elasticity to NNCFNetwork
+        """
         return self._transformation_commands
 
     def get_search_space(self) -> ElasticWidthSearchSpace:
@@ -525,7 +531,14 @@ class ElasticWidthBuilder(SingleElasticityBuilder):
             self._weights_normalizer = tensor_l2_normalizer  # for all weights in common case
         self._grouped_node_names_to_prune = []  # type: List[List[NNCFNodeName]]
 
-    def build(self, target_model: NNCFNetwork, **kwargs) -> ElasticWidthHandler:
+    def build(self, target_model: NNCFNetwork) -> ElasticWidthHandler:
+        """
+        Creates modifications to the given NNCFNetwork for introducing elastic width and creates a handler object that
+        can manipulate this elasticity.
+
+        :param target_model: a target NNCFNetwork for adding modifications
+        :return: a handler object that can manipulate the elastic width.
+        """
         filter_importance_str = self._elasticity_params.get('filter_importance', 'L1')
         filter_importance = FILTER_IMPORTANCE_FUNCTIONS.get(filter_importance_str)
 

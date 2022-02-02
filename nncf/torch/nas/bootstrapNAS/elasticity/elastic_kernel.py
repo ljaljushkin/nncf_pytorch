@@ -192,6 +192,9 @@ class ElasticKernelInputForExternalPadding:
 
 
 class ElasticKernelHandler(SingleElasticityHandler):
+    """
+    An interface for handling elastic kernel dimension in the network, i.e. define size of kernels in the conv layers.
+    """
     def __init__(self,
                  elastic_kernel_ops: List[ElasticKernelOp],
                  transformation_commands: List[TransformationCommand]):
@@ -200,6 +203,9 @@ class ElasticKernelHandler(SingleElasticityHandler):
         self._transformation_commands = transformation_commands
 
     def get_transformation_commands(self) -> List[TransformationCommand]:
+        """
+        :return: transformation commands for introducing the elasticity to NNCFNetwork
+        """
         return self._transformation_commands
 
     def get_search_space(self) -> ElasticKernelSearchSpace:
@@ -286,7 +292,14 @@ class ElasticKernelBuilder(SingleElasticityBuilder):
         super().__init__(target_scopes, ignored_scopes, elasticity_params)
         self._node_names_to_make_elastic = []  # type: List[NNCFNodeName]
 
-    def build(self, target_model: NNCFNetwork, **kwargs) -> ElasticKernelHandler:
+    def build(self, target_model: NNCFNetwork) -> ElasticKernelHandler:
+        """
+        Creates modifications to the given NNCFNetwork for introducing elastic kernel and creates a handler object that
+        can manipulate this elasticity.
+
+        :param target_model: a target NNCFNetwork for adding modifications
+        :return: a handler object that can manipulate the elastic kernel.
+        """
         elastic_kernel_ops = []  # type: List[ElasticKernelOp]
         transformation_commands = []
 
