@@ -18,6 +18,7 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Tuple
 
 import torch
 import torch.nn as nn
@@ -406,7 +407,7 @@ class ElasticWidthHandler(SingleElasticityHandler):
     def resolve_conflicts_with_other_elasticities(self,
                                                   config: ElasticWidthConfig,
                                                   elasticity_handlers: ELASTICITY_HANDLERS_MAP) -> ElasticWidthConfig:
-        pass
+        return config
 
     def get_group_id_by_node_name(self, node_name: NNCFNodeName) -> Optional[int]:
         for cluster in self._pruned_module_groups_info.get_all_clusters():
@@ -448,7 +449,7 @@ class ElasticWidthHandler(SingleElasticityHandler):
                                                  PTNNCFPruningTensorProcessor)
         reorder_algo.reorder_filters()
 
-    def find_pairs_of_nodes_with_different_width(self, pairs_of_nodes: List[List[str]]) -> List[int]:
+    def find_pairs_of_nodes_with_different_width(self, pairs_of_nodes: List[Tuple[str, str]]) -> List[int]:
         pair_indexes = []
         for idx, (start_node_name, end_node_name) in enumerate(pairs_of_nodes):
             start_node = self._propagation_graph.get_node_by_name(start_node_name)

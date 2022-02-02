@@ -266,7 +266,7 @@ class ElasticKernelHandler(SingleElasticityHandler):
     def resolve_conflicts_with_other_elasticities(self,
                                                   config: ElasticKernelConfig,
                                                   elasticity_handlers: ELASTICITY_HANDLERS_MAP) -> ElasticKernelConfig:
-        pass
+        return config
 
     def _collect_ops_data_by_selection_rule(self, selection_rule: Callable) -> List[Any]:
         return list(map(selection_rule, self._elastic_kernel_ops))

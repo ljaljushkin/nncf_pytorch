@@ -161,7 +161,6 @@ class SingleElasticityHandler(ElasticityHandler, ABC):
         :param elasticity_handlers: map of elasticity dimension to elasticity handler
         :return: elasticity configuration without conflicts with other active configs of other elasticity handlers
         """
-        pass
 
     def load_state(self, state: Dict[str, Any]) -> None:
         """

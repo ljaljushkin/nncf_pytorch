@@ -147,7 +147,8 @@ class ElasticDepthHandler(SingleElasticityHandler):
         if ElasticityDim.WIDTH in handlers:
             width_handler = handlers[ElasticityDim.WIDTH]
             assert isinstance(width_handler, ElasticWidthHandler)
-            pairs_of_nodes = [self._tracing_context.skipped_blocks[block_idx] for block_idx in config]
+            blocks = [self._tracing_context.skipped_blocks[block_idx] for block_idx in config]
+            pairs_of_nodes = [(block.start_node, block.end_node) for block in blocks]
             if pairs_of_nodes:
                 indexes_of_pairs = width_handler.find_pairs_of_nodes_with_different_width(pairs_of_nodes)
                 if indexes_of_pairs:
