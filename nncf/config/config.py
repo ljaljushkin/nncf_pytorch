@@ -13,7 +13,9 @@
 
 from copy import deepcopy
 from pathlib import Path
-from typing import List, Type, Optional
+from typing import List
+from typing import Optional
+from typing import Type
 
 import jsonschema
 import jstyleson as json
@@ -21,9 +23,11 @@ import jstyleson as json
 from nncf.common.utils.logger import logger
 from nncf.common.utils.os import safe_open
 from nncf.config.schema import ROOT_NNCF_CONFIG_SCHEMA
-from nncf.config.schema import validate_single_compression_algo_schema
 from nncf.config.schema import validate_accuracy_aware_training_schema
+from nncf.config.schema import validate_single_compression_algo_schema
 from nncf.config.structures import NNCFExtraConfigStruct
+from nncf.experimental.config.nas_schema import BOOTSTRAP_NAS_ALGO_NAME_IN_CONFIG
+from nncf.experimental.config.nas_schema import BOOTSTRAP_NAS_SCHEMA
 
 
 class NNCFConfig(dict):
@@ -90,17 +94,11 @@ class NNCFConfig(dict):
 
     @staticmethod
     def validate(loaded_json):
-        try:
-            jsonschema.validate(loaded_json, schema=ROOT_NNCF_CONFIG_SCHEMA)
-        except jsonschema.ValidationError as e:
-            logger.error('Invalid NNCF config supplied!')
+        NNCFConfig._validate_json_section_by_schema(loaded_json, ROOT_NNCF_CONFIG_SCHEMA)
 
-            # The default exception's __str__ result will contain the entire schema,
-            # which is too large to be readable.
-            import nncf.config.schema as config_schema
-            msg = e.message + '. See documentation or {} for an NNCF configuration file JSON schema definition'.format(
-                config_schema.__file__)
-            raise jsonschema.ValidationError(msg)
+        bootstrap_nas_section = loaded_json.get(BOOTSTRAP_NAS_ALGO_NAME_IN_CONFIG)
+        if bootstrap_nas_section is not None:
+            NNCFConfig._validate_json_section_by_schema(bootstrap_nas_section, BOOTSTRAP_NAS_SCHEMA)
 
         compression_section = loaded_json.get('compression')
         accuracy_aware_section = loaded_json.get('accuracy_aware_training')
@@ -122,3 +120,17 @@ class NNCFConfig(dict):
             # specific sub-schema will be shown, which is much shorter than the global schema
             logger.error('Invalid NNCF config supplied!')
             raise
+
+    @staticmethod
+    def _validate_json_section_by_schema(loaded_json, schema):
+        try:
+            jsonschema.validate(loaded_json, schema)
+        except jsonschema.ValidationError as e:
+            logger.error('Invalid NNCF config supplied!')
+
+            # The default exception's __str__ result will contain the entire schema,
+            # which is too large to be readable.
+            import nncf.config.schema as config_schema
+            msg = e.message + '. See documentation or {} for an NNCF configuration file JSON schema definition'.format(
+                config_schema.__file__)
+            raise jsonschema.ValidationError(msg)
