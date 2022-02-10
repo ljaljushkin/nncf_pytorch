@@ -153,6 +153,10 @@ STAGE_DESCRIPTOR_SCHEMA = {
                                                      "beginning of the stage"),
         "bn_adapt": with_attributes(BOOLEAN,
                                     description="if True, triggers batchnorm adaptation in the beginning of the stage"),
+        "init_lr": with_attributes(NUMBER,
+                                   description="TBD"),
+        "epochs_lr": with_attributes(NUMBER,
+                                     description="TBD")
     },
     "description": "Defines a supernet training stage: how many epochs it takes, which elasticities with which "
                    "settings are enabled, whether some operation should happen in the beginning",
@@ -170,6 +174,22 @@ NAS_SCHEDULE_SCHEMA = {
     },
     "additionalProperties": False
 }
+
+LR_SCHEDULE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "params": {
+            "type": "object",
+            "properties": {
+                "base_lr": with_attributes(NUMBER,
+                                           description="TBD"),
+            },
+            "additionalProperties": False
+        }
+    },
+    "additionalProperties": False
+}
+
 BOOTSTRAP_NAS_TRAINING_SCHEMA = {
     "type": "object",
     "properties": {
@@ -182,7 +202,30 @@ BOOTSTRAP_NAS_TRAINING_SCHEMA = {
                                                        examples=[["width", "depth", "kernel"]]),
         "batchnorm_adaptation": BATCHNORM_ADAPTATION_SCHEMA,
         "schedule": NAS_SCHEDULE_SCHEMA,
-        "elasticity": ELASTICITY_SCHEMA
+        "elasticity": ELASTICITY_SCHEMA,
+        "lr_schedule": LR_SCHEDULE_SCHEMA
+    },
+    "additionalProperties": False
+}
+
+SEARCH_ALGORITHMS_SCHEMA = {
+    "type": "string",
+    "enum": ["NSGA"],
+}
+
+BOOTSTRAP_NAS_SEARCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "algorithm": with_attributes(SEARCH_ALGORITHMS_SCHEMA,
+                                     description="TBD"),
+        "num_evals": with_attributes(NUMBER,
+                                     description="TBD"),
+        "population": with_attributes(NUMBER,
+                                      description="TBD"),
+        "use_cache_file": with_attributes(BOOLEAN,
+                                          description="TBD"),
+        "cache_file_path": with_attributes(STRING,
+                                           description="TBD"),
     },
     "additionalProperties": False
 }
@@ -190,7 +233,8 @@ BOOTSTRAP_NAS_TRAINING_SCHEMA = {
 BOOTSTRAP_NAS_SCHEMA = {
     "type": "object",
     "properties": {
-        "training": BOOTSTRAP_NAS_TRAINING_SCHEMA
+        "training": BOOTSTRAP_NAS_TRAINING_SCHEMA,
+        "search": BOOTSTRAP_NAS_SEARCH_SCHEMA,
     },
     "additionalProperties": False
 }

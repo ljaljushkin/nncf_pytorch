@@ -31,6 +31,8 @@ from examples.torch.common.execution import get_execution_mode
 from examples.torch.common.execution import set_seed
 from examples.torch.common.execution import start_worker
 from examples.torch.common.model_loader import load_model
+from examples.torch.common.optimizer import get_parameter_groups
+from examples.torch.common.optimizer import make_optimizer
 from examples.torch.common.sample_config import SampleConfig
 from examples.torch.common.sample_config import create_sample_config
 from examples.torch.common.utils import SafeMLFLow
@@ -42,123 +44,37 @@ from examples.torch.common.utils import is_pretrained_model_requested
 from examples.torch.common.utils import print_args
 from nncf.config.structures import BNAdaptationInitArgs
 from nncf.experimental.torch.nas.bootstrapNAS.search import NSGAIISearch
-from nncf.experimental.torch.nas.bootstrapNAS.training import EpochBasedTrainingAlgorithm
+from nncf.experimental.torch.nas.bootstrapNAS.training.model_creator_helpers import resume_compression_from_state
 from nncf.torch.initialization import default_criterion_fn
 from nncf.torch.initialization import wrap_dataloader_for_init
 from nncf.torch.model_creation import create_nncf_network
 from nncf.torch.utils import is_main_process
+from nncf.torch.checkpoint_loading import load_state
 
 
 def get_nas_argument_parser():
     parser = get_argument_parser()
     parser.add_argument('--train-steps', default=None, type=int,
                         help='Enables running training for the given number of steps')
+
+    parser.add_argument('--elasticity-state_path', required=True, type=str,
+                        help='Path of elasticity state')
+
+    parser.add_argument('--supernet-weights', required=True, type=str,
+                        help='Path to weights of trained super-network')
+
+    parser.add_argument('--cache-file-path', default=None, type=str,
+                        help='Path to cache file for search')
     return parser
-
-
-def get_optimizer(model, opt_config):
-    def get_parameters(model, keys=None, mode='include'):
-        if keys is None:
-            for name, param in model.named_parameters():
-                if param.requires_grad: yield param
-        elif mode == 'include':
-            for name, param in model.named_parameters():
-                flag = False
-                for key in keys:
-                    if key in name:
-                        flag = True
-                        break
-                if flag and param.requires_grad: yield param
-        elif mode == 'exclude':
-            for name, param in model.named_parameters():
-                flag = True
-                for key in keys:
-                    if key in name:
-                        flag = False
-                        break
-                if flag and param.requires_grad: yield param
-        else:
-            raise ValueError('do not support: %s' % mode)
-
-    def weight_parameters(model):
-        return model.get_parameters()
-
-    def build_optimizer(net_params, opt_type, opt_param, init_lr, weight_decay, no_decay_keys):
-        if no_decay_keys is not None:
-            assert isinstance(net_params, list) and len(net_params) == 2
-            net_params = [
-                {'params': net_params[0], 'weight_decay': weight_decay},
-                {'params': net_params[1], 'weight_decay': 0},
-            ]
-        else:
-            net_params = [{'params': net_params, 'weight_decay': weight_decay}]
-
-        if opt_type == 'sgd':
-            opt_param = {} if opt_param is None else opt_param
-            momentum, nesterov = opt_param.get('momentum', 0.9), opt_param.get('nesterov', True)
-            optimizer = torch.optim.SGD(net_params, init_lr, momentum=momentum, nesterov=nesterov)
-        elif opt_type == 'adam':
-            optimizer = torch.optim.Adam(net_params, init_lr)
-        else:
-            raise NotImplementedError
-        return optimizer
-
-    no_decay_keys = opt_config.no_decay_keys
-
-    if no_decay_keys:
-        keys = no_decay_keys.split('#')
-        net_params = [
-            get_parameters(model, keys, mode='exclude'),  # parameters with weight decay
-            get_parameters(model, keys, mode='include'),  # parameters without weight decay
-        ]
-    else:
-        # noinspection PyBroadException
-        try:
-            net_params = model.weight_parameters()
-        except Exception:
-            net_params = []
-            for param in model.parameters():
-                if param.requires_grad:
-                    net_params.append(param)
-
-    opt_type = opt_config.type
-    opt_param = None
-    init_lr = opt_config.base_lr
-    weight_decay = opt_config.weight_decay
-
-    optimizer = build_optimizer(net_params, opt_type, opt_param, init_lr, weight_decay, no_decay_keys)
-
-    return optimizer
-
-
-""" Label smooth """
-
-
-def label_smooth(target, n_classes: int, label_smoothing=0.1):
-    # convert to one-hot
-    batch_size = target.size(0)
-    target = torch.unsqueeze(target, 1)
-    soft_target = torch.zeros((batch_size, n_classes), device=target.device)
-    soft_target.scatter_(1, target, 1)
-    # label smoothing
-    soft_target = soft_target * (1 - label_smoothing) + label_smoothing / n_classes
-    return soft_target
-
-
-def cross_entropy_loss_with_soft_target(pred, soft_target):
-    logsoftmax = nn.LogSoftmax()
-    return torch.mean(torch.sum(- soft_target * logsoftmax(pred), 1))
-
-
-def cross_entropy_with_label_smoothing(pred, target, label_smoothing=0.1):
-    soft_target = label_smooth(target, pred.size(1), label_smoothing)
-    return cross_entropy_loss_with_soft_target(pred, soft_target)
 
 
 def main(argv):
     parser = get_nas_argument_parser()
     args = parse_args(parser, argv)
     config = create_sample_config(args, parser)
+    config.search_elasticity_state_path = args.elasticity_state_path
+    config.search_supernet_weights = args.supernet_weights
+    config.cache_file_path = args.cache_file_path
 
     if config.dist_url == "env://":
         config.update_from_env()
@@ -190,22 +106,20 @@ def main_worker(current_gpu, config: SampleConfig):
 
     set_seed(config)
 
-    opt_config = config.get('optimizer', {})
     # define loss function (criterion)
-    # criterion = nn.CrossEntropyLoss()
-    criterion = lambda pred, target: \
-        cross_entropy_with_label_smoothing(pred, target, opt_config.label_smoothing)
-    # criterion = criterion.to(config.device)
+    criterion = nn.CrossEntropyLoss()
+    criterion = criterion.to(config.device)
 
     model_name = config['model']
     train_criterion_fn = inception_criterion_fn if 'inception' in model_name else default_criterion_fn
 
+    resuming_checkpoint_path = config.resuming_checkpoint_path
     nncf_config = config.nncf_config
     pretrained = is_pretrained_model_requested(config)
 
     # Data loading code
     train_dataset, val_dataset = create_datasets(config)
-    train_loader, _, val_loader, _ = create_data_loaders(config, train_dataset, val_dataset)
+    train_loader, train_sampler, val_loader, init_loader = create_data_loaders(config, train_dataset, val_dataset)
 
     bn_adapt_args = BNAdaptationInitArgs(data_loader=wrap_dataloader_for_init(train_loader), device=config.device)
     nncf_config.register_extra_structs([bn_adapt_args])
@@ -220,7 +134,9 @@ def main_worker(current_gpu, config: SampleConfig):
 
     validate(val_loader, model, criterion, config)
 
-    optimizer = get_optimizer(model, opt_config)
+    # define optimizer
+    params_to_optimize = get_parameter_groups(model, config)
+    optimizer, lr_scheduler = make_optimizer(params_to_optimize, config)
 
     def train_epoch_fn(loader, model_, compression_ctrl, epoch, optimizer_):
         train_epoch(loader, model_, criterion, train_criterion_fn, optimizer_, compression_ctrl, epoch, config,
@@ -232,28 +148,25 @@ def main_worker(current_gpu, config: SampleConfig):
 
     nncf_network = create_nncf_network(model, nncf_config)
 
-    resuming_checkpoint_path = config.resuming_checkpoint_path
-    if resuming_checkpoint_path is None:
-        training_algorithm = EpochBasedTrainingAlgorithm.from_config(nncf_network, nncf_config)
-    else:
-        training_algorithm = EpochBasedTrainingAlgorithm.from_checkpoint(nncf_network, bn_adapt_args,
-                                                                         resuming_checkpoint_path)
-    elasticity_ctrl = training_algorithm.elasticity_ctrl
-
     if 'train' in config.mode:
-        # Validate supernetwork
-        validate(val_loader, model, criterion, config)
 
-        nncf_network, elasticity_ctrl = training_algorithm.run(train_epoch_fn, train_loader,
-                                                               validate_model_fn, val_loader, optimizer,
-                                                               config.checkpoint_save_dir, config.tb,
-                                                               config.train_steps)
+        compression_state = torch.load(config.search_elasticity_state_path)
+        model, elasticity_ctrl = resume_compression_from_state(nncf_network, compression_state)  # 1
+        model_weights = torch.load(config.search_supernet_weights)
+
+        load_state(model, model_weights, is_resume=True)
+
+        #TODO(pablo) Check with Nikolay if supernetwork will always be activated when loading elasticity and weights, then remove.
+        elasticity_ctrl.multi_elasticity_handler.activate_maximal_subnet()
+        top1, top5, loss = validate_model_fn(model, val_loader)
+        print(f'SuperNetwork Top 1: {top1}')
+
+        #TODO(pablo) Check if this is specified in config file.
+        nncf_config['cache_file_path'] = config.cache_file_path
 
         search_algo = NSGAIISearch(model, elasticity_ctrl, nncf_config)
 
-        validate_fn = validate_model_fn
-
-        elasticity_ctrl, best_config, metrics = search_algo.run(validate_fn, val_loader, tensorboard_writer=config.tb)
+        elasticity_ctrl, best_config, metrics = search_algo.run(validate_model_fn, val_loader)
 
         print(best_config)
         print(metrics)

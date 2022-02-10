@@ -20,6 +20,7 @@ from nncf.api.compression import CompressionStage
 from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
 from nncf.common.statistics import NNCFStatistics
 from nncf.common.utils.logger import logger as nncf_logger
+from nncf.experimental.torch.nas.bootstrapNAS.training.cosine_lr_scheduler import CosineLRScheduler
 from nncf.torch.algo_selector import ZeroCompressionLoss
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_controller import ElasticityController
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
@@ -41,7 +42,8 @@ class ProgressiveShrinkingController(BNASTrainingController):
                  elasticity_ctrl: ElasticityController,
                  bn_adaptation: BatchnormAdaptationAlgorithm,
                  progressivity_of_elasticity: List[ElasticityDim],
-                 schedule_params: Dict[str, Any]):
+                 schedule_params: Dict[str, Any],
+                 lr_schedule_config: Dict[str, Any]):
         super().__init__(target_model)
         self._elasticity_ctrl = elasticity_ctrl
         self._bn_adaptation = bn_adaptation
@@ -49,8 +51,27 @@ class ProgressiveShrinkingController(BNASTrainingController):
         self._target_model = target_model
         self._loss = ZeroCompressionLoss(next(target_model.parameters()).device)
         self._available_elasticity_dims = self.multi_elasticity_handler.get_available_elasticity_dims()
+        self._lr_schedule_config = lr_schedule_config
         self._scheduler = BootstrapNASScheduler(self, schedule_params, self._available_elasticity_dims,
                                                 self._progressivity_of_elasticity)
+
+    def set_training_lr_scheduler_args(self, optimizer, train_iters): # loader_len):
+        params = self._lr_schedule_config.get('params', None)
+        num_epochs = None if params is None else params.get("num_epochs", None)
+        base_lr = None if params is None else params.get("base_lr", None)
+
+        if base_lr is not None:
+            # Global lr scheduler
+            if num_epochs is None:
+                params['num_epochs'] = self.get_total_num_epochs()
+            lr_scheduler = CosineLRScheduler(optimizer, train_iters, **params)
+            # self._scheduler.set_lr_scheduler(lr_scheduler)
+            self._scheduler.set_global_lr_scheduler(lr_scheduler)
+        else:
+            # Stage lr scheduler
+            params = {"base_lr": None, "num_epochs": None}
+            lr_scheduler = CosineLRScheduler(optimizer, train_iters, **params)
+            self._scheduler.set_stage_lr_scheduler(lr_scheduler)
 
     @property
     def multi_elasticity_handler(self) -> MultiElasticityHandler:

@@ -19,6 +19,7 @@ from typing import Tuple
 
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.utils.tensorboard import SummaryWriter
 
 from nncf import NNCFConfig
 from nncf.api.compression import CompressionStage
@@ -69,6 +70,7 @@ class EpochBasedTrainingAlgorithm:
         self._start_epoch = 0
         self._supernet_best_acc1 = 0
         self._min_subnet_best_acc1 = 0
+        self._optimizer = None
         self._optimizer_state = None
         if checkpoint is not None:
             resuming_model_state_dict = checkpoint[self._state_names.MODEL_STATE]
@@ -89,18 +91,17 @@ class EpochBasedTrainingAlgorithm:
     def run(self,
             train_epoch_fn,
             train_loader,
-            lr_scheduler,
             val_fn,
             val_loader,
             optimizer,
             checkpoint_save_dir,
-            tensorboard_writer=None) -> Tuple[NNCFNetwork, ElasticityController]:
+            tensorboard_writer=None,
+            train_iters=None) -> Tuple[NNCFNetwork, ElasticityController]:
         """
         Implements a training loop for supernet training.
 
         :param train_epoch_fn: a method to fine-tune the model for a single epoch
         :param train_loader: data loader for training
-        :param lr_scheduler: scheduler for learning rate
         :param val_fn: a method to evaluate the model on the validation dataset
         :param val_loader: data loader for validation
         :param optimizer: a training optimizer
@@ -108,8 +109,15 @@ class EpochBasedTrainingAlgorithm:
         :param tensorboard_writer: The tensorboard object to be used for logging.
         :return: the fine-tuned model and elasticity controller
         """
+        # Global LR Scheduler
+        if train_iters is None:
+            train_iters = len(train_loader)
+        self._training_ctrl.set_training_lr_scheduler_args(optimizer, train_iters)  # len(train_loader))
+
         if self._optimizer_state is not None:
             optimizer.load_state_dict(self._optimizer_state)
+
+        self._optimizer = optimizer
 
         log_validation_info = True
         if tensorboard_writer is None:
@@ -135,7 +143,8 @@ class EpochBasedTrainingAlgorithm:
             train_epoch_fn(train_loader, self._model, self._training_ctrl, epoch, optimizer)
 
             # Learning rate scheduling should be applied after optimizer’s update
-            lr_scheduler.step(epoch if not isinstance(lr_scheduler, ReduceLROnPlateau) else self._supernet_best_acc1)
+            # TODO(pablo): We are updating the learning rate in train_epoch. How to handle this?
+            # lr_scheduler.step(epoch if not isinstance(lr_scheduler, ReduceLROnPlateau) else self._supernet_best_acc1)
 
             compression_stage = self._training_ctrl.compression_stage()
 
@@ -250,3 +259,10 @@ class EpochBasedTrainingAlgorithm:
     def _validate_subnet(self, val_fn, val_loader):
         self._training_ctrl.prepare_for_validation()
         return val_fn(self._model, val_loader)
+
+    def adjust_optimizer_learning_rate(self, new_lr):
+        if self._optimizer is not None:
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = new_lr
+        else:
+            raise RuntimeError("Optimizer is not available in the training algorithm")

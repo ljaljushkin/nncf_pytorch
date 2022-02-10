@@ -17,8 +17,11 @@ from typing import Optional
 from typing import Tuple
 
 from nncf.common.schedulers import BaseCompressionScheduler
+from nncf.common.utils.logger import logger as nncf_logger
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
 from nncf.experimental.torch.nas.bootstrapNAS.training.base_training import BNASTrainingAlgorithm
+from nncf.experimental.torch.nas.bootstrapNAS.training.cosine_lr_scheduler import CosineLRScheduler
+from nncf.experimental.torch.nas.bootstrapNAS.training.stage_descriptor import DEFAULT_STAGE_LR_RATE
 from nncf.experimental.torch.nas.bootstrapNAS.training.stage_descriptor import StageDescriptor
 
 
@@ -52,6 +55,14 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
         #  The validation will happen in the first usage of list_stage_descriptors property.
         self._list_stage_descriptors = [StageDescriptor.from_state(d) for d in list_stage_descriptions]
         self._is_elasticity_dims_validated = False
+        self._global_lr_scheduler = None
+        self._stage_lr_scheduler = None
+
+    def set_global_lr_scheduler(self, lr_scheduler: CosineLRScheduler):
+        self._global_lr_scheduler = lr_scheduler
+
+    def set_stage_lr_scheduler(self, lr_scheduler: CosineLRScheduler):
+        self._stage_lr_scheduler = lr_scheduler
 
     @property
     def list_stage_descriptors(self) -> List[StageDescriptor]:
@@ -61,6 +72,7 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
         if not self._is_elasticity_dims_validated:
             self._validate_elasticity_dims(self._available_elasticity_dims, self._progressivity_of_elasticity)
         self._is_elasticity_dims_validated = True
+        self._validate_lr()
         return self._list_stage_descriptors
 
     @list_stage_descriptors.setter
@@ -73,6 +85,7 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
         self._list_stage_descriptors = stage_descriptors
         self._validate_elasticity_dims(self._available_elasticity_dims, self._progressivity_of_elasticity)
         self._is_elasticity_dims_validated = True
+        self._validate_lr()
 
     def step(self, next_step: Optional[int] = None) -> None:
         """
@@ -83,6 +96,11 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
             will update the state of the compression method.
         """
         self._training_ctrl.step()
+        if self._global_lr_scheduler is not None:
+            self._global_lr_scheduler.step(next_step)
+        else:
+            self._stage_lr_scheduler.step(next_step)
+        # self._lr_scheduler.step(next_step)
 
     def epoch_step(self, next_epoch: Optional[int] = None) -> None:
         """
@@ -93,9 +111,15 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
             will update the state of the compression method.
         """
         super().epoch_step(next_epoch)
+        if self._global_lr_scheduler is not None:
+            self._global_lr_scheduler.epoch_step(next_epoch)
+        else:
+            self._stage_lr_scheduler.epoch_step(next_epoch)
         stage_desc, stage_desc_idx = self.get_current_stage_desc()
         if stage_desc is not None:
             if stage_desc_idx != self.current_stage_idx:
+                if self._global_lr_scheduler is None:
+                    self._stage_lr_scheduler.reset(stage_desc.init_lr, stage_desc.epochs_lr)
                 self._training_ctrl.set_stage(stage_desc)
                 self.current_stage_idx = stage_desc_idx
 
@@ -183,6 +207,25 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
                         f"progressivity of elasticity {progressivity_of_elasticity}")
             last_stage = high_priority_dim_idx
             first_stage = low_priority_dim_idx
+
+    def _validate_lr(self):
+        for desc in self._list_stage_descriptors:
+            # Check if global learning rate has been set
+            if desc.init_lr is not None and bool(self._training_ctrl._lr_schedule_config):
+                print(desc.init_lr, self._training_ctrl._lr_schedule_config)
+                raise ValueError(
+                    f"Global learning rate scheduler is in use. Cannot set stage learning rate: {desc.init_lr}"
+                )
+            # Check if stage learning rate has been set
+            elif desc.init_lr is None and not bool(self._training_ctrl._lr_schedule_config):
+                nncf_logger.warning(
+                    "Stage learning rate in use but init_lr value for stage wasn't set. Using default value of 3.5e-6")
+                desc.init_lr = DEFAULT_STAGE_LR_RATE
+
+            if desc.init_lr is not None and desc.epochs_lr is None:
+                nncf_logger.warning(
+                    f"Stage learning rate in use but epochs_lr value for stage wasn't set. Using number of epochs for stage {desc.epochs}")
+                desc.epochs_lr = desc.epochs
 
     @staticmethod
     def _get_default_params() -> Dict[str, List[Dict]]:

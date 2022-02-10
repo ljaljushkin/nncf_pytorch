@@ -59,7 +59,7 @@ GLOBAL_CONFIG = {
                             'checkpoint_name': 'supernet',
                         },
                         'resnet50_cifar10_nas_SMALL.json': {
-                            'expected_accuracy': 72.76,
+                            'expected_accuracy': 87.36,
                             'train_steps': 2,
                             'weights': 'resnet50_cifar10_93.65.pth',
                             'absolute_tolerance_train': 2.0,
@@ -127,7 +127,7 @@ GLOBAL_CONFIG = {
                             'absolute_tolerance_train': 1.5,
                             'absolute_tolerance_eval': 2e-2
                         },
-                        'efficient_net_b0_cifar10_nas_SMALL.json': {
+                        'efficient_net_b0_cifar100_nas_SMALL.json': {
                             # TODO: fix supernet training (ticket 73814)
                             'expected_accuracy': 10.04,
                             'train_steps': 2,

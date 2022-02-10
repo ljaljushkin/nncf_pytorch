@@ -16,7 +16,7 @@ from typing import List
 
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
 
-
+DEFAULT_STAGE_LR_RATE = 3.5e-06
 class StageDescriptor:
     """
     Describes parameters of the training stage. The stage defines active elastic dimension and its parameters.
@@ -26,13 +26,17 @@ class StageDescriptor:
                  reorg_weights: bool = False,
                  bn_adapt: bool = False,
                  depth_indicator: int = 1,
-                 width_indicator: int = 1):
+                 width_indicator: int = 1,
+                 init_lr = None,
+                 epochs_lr = None):
         self.train_dims = train_dims
         self.epochs = epochs
         self.depth_indicator = depth_indicator
         self.width_indicator = width_indicator
         self.reorg_weights = reorg_weights
         self.bn_adapt = bn_adapt
+        self.init_lr = init_lr
+        self.epochs_lr = epochs_lr
 
     def __eq__(self, other: 'StageDescriptor'):
         return self.train_dims == other.train_dims and \
@@ -40,7 +44,9 @@ class StageDescriptor:
                self.reorg_weights == other.reorg_weights and \
                self.width_indicator == other.width_indicator and \
                self.depth_indicator == other.depth_indicator and \
-               self.bn_adapt == other.bn_adapt
+               self.bn_adapt == other.bn_adapt and \
+               self.init_lr == other.init_lr and \
+               self.epochs_lr == other.epochs_lr
 
     @classmethod
     def from_state(cls, state: Dict[str, Any]):
@@ -57,4 +63,6 @@ class StageDescriptor:
             'width_indicator': self.width_indicator,
             'depth_indicator': self.depth_indicator,
             'bn_adapt': self.bn_adapt,
+            'init_lr': self.init_lr,
+            'epochs_lr': self.epochs_lr
         }
