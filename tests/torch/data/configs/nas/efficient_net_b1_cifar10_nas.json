@@ -3,6 +3,7 @@
     "input_info": {
       "sample_size": [1, 3, 32, 32]
     },
+    "train_steps": 100,
     "multiprocessing_distributed": false,
     "optimizer": {
         "type": "sgd",
@@ -19,12 +20,22 @@
             },
             "schedule": {
                 "list_stage_descriptions": [
-                    {"train_dims": ["width"], "epochs": 1, "width_indicator": 4},
-                    {"train_dims": ["width"], "epochs": 1, "reorg_weights": true, "width_indicator": 1}
+                    {"train_dims": ["depth"], "epochs": 1},
+                    {"train_dims": ["depth", "width"], "epochs": 1, "width_indicator": 4},
+                    {"train_dims": ["depth", "width"], "epochs": 1, "reorg_weights": true, "width_indicator": 1}
                 ]
             },
             "elasticity": {
-                "available_elasticity_dims": ["width"]
+                "available_elasticity_dims": ["depth","width"],
+                "depth": {
+                    "mode": "manual",
+                    "skipped_blocks": [
+                        ["EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/MemoryEfficientSwish[_swish]/__mul___1",
+                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/__mul___0"],
+                        ["EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/MemoryEfficientSwish[_swish]/__mul___1",
+                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/__mul___0"]
+                    ]
+                }
             }
         },
         "search": {
