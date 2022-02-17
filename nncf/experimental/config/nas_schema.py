@@ -182,7 +182,7 @@ LR_SCHEDULE_SCHEMA = {
             "type": "object",
             "properties": {
                 "base_lr": with_attributes(NUMBER,
-                                           description="TBD"),
+                                           description="Defines a global learning rate scheduler. If these parameters are not set, a stage learning rate scheduler will be used."),
             },
             "additionalProperties": False
         }
@@ -217,15 +217,11 @@ BOOTSTRAP_NAS_SEARCH_SCHEMA = {
     "type": "object",
     "properties": {
         "algorithm": with_attributes(SEARCH_ALGORITHMS_SCHEMA,
-                                     description="TBD"),
+                                     description="Defines the search algorithm. Default algorithm is NSGA-II."),
         "num_evals": with_attributes(NUMBER,
-                                     description="TBD"),
+                                     description="Defines the number of evaluations that will be used by the search algorithm."),
         "population": with_attributes(NUMBER,
-                                      description="TBD"),
-        "use_cache_file": with_attributes(BOOLEAN,
-                                          description="TBD"),
-        "cache_file_path": with_attributes(STRING,
-                                           description="TBD"),
+                                      description="Defines the population size when using an evolutionary search algorithm."),
     },
     "additionalProperties": False
 }
