@@ -210,7 +210,7 @@ BOOTSTRAP_NAS_TRAINING_SCHEMA = {
 
 SEARCH_ALGORITHMS_SCHEMA = {
     "type": "string",
-    "enum": ["NSGA"],
+    "enum": ["NSGA2"],
 }
 
 BOOTSTRAP_NAS_SEARCH_SCHEMA = {

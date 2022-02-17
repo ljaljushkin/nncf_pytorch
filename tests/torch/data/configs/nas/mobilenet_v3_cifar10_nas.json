@@ -19,7 +19,7 @@
             }
         },
         "search": {
-            "algorithm": "NSGA",
+            "algorithm": "NSGA2",
             "num_evals": 2,
             "population": 1
         }
