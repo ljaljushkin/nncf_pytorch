@@ -36,11 +36,9 @@
             }
         },
         "search": {
-            "algorithm": "NSGA",
-            "num_evals": 30,
-            "population": 4,
-            "use_cache_file": true,
-//            "cache_file_path":
+            "algorithm": "NSGA2",
+            "num_evals": 4,
+            "population": 1,
         }
     }
 }

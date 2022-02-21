@@ -36,20 +36,24 @@ from nncf.torch.nncf_network import NNCFNetwork
 
 
 class BaseSearchAlgorithm:
+    def __init__(self):
+        self._use_default_evaluators = True
+        self._evaluators = None
+        self._bad_requests = []
+
     @abstractmethod
     def run(self):
         pass
-    # TODO(pablo): Move add_default evaluators here?
 
 
-# TODO(pablo) Register Search algorithms?
-class NSGAIISearch(BaseSearchAlgorithm):
+class SearchAlgorithm(BaseSearchAlgorithm):
     def __init__(self,
                  model: NNCFNetwork,
                  elasticity_ctrl: ElasticityController,
                  nncf_config: NNCFConfig,
                  verbose=True):
 
+        super(SearchAlgorithm, self).__init__()
         self._model = model
         self._elasticity_ctrl = elasticity_ctrl
         self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
@@ -57,47 +61,51 @@ class NSGAIISearch(BaseSearchAlgorithm):
         search_config = nncf_config.get('bootstrapNAS', {}).get('search', {})
         self._num_obj = None
         self._num_constraints = search_config.get('num_constraints', 0)
-        self._num_evals = search_config.get('num_evals', 3000)  # 30)
-        self._population = search_config.get('population', 40)  # 4)
+        self._num_evals = search_config.get('num_evals', 3000)
+        self._population = search_config.get('population', 40)
+        if self._population > self._num_evals:
+            raise ValueError("Population size must not be greater than number of evaluations.")
         self._seed = search_config.get('seed', 0)
         self._crossover_prob = search_config.get('crossover_prob', 0.9)
         self._crossover_eta = search_config.get('crossover_eta', 10.0)
         self._mutation_prob = search_config.get('mutation_prob', 0.02)
         self._mutation_eta = search_config.get('mutation_eta', 3.0)
-        self._use_cache_file = search_config.get('use_cache_file', False)
         self._log_dir = nncf_config.get("log_dir", ".")
         self._tb = None
         self._verbose = verbose
-
         self._top1_accuracy_validation_fn = None
         self._val_loader = None
-        self._algorithm = NSGA2(pop_size=self._population,
-                                sampling=get_sampling("int_lhs"),
-                                crossover=get_crossover("int_sbx", prob=self._crossover_prob, eta=self._crossover_eta),
-                                mutation=get_mutation("int_pm", prob=self._mutation_prob, eta=self._mutation_eta),
-                                eliminate_duplicates=True,
-                                save_history=True,
-                                )
-        self._nvar = 0
-        self._xl = 0
-        self._xu = []
+        evo_algo = search_config['algorithm']
+        if evo_algo == 'NSGA2':
+            self._algorithm = NSGA2(pop_size=self._population,
+                                    sampling=get_sampling("int_lhs"),
+                                    crossover=get_crossover("int_sbx", prob=self._crossover_prob, eta=self._crossover_eta),
+                                    mutation=get_mutation("int_pm", prob=self._mutation_prob, eta=self._mutation_eta),
+                                    eliminate_duplicates=True,
+                                    save_history=True,
+                                    )
+        else:
+            raise NotImplementedError(f"Evolutionary Search Algorithm {evo_algo} not implemented")
+        self._num_vars = 0
+        self._vars_lower = 0
+        self._vars_upper = []
 
         for dim in elasticity_ctrl.multi_elasticity_handler.get_available_elasticity_dims():
             if dim == ElasticityDim.KERNEL:
                 self._kernel_search_space = self._elasticity_ctrl.multi_elasticity_handler.kernel_search_space
-                self._nvar += len(self._kernel_search_space)
-                self._xu += [len(self._kernel_search_space[i]) - 1 for i in
-                             range(len(self._kernel_search_space))]  # TODO(Pablo) Check
+                self._num_vars += len(self._kernel_search_space)
+                self._vars_upper += [len(self._kernel_search_space[i]) - 1 for i in
+                             range(len(self._kernel_search_space))]
             elif dim == ElasticityDim.WIDTH:
                 self._width_search_space = self._elasticity_ctrl.multi_elasticity_handler.width_search_space
-                self._nvar += len(self._width_search_space)
-                self._xu += [len(self._width_search_space[i]) - 1 for i in range(len(self._width_search_space))]
+                self._num_vars += len(self._width_search_space)
+                self._vars_upper += [len(self._width_search_space[i]) - 1 for i in range(len(self._width_search_space))]
             elif dim == ElasticityDim.DEPTH:
-                self._valid_depth_configs = self._elasticity_ctrl.multi_elasticity_handler.depth_search_space  # TODO(pablo): Is this getting all valid depth configs?
+                self._valid_depth_configs = self._elasticity_ctrl.multi_elasticity_handler.depth_search_space
                 if [] not in self._valid_depth_configs:
                     self._valid_depth_configs.append([])
-                self._nvar += 1
-                self._xu.append(len(self._valid_depth_configs) - 1)
+                self._num_vars += 1
+                self._vars_upper.append(len(self._valid_depth_configs) - 1)
 
         self._type_var = np.int
         self._result = None
@@ -108,14 +116,35 @@ class NSGAIISearch(BaseSearchAlgorithm):
 
         self._search_records = []
         self._problem = None
-        self._use_default_evaluators = True
-        self._evaluators = None
         self._best_config = None
         self._best_vals = None
-
         self._ref_acc = None
         self._acc_delta = None
         self._best_pair_objective = float('inf')
+
+    @property
+    def evaluators(self):
+        if self._evaluators is not []:
+            return self._evaluators
+        else:
+            raise RuntimeError("Evaluators haven't been defined")
+
+    @property
+    def vars_lower(self):
+        return self._vars_lower
+
+    @property
+    def vars_upper(self):
+        """
+                Gets access to design variables upper bound.
+                :return: upper bound for design variables
+                """
+        return self._vars_upper
+
+    @property
+    def num_vars(self):
+        return self._num_vars
+
 
     def run(self, validate_fn, val_loader, evaluators=None, ref_acc=100, acc_delta=1, tensorboard_writer=None):
         nncf_logger.info("Searching for optimal subnet.")
@@ -128,6 +157,8 @@ class NSGAIISearch(BaseSearchAlgorithm):
             self._evaluators = evaluators
         else:
             self._add_default_evaluators(validate_fn, val_loader)
+
+        self.update_evaluators_for_input_model()
         self._problem = SearchProblem(self)
         self._result = minimize(self._problem, self._algorithm,
                                 ('n_gen', int(self._num_evals / self._population)),
@@ -135,22 +166,33 @@ class NSGAIISearch(BaseSearchAlgorithm):
                                 # save_history=True,
                                 verbose=self._verbose)
 
-        # TODO(Pablo): Optional dump caches and search progression
-        self.search_progression_to_csv()
-        for evaluator in self._evaluators:
-            evaluator.export_cache_to_csv(self._log_dir)
-
-        # TODO(Pablo)
         if self._best_config is not None:
             self._elasticity_ctrl.multi_elasticity_handler.set_config(self._best_config)
             self._bn_adaptation.run(self._model)
         return self._elasticity_ctrl, self._best_config, self._best_vals
+
+    def update_evaluators_for_input_model(self):
+        self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
+        for evaluator in self._evaluators:
+            if isinstance(evaluator, AccuracyEvaluator):
+                value, _, _ = evaluator.evaluate_model(self._model)
+                evaluator.input_model_value = value
+            else:
+                if evaluator.use_model_for_evaluation:
+                    value = evaluator.evaluate_model(self._model)
+                else:
+                    value = evaluator.evaluate_with_elasticity_handler()
+                evaluator.input_model_value = value
 
     def search_progression_to_csv(self):
         with open(f'{self._log_dir}/search_progression.csv', 'w') as progression:
             writer = csv.writer(progression)
             for record in self._search_records:
                 writer.writerow(record)
+
+    def evaluators_to_csv(self):
+        for evaluator in self._evaluators:
+            evaluator.export_cache_to_csv(self._log_dir)
 
     def _add_default_evaluators(self, validate_fn, val_loader):
         self._use_default_evaluators = True
@@ -164,11 +206,11 @@ class NSGAIISearch(BaseSearchAlgorithm):
 
 class SearchProblem(Problem):
     def __init__(self, search):
-        super().__init__(n_var=search._nvar,
+        super().__init__(n_var=search.num_vars,
                          n_obj=search._num_obj,
                          n_constr=search._num_constraints,
-                         xl=search._xl,
-                         xu=search._xu,
+                         xl=search.vars_lower,
+                         xu=search.vars_upper,
                          type_var=search._type_var)
         self._search = search
         self._elasticity_handler = self._search._elasticity_ctrl.multi_elasticity_handler
@@ -202,7 +244,7 @@ class SearchProblem(Problem):
                 nncf_logger.warning("Requested configuration was invalid")
                 nncf_logger.warning(f"Requested: {sample}")
                 nncf_logger.warning(f"Provided: {self._elasticity_handler.get_active_config()}")
-                raise RuntimeError("TODO(pablo) Handle differences between requested and valid configuration.")
+                self._search._bad_requests.append((sample, self._elasticity_handler.get_active_config()))
 
             result = []
             for key in sample.keys():
@@ -213,6 +255,7 @@ class SearchProblem(Problem):
             bn_adaption_executed = False
             acc_within_tolerance = 0
             pair_objective = None
+            in_cache = False
             for evaluator in self._search._evaluators:
                 in_cache, value = evaluator.retrieve_from_cache(tuple(x[i]))
                 if not bn_adaption_executed and not in_cache:
@@ -244,9 +287,7 @@ class SearchProblem(Problem):
 
             if acc_within_tolerance > 0:
                 if pair_objective < self._search._best_pair_objective:
-                    # if sample_dist < self._best_dist_ideal:
                     self._search._best_pair_objective = pair_objective
-                    # self._best_dist_ideal = sample_dist
                     self._search._best_config = sample
                     self._search._best_vals = [evaluator.curr_value for evaluator in self._search._evaluators]
                     print(f"Best: {acc_within_tolerance}, {pair_objective}")

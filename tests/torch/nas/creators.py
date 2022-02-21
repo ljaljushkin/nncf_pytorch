@@ -77,6 +77,9 @@ def create_bnas_model_and_ctrl_by_test_desc(desc: MultiElasticityTestDesc, mode=
             }
         }
     }
+    depth_config = config['bootstrapNAS']['training']['elasticity']['depth']
+    if depth_config['mode'] == 'auto':
+        del depth_config['skipped_blocks']
     config['bootstrapNAS']['training']['elasticity'].update(desc.algo_params)
     if desc.name == 'densenet_121':
         config['bootstrapNAS']['training'] = {'elasticity': {'depth': {'min_block_size': 10, 'max_block_size': 117}}}

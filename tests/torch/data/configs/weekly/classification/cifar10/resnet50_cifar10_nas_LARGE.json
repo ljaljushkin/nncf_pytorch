@@ -8,7 +8,7 @@
     "batch_size": 64,
     "batch_size_val": 2000,
     "multiprocessing_distributed": false,
-    "optimizer": {   // Apply only on finetuning?
+    "optimizer": {
         "type": "sgd",
         "momentum": 0.9,
         "nesterov": true,
@@ -42,7 +42,7 @@
             "elasticity": {
                 "available_elasticity_dims": ["width", "depth"],
                 "width": {
-                    "max_num_widths": 2,
+                    "max_num_widths": 3,
                       "min_out_channels": 32,
                       "width_step": 32,
                       "width_multipliers": [1, 0.85, 0.60]
@@ -51,26 +51,13 @@
                     "max_num_kernels": 3
                 },
                 "depth": {
-                    "mode": "manual", // auto", //
-                //    // Depth indicator = 1
+                    "mode": "manual",
                     "skipped_blocks": [
-                ////        ['ResNet/Sequential[layer1]/Bottleneck[0]/ReLU[relu]/relu__2', 'ResNet/Sequential[layer1]/Bottleneck[1]/ReLU[relu]/relu__2'],
-                        // 0
                         ["ResNet/Sequential[layer1]/Bottleneck[1]/ReLU[relu]/relu__2", "ResNet/Sequential[layer1]/Bottleneck[2]/ReLU[relu]/relu__2"],
-                ////        ['ResNet/Sequential[layer2]/Bottleneck[0]/ReLU[relu]/relu__2', 'ResNet/Sequential[layer2]/Bottleneck[1]/ReLU[relu]/relu__2'],
-                        // 1
                         ["ResNet/Sequential[layer2]/Bottleneck[1]/ReLU[relu]/relu__2", "ResNet/Sequential[layer2]/Bottleneck[2]/ReLU[relu]/relu__2"],
-                        // 2
                         ["ResNet/Sequential[layer2]/Bottleneck[2]/ReLU[relu]/relu__2", "ResNet/Sequential[layer2]/Bottleneck[3]/ReLU[relu]/relu__2"],
-                ////        ['ResNet/Sequential[layer3]/Bottleneck[0]/ReLU[relu]/relu__2', 'ResNet/Sequential[layer3]/Bottleneck[1]/ReLU[relu]/relu__2'],
-                ////        ['ResNet/Sequential[layer3]/Bottleneck[1]/ReLU[relu]/relu__2', 'ResNet/Sequential[layer3]/Bottleneck[2]/ReLU[relu]/relu__2'],
-                ////        ['ResNet/Sequential[layer3]/Bottleneck[2]/ReLU[relu]/relu__2', 'ResNet/Sequential[layer3]/Bottleneck[3]/ReLU[relu]/relu__2'],
-                        // 3
                         ["ResNet/Sequential[layer3]/Bottleneck[3]/ReLU[relu]/relu__2", "ResNet/Sequential[layer3]/Bottleneck[4]/ReLU[relu]/relu__2"],
-                        // 4
                         ["ResNet/Sequential[layer3]/Bottleneck[4]/ReLU[relu]/relu__2", "ResNet/Sequential[layer3]/Bottleneck[5]/ReLU[relu]/relu__2"],
-                ////        ['ResNet/Sequential[layer4]/Bottleneck[0]/ReLU[relu]/relu__2', 'ResNet/Sequential[layer4]/Bottleneck[1]/ReLU[relu]/relu__2'],
-                        // 5
                         ["ResNet/Sequential[layer4]/Bottleneck[1]/ReLU[relu]/relu__2", "ResNet/Sequential[layer4]/Bottleneck[2]/ReLU[relu]/relu__2"]
                     ],
                 }
@@ -80,8 +67,6 @@
             "algorithm": "NSGA",
             "num_evals": 2000,
             "population": 40,
-            "use_cache_file": true,
-//            "cache_file_path":
         },
     }
 }
