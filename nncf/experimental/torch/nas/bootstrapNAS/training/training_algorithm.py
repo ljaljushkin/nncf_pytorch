@@ -142,10 +142,6 @@ class EpochBasedTrainingAlgorithm:
             # train for one epoch
             train_epoch_fn(train_loader, self._model, self._training_ctrl, epoch, optimizer)
 
-            # Learning rate scheduling should be applied after optimizer’s update
-            # TODO(pablo): We are updating the learning rate in train_epoch. How to handle this?
-            # lr_scheduler.step(epoch if not isinstance(lr_scheduler, ReduceLROnPlateau) else self._supernet_best_acc1)
-
             compression_stage = self._training_ctrl.compression_stage()
 
             self._training_ctrl.multi_elasticity_handler.activate_minimum_subnet()
