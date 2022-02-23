@@ -232,10 +232,10 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
         # TODO(nlyalyus): Perform some studies to determine default params (ticket 76938)
         return {
             "list_stage_descriptions": [
-                {"train_dims": ["kernel"], "epochs": 1},
-                {"train_dims": ["kernel", "depth"], "epochs": 1},
-                {"train_dims": ["kernel", "depth"], "epochs": 1},
-                {"train_dims": ["kernel", "depth", "width"], "epochs": 1},
-                {"train_dims": ["kernel", "depth", "width"], "epochs": 1, "reorg_weights": True, "bn_adapt": True}
+                {"train_dims": ["kernel"], "epochs": 1, "init_lr": 2.5e-6, "epochs_lr": 1},
+                {"train_dims": ["kernel", "depth"], "epochs": 1, "init_lr": 2.5e-6, "epochs_lr": 1},
+                {"train_dims": ["kernel", "depth"], "epochs": 1, "init_lr": 2.5e-6, "epochs_lr": 1},
+                {"train_dims": ["kernel", "depth", "width"], "epochs": 1, "init_lr": 2.5e-6, "epochs_lr": 1},
+                {"train_dims": ["kernel", "depth", "width"], "epochs": 1, "reorg_weights": True, "bn_adapt": True, "init_lr": 2.5e-6, "epochs_lr": 1}
             ]
         }

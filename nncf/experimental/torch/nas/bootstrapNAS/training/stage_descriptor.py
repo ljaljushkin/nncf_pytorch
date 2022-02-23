@@ -56,13 +56,16 @@ class StageDescriptor:
         return cls(**new_dict)
 
     def get_state(self) -> Dict[str, Any]:
-        return {
+        state_dict = {
             'train_dims': [dim.value for dim in self.train_dims],
             'epochs': self.epochs,
             'reorg_weights': self.reorg_weights,
             'width_indicator': self.width_indicator,
             'depth_indicator': self.depth_indicator,
             'bn_adapt': self.bn_adapt,
-            'init_lr': self.init_lr,
-            'epochs_lr': self.epochs_lr
         }
+        if self.init_lr is not None:
+            state_dict['init_lr'] = self.init_lr
+        if self.epochs_lr is not None:
+            state_dict['epochs_lr'] = self.epochs_lr
+        return state_dict
