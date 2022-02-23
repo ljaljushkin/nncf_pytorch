@@ -222,6 +222,8 @@ BOOTSTRAP_NAS_SEARCH_SCHEMA = {
                                      description="Defines the number of evaluations that will be used by the search algorithm."),
         "population": with_attributes(NUMBER,
                                       description="Defines the population size when using an evolutionary search algorithm."),
+        "acc_delta": with_attributes(NUMBER,
+                                      description="Defines the possible + or - difference in accuracy that is tolerated when looking for a subnetwork"),
     },
     "additionalProperties": False
 }

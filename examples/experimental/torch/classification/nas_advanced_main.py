@@ -41,7 +41,7 @@ from examples.torch.common.utils import create_code_snapshot
 from examples.torch.common.utils import is_pretrained_model_requested
 from examples.torch.common.utils import print_args
 from nncf.config.structures import BNAdaptationInitArgs
-from nncf.experimental.torch.nas.bootstrapNAS.search import NSGAIISearch
+from nncf.experimental.torch.nas.bootstrapNAS.search import SearchAlgorithm
 from nncf.experimental.torch.nas.bootstrapNAS.training import EpochBasedTrainingAlgorithm
 from nncf.torch.initialization import default_criterion_fn
 from nncf.torch.initialization import wrap_dataloader_for_init
@@ -242,21 +242,22 @@ def main_worker(current_gpu, config: SampleConfig):
 
     if 'train' in config.mode:
         # Validate supernetwork
-        validate(val_loader, model, criterion, config)
+        top1, _, _ = validate(val_loader, model, criterion, config)
 
         nncf_network, elasticity_ctrl = training_algorithm.run(train_epoch_fn, train_loader,
                                                                validate_model_fn, val_loader, optimizer,
                                                                config.checkpoint_save_dir, config.tb,
                                                                config.train_steps)
 
-        search_algo = NSGAIISearch(model, elasticity_ctrl, nncf_config)
+        search_algo = SearchAlgorithm(model, elasticity_ctrl, nncf_config)
 
-        validate_fn = validate_model_fn
-
-        elasticity_ctrl, best_config, metrics = search_algo.run(validate_fn, val_loader, tensorboard_writer=config.tb)
+        elasticity_ctrl, best_config, metrics = search_algo.run(validate_model_fn, val_loader, config.checkpoint_save_dir, ref_acc=top1, tensorboard_writer=config.tb)
 
         print(best_config)
         print(metrics)
+
+        search_algo.search_progression_to_csv()
+        search_algo.evaluators_to_csv()
 
     if 'test' in config.mode:
         validate(val_loader, model, criterion, config)

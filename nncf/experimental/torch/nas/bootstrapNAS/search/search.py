@@ -15,12 +15,14 @@ from abc import abstractmethod
 
 import autograd.numpy as anp
 import numpy as np
+from pathlib import Path
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.core.problem import Problem
 from pymoo.factory import get_crossover
 from pymoo.factory import get_mutation
 from pymoo.factory import get_sampling
 from pymoo.optimize import minimize
+import torch
 
 from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import AccuracyEvaluator
 from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import Evaluator
@@ -119,8 +121,10 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self._best_config = None
         self._best_vals = None
         self._ref_acc = None
-        self._acc_delta = None
+        self._acc_delta = search_config.get('acc_delta', 1)
         self._best_pair_objective = float('inf')
+
+        self.checkpoint_save_dir = None
 
     @property
     def evaluators(self):
@@ -128,6 +132,19 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             return self._evaluators
         else:
             raise RuntimeError("Evaluators haven't been defined")
+
+    @property
+    def acc_delta(self):
+        return self._acc_delta
+
+    @acc_delta.setter
+    def acc_delta(self, val):
+        if val > 50:
+            val = 50
+        if val > 5:
+            nncf_logger.warning("Accuracy delta was set to a value greater than 5")
+        self._acc_delta = val
+
 
     @property
     def vars_lower(self):
@@ -146,11 +163,11 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         return self._num_vars
 
 
-    def run(self, validate_fn, val_loader, evaluators=None, ref_acc=100, acc_delta=1, tensorboard_writer=None):
+    def run(self, validate_fn, val_loader, checkpoint_save_dir, evaluators=None, ref_acc=100, tensorboard_writer=None):
         nncf_logger.info("Searching for optimal subnet.")
         self._ref_acc = ref_acc
-        self._acc_delta = acc_delta
         self._tb = tensorboard_writer
+        self.checkpoint_save_dir = checkpoint_save_dir
         if evaluators is not None:
             self._use_default_evaluators = False
             self._num_obj = len(evaluators)
@@ -266,8 +283,8 @@ class SearchProblem(Problem):
                         value, _, _ = evaluator.evaluate_model(self._search._model)
                         evaluator.add_to_cache(tuple(x[i]), value)
                     evaluators_arr[eval_idx].append(value * -1.0)
-                    upper_bound = self._search._ref_acc + self._search._acc_delta
-                    lower_bound = self._search._ref_acc - self._search._acc_delta
+                    upper_bound = self._search._ref_acc + self._search.acc_delta
+                    lower_bound = self._search._ref_acc - self._search.acc_delta
                     temp_acc = (value * -1.0) if value < 0 else value
                     if temp_acc < upper_bound and temp_acc > lower_bound:
                         acc_within_tolerance = temp_acc
@@ -291,6 +308,13 @@ class SearchProblem(Problem):
                     self._search._best_config = sample
                     self._search._best_vals = [evaluator.curr_value for evaluator in self._search._evaluators]
                     print(f"Best: {acc_within_tolerance}, {pair_objective}")
+                    checkpoint_path = Path(self._search.checkpoint_save_dir, 'subnetwork_best.pth')
+                    checkpoint = {
+                        'epoch': 0, #epoch + 1,
+                        'best_acc1': acc_within_tolerance,
+                        'subnet_config': sample
+                    }
+                    torch.save(checkpoint, checkpoint_path)
 
             self._search._search_records.append(result)
 

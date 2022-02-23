@@ -8,6 +8,15 @@
     "batch_size": 2,
     "batch_size_val": 2000,
     "multiprocessing_distributed": false,
+    "optimizer": {
+        "type": "sgd",
+        "momentum": 0.9,
+        "nesterov": true,
+        "weight_decay": 3e-7,
+        "base_lr": 1.0, // 2.5e-6,
+        "label_smoothing": 0.1,
+        "no_decay_keys": "bn#bias",
+    },
     "bootstrapNAS": {
         "training": {
             "algorithm": "progressive_shrinking",
@@ -39,6 +48,7 @@
             "algorithm": "NSGA2",
             "num_evals": 4,
             "population": 1,
+            "acc_delta": 2
         }
     }
 }
