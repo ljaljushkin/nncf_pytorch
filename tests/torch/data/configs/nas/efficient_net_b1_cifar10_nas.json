@@ -3,7 +3,6 @@
     "input_info": {
       "sample_size": [1, 3, 32, 32]
     },
-    "train_steps": 100,
     "multiprocessing_distributed": false,
     "optimizer": {
         "type": "sgd",
@@ -15,6 +14,7 @@
     "bootstrapNAS": {
         "training": {
             "algorithm": "progressive_shrinking",
+            "train_steps": 100,
             "batchnorm_adaptation": {
                 "num_bn_adaptation_samples": 2
             },

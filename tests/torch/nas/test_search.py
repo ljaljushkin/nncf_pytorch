@@ -158,12 +158,12 @@ def test_num_variables(nas_model_name):
     assert search.num_vars == len(NAS_MODELS_SEARCH_ENCODING[nas_model_name])
 
 
-def test_create_default_evaluators(nas_model_name):
+def test_create_default_evaluators(nas_model_name, tmp_path):
     search = prepare_search_algorithm(nas_model_name)
 
     def fake_acc_validate_fn(model, val_loader):
         return 0, 0, 0
-    search.run(fake_acc_validate_fn, None)
+    search.run(fake_acc_validate_fn, None, tmp_path)
     evaluators = search.evaluators
     assert len(evaluators) == 2
     assert not evaluators[0].use_model_for_evaluation

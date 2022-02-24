@@ -203,7 +203,9 @@ BOOTSTRAP_NAS_TRAINING_SCHEMA = {
         "batchnorm_adaptation": BATCHNORM_ADAPTATION_SCHEMA,
         "schedule": NAS_SCHEDULE_SCHEMA,
         "elasticity": ELASTICITY_SCHEMA,
-        "lr_schedule": LR_SCHEDULE_SCHEMA
+        "lr_schedule": LR_SCHEDULE_SCHEMA,
+        "train_steps": with_attributes(NUMBER,
+                                     description="Defines the number of of samples used for each training epoch."),
     },
     "additionalProperties": False
 }

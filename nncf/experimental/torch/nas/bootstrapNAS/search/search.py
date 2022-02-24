@@ -38,6 +38,9 @@ from nncf.torch.nncf_network import NNCFNetwork
 
 
 class BaseSearchAlgorithm:
+    """
+    Base class for search algorithms. It contains the evaluators used by search approches.
+    """
     def __init__(self):
         self._use_default_evaluators = True
         self._evaluators = None
@@ -48,30 +51,54 @@ class BaseSearchAlgorithm:
         pass
 
 
+class SearchParams:
+    """
+    Storage class for search parameters.
+    """
+    def __init__(self, num_evals, num_contstraints, population,
+                 seed, crossover_prob, crossover_eta,
+                 mutation_prob, mutation_eta, acc_delta):
+        self._num_evals = num_evals
+        self._num_constraints = num_contstraints
+        self._population = population
+        if population > num_evals:
+            raise ValueError("Population size must not be greater than number of evaluations.")
+        self._seed = seed
+        self._crossover_prob = crossover_prob
+        self._crossover_eta = crossover_eta
+        self._mutation_prob = mutation_prob
+        self._mutation_eta = mutation_eta
+        self._acc_delta = acc_delta
+
+    @classmethod
+    def from_dict(cls, search_config):
+        num_evals = search_config.get('num_evals', 3000)
+        num_constraints = search_config.get('num_constraints', 0)
+        population = search_config.get('population', 40)
+        seed = search_config.get('seed', 0)
+        crossover_prob = search_config.get('crossover_prob', 0.9)
+        crossover_eta = search_config.get('crossover_eta', 10.0)
+        mutation_prob = search_config.get('mutation_prob', 0.02)
+        mutation_eta = search_config.get('mutation_eta', 3.0)
+        acc_delta = search_config.get('acc_delta', 1)
+
+        return cls(num_evals, num_constraints, population,
+                 seed, crossover_prob, crossover_eta,
+                 mutation_prob, mutation_eta, acc_delta)
+
 class SearchAlgorithm(BaseSearchAlgorithm):
     def __init__(self,
                  model: NNCFNetwork,
                  elasticity_ctrl: ElasticityController,
                  nncf_config: NNCFConfig,
                  verbose=True):
-
         super(SearchAlgorithm, self).__init__()
         self._model = model
         self._elasticity_ctrl = elasticity_ctrl
         self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
-
         search_config = nncf_config.get('bootstrapNAS', {}).get('search', {})
         self._num_obj = None
-        self._num_constraints = search_config.get('num_constraints', 0)
-        self._num_evals = search_config.get('num_evals', 3000)
-        self._population = search_config.get('population', 40)
-        if self._population > self._num_evals:
-            raise ValueError("Population size must not be greater than number of evaluations.")
-        self._seed = search_config.get('seed', 0)
-        self._crossover_prob = search_config.get('crossover_prob', 0.9)
-        self._crossover_eta = search_config.get('crossover_eta', 10.0)
-        self._mutation_prob = search_config.get('mutation_prob', 0.02)
-        self._mutation_eta = search_config.get('mutation_eta', 3.0)
+        self.search_params = SearchParams.from_dict(search_config)
         self._log_dir = nncf_config.get("log_dir", ".")
         self._tb = None
         self._verbose = verbose
@@ -79,10 +106,11 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self._val_loader = None
         evo_algo = search_config['algorithm']
         if evo_algo == 'NSGA2':
-            self._algorithm = NSGA2(pop_size=self._population,
+            self._algorithm = NSGA2(pop_size=self.search_params._population,
                                     sampling=get_sampling("int_lhs"),
-                                    crossover=get_crossover("int_sbx", prob=self._crossover_prob, eta=self._crossover_eta),
-                                    mutation=get_mutation("int_pm", prob=self._mutation_prob, eta=self._mutation_eta),
+                                    crossover=get_crossover("int_sbx", prob=self.search_params._crossover_prob,
+                                                            eta=self.search_params._crossover_eta),
+                                    mutation=get_mutation("int_pm", prob=self.search_params._mutation_prob, eta=self.search_params._mutation_eta),
                                     eliminate_duplicates=True,
                                     save_history=True,
                                     )
@@ -97,7 +125,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
                 self._kernel_search_space = self._elasticity_ctrl.multi_elasticity_handler.kernel_search_space
                 self._num_vars += len(self._kernel_search_space)
                 self._vars_upper += [len(self._kernel_search_space[i]) - 1 for i in
-                             range(len(self._kernel_search_space))]
+                                     range(len(self._kernel_search_space))]
             elif dim == ElasticityDim.WIDTH:
                 self._width_search_space = self._elasticity_ctrl.multi_elasticity_handler.width_search_space
                 self._num_vars += len(self._width_search_space)
@@ -115,15 +143,12 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         bn_adapt_params = nncf_config.get('compression', {}).get('initializer', {}).get('batchnorm_adaptation', {})
         bn_adapt_algo_kwargs = get_bn_adapt_algo_kwargs(nncf_config, bn_adapt_params)
         self._bn_adaptation = BatchnormAdaptationAlgorithm(**bn_adapt_algo_kwargs)
-
         self._search_records = []
         self._problem = None
         self._best_config = None
         self._best_vals = None
         self._ref_acc = None
-        self._acc_delta = search_config.get('acc_delta', 1)
         self._best_pair_objective = float('inf')
-
         self.checkpoint_save_dir = None
 
     @property
@@ -135,7 +160,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
 
     @property
     def acc_delta(self):
-        return self._acc_delta
+        return self.search_params._acc_delta
 
     @acc_delta.setter
     def acc_delta(self, val):
@@ -143,25 +168,27 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             val = 50
         if val > 5:
             nncf_logger.warning("Accuracy delta was set to a value greater than 5")
-        self._acc_delta = val
-
+        self.search_params._acc_delta = val
 
     @property
     def vars_lower(self):
+        """
+        Gets access to design variables lower bounds.
+        :return: lower bounds for design variables
+        """
         return self._vars_lower
 
     @property
     def vars_upper(self):
         """
-                Gets access to design variables upper bound.
-                :return: upper bound for design variables
-                """
+        Gets access to design variables upper bounds.
+        :return: upper bounds for design variables
+        """
         return self._vars_upper
 
     @property
     def num_vars(self):
         return self._num_vars
-
 
     def run(self, validate_fn, val_loader, checkpoint_save_dir, evaluators=None, ref_acc=100, tensorboard_writer=None):
         nncf_logger.info("Searching for optimal subnet.")
@@ -178,8 +205,8 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self.update_evaluators_for_input_model()
         self._problem = SearchProblem(self)
         self._result = minimize(self._problem, self._algorithm,
-                                ('n_gen', int(self._num_evals / self._population)),
-                                seed=self._seed,
+                                ('n_gen', int(self.search_params._num_evals / self.search_params._population)),
+                                seed=self.search_params._seed,
                                 # save_history=True,
                                 verbose=self._verbose)
 
@@ -191,7 +218,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
     def update_evaluators_for_input_model(self):
         self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
         for evaluator in self._evaluators:
-            if isinstance(evaluator, AccuracyEvaluator):
+            if evaluator.type_of_measurement == 'accuracy':
                 value, _, _ = evaluator.evaluate_model(self._model)
                 evaluator.input_model_value = value
             else:
@@ -225,7 +252,7 @@ class SearchProblem(Problem):
     def __init__(self, search):
         super().__init__(n_var=search.num_vars,
                          n_obj=search._num_obj,
-                         n_constr=search._num_constraints,
+                         n_constr=search.search_params._num_constraints,
                          xl=search.vars_lower,
                          xu=search.vars_upper,
                          type_var=search._type_var)
@@ -278,7 +305,7 @@ class SearchProblem(Problem):
                 if not bn_adaption_executed and not in_cache:
                     self._search._bn_adaptation.run(self._search._model)
                     bn_adaption_executed = True
-                if isinstance(evaluator, AccuracyEvaluator):
+                if evaluator.type_of_measurement == 'accuracy':
                     if not in_cache:
                         value, _, _ = evaluator.evaluate_model(self._search._model)
                         evaluator.add_to_cache(tuple(x[i]), value)
@@ -310,7 +337,6 @@ class SearchProblem(Problem):
                     print(f"Best: {acc_within_tolerance}, {pair_objective}")
                     checkpoint_path = Path(self._search.checkpoint_save_dir, 'subnetwork_best.pth')
                     checkpoint = {
-                        'epoch': 0, #epoch + 1,
                         'best_acc1': acc_within_tolerance,
                         'subnet_config': sample
                     }
