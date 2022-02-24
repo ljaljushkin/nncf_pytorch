@@ -10,20 +10,32 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-
+from typing import Any, Tuple, NoReturn
+from typing import Callable
+from typing import Dict
 import csv
 
-def get_flops_for_active_subnet(elasticity_handler):
+from nncf.common.utils.logger import logger as nncf_logger
+from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_controller import ElasticityController
+from nncf.experimental.torch.nas.bootstrapNAS.elasticity.multi_elasticity_handler import MultiElasticityHandler
+from nncf.torch.nncf_network import NNCFNetwork
+
+class BNASEvaluatorStateNames:
+    BNAS_EVALUATOR_STAGE = 'evaluator_state'
+
+def get_flops_for_active_subnet(elasticity_handler: MultiElasticityHandler) -> float:
     flops, _ = elasticity_handler.count_flops_and_weights_for_active_subnet()
     return flops /2000000   # MACs
 
-def get_weights_for_active_subnet(elasticity_handler):
+def get_weights_for_active_subnet(elasticity_handler: MultiElasticityHandler) -> float:
     _, num_weights = elasticity_handler.count_flops_and_weights_for_active_subnet()
     return num_weights
 
 class Evaluator:
-    def __init__(self, name, eval_func, ideal_val, elasticity_ctrl):
-        print(name, eval_func)
+    """
+    An interface for handling measurements collected on a target device. Evaluators make use of functions provided by the users to measure a particular property, e.g., accuracy, latency, etc.
+    """
+    def __init__(self, name: str, eval_func: Callable, ideal_val: float, elasticity_ctrl: ElasticityController):
         self.name = name
         self._eval_func = eval_func
         self._curr_value = 0
@@ -32,32 +44,56 @@ class Evaluator:
         self.use_model_for_evaluation = True
         self.cache = {}
         self.input_model_value = None
+        self.type_of_measurement = None
         #TODO(pablo): Here we should store some super-network signature that is associated with this evaluator
 
-    def evaluate_model(self, model):
+    def evaluate_model(self, model: NNCFNetwork) -> Tuple[float, ...]:
         return self._eval_func(model)
 
-    def evaluate_with_elasticity_handler(self):
+    def evaluate_with_elasticity_handler(self) -> Tuple[float, ...]:
         if self.use_model_for_evaluation:
             raise RuntimeError("Evaluator set to evaluate with model but elasticity handler was requested.")
         return self._eval_func(self._elasticity_ctrl.multi_elasticity_handler)
 
-    def add_to_cache(self, subnet_config_repr, measurement: float):
-        print("add", subnet_config_repr, measurement)
+    def add_to_cache(self, subnet_config_repr, measurement: float) -> NoReturn:
+        nncf_logger.info(f"Add to evaluator {self.name}: {subnet_config_repr}, {measurement}")
         self.cache[subnet_config_repr] = measurement
 
-    def retrieve_from_cache(self, subnet_config_repr):
+    def retrieve_from_cache(self, subnet_config_repr: Tuple[float, ...]) -> Tuple[bool, float]:
         if subnet_config_repr in self.cache.keys():
             return True, self.cache[subnet_config_repr]
         return False, False
 
-    def get_state(self): # Returns a dictionary with Python data structures
-        raise NotImplementedError
+    def get_state(self) -> Dict[str, Any]:
+        state_dict = {
+            'name': self.name,
+            'eval_func': self._eval_func,
+            'curr_value': self._curr_value,
+            'ideal_value': self._ideal_value,
+            'elasticity_controller_compression_state': self.elasticity_ctrl.get_state(),
+            'use_model_for_evaluation': self.use_model_for_evaluation,
+            'cache': self.cache,
+            'input_model_value': self.input_model_value
+        }
+        return state_dict
 
-    def from_state(self, eval_state):
-        raise NotImplementedError
+    def from_state(self, state: Dict[str, Any]) -> 'Evaluator':
+        raise RuntimeError("Not implemented")
+        # new_dict = state.copy()
+        # elasticity_ctrl_state = state['elasticity_controller_compression_state']
+        # #TODO (Pablo) FIX. Best way to recover the elasticity controller?
+        # elasticity_ctrl = None
+        # # elasticity_ctrl = ElasticityController(target_model: NNCFNetwork, algo_config: Dict, multi_elasticity_handler: MultiElasticityHandler)
+        # # elasticity_ctrl.load_state(elasticity_ctrl_state)
+        # evaluator = cls(new_dict['name'], new_dict['eval_func'], new_dict['ideal_val'], elasticity_ctrl)
+        #
+        # evaluator._curr_value = new_dict['curr_value']
+        # evaluator.use_model_for_evaluation = new_dict['use_model_for_evaluation']
+        # evaluator.cache = new_dict['cache']
+        # evaluator.input_model_value = new_dict['input_model_value']
+        # return evaluator
 
-    def load_cache_from_csv(self, cache_file_path):
+    def load_cache_from_csv(self, cache_file_path: str) -> NoReturn:
         with open(f"{cache_file_path}", 'r') as cache_file:
             reader = csv.reader(cache_file)
             for row in reader:
@@ -66,7 +102,7 @@ class Evaluator:
                 print(type(rep_tuple), rep_tuple)
                 self.add_to_cache(rep_tuple, float(row[1]))
 
-    def export_cache_to_csv(self, cache_file_path):
+    def export_cache_to_csv(self, cache_file_path: str) -> NoReturn:
         with open(f'{cache_file_path}/cache_{self.name}.csv', 'w') as cache_dump:
             writer = csv.writer(cache_dump)
             for key in self.cache:
@@ -75,6 +111,10 @@ class Evaluator:
 
 
 class AccuracyEvaluator(Evaluator):
+    """
+    A particular kind of evaluator n interface for collecting model's accuracy measurements
+    """
+
     def __init__(self, eval_func, val_loader, is_top1=True):
         if is_top1:
             name = "top1_acc"
@@ -82,6 +122,7 @@ class AccuracyEvaluator(Evaluator):
         self._val_loader = val_loader
         self._use_model_for_evaluation = True
         self._ideal_value = 100
+        self.type_of_measurement = 'accuracy'
 
-    def evaluate_model(self, model):
+    def evaluate_model(self, model: NNCFNetwork) -> Tuple[float, ...]:
         return self._eval_func(model, self._val_loader)

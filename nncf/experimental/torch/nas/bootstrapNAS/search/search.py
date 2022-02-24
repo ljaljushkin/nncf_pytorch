@@ -12,6 +12,7 @@
 """
 import csv
 from abc import abstractmethod
+from typing import Any, Dict, Tuple, Callable, Optional, List, NoReturn
 
 import autograd.numpy as anp
 import numpy as np
@@ -23,6 +24,8 @@ from pymoo.factory import get_mutation
 from pymoo.factory import get_sampling
 from pymoo.optimize import minimize
 import torch
+from torch.utils.data.dataloader import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import AccuracyEvaluator
 from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import Evaluator
@@ -35,20 +38,6 @@ from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_controller i
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.multi_elasticity_handler import SubnetConfig
 from nncf.torch.nncf_network import NNCFNetwork
-
-
-class BaseSearchAlgorithm:
-    """
-    Base class for search algorithms. It contains the evaluators used by search approches.
-    """
-    def __init__(self):
-        self._use_default_evaluators = True
-        self._evaluators = None
-        self._bad_requests = []
-
-    @abstractmethod
-    def run(self):
-        pass
 
 
 class SearchParams:
@@ -71,7 +60,7 @@ class SearchParams:
         self._acc_delta = acc_delta
 
     @classmethod
-    def from_dict(cls, search_config):
+    def from_dict(cls, search_config: Dict[str, Any]) -> 'SearchParams':
         num_evals = search_config.get('num_evals', 3000)
         num_constraints = search_config.get('num_constraints', 0)
         population = search_config.get('population', 40)
@@ -85,6 +74,24 @@ class SearchParams:
         return cls(num_evals, num_constraints, population,
                  seed, crossover_prob, crossover_eta,
                  mutation_prob, mutation_eta, acc_delta)
+
+
+class BaseSearchAlgorithm:
+    """
+    Base class for search algorithms. It contains the evaluators used by search approches.
+    """
+    def __init__(self):
+        self._use_default_evaluators = True
+        self._evaluators = None
+        self._bad_requests = []
+
+    @abstractmethod
+    def run(self, validate_fn: Callable, val_loader: DataLoader, checkpoint_save_dir: str,
+            evaluators: Optional[List[Evaluator]] = None, ref_acc: Optional[float] = 100,
+            tensorboard_writer: Optional[SummaryWriter] = None) -> Tuple[ElasticityController,
+                                                                         SubnetConfig, Tuple[float, ...]]:
+        pass
+
 
 class SearchAlgorithm(BaseSearchAlgorithm):
     def __init__(self,
@@ -152,18 +159,18 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self.checkpoint_save_dir = None
 
     @property
-    def evaluators(self):
+    def evaluators(self) -> List[Evaluator]:
         if self._evaluators is not []:
             return self._evaluators
         else:
             raise RuntimeError("Evaluators haven't been defined")
 
     @property
-    def acc_delta(self):
+    def acc_delta(self) -> float:
         return self.search_params._acc_delta
 
     @acc_delta.setter
-    def acc_delta(self, val):
+    def acc_delta(self, val: float) -> NoReturn:
         if val > 50:
             val = 50
         if val > 5:
@@ -171,7 +178,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self.search_params._acc_delta = val
 
     @property
-    def vars_lower(self):
+    def vars_lower(self) -> List[float]:
         """
         Gets access to design variables lower bounds.
         :return: lower bounds for design variables
@@ -179,7 +186,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         return self._vars_lower
 
     @property
-    def vars_upper(self):
+    def vars_upper(self) -> List[float]:
         """
         Gets access to design variables upper bounds.
         :return: upper bounds for design variables
@@ -187,10 +194,13 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         return self._vars_upper
 
     @property
-    def num_vars(self):
+    def num_vars(self) -> float:
         return self._num_vars
 
-    def run(self, validate_fn, val_loader, checkpoint_save_dir, evaluators=None, ref_acc=100, tensorboard_writer=None):
+    def run(self, validate_fn: Callable, val_loader: DataLoader, checkpoint_save_dir: str,
+            evaluators: Optional[List[Evaluator]] = None, ref_acc: Optional[float] = 100,
+            tensorboard_writer: Optional[SummaryWriter] = None) -> Tuple[
+        ElasticityController, SubnetConfig, Tuple[float, ...]]:
         nncf_logger.info("Searching for optimal subnet.")
         self._ref_acc = ref_acc
         self._tb = tensorboard_writer
@@ -213,9 +223,12 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         if self._best_config is not None:
             self._elasticity_ctrl.multi_elasticity_handler.set_config(self._best_config)
             self._bn_adaptation.run(self._model)
+        else:
+            nncf_logger.warning("Couldn't find a subnet that satisfies the requirements.")
+
         return self._elasticity_ctrl, self._best_config, self._best_vals
 
-    def update_evaluators_for_input_model(self):
+    def update_evaluators_for_input_model(self) -> NoReturn:
         self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
         for evaluator in self._evaluators:
             if evaluator.type_of_measurement == 'accuracy':
@@ -228,17 +241,28 @@ class SearchAlgorithm(BaseSearchAlgorithm):
                     value = evaluator.evaluate_with_elasticity_handler()
                 evaluator.input_model_value = value
 
-    def search_progression_to_csv(self):
+    def search_progression_to_csv(self) -> NoReturn:
         with open(f'{self._log_dir}/search_progression.csv', 'w') as progression:
             writer = csv.writer(progression)
             for record in self._search_records:
                 writer.writerow(record)
 
-    def evaluators_to_csv(self):
+    def save_evaluators_state(self) -> NoReturn:
+        evaluators_state = []
+        for evaluator in self._evaluators:
+            eval_state = evaluator.get_state()
+            evaluators_state.append(eval_state)
+        torch.save(Path(self.checkpoint_save_dir, 'evaluators_state.pth'))
+
+    def load_evaluators_state(self) -> NoReturn:
+        # TODO(pablo)
+        pass
+
+    def evaluators_to_csv(self) -> NoReturn:
         for evaluator in self._evaluators:
             evaluator.export_cache_to_csv(self._log_dir)
 
-    def _add_default_evaluators(self, validate_fn, val_loader):
+    def _add_default_evaluators(self, validate_fn: Callable, val_loader: DataLoader) -> NoReturn:
         self._use_default_evaluators = True
         self._num_obj = 2
         self._evaluators = []
@@ -262,7 +286,7 @@ class SearchProblem(Problem):
         self._best_dist_ideal = float('inf')
         self._iter = 0
 
-    def _evaluate(self, x, out, *args, **kargs):
+    def _evaluate(self, x: List[float], out: Dict[str, Any], *args, **kargs) -> NoReturn:
         evaluators_arr = [[] for i in range(len(self._search._evaluators))]
 
         for i in range(len(x)):
