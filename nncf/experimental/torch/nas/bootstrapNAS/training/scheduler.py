@@ -60,9 +60,13 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
 
     def set_global_lr_scheduler(self, lr_scheduler: CosineLRScheduler):
         self._global_lr_scheduler = lr_scheduler
+        if lr_scheduler is not None:
+            self._stage_lr_scheduler = None
 
     def set_stage_lr_scheduler(self, lr_scheduler: CosineLRScheduler):
         self._stage_lr_scheduler = lr_scheduler
+        if lr_scheduler is not None:
+            self._global_lr_scheduler = None
 
     @property
     def list_stage_descriptors(self) -> List[StageDescriptor]:
@@ -212,7 +216,6 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
         for desc in self._list_stage_descriptors:
             # Check if global learning rate has been set
             if desc.init_lr is not None and bool(self._training_ctrl._lr_schedule_config):
-                print(desc.init_lr, self._training_ctrl._lr_schedule_config)
                 raise ValueError(
                     f"Global learning rate scheduler is in use. Cannot set stage learning rate: {desc.init_lr}"
                 )
@@ -232,10 +235,10 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
         # TODO(nlyalyus): Perform some studies to determine default params (ticket 76938)
         return {
             "list_stage_descriptions": [
-                {"train_dims": ["kernel"], "epochs": 1, "init_lr": 2.5e-6, "epochs_lr": 1},
-                {"train_dims": ["kernel", "depth"], "epochs": 1, "init_lr": 2.5e-6, "epochs_lr": 1},
-                {"train_dims": ["kernel", "depth"], "epochs": 1, "init_lr": 2.5e-6, "epochs_lr": 1},
-                {"train_dims": ["kernel", "depth", "width"], "epochs": 1, "init_lr": 2.5e-6, "epochs_lr": 1},
-                {"train_dims": ["kernel", "depth", "width"], "epochs": 1, "reorg_weights": True, "bn_adapt": True, "init_lr": 2.5e-6, "epochs_lr": 1}
+                {"train_dims": ["kernel"], "epochs": 1},
+                {"train_dims": ["kernel", "depth"], "epochs": 1},
+                {"train_dims": ["kernel", "depth"], "epochs": 1},
+                {"train_dims": ["kernel", "depth", "width"], "epochs": 1},
+                {"train_dims": ["kernel", "depth", "width"], "epochs": 1, "reorg_weights": True, "bn_adapt": True}
             ]
         }

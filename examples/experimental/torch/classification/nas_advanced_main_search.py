@@ -43,7 +43,7 @@ from examples.torch.common.utils import create_code_snapshot
 from examples.torch.common.utils import is_pretrained_model_requested
 from examples.torch.common.utils import print_args
 from nncf.config.structures import BNAdaptationInitArgs
-from nncf.experimental.torch.nas.bootstrapNAS.search import NSGAIISearch
+from nncf.experimental.torch.nas.bootstrapNAS.search import SearchAlgorithm
 from nncf.experimental.torch.nas.bootstrapNAS.training.model_creator_helpers import resume_compression_from_state
 from nncf.torch.initialization import default_criterion_fn
 from nncf.torch.initialization import wrap_dataloader_for_init
@@ -57,14 +57,14 @@ def get_nas_argument_parser():
     parser.add_argument('--train-steps', default=None, type=int,
                         help='Enables running training for the given number of steps')
 
-    parser.add_argument('--elasticity-state_path', required=True, type=str,
+    parser.add_argument('--elasticity-state-path', required=True, type=str,
                         help='Path of elasticity state')
 
     parser.add_argument('--supernet-weights', required=True, type=str,
                         help='Path to weights of trained super-network')
 
-    parser.add_argument('--cache-file-path', default=None, type=str,
-                        help='Path to cache file for search')
+    parser.add_argument("--search-mode", "-s", action='store_true', help="Activates search mode")
+
     return parser
 
 
@@ -74,7 +74,7 @@ def main(argv):
     config = create_sample_config(args, parser)
     config.search_elasticity_state_path = args.elasticity_state_path
     config.search_supernet_weights = args.supernet_weights
-    config.cache_file_path = args.cache_file_path
+    config.search_mode_active = args.search_mode
 
     if config.dist_url == "env://":
         config.update_from_env()
@@ -113,7 +113,6 @@ def main_worker(current_gpu, config: SampleConfig):
     model_name = config['model']
     train_criterion_fn = inception_criterion_fn if 'inception' in model_name else default_criterion_fn
 
-    resuming_checkpoint_path = config.resuming_checkpoint_path
     nncf_config = config.nncf_config
     pretrained = is_pretrained_model_requested(config)
 
@@ -148,28 +147,29 @@ def main_worker(current_gpu, config: SampleConfig):
 
     nncf_network = create_nncf_network(model, nncf_config)
 
-    if 'train' in config.mode:
+    if config.search_mode_active:
 
         compression_state = torch.load(config.search_elasticity_state_path)
-        model, elasticity_ctrl = resume_compression_from_state(nncf_network, compression_state)  # 1
+        model, elasticity_ctrl = resume_compression_from_state(nncf_network, compression_state)
         model_weights = torch.load(config.search_supernet_weights)
 
         load_state(model, model_weights, is_resume=True)
 
-        #TODO(pablo) Check with Nikolay if supernetwork will always be activated when loading elasticity and weights, then remove.
-        elasticity_ctrl.multi_elasticity_handler.activate_maximal_subnet()
         top1, top5, loss = validate_model_fn(model, val_loader)
         print(f'SuperNetwork Top 1: {top1}')
 
-        #TODO(pablo) Check if this is specified in config file.
-        nncf_config['cache_file_path'] = config.cache_file_path
+        search_algo = SearchAlgorithm(model, elasticity_ctrl, nncf_config)
 
-        search_algo = NSGAIISearch(model, elasticity_ctrl, nncf_config)
-
-        elasticity_ctrl, best_config, metrics = search_algo.run(validate_model_fn, val_loader)
-
+        elasticity_ctrl, best_config, metrics = search_algo.run(validate_model_fn, val_loader, config.checkpoint_save_dir, tensorboard_writer=config.tb)
         print(best_config)
         print(metrics)
+
+        search_algo.search_progression_to_csv()
+        search_algo.evaluators_to_csv()
+
+        top1, top5, loss = validate(val_loader, model, criterion, config)
+        print(top1, elasticity_ctrl.multi_elasticity_handler.count_flops_and_weights_for_active_subnet()[0]/2000000)
+        assert best_config == elasticity_ctrl.multi_elasticity_handler.get_active_config()
 
     if 'test' in config.mode:
         validate(val_loader, model, criterion, config)

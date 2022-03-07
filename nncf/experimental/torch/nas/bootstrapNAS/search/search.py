@@ -46,7 +46,7 @@ class SearchParams:
     """
     def __init__(self, num_evals, num_contstraints, population,
                  seed, crossover_prob, crossover_eta,
-                 mutation_prob, mutation_eta, acc_delta):
+                 mutation_prob, mutation_eta, acc_delta, ref_acc):
         self._num_evals = num_evals
         self._num_constraints = num_contstraints
         self._population = population
@@ -58,6 +58,7 @@ class SearchParams:
         self._mutation_prob = mutation_prob
         self._mutation_eta = mutation_eta
         self._acc_delta = acc_delta
+        self._ref_acc = ref_acc
 
     @classmethod
     def from_dict(cls, search_config: Dict[str, Any]) -> 'SearchParams':
@@ -70,10 +71,11 @@ class SearchParams:
         mutation_prob = search_config.get('mutation_prob', 0.02)
         mutation_eta = search_config.get('mutation_eta', 3.0)
         acc_delta = search_config.get('acc_delta', 1)
+        ref_acc = search_config.get('ref_acc', 100)
 
         return cls(num_evals, num_constraints, population,
                  seed, crossover_prob, crossover_eta,
-                 mutation_prob, mutation_eta, acc_delta)
+                 mutation_prob, mutation_eta, acc_delta, ref_acc)
 
 
 class BaseSearchAlgorithm:
@@ -136,7 +138,8 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             elif dim == ElasticityDim.WIDTH:
                 self._width_search_space = self._elasticity_ctrl.multi_elasticity_handler.width_search_space
                 self._num_vars += len(self._width_search_space)
-                self._vars_upper += [len(self._width_search_space[i]) - 1 for i in range(len(self._width_search_space))]
+                self._vars_upper += [len(self._width_search_space[i]) - 1 for i in
+                                     range(len(self._width_search_space))]
             elif dim == ElasticityDim.DEPTH:
                 self._valid_depth_configs = self._elasticity_ctrl.multi_elasticity_handler.depth_search_space
                 if [] not in self._valid_depth_configs:
@@ -154,7 +157,6 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self._problem = None
         self._best_config = None
         self._best_vals = None
-        self._ref_acc = None
         self._best_pair_objective = float('inf')
         self.checkpoint_save_dir = None
 
@@ -202,7 +204,8 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             tensorboard_writer: Optional[SummaryWriter] = None) -> Tuple[
         ElasticityController, SubnetConfig, Tuple[float, ...]]:
         nncf_logger.info("Searching for optimal subnet.")
-        self._ref_acc = ref_acc
+        if ref_acc != 100:
+            self.search_params._ref_acc = ref_acc
         self._tb = tensorboard_writer
         self.checkpoint_save_dir = checkpoint_save_dir
         if evaluators is not None:
@@ -211,7 +214,6 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             self._evaluators = evaluators
         else:
             self._add_default_evaluators(validate_fn, val_loader)
-
         self.update_evaluators_for_input_model()
         self._problem = SearchProblem(self)
         self._result = minimize(self._problem, self._algorithm,
@@ -224,7 +226,11 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             self._elasticity_ctrl.multi_elasticity_handler.set_config(self._best_config)
             self._bn_adaptation.run(self._model)
         else:
-            nncf_logger.warning("Couldn't find a subnet that satisfies the requirements.")
+            nncf_logger.warning("Couldn't find a subnet that satisfies the requirements. Returning maximum subnet.")
+            self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
+            self._bn_adaptation.run(self._model)
+            self._best_config = self._elasticity_ctrl.multi_elasticity_handler.get_active_config()
+            self._best_vals = [None, None]
 
         return self._elasticity_ctrl, self._best_config, self._best_vals
 
@@ -234,6 +240,14 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             if evaluator.type_of_measurement == 'accuracy':
                 value, _, _ = evaluator.evaluate_model(self._model)
                 evaluator.input_model_value = value
+                if value > self.search_params._ref_acc - 0.01 or value < self.search_params._ref_acc - 0.01:
+                    nncf_logger.warning(f"Accuracy obtained from evaluation {value} differs from reference accuracy {self.search_params._ref_acc}")
+                    if self.search_params._ref_acc == 100:
+                        nncf_logger.info("Adjusting reference accuracy to accuracy obtained from evaluation")
+                        self.search_params._ref_acc = value
+                    elif self.search_params._ref_acc < 100: # REMOVE. Not Needed because we want to make a distiction between both values.
+                        nncf_logger.info("Using reference accuracy.")
+                        evaluator.input_model_value = self.search_params._ref_acc
             else:
                 if evaluator.use_model_for_evaluation:
                     value = evaluator.evaluate_model(self._model)
@@ -241,8 +255,8 @@ class SearchAlgorithm(BaseSearchAlgorithm):
                     value = evaluator.evaluate_with_elasticity_handler()
                 evaluator.input_model_value = value
 
-    def search_progression_to_csv(self) -> NoReturn:
-        with open(f'{self._log_dir}/search_progression.csv', 'w') as progression:
+    def search_progression_to_csv(self, filename='search_progression.csv') -> NoReturn:
+        with open(f'{self._log_dir}/{filename}', 'w') as progression:
             writer = csv.writer(progression)
             for record in self._search_records:
                 writer.writerow(record)
@@ -334,8 +348,8 @@ class SearchProblem(Problem):
                         value, _, _ = evaluator.evaluate_model(self._search._model)
                         evaluator.add_to_cache(tuple(x[i]), value)
                     evaluators_arr[eval_idx].append(value * -1.0)
-                    upper_bound = self._search._ref_acc + self._search.acc_delta
-                    lower_bound = self._search._ref_acc - self._search.acc_delta
+                    upper_bound = 100
+                    lower_bound = self._search.search_params._ref_acc - self._search.acc_delta
                     temp_acc = (value * -1.0) if value < 0 else value
                     if temp_acc < upper_bound and temp_acc > lower_bound:
                         acc_within_tolerance = temp_acc

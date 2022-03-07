@@ -74,7 +74,6 @@ class EpochBasedTrainingAlgorithm:
         self._optimizer_state = None
         if checkpoint is not None:
             resuming_model_state_dict = checkpoint[self._state_names.MODEL_STATE]
-            print(self._model)
             load_state(self._model, resuming_model_state_dict, is_resume=True)
             self._optimizer_state = checkpoint[self._state_names.OPTIMIZER]
             self._start_epoch = checkpoint[self._state_names.EPOCH]
@@ -109,7 +108,7 @@ class EpochBasedTrainingAlgorithm:
         :param tensorboard_writer: The tensorboard object to be used for logging.
         :return: the fine-tuned model and elasticity controller
         """
-        # Global LR Scheduler
+
         if train_iters is None:
             train_iters = len(train_loader)
         self._training_ctrl.set_training_lr_scheduler_args(optimizer, train_iters)  # len(train_loader))

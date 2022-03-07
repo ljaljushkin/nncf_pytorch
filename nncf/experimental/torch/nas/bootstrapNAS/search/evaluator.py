@@ -77,7 +77,7 @@ class Evaluator:
         }
         return state_dict
 
-    def from_state(self, state: Dict[str, Any]) -> 'Evaluator':
+    def from_state(self, state: Dict[str, Any], elasticity_ctrl: ElasticityController) -> 'Evaluator':
         raise RuntimeError("Not implemented")
         # new_dict = state.copy()
         # elasticity_ctrl_state = state['elasticity_controller_compression_state']
@@ -97,9 +97,7 @@ class Evaluator:
         with open(f"{cache_file_path}", 'r') as cache_file:
             reader = csv.reader(cache_file)
             for row in reader:
-                print(type(row[0]), row[0], row[1])
                 rep_tuple = tuple(map(int, row[0][1:len(row[0])-1].split(',')))
-                print(type(rep_tuple), rep_tuple)
                 self.add_to_cache(rep_tuple, float(row[1]))
 
     def export_cache_to_csv(self, cache_file_path: str) -> NoReturn:
@@ -115,13 +113,14 @@ class AccuracyEvaluator(Evaluator):
     A particular kind of evaluator n interface for collecting model's accuracy measurements
     """
 
-    def __init__(self, eval_func, val_loader, is_top1=True):
+    def __init__(self, eval_func, val_loader, is_top1=True, ref_acc=100):
         if is_top1:
             name = "top1_acc"
         super(AccuracyEvaluator, self).__init__(name, eval_func, 100, None)
         self._val_loader = val_loader
         self._use_model_for_evaluation = True
         self._ideal_value = 100
+        self._ref_acc = ref_acc
         self.type_of_measurement = 'accuracy'
 
     def evaluate_model(self, model: NNCFNetwork) -> Tuple[float, ...]:

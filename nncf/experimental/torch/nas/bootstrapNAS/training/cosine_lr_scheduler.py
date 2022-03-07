@@ -12,7 +12,7 @@
 """
 
 import math
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from nncf.common.schedulers import BaseCompressionScheduler
 
@@ -80,3 +80,17 @@ class CosineLRScheduler(BaseCompressionScheduler):
         self._base_lr = base_lr
         self.current_epoch = 0
         self.current_step = 0
+
+    @classmethod
+    def from_state(cls, state: Dict[str, Any], optimizer):
+        new_dict = state.copy()
+        return cls(optimizer, new_dict['num_steps_in_epoch'], new_dict['base_lr'], new_dict['num_epochs'], new_dict['warmup_epochs'], new_dict['warmup_lr'])
+
+    def get_state(self) -> Dict[str, Any]:
+        state_dict = {
+            'num_steps_in_epoch': self._num_steps_in_epoch,
+            'base_lr': self._base_lr,
+            'num_epochs': self._num_epochs,
+            'warmup_epochs': self._warmup_epochs,
+            'warmup_lr': self._warmup_lr
+        }

@@ -238,7 +238,6 @@ def main_worker(current_gpu, config: SampleConfig):
     else:
         training_algorithm = EpochBasedTrainingAlgorithm.from_checkpoint(nncf_network, bn_adapt_args,
                                                                          resuming_checkpoint_path)
-    elasticity_ctrl = training_algorithm.elasticity_ctrl
 
     if 'train' in config.mode:
         # Validate supernetwork
@@ -251,7 +250,7 @@ def main_worker(current_gpu, config: SampleConfig):
 
         search_algo = SearchAlgorithm(model, elasticity_ctrl, nncf_config)
 
-        elasticity_ctrl, best_config, metrics = search_algo.run(validate_model_fn, val_loader, config.checkpoint_save_dir, ref_acc=top1, tensorboard_writer=config.tb)
+        elasticity_ctrl, best_config, metrics = search_algo.run(validate_model_fn, val_loader, config.checkpoint_save_dir, tensorboard_writer=config.tb)
 
         print(best_config)
         print(metrics)

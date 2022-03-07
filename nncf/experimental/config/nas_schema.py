@@ -225,7 +225,9 @@ BOOTSTRAP_NAS_SEARCH_SCHEMA = {
         "population": with_attributes(NUMBER,
                                       description="Defines the population size when using an evolutionary search algorithm."),
         "acc_delta": with_attributes(NUMBER,
-                                      description="Defines the possible + or - difference in accuracy that is tolerated when looking for a subnetwork"),
+                                      description="Defines the possible + or - difference in accuracy that is tolerated when looking for a subnetwork."),
+        "ref_acc": with_attributes(NUMBER,
+                                      description="Defines the reference accuracy from the pre-trained model used to generate the super-network."),
     },
     "additionalProperties": False
 }
