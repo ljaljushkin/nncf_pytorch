@@ -94,3 +94,4 @@ class CosineLRScheduler(BaseCompressionScheduler):
             'warmup_epochs': self._warmup_epochs,
             'warmup_lr': self._warmup_lr
         }
+        return state_dict

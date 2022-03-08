@@ -290,6 +290,7 @@ REF_COMPRESSION_STATE_FOR_TWO_CONV = {
                 }
             }
         },
+        'learning_rate_global_schedule_state': {'params': {'base_lr': 2.5e-06, 'num_epochs': 2}},
         'progressive_shrinking': {
             'compression_stage': CompressionStage.PARTIALLY_COMPRESSED,
             'loss_state': None,

@@ -19,6 +19,7 @@ from typing import Optional
 from typing import OrderedDict as OrderedDictType
 
 from nncf.common.pruning.utils import count_flops_and_weights_per_node
+from nncf.common.utils.logger import logger as nncf_logger
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.base_handler import ElasticityConfig
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.base_handler import ElasticityHandler
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.base_handler import SingleElasticityHandler
@@ -127,6 +128,8 @@ class MultiElasticityHandler(ElasticityHandler):
                 other_active_handlers = dict(filter(lambda pair: pair[0] != handler_id, active_handlers.items()))
                 resolved_config = handler.resolve_conflicts_with_other_elasticities(sub_config, other_active_handlers)
                 handler.set_config(resolved_config)
+                if sub_config != resolved_config:
+                    nncf_logger.warning(f"Config for {handler_id} mismatch. Requested: {sub_config}. Resolved: {resolved_config}")
 
     def load_state(self, state: Dict[str, Any]) -> None:
         """

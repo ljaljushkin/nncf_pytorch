@@ -33,7 +33,7 @@ from nncf.torch.nncf_network import NNCFNetwork
 
 class PSControllerStateNames:
     ELASTICITY_CONTROLLER_STATE = 'elasticity_controller_compression_state'
-    LR_GLOBAL_SCHEDULE_STATE = 'learning_rate_schedule_state'
+    LR_GLOBAL_SCHEDULE_STATE = 'learning_rate_global_schedule_state'
 
 
 class ProgressiveShrinkingController(BNASTrainingController):
@@ -188,9 +188,9 @@ class ProgressiveShrinkingController(BNASTrainingController):
 
         :param state: map of the algorithm name to the dictionary with the corresponding state attributes.
         """
+        self._lr_schedule_config = state[self._ps_state_names.LR_GLOBAL_SCHEDULE_STATE]
         super().load_state(state)
         elasticity_ctrl_state = state[self._ps_state_names.ELASTICITY_CONTROLLER_STATE]
-        self._lr_schedule_config = state[self._ps_state_names.LR_GLOBAL_SCHEDULE_STATE]
         self._elasticity_ctrl.load_state(elasticity_ctrl_state)
 
     def get_state(self) -> Dict[str, Dict[str, Any]]:
