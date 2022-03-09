@@ -30,6 +30,7 @@ from nncf.common.graph import OperatorMetatype
 from nncf.common.graph.layer_attributes import ConvolutionLayerAttributes
 from nncf.common.graph.layer_attributes import MultipleInputLayerAttributes
 from nncf.common.graph.layer_attributes import ReshapeLayerAttributes
+from nncf.common.graph.layer_attributes import LinearLayerAttributes
 from nncf.common.graph.layer_attributes import Dtype
 from nncf.common.graph.utils import get_concat_axis
 from nncf.common.utils.logger import logger as nncf_logger
@@ -38,6 +39,7 @@ from nncf.tensorflow.graph.metatypes.common import DEPTHWISE_CONV_LAYER_METATYPE
 from nncf.tensorflow.graph.metatypes.common import \
     LAYER_METATYPES_AGNOSTIC_TO_DATA_PRECISION_WITH_MULTIPLE_CONCAT_INPUTS
 from nncf.tensorflow.graph.metatypes.common import GENERAL_CONV_LAYER_METATYPES
+from nncf.tensorflow.graph.metatypes.common import LINEAR_LAYER_METATYPES
 from nncf.tensorflow.graph.metatypes.common import RESHAPE_METATYPES
 from nncf.tensorflow.graph.metatypes.matcher import get_keras_layer_metatype
 from nncf.tensorflow.graph.metatypes.matcher import get_op_metatype
@@ -138,7 +140,24 @@ class CustomLayerInfo:
 
 class TFModelConverter(ABC):
     """
-    A base class for objects converting TF models into NNCFGraph representations.
+    Abstract class which describes the interface needed to convert
+    the Keras model to the `NNCFGraph` object.
+    """
+
+    @abstractmethod
+    def convert(self) -> NNCFGraph:
+        """
+        Converts the Keras model to the `NNCFGraph` object.
+
+        :return: The `NNCFGraph` object that represents the Keras model
+            for compression algorithms.
+        """
+
+
+class BaseFunctionalSequentialConverter(TFModelConverter):
+    """
+    A base class for the `FunctionalConverter` and `SequentialConverter` classes.
+    Contains the implementation of the common methods.
     """
 
     def __init__(self, model: tf.keras.Model):
@@ -155,7 +174,7 @@ class TFModelConverter(ABC):
 
     def _collect_custom_layer_infos(self, model: tf.keras.Model,
                                     use_graph_var_names: bool = False) -> Dict[str, CustomLayerInfo]:
-        custom_layers = TFModelConverter.get_custom_layers(model)
+        custom_layers = BaseFunctionalSequentialConverter.get_custom_layers(model)
         retval = {}
         for layer_name, layer in custom_layers.items():
             layer_input_spec = [self._get_type_spec(tensor)
@@ -173,7 +192,7 @@ class TFModelConverter(ABC):
 
             graphdef_nodes = wrapped_function.graph.as_graph_def().node
             graphdef_name_to_layer_var_map = {} if use_graph_var_names else \
-                TFModelConverter._get_graphdef_name_to_layer_var_map(concr_fn)
+                BaseFunctionalSequentialConverter._get_graphdef_name_to_layer_var_map(concr_fn)
             nodes = {graphdef_name_to_layer_var_map.get(node.name, node.name): node for node in graphdef_nodes}
             graphdef_node_name_vs_node = {node.name: node for node in graphdef_nodes}
 
@@ -327,12 +346,6 @@ class TFModelConverter(ABC):
             return [shape]
         return shape
 
-    @abstractmethod
-    def convert(self) -> NNCFGraph:
-        """
-        Returns an NNCFGraph that represents the TF model for further compression algos.
-        """
-
     def get_layer_info_for_node(self, node_name: NNCFNodeName) -> Tuple[bool, TFLayerInfo]:
         """
         :param node_name: The node name in the converted NNCFGraph
@@ -423,7 +436,7 @@ class TFModelConverterFactory:
         return converter
 
 
-class FunctionalConverter(TFModelConverter):
+class FunctionalConverter(BaseFunctionalSequentialConverter):
     """
     Converter for TF models that use the Functional API.
     """
@@ -549,9 +562,11 @@ class FunctionalConverter(TFModelConverter):
             metatype = layer_info['metatype']
             layer = self._get_layer(layer_name)
             if metatype in DEPTHWISE_CONV_LAYER_METATYPES:
-                layer_attributes = _get_conv_layer_attributes(self._get_layer(layer_name), is_depthwise=True)
+                layer_attributes = _get_conv_layer_attributes(layer, is_depthwise=True)
             elif metatype in GENERAL_CONV_LAYER_METATYPES:
-                layer_attributes = _get_conv_layer_attributes(self._get_layer(layer_name), is_depthwise=False)
+                layer_attributes = _get_conv_layer_attributes(layer, is_depthwise=False)
+            elif metatype in LINEAR_LAYER_METATYPES:
+                layer_attributes = _get_linear_layer_attributes(layer)
             elif metatype in LAYER_METATYPES_AGNOSTIC_TO_DATA_PRECISION_WITH_MULTIPLE_CONCAT_INPUTS:
                 layer_attributes = _get_multiple_input_layer_attributes(layer)
             elif metatype in RESHAPE_METATYPES:
@@ -613,7 +628,7 @@ class FunctionalConverter(TFModelConverter):
         return nncf_graph
 
 
-class SequentialConverter(TFModelConverter):
+class SequentialConverter(BaseFunctionalSequentialConverter):
     """
     Converter for the TF models using the Sequential API.
     """
@@ -644,9 +659,11 @@ class SequentialConverter(TFModelConverter):
 
             layer_attributes = None
             if layer_metatype in DEPTHWISE_CONV_LAYER_METATYPES:
-                layer_attributes = _get_conv_layer_attributes(self._get_layer(layer_name), is_depthwise=True)
+                layer_attributes = _get_conv_layer_attributes(model_layer, is_depthwise=True)
             elif layer_metatype in GENERAL_CONV_LAYER_METATYPES:
-                layer_attributes = _get_conv_layer_attributes(self._get_layer(layer_name), is_depthwise=False)
+                layer_attributes = _get_conv_layer_attributes(model_layer, is_depthwise=False)
+            elif layer_metatype in LINEAR_LAYER_METATYPES:
+                layer_attributes = _get_linear_layer_attributes(model_layer)
             elif layer_metatype in LAYER_METATYPES_AGNOSTIC_TO_DATA_PRECISION_WITH_MULTIPLE_CONCAT_INPUTS:
                 layer_attributes = _get_multiple_input_layer_attributes(model_layer)
             elif layer_metatype in RESHAPE_METATYPES:
@@ -735,7 +752,16 @@ def _get_conv_layer_attributes(layer: tf.keras.layers.Layer, is_depthwise: bool 
                                       padding_values=([0, 0, 0, 0]))
 
 
-def _get_reshape_layer_attributes(layer: tf.keras.layers.Layer):
+def _get_linear_layer_attributes(layer: tf.keras.layers.Layer) -> LinearLayerAttributes:
+    channel_axis = get_input_channel_axis(layer)
+    in_features = layer.get_input_shape_at(0)[channel_axis]
+    out_features = layer.get_output_shape_at(0)[channel_axis]
+    return LinearLayerAttributes(layer.trainable,
+                                 in_features,
+                                 out_features)
+
+
+def _get_reshape_layer_attributes(layer: tf.keras.layers.Layer) -> ReshapeLayerAttributes:
     input_shape = layer.input_shape
     output_shape = layer.output_shape
     if isinstance(output_shape, list):

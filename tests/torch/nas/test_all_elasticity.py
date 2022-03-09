@@ -149,8 +149,6 @@ def test_random_multi_elasticity(_seed, nas_model_name):
     multi_elasticity_handler.width_handler.width_num_params_indicator = 1
     multi_elasticity_handler.activate_random_subnet()
     model.do_dummy_forward()
-    # TODO(nlyalyus): some blocks are not skipped because they fail a conflict resolving with elastic width: start or
-    #  end block can be out of pruning scope and can't retrieve width in the propagation graph: mask = None
     check_subnet_visualization(multi_elasticity_handler, model, nas_model_name, stage='width')
 
 
@@ -250,14 +248,14 @@ REF_COMPRESSION_STATE_FOR_TWO_CONV = {
                             'skipped_blocks': [
                                 {
                                     'start_node_name': 'ThreeConvModel/NNCFConv2d[conv1]/conv2d_0',
-                                    'end_node_name': '/nncf_model_output_0'
+                                    'end_node_name': 'ThreeConvModel/NNCFConv2d[conv_to_skip]/conv2d_0'
                                 }
                             ],
                             'skipped_blocks_dependencies': {0: [0]},
-                            'ordinal_ids': [[1, 5]],
+                            'ordinal_ids': [[1, 2]],
                         },
                         'width': {
-                            'elasticity_params': {'min_out_channels': 1, 'width_step': 1},
+                            'elasticity_params': {'min_width': 1, 'width_step': 1},
                             'grouped_node_names_to_prune': [['ThreeConvModel/NNCFConv2d[conv1]/conv2d_0',
                                                              'ThreeConvModel/NNCFConv2d[conv_to_skip]/conv2d_0']]
                         }
@@ -356,8 +354,6 @@ def test_multi_elasticity_state():
     compression_state = training_ctrl.get_compression_state()
 
     assert compression_state == REF_COMPRESSION_STATE_FOR_TWO_CONV
-    # TODO: check that compression is json serializable
-    # check_serialization(training_ctrl)
 
 
 def test_can_restore_from_state():

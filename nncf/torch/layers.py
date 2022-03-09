@@ -309,6 +309,7 @@ NNCF_LINEAR_MODULES_DICT = {NNCFLinear: nn.Linear}
 NNCF_MODULES_OP_NAMES = [k.op_func_name for k, _ in NNCF_MODULES_DICT.items()]
 
 NNCF_PRUNING_MODULES_DICT = {
+    NNCFLinear: nn.Linear,
     NNCFConv1d: nn.Conv1d,
     NNCFConv2d: nn.Conv2d,
     NNCFConv3d: nn.Conv3d,
