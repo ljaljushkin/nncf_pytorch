@@ -24,13 +24,6 @@
             "batchnorm_adaptation": {
                 "num_bn_adaptation_samples": 1
             },
-            // TODO(pablo) Use base_lr from optimizer definition?
-//            "lr_schedule": {
-//                "params": {
-//                    // This implies global. If not specified. Use lr adjustement per stages.
-//                    "base_lr": 2.5e-6
-//                },
-//            },
             "schedule": {
                 "list_stage_descriptions": [
                     {"train_dims": ["depth"], "epochs": 1, "depth_indicator": 1, "init_lr": 2.5e-6, "epochs_lr": 1},

@@ -13,7 +13,9 @@ This sample demonstrates a DL model compression in case of an image-classificati
 
 ## Installation
 
-To work with the sample you should install the corresponding Python package dependencies
+At this point it is assumed that you have already installed nncf. You can find information on downloading nncf [here](https://github.com/openvinotoolkit/nncf#user-content-installation).  
+
+To work with the sample you should install the corresponding Python package dependencies:
 
 ```
 pip install -r examples/torch/requirements.txt
@@ -31,6 +33,22 @@ To prepare the ImageNet dataset, refer to the following [tutorial](https://githu
 
 - If you did not install the package, add the repository root folder to the `PYTHONPATH` environment variable.
 - Go to the `examples/torch/classification` folder.
+
+#### Test Pretrained Model
+
+Before compressing a model, it is highly recommended checking the accuracy of the pretrained model. All models which are supported in the sample has pretrained weights for ImageNet. 
+
+To load pretrained weights into a model and then evaluate the accuracy of that model, make sure that the pretrained=True option is set in the configuration file and use the following command:
+```bash
+python main.py \
+--mode=test \
+--config=configs/quantization/mobilenet_v2_imagenet_int8.json \
+--data=<path_to_imagenet_dataset> \
+--disable-compression 
+```
+
+#### Compress Pretrained Model
+
 - Run the following command to start compression with fine-tuning on GPUs:
     ```
     python main.py -m train --config configs/quantization/mobilenet_v2_imagenet_int8.json --data /data/imagenet/ --log-dir=../../results/quantization/mobilenet_v2_int8/
@@ -43,11 +61,10 @@ To prepare the ImageNet dataset, refer to the following [tutorial](https://githu
 
 #### Validate Your Model Checkpoint
 
-To estimate the test scores of your model checkpoint, use the following command:
+To estimate the test scores of your trained model checkpoint, use the following command:
 ```
 python main.py -m test --config=configs/quantization/mobilenet_v2_imagenet_int8.json --resume <path_to_trained_model_checkpoint>
 ```
-To validate an FP32 model checkpoint, make sure the compression algorithm settings are empty in the configuration file or `pretrained=True` is set.
 
 **WARNING**: The samples use `torch.load` functionality for checkpoint loading which, in turn, uses pickle facilities by default which are known to be vulnerable to arbitrary code execution attacks. **Only load the data you trust**
 
@@ -75,7 +92,7 @@ To export a model to the OpenVINO IR and run it using the Intel® Deep Learning 
 |Inception V3|None|ImageNet|77.34|[inception_v3_imagenet.json](configs/quantization/inception_v3_imagenet.json)|-|
 |Inception V3|INT8|ImageNet|78.25 (-0.91)|[inception_v3_imagenet_int8.json](configs/quantization/inception_v3_imagenet_int8.json)|[Link](https://storage.openvinotoolkit.org/repositories/nncf/models/develop/torch/inception_v3_imagenet_int8.pth)|
 |Inception V3|INT8 + Sparsity 61% (RB)|ImageNet|77.58 (-0.24)|[inception_v3_imagenet_rb_sparsity_int8.json](configs/sparsity_quantization/inception_v3_imagenet_rb_sparsity_int8.json)|[Link](https://storage.openvinotoolkit.org/repositories/nncf/models/develop/torch/inception_v3_imagenet_rb_sparsity_int8.pth)|
-|MobileNet V2|None|ImageNet|71.93|[mobilenet_v2_imagenet.json](configs/quantization/mobilenet_v2_imagenet.json)|-|
+|MobileNet V2|None|ImageNet|71.87|[mobilenet_v2_imagenet.json](configs/quantization/mobilenet_v2_imagenet.json)|-|
 |MobileNet V2|INT8|ImageNet|71.35 (0.58)|[mobilenet_v2_imagenet_int8.json](configs/quantization/mobilenet_v2_imagenet_int8.json)|[Link](https://storage.openvinotoolkit.org/repositories/nncf/models/develop/torch/mobilenet_v2_imagenet_int8.pth)|
 |MobileNet V2|INT8 (per-tensor only)|ImageNet|71.3 (0.63)|[mobilenet_v2_imagenet_int8_per_tensor.json](configs/quantization/mobilenet_v2_imagenet_int8_per_tensor.json)|[Link](https://storage.openvinotoolkit.org/repositories/nncf/models/develop/torch/mobilenet_v2_imagenet_int8_per_tensor.pth)|
 |MobileNet V2|Mixed, 53.27% INT8 / 46.73% INT4|ImageNet|71.07 (0.86)|[mobilenet_v2_imagenet_mixed_int_hawq.json](configs/mixed_precision/mobilenet_v2_imagenet_mixed_int_hawq.json)|[Link](https://storage.openvinotoolkit.org/repositories/nncf/models/develop/torch/mobilenet_v2_imagenet_int4_int8.pth)|
