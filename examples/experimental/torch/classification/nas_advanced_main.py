@@ -80,9 +80,6 @@ def get_optimizer(model, opt_config):
         else:
             raise ValueError('do not support: %s' % mode)
 
-    def weight_parameters(model):
-        return model.get_parameters()
-
     def build_optimizer(net_params, opt_type, opt_param, init_lr, weight_decay, no_decay_keys):
         if no_decay_keys is not None:
             assert isinstance(net_params, list) and len(net_params) == 2
@@ -108,8 +105,8 @@ def get_optimizer(model, opt_config):
     if no_decay_keys:
         keys = no_decay_keys.split('#')
         net_params = [
-            get_parameters(model, keys, mode='exclude'),  # parameters with weight decay
-            get_parameters(model, keys, mode='include'),  # parameters without weight decay
+            get_parameters(model, keys, mode='exclude'),
+            get_parameters(model, keys, mode='include'),
         ]
     else:
         # noinspection PyBroadException
@@ -131,17 +128,12 @@ def get_optimizer(model, opt_config):
     return optimizer
 
 
-""" Label smooth """
-
-
-def label_smooth(target, n_classes: int, label_smoothing=0.1):
-    # convert to one-hot
+def label_smooth(target, num_classes: int, label_smoothing=0.1):
     batch_size = target.size(0)
     target = torch.unsqueeze(target, 1)
-    soft_target = torch.zeros((batch_size, n_classes), device=target.device)
+    soft_target = torch.zeros((batch_size, num_classes), device=target.device)
     soft_target.scatter_(1, target, 1)
-    # label smoothing
-    soft_target = soft_target * (1 - label_smoothing) + label_smoothing / n_classes
+    soft_target = soft_target * (1 - label_smoothing) + label_smoothing / num_classes
     return soft_target
 
 
@@ -191,11 +183,13 @@ def main_worker(current_gpu, config: SampleConfig):
     set_seed(config)
 
     opt_config = config.get('optimizer', {})
+
     # define loss function (criterion)
-    # criterion = nn.CrossEntropyLoss()
-    criterion = lambda pred, target: \
-        cross_entropy_with_label_smoothing(pred, target, opt_config.label_smoothing)
-    # criterion = criterion.to(config.device)
+    if opt_config.label_smoothing is not None:
+        criterion = lambda pred, target: \
+            cross_entropy_with_label_smoothing(pred, target, opt_config.label_smoothing)
+    else:
+        criterion = nn.CrossEntropyLoss()
 
     model_name = config['model']
     train_criterion_fn = inception_criterion_fn if 'inception' in model_name else default_criterion_fn
@@ -250,13 +244,10 @@ def main_worker(current_gpu, config: SampleConfig):
 
         search_algo = SearchAlgorithm(model, elasticity_ctrl, nncf_config)
 
-        elasticity_ctrl, best_config, metrics = search_algo.run(validate_model_fn, val_loader, config.checkpoint_save_dir, tensorboard_writer=config.tb)
+        elasticity_ctrl, best_config, performance_metrics = search_algo.run(validate_model_fn, val_loader, config.checkpoint_save_dir, tensorboard_writer=config.tb)
 
         print(best_config)
-        print(metrics)
-
-        search_algo.search_progression_to_csv()
-        search_algo.evaluators_to_csv()
+        print(performance_metrics)
 
     if 'test' in config.mode:
         validate(val_loader, model, criterion, config)
