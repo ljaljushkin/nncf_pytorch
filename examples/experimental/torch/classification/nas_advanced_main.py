@@ -81,7 +81,7 @@ def get_optimizer(model, opt_config):
             raise ValueError('do not support: %s' % mode)
 
     def build_optimizer(net_params, opt_type, opt_param, init_lr, weight_decay, no_decay_keys):
-        if no_decay_keys is not None:
+        if no_decay_keys:
             assert isinstance(net_params, list) and len(net_params) == 2
             net_params = [
                 {'params': net_params[0], 'weight_decay': weight_decay},
@@ -185,7 +185,7 @@ def main_worker(current_gpu, config: SampleConfig):
     opt_config = config.get('optimizer', {})
 
     # define loss function (criterion)
-    if opt_config.label_smoothing is not None:
+    if opt_config.label_smoothing:
         criterion = lambda pred, target: \
             cross_entropy_with_label_smoothing(pred, target, opt_config.label_smoothing)
     else:

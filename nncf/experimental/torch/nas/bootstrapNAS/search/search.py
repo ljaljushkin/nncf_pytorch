@@ -12,9 +12,9 @@
 """
 import csv
 from abc import abstractmethod
+from enum import Enum
 from typing import Any, Dict, Tuple, Callable, Optional, List, NoReturn
 
-import autograd.numpy as anp
 import numpy as np
 from pathlib import Path
 from pymoo.algorithms.moo.nsga2 import NSGA2
@@ -39,6 +39,9 @@ from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_dim import E
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.multi_elasticity_handler import SubnetConfig
 from nncf.torch.nncf_network import NNCFNetwork
 
+
+class EvolutionaryAlgorithms(Enum):
+    NSGA2 = 'NSGA2'
 
 class SearchParams:
     """
@@ -114,7 +117,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self._top1_accuracy_validation_fn = None
         self._val_loader = None
         evo_algo = search_config['algorithm']
-        if evo_algo == 'NSGA2':
+        if evo_algo == EvolutionaryAlgorithms.NSGA2:
             self._algorithm = NSGA2(pop_size=self.search_params._population,
                                     sampling=get_sampling("int_lhs"),
                                     crossover=get_crossover("int_sbx", prob=self.search_params._crossover_prob,
@@ -383,4 +386,4 @@ class SearchProblem(Problem):
             self._search._search_records.append(result)
 
         self._iter += 1
-        out["F"] = anp.column_stack([arr for arr in evaluators_arr])
+        out["F"] = np.column_stack([arr for arr in evaluators_arr])
