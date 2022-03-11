@@ -117,7 +117,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self._top1_accuracy_validation_fn = None
         self._val_loader = None
         evo_algo = search_config['algorithm']
-        if evo_algo == EvolutionaryAlgorithms.NSGA2:
+        if evo_algo == EvolutionaryAlgorithms.NSGA2.value:
             self._algorithm = NSGA2(pop_size=self.search_params._population,
                                     sampling=get_sampling("int_lhs"),
                                     crossover=get_crossover("int_sbx", prob=self.search_params._crossover_prob,
