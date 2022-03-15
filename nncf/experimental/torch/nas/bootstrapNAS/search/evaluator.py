@@ -77,21 +77,15 @@ class Evaluator:
         }
         return state_dict
 
-    def from_state(self, state: Dict[str, Any], elasticity_ctrl: ElasticityController) -> 'Evaluator':
-        raise RuntimeError("Not implemented")
-        # new_dict = state.copy()
-        # elasticity_ctrl_state = state['elasticity_controller_compression_state']
-        # #TODO (Pablo) FIX. Best way to recover the elasticity controller?
-        # elasticity_ctrl = None
-        # # elasticity_ctrl = ElasticityController(target_model: NNCFNetwork, algo_config: Dict, multi_elasticity_handler: MultiElasticityHandler)
-        # # elasticity_ctrl.load_state(elasticity_ctrl_state)
-        # evaluator = cls(new_dict['name'], new_dict['eval_func'], new_dict['ideal_val'], elasticity_ctrl)
-        #
-        # evaluator._curr_value = new_dict['curr_value']
-        # evaluator.use_model_for_evaluation = new_dict['use_model_for_evaluation']
-        # evaluator.cache = new_dict['cache']
-        # evaluator.input_model_value = new_dict['input_model_value']
-        # return evaluator
+    @classmethod
+    def from_state(cls, state: Dict[str, Any], elasticity_ctrl: ElasticityController) -> 'Evaluator':
+        new_dict = state.copy()
+        evaluator = cls(new_dict['name'], new_dict['eval_func'], new_dict['ideal_val'], elasticity_ctrl)
+        evaluator._curr_value = new_dict['curr_value']
+        evaluator.use_model_for_evaluation = new_dict['use_model_for_evaluation']
+        evaluator.cache = new_dict['cache']
+        evaluator.input_model_value = new_dict['input_model_value']
+        return evaluator
 
     def load_cache_from_csv(self, cache_file_path: str) -> NoReturn:
         with open(f"{cache_file_path}", 'r') as cache_file:
@@ -117,11 +111,27 @@ class AccuracyEvaluator(Evaluator):
         if is_top1:
             name = "top1_acc"
         super(AccuracyEvaluator, self).__init__(name, eval_func, 100, None)
+        self._is_top1 = is_top1
         self._val_loader = val_loader
         self._use_model_for_evaluation = True
         self._ideal_value = 100
         self._ref_acc = ref_acc
-        self.type_of_measurement = 'accuracy'
 
     def evaluate_model(self, model: NNCFNetwork) -> Tuple[float, ...]:
         return self._eval_func(model, self._val_loader)
+
+    def get_state(self) -> Dict[str, Any]:
+        state = super.get_state()
+        state['is_top1'] = self._is_top1
+        state['ref_acc'] = self._ref_acc
+        return state
+
+    @classmethod
+    def from_state(cls, state: Dict[str, Any], val_loader) -> 'AccuracyEvaluator':
+        new_dict = state.copy()
+        evaluator = cls(new_dict['eval_func'], val_loader, new_dict['is_top1'], new_dict['ref_acc'])
+        evaluator._curr_value = new_dict['curr_value']
+        evaluator.use_model_for_evaluation = new_dict['use_model_for_evaluation']
+        evaluator.cache = new_dict['cache']
+        evaluator.input_model_value = new_dict['input_model_value']
+        return evaluator
