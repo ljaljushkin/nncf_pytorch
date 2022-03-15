@@ -22,7 +22,6 @@
   "compression": {
       "algorithm": "quantization",
       "ignored_scopes": [
-        // Disable all head
         "gt_boxes",
         "gt_masks",
         "image_info",
@@ -52,7 +51,7 @@
         "fc1",
         "fc0",
         "class-predict",
-        "box-predict",
+        "box-predict"
       ]
   }
 }
