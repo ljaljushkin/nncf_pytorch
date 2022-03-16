@@ -242,7 +242,10 @@ def main_worker(current_gpu, config: SampleConfig):
                                                                config.checkpoint_save_dir, config.tb,
                                                                config.train_steps)
 
-        search_algo = SearchAlgorithm(model, elasticity_ctrl, nncf_config)
+        if resuming_checkpoint_path is None:
+            search_algo = SearchAlgorithm.from_config(nncf_network, elasticity_ctrl, nncf_config)
+        else:
+            search_algo = SearchAlgorithm.from_checkpoint(nncf_network, elasticity_ctrl, bn_adapt_args, resuming_checkpoint_path)
 
         elasticity_ctrl, best_config, performance_metrics = search_algo.run(validate_model_fn, val_loader, config.checkpoint_save_dir, tensorboard_writer=config.tb)
 

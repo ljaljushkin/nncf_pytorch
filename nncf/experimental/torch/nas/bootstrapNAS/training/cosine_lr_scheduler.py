@@ -12,9 +12,13 @@
 """
 
 import math
-from typing import Optional, Dict, Any
+from typing import Any
+from typing import Dict
+from typing import NoReturn
+from typing import Optional
 
 from nncf.common.schedulers import BaseCompressionScheduler
+from nncf.common.utils.logger import logger as nncf_logger
 
 
 def adjust_learning_rate(optimizer, epoch, init_lr, epochs, batch=0, nBatch=None, lr_schedule_type='cosine'):
@@ -73,7 +77,22 @@ class CosineLRScheduler(BaseCompressionScheduler):
                                           batch=step_from_epoch_start,
                                           nBatch=self._num_steps_in_epoch,
                                           lr_schedule_type='cosine')
-        pass
+
+    @BaseCompressionScheduler.current_epoch.setter
+    def current_epoch(self, val: float) -> NoReturn:
+        if val < 0:
+            self._current_epoch = 0
+            nncf_logger.warning("LR Current Epoch was set to 0.")
+        else:
+            self._current_epoch = val
+
+    @BaseCompressionScheduler.current_step.setter
+    def current_step(self, val: float) -> NoReturn:
+        if val < 0:
+            self._current_step = 0
+            nncf_logger.warning("LR Current step was set to 0.")
+        else:
+            self._current_step = val
 
     def reset(self, base_lr, num_epochs):
         self._num_epochs = num_epochs

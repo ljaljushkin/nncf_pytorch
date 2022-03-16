@@ -202,6 +202,14 @@ class SearchAlgorithm(BaseSearchAlgorithm):
     def num_vars(self) -> float:
         return self._num_vars
 
+    @classmethod
+    def from_config(cls, model, elasticity_ctrl, nncf_config):
+        return cls(model, elasticity_ctrl, nncf_config)
+
+    @classmethod
+    def from_checkpoint(cls, model, elasticity_ctrl, bn_adapt_args, resuming_checkpoint_path):
+        raise NotImplementedError
+
     def run(self, validate_fn: Callable, val_loader: DataLoader, checkpoint_save_dir: str,
             evaluators: Optional[List[Evaluator]] = None, ref_acc: Optional[float] = 100,
             tensorboard_writer: Optional[SummaryWriter] = None) -> Tuple[
@@ -325,7 +333,7 @@ class SearchProblem(Problem):
                     sample[dim] = self._search._valid_depth_configs[x[i][start_index]]
                     start_index += 1
 
-            self._elasticity_handler.set_config(sample)
+            self._elasticity_handler.activate_subnet_for_config(sample)
 
             if sample != self._elasticity_handler.get_active_config():
                 nncf_logger.warning("Requested configuration was invalid")

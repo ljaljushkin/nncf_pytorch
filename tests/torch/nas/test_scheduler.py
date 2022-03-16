@@ -29,6 +29,7 @@ from nncf.experimental.torch.nas.bootstrapNAS.training.progressive_shrinking_con
 from nncf.experimental.torch.nas.bootstrapNAS.training.scheduler import BootstrapNASScheduler
 from nncf.experimental.torch.nas.bootstrapNAS.training.scheduler import NASSchedulerParams
 from nncf.experimental.torch.nas.bootstrapNAS.training.stage_descriptor import StageDescriptor
+from nncf.experimental.torch.nas.bootstrapNAS.training.stage_descriptor import DEFAULT_STAGE_LR_RATE
 from nncf.torch.nncf_network import NNCFNetwork
 from tests.torch.helpers import MockModel
 
@@ -72,10 +73,14 @@ class TestScheduler:
         training_ctrl_mock = mocker.MagicMock(spec=BNASTrainingAlgorithm)
         training_ctrl_mock._lr_schedule_config = {}
         scheduler = BootstrapNASScheduler(training_ctrl_mock, schedule_params, LIST_DIMS__KDW, LIST_DIMS__KDW)
-
+        scheduler.set_stage_lr_scheduler(CosineLRScheduler(mocker.stub(), 10, num_epochs=1, base_lr=DEFAULT_STAGE_LR_RATE))
         scheduler.epoch_step()
-        ref_desc = StageDescriptor(train_dims=[ElasticityDim.KERNEL]epochs=1, init_lr=DEFAULT_STAGE_LR_RATE, epochs_lr=1)
+        ref_desc = StageDescriptor(train_dims=[ElasticityDim.KERNEL], epochs=1, init_lr=DEFAULT_STAGE_LR_RATE, epochs_lr=1)
         act_desc, act_idx = scheduler.get_current_stage_desc()
+        print(schedule_params.list_stage_descriptions[0].__dict__)
+        print(ref_desc.__dict__)
+        print(act_desc.__dict__)
+        print(ref_desc.__dict__ == act_desc.__dict__)
         assert ref_desc == act_desc
         assert act_idx == 0
 
@@ -116,9 +121,10 @@ class TestScheduler:
         is_handler_enabled_map = mock_handler._is_handler_enabled_map
         mock_elasticity_ctrl = mocker.stub()
         mock_elasticity_ctrl.multi_elasticity_handler = mock_handler
+        lr_schedule_config = {}
         training_algo = ProgressiveShrinkingController(mock_model, mock_elasticity_ctrl, mocker.stub(),
                                                        ProgressiveShrinkingBuilder.DEFAULT_PROGRESSIVITY,
-                                                       schedule_params)
+                                                       schedule_params, lr_schedule_config)
         scheduler = training_algo.scheduler
         lr_scheduler = CosineLRScheduler(mocker.stub(), mocker.stub(), base_lr=None, num_epochs=None)
         scheduler.set_global_lr_scheduler(lr_scheduler)
