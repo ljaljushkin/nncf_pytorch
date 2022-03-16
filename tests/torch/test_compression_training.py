@@ -55,33 +55,33 @@ GLOBAL_CONFIG = {
                             'absolute_tolerance_train': 1.0,
                             'absolute_tolerance_eval': 2e-2,
                             'is_experimental': True,
-                            'main_filename': 'nas_advanced_main.py',
+                            'main_filename': 'bootstrap_nas.py',
                             'checkpoint_name': 'supernet',
                             # Search
                             'subnet_checkpoint_name': 'subnetwork_best',
                             'subnet_expected_accuracy': 88.67
                         },
                         'resnet50_cifar10_nas_SMALL.json': {
-                            'expected_accuracy': 91.19, # 87.36,
+                            'expected_accuracy': 91.19, # 87.36, 22.36,
                             'train_steps': 2,
                             'weights': 'resnet50_cifar10_93.65.pth',
                             'absolute_tolerance_train': 2.0,
                             'absolute_tolerance_eval': 2e-2,
                             'is_experimental': True,
-                            'main_filename': 'nas_advanced_main.py',
+                            'main_filename': 'bootstrap_nas.py',
                             'checkpoint_name': 'supernet',
                             # Search
                             'subnet_checkpoint_name': 'subnetwork_best',
                             'subnet_expected_accuracy': 88.67
                         },
                         'vgg11_bn_cifar10_nas_SMALL.json': {
-                            'expected_accuracy': 87.75, # 77.76,
+                            'expected_accuracy': 87.75, # 77.76, 19.26,
                             'train_steps': 2,
                             'weights': 'vgg11_bn_cifar10_92.39.pth',
                             'absolute_tolerance_train': 2.0,
                             'absolute_tolerance_eval': 2e-2,
                             'is_experimental': True,
-                            'main_filename': 'nas_advanced_main.py',
+                            'main_filename': 'bootstrap_nas.py',
                             'checkpoint_name': 'supernet',
                             # Search
                             'subnet_checkpoint_name': 'subnetwork_best',
@@ -144,7 +144,7 @@ GLOBAL_CONFIG = {
                             'absolute_tolerance_train': 1.0,
                             'absolute_tolerance_eval': 2e-2,
                             'is_experimental': True,
-                            'main_filename': 'nas_advanced_main.py',
+                            'main_filename': 'bootstrap_nas.py',
                             'checkpoint_name': 'supernet',
                             # Search
                             'subnet_checkpoint_name': 'subnetwork_best',

@@ -12,7 +12,6 @@
 """
 from collections import OrderedDict
 from functools import partial
-from typing import Dict
 from typing import List
 
 import pytest
@@ -22,12 +21,15 @@ from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elastic_depth import El
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elastic_width import ElasticWidthHandler
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.multi_elasticity_handler import MultiElasticityHandler
+from nncf.experimental.torch.nas.bootstrapNAS.training.base_training import BNASTrainingAlgorithm
 from nncf.experimental.torch.nas.bootstrapNAS.training.cosine_lr_scheduler import CosineLRScheduler
 from nncf.experimental.torch.nas.bootstrapNAS.training.progressive_shrinking_builder import ProgressiveShrinkingBuilder
 from nncf.experimental.torch.nas.bootstrapNAS.training.progressive_shrinking_controller import \
     ProgressiveShrinkingController
 from nncf.experimental.torch.nas.bootstrapNAS.training.scheduler import BootstrapNASScheduler
-from nncf.experimental.torch.nas.bootstrapNAS.training.stage_descriptor import StageDescriptor, DEFAULT_STAGE_LR_RATE
+from nncf.experimental.torch.nas.bootstrapNAS.training.scheduler import NASSchedulerParams
+from nncf.experimental.torch.nas.bootstrapNAS.training.stage_descriptor import StageDescriptor
+from nncf.torch.nncf_network import NNCFNetwork
 from tests.torch.helpers import MockModel
 
 LIST_STAGES__K_KW_KWD = [
@@ -43,46 +45,48 @@ LIST_STAGES__K_KD_KDW = [
 ]
 
 SIMPLE_LIST_STAGE_DESCRIPTORS = [
-    {"train_dims": ["kernel"], "epochs": 1},
-    {"train_dims": ["kernel", "depth"], "epochs": 1, "depth_indicator": 1},
-    {"train_dims": ["kernel", "depth"], "epochs": 1, "depth_indicator": 2},
-    {"train_dims": ["kernel", "depth", "width"], "epochs": 1, "depth_indicator": 2, "reorg_weights": True,
-     "width_indicator": 2},
-    {"train_dims": ["kernel", "depth", "width"], "epochs": 1, "depth_indicator": 2, "reorg_weights": True,
-     "width_indicator": 3}
+    StageDescriptor(train_dims=[ElasticityDim.KERNEL],
+                    epochs=1),
+    StageDescriptor(train_dims=[ElasticityDim.KERNEL, ElasticityDim.DEPTH],
+                    epochs=1, depth_indicator=1),
+    StageDescriptor(train_dims=[ElasticityDim.KERNEL, ElasticityDim.DEPTH],
+                    epochs=1, depth_indicator=2),
+    StageDescriptor(train_dims=[ElasticityDim.KERNEL, ElasticityDim.DEPTH, ElasticityDim.WIDTH],
+                    epochs=1, depth_indicator=2, reorg_weights=True, width_indicator=2),
+    StageDescriptor(train_dims=[ElasticityDim.KERNEL, ElasticityDim.DEPTH, ElasticityDim.WIDTH],
+                    epochs=1, depth_indicator=2, reorg_weights=True, width_indicator=3),
 ]
 
 
 @pytest.fixture(name='schedule_params', params=[SIMPLE_LIST_STAGE_DESCRIPTORS], ids=['simple_desc'])
 def fixture_schedule_params(request):
     list_descriptors = request.param
-    return {"list_stage_descriptions": list_descriptors}
+    return NASSchedulerParams(list_descriptors)
 
 
 LIST_DIMS__KDW = [ElasticityDim.KERNEL, ElasticityDim.DEPTH, ElasticityDim.WIDTH]
 
 
 class TestScheduler:
-    def test_get_stage(self, schedule_params, mocker):
-        training_controller_mock = mocker.stub()
-        training_controller_mock._lr_schedule_config = {}
-        scheduler = BootstrapNASScheduler(training_controller_mock, schedule_params, LIST_DIMS__KDW,
-                                          LIST_DIMS__KDW)
+    def test_get_stage(self, schedule_params: NASSchedulerParams, mocker):
+        training_ctrl_mock = mocker.MagicMock(spec=BNASTrainingAlgorithm)
+        training_ctrl_mock._lr_schedule_config = {}
+        scheduler = BootstrapNASScheduler(training_ctrl_mock, schedule_params, LIST_DIMS__KDW, LIST_DIMS__KDW)
 
-        scheduler.current_epoch = 0
-        ref_desc = StageDescriptor(train_dims=[ElasticityDim.KERNEL], epochs=1, init_lr=DEFAULT_STAGE_LR_RATE, epochs_lr=1)
+        scheduler.epoch_step()
+        ref_desc = StageDescriptor(train_dims=[ElasticityDim.KERNEL]epochs=1, init_lr=DEFAULT_STAGE_LR_RATE, epochs_lr=1)
         act_desc, act_idx = scheduler.get_current_stage_desc()
         assert ref_desc == act_desc
         assert act_idx == 0
 
-        scheduler.current_epoch = 2
+        scheduler.epoch_step(next_epoch=2)
         ref_desc.train_dims.append(ElasticityDim.DEPTH)
         ref_desc.depth_indicator = 2
         act_desc, act_idx = scheduler.get_current_stage_desc()
         assert ref_desc == act_desc
         assert act_idx == 2
 
-        scheduler.current_epoch = 3
+        scheduler.epoch_step()
         ref_desc.train_dims.append(ElasticityDim.WIDTH)
         ref_desc.reorg_weights = True
         ref_desc.width_indicator = 2
@@ -90,7 +94,7 @@ class TestScheduler:
         assert ref_desc == act_desc
         assert act_idx == 3
 
-        scheduler.current_epoch = 4
+        scheduler.epoch_step()
         ref_desc.width_indicator = 3
         act_desc, act_idx = scheduler.get_current_stage_desc()
         assert ref_desc == act_desc
@@ -98,6 +102,7 @@ class TestScheduler:
 
     def test_epoch_step(self, schedule_params, mocker):
         mock_model = MockModel()
+        mock_nncf_network = mocker.MagicMock(spec=NNCFNetwork)
         mock_width_handler = mocker.MagicMock(spec=ElasticWidthHandler)
         mock_depth_handler = mocker.MagicMock(spec=ElasticDepthHandler)
         mock_kernel_handler = mocker.MagicMock(spec=SingleElasticityHandler)
@@ -106,14 +111,14 @@ class TestScheduler:
             ElasticityDim.KERNEL: mock_kernel_handler,
             ElasticityDim.DEPTH: mock_depth_handler,
         })
-        mock_handler = MultiElasticityHandler(handlers)
+        mock_handler = MultiElasticityHandler(handlers, mock_nncf_network)
         # pylint:disable=protected-access
         is_handler_enabled_map = mock_handler._is_handler_enabled_map
         mock_elasticity_ctrl = mocker.stub()
         mock_elasticity_ctrl.multi_elasticity_handler = mock_handler
         training_algo = ProgressiveShrinkingController(mock_model, mock_elasticity_ctrl, mocker.stub(),
                                                        ProgressiveShrinkingBuilder.DEFAULT_PROGRESSIVITY,
-                                                       schedule_params, None)
+                                                       schedule_params)
         scheduler = training_algo.scheduler
         lr_scheduler = CosineLRScheduler(mocker.stub(), mocker.stub(), base_lr=None, num_epochs=None)
         scheduler.set_global_lr_scheduler(lr_scheduler)
@@ -185,10 +190,10 @@ class SchedulerTestDesc:
         return self.name
 
     @property
-    def scheduler_params(self) -> Dict[str, List[Dict]]:
+    def scheduler_params(self) -> NASSchedulerParams:
         list_stage_descs = [{"train_dims": list(map(lambda x: x.value, stage_dims))} for stage_dims in
                             self.list_stage_dims]
-        return {"list_stage_descriptions": list_stage_descs}
+        return NASSchedulerParams.from_config({"list_stage_descriptions": list_stage_descs})
 
 
 LIST_SCHEDULER_DESCS = [

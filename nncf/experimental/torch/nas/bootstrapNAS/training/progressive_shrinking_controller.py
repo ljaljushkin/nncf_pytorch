@@ -21,6 +21,7 @@ from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationA
 from nncf.common.statistics import NNCFStatistics
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.experimental.torch.nas.bootstrapNAS.training.cosine_lr_scheduler import CosineLRScheduler
+from nncf.experimental.torch.nas.bootstrapNAS.training.scheduler import NASSchedulerParams
 from nncf.torch.algo_selector import ZeroCompressionLoss
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_controller import ElasticityController
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
@@ -51,7 +52,7 @@ class ProgressiveShrinkingController(BNASTrainingController):
                  elasticity_ctrl: ElasticityController,
                  bn_adaptation: BatchnormAdaptationAlgorithm,
                  progressivity_of_elasticity: List[ElasticityDim],
-                 schedule_params: Dict[str, Any],
+                 schedule_params: NASSchedulerParams,
                  lr_schedule_config: Dict[str, Any]):
         super().__init__(target_model)
         self._elasticity_ctrl = elasticity_ctrl
