@@ -1,0 +1,28 @@
+strict digraph  {
+"0 /nncf_model_input_0" [id=0, label="nncf_model_input_#0", style=filled, type=nncf_model_input];
+"1 SymmetricQuantizer/symmetric_quantize_0" [id=1, label="symmetric_quantize_#1", style=filled, type=symmetric_quantize];
+"2 ThreeConvModel/NNCFConv2d[conv1]/ModuleDict[pre_ops]/UpdateWeight[4]/SymmetricQuantizer[op]/symmetric_quantize_0" [id=2, label="symmetric_quantize_#2", style=filled, type=symmetric_quantize];
+"3 ThreeConvModel/NNCFConv2d[conv1]/conv2d_0" [color=lightblue, id=3, label="conv2d_OW3_G0_#1", style=filled, type=conv2d];
+"4 ThreeConvModel/NNCFConv2d[conv1]/SymmetricQuantizer/symmetric_quantize_0" [id=4, label="symmetric_quantize_#4", style=filled, type=symmetric_quantize];
+"5 ThreeConvModel/NNCFConv2d[conv_to_skip]/ModuleDict[pre_ops]/UpdateWeight[4]/SymmetricQuantizer[op]/symmetric_quantize_0" [id=5, label="symmetric_quantize_#5", style=filled, type=symmetric_quantize];
+"6 ThreeConvModel/NNCFConv2d[conv_to_skip]/conv2d_0" [color=lightblue, id=6, label="conv2d_IW3_OW3_G0_#2", style=filled, type=conv2d];
+"7 ThreeConvModel/NNCFConv2d[conv_to_skip]/SymmetricQuantizer/symmetric_quantize_0" [id=7, label="symmetric_quantize_#7", style=filled, type=symmetric_quantize];
+"8 ThreeConvModel/__add___0" [id=8, label="__add___IW[3, 3]_OW3_#3", style=filled, type=__add__];
+"9 ThreeConvModel/SymmetricQuantizer/symmetric_quantize_0" [id=9, label="symmetric_quantize_#9", style=filled, type=symmetric_quantize];
+"10 ThreeConvModel/NNCFConv2d[last_conv]/ModuleDict[pre_ops]/UpdateWeight[3]/SymmetricQuantizer[op]/symmetric_quantize_0" [id=10, label="symmetric_quantize_#10", style=filled, type=symmetric_quantize];
+"11 ThreeConvModel/NNCFConv2d[last_conv]/conv2d_0" [color=lightblue, id=11, label="conv2d_IW3_#4", style=filled, type=conv2d];
+"12 /nncf_model_output_0" [id=12, label="nncf_model_output_#5", style=filled, type=nncf_model_output];
+"0 /nncf_model_input_0" -> "1 SymmetricQuantizer/symmetric_quantize_0"  [label="(1, 1, 10, 10)", style=solid];
+"1 SymmetricQuantizer/symmetric_quantize_0" -> "3 ThreeConvModel/NNCFConv2d[conv1]/conv2d_0"  [label="(1, 1, 10, 10)", style=solid];
+"2 ThreeConvModel/NNCFConv2d[conv1]/ModuleDict[pre_ops]/UpdateWeight[4]/SymmetricQuantizer[op]/symmetric_quantize_0" -> "3 ThreeConvModel/NNCFConv2d[conv1]/conv2d_0"  [label="(3, 1, 5, 5)", style=solid];
+"3 ThreeConvModel/NNCFConv2d[conv1]/conv2d_0" -> "4 ThreeConvModel/NNCFConv2d[conv1]/SymmetricQuantizer/symmetric_quantize_0"  [label="(1, 3, 10, 10)", style=solid];
+"4 ThreeConvModel/NNCFConv2d[conv1]/SymmetricQuantizer/symmetric_quantize_0" -> "6 ThreeConvModel/NNCFConv2d[conv_to_skip]/conv2d_0"  [label="(1, 3, 10, 10)", style=solid];
+"4 ThreeConvModel/NNCFConv2d[conv1]/SymmetricQuantizer/symmetric_quantize_0" -> "8 ThreeConvModel/__add___0"  [label="(1, 3, 10, 10)", style=solid];
+"5 ThreeConvModel/NNCFConv2d[conv_to_skip]/ModuleDict[pre_ops]/UpdateWeight[4]/SymmetricQuantizer[op]/symmetric_quantize_0" -> "6 ThreeConvModel/NNCFConv2d[conv_to_skip]/conv2d_0"  [label="(3, 3, 1, 1)", style=solid];
+"6 ThreeConvModel/NNCFConv2d[conv_to_skip]/conv2d_0" -> "7 ThreeConvModel/NNCFConv2d[conv_to_skip]/SymmetricQuantizer/symmetric_quantize_0"  [label="(1, 3, 10, 10)", style=solid];
+"7 ThreeConvModel/NNCFConv2d[conv_to_skip]/SymmetricQuantizer/symmetric_quantize_0" -> "8 ThreeConvModel/__add___0"  [label="(1, 3, 10, 10)", style=solid];
+"8 ThreeConvModel/__add___0" -> "9 ThreeConvModel/SymmetricQuantizer/symmetric_quantize_0"  [label="(1, 3, 10, 10)", style=solid];
+"9 ThreeConvModel/SymmetricQuantizer/symmetric_quantize_0" -> "11 ThreeConvModel/NNCFConv2d[last_conv]/conv2d_0"  [label="(1, 3, 10, 10)", style=solid];
+"10 ThreeConvModel/NNCFConv2d[last_conv]/ModuleDict[pre_ops]/UpdateWeight[3]/SymmetricQuantizer[op]/symmetric_quantize_0" -> "11 ThreeConvModel/NNCFConv2d[last_conv]/conv2d_0"  [label="(1, 3, 1, 1)", style=solid];
+"11 ThreeConvModel/NNCFConv2d[last_conv]/conv2d_0" -> "12 /nncf_model_output_0"  [label="(1, 1, 10, 10)", style=solid];
+}

@@ -357,7 +357,7 @@ class CompositeCompressionAlgorithmBuilder(CompressionAlgorithmBuilder):
     `CompressionAlgorithmBuilder` instances as a list of children that are
     treated the same way as a single `CompressionAlgorithmBuilder` instance.
     """
-
+    # TODO: composite builder doesn't need a NNCFConfig
     def __init__(self, config: NNCFConfig, should_init: bool = True):
         """
         Initializes internal state of the composite compression algorithm builder

@@ -11,6 +11,8 @@
  limitations under the License.
 """
 
+from typing import List
+from typing import Optional
 from typing import TypeVar
 
 import torch.nn
@@ -42,18 +44,26 @@ class PTCompositeCompressionLoss(CompositeCompressionLoss, PTCompressionLoss):
 
 
 class PTCompositeCompressionAlgorithmBuilder(
-        CompositeCompressionAlgorithmBuilder, PTCompressionAlgorithmBuilder):
-    def __init__(self, config: NNCFConfig, should_init: bool = True):
-
+    CompositeCompressionAlgorithmBuilder, PTCompressionAlgorithmBuilder):
+    def __init__(self,
+                 config: NNCFConfig,
+                 should_init: bool = True,
+                 builders: Optional[List[PTCompressionAlgorithmBuilder]] = None):
         super().__init__(config, should_init)
+        if builders:
+            self._child_builders = builders
+        else:
+            algo_names = extract_algorithm_names(config)
+            if len(algo_names) < 2:
+                raise RuntimeError('Composite algorithm builder must be supplied with a config with more than one '
+                                   'compression algo specified!')
+            for algo_name in algo_names:
+                algo_builder = PT_COMPRESSION_ALGORITHMS.get(algo_name)
+                self._child_builders.append(algo_builder(config, should_init=should_init))
 
-        algo_names = extract_algorithm_names(config)
-        if len(algo_names) < 2:
-            raise RuntimeError('Composite algorithm builder must be supplied with a config with more than one '
-                               'compression algo specified!')
-        for algo_name in algo_names:
-            algo_builder = PT_COMPRESSION_ALGORITHMS.get(algo_name)
-            self._child_builders.append(algo_builder(config, should_init=should_init))
+    @classmethod
+    def from_builders(cls, builders: List[PTCompressionAlgorithmBuilder]):
+        return PTCompositeCompressionAlgorithmBuilder(NNCFConfig(), builders=builders)
 
     def __bool__(self):
         return bool(self.child_builders)
