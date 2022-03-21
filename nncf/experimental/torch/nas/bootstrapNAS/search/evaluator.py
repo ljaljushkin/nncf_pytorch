@@ -41,19 +41,28 @@ class Evaluator:
         self._curr_value = 0
         self._ideal_value = ideal_val
         self._elasticity_ctrl = elasticity_ctrl
-        self.use_model_for_evaluation = True
+        self._use_model_for_evaluation = True
         self.cache = {}
         self.input_model_value = None
-        self.type_of_measurement = None
         #TODO(pablo): Here we should store some super-network signature that is associated with this evaluator
 
-    def evaluate_model(self, model: NNCFNetwork) -> Tuple[float, ...]:
-        return self._eval_func(model)
+    def evaluate_from_pymoo(self, model: NNCFNetwork, pymoo_repr):
+        if self._use_model_for_evaluation:
+            value = self.evaluate_model(model)
+        else:
+            value = self.evaluate_with_elasticity_handler()
+        self.add_to_cache(pymoo_repr, value)
+        return value
+
+    def evaluate_model(self, model: NNCFNetwork) -> float:
+        self._curr_value = self._eval_func(model)
+        return self._curr_value
 
     def evaluate_with_elasticity_handler(self) -> Tuple[float, ...]:
-        if self.use_model_for_evaluation:
+        if self._use_model_for_evaluation:
             raise RuntimeError("Evaluator set to evaluate with model but elasticity handler was requested.")
-        return self._eval_func(self._elasticity_ctrl.multi_elasticity_handler)
+        self._curr_value = self._eval_func(self._elasticity_ctrl.multi_elasticity_handler)
+        return self._curr_value
 
     def add_to_cache(self, subnet_config_repr, measurement: float) -> NoReturn:
         nncf_logger.info(f"Add to evaluator {self.name}: {subnet_config_repr}, {measurement}")
@@ -62,7 +71,7 @@ class Evaluator:
     def retrieve_from_cache(self, subnet_config_repr: Tuple[float, ...]) -> Tuple[bool, float]:
         if subnet_config_repr in self.cache.keys():
             return True, self.cache[subnet_config_repr]
-        return False, False
+        return False, 0
 
     def get_state(self) -> Dict[str, Any]:
         state_dict = {
@@ -71,7 +80,7 @@ class Evaluator:
             'curr_value': self._curr_value,
             'ideal_value': self._ideal_value,
             'elasticity_controller_compression_state': self.elasticity_ctrl.get_state(),
-            'use_model_for_evaluation': self.use_model_for_evaluation,
+            'use_model_for_evaluation': self._use_model_for_evaluation,
             'cache': self.cache,
             'input_model_value': self.input_model_value
         }
@@ -82,7 +91,7 @@ class Evaluator:
         new_dict = state.copy()
         evaluator = cls(new_dict['name'], new_dict['eval_func'], new_dict['ideal_val'], elasticity_ctrl)
         evaluator._curr_value = new_dict['curr_value']
-        evaluator.use_model_for_evaluation = new_dict['use_model_for_evaluation']
+        evaluator._use_model_for_evaluation = new_dict['use_model_for_evaluation']
         evaluator.cache = new_dict['cache']
         evaluator.input_model_value = new_dict['input_model_value']
         return evaluator
@@ -118,7 +127,14 @@ class AccuracyEvaluator(Evaluator):
         self._ref_acc = ref_acc
 
     def evaluate_model(self, model: NNCFNetwork) -> Tuple[float, ...]:
-        return self._eval_func(model, self._val_loader)
+        self._curr_value = self._eval_func(model, self._val_loader) * -1.0
+        return self._curr_value
+
+    def evaluate_from_pymoo(self, model: NNCFNetwork, pymoo_repr):
+        value = self.evaluate_model(model)
+        self._curr_value = value
+        self.add_to_cache(pymoo_repr, value)
+        return value
 
     def get_state(self) -> Dict[str, Any]:
         state = super.get_state()
@@ -131,7 +147,7 @@ class AccuracyEvaluator(Evaluator):
         new_dict = state.copy()
         evaluator = cls(new_dict['eval_func'], val_loader, new_dict['is_top1'], new_dict['ref_acc'])
         evaluator._curr_value = new_dict['curr_value']
-        evaluator.use_model_for_evaluation = new_dict['use_model_for_evaluation']
+        evaluator._use_model_for_evaluation = new_dict['use_model_for_evaluation']
         evaluator.cache = new_dict['cache']
         evaluator.input_model_value = new_dict['input_model_value']
         return evaluator

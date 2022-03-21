@@ -108,7 +108,8 @@ LIST_SEARCH_SPACE_DESCS = [
                        [1], [2], [3], [4],
                        [1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4],
                        [1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4],
-                       [1, 2, 3, 4]
+                       [1, 2, 3, 4],
+                       []
                    ]),
     ElasticityDesc(ElasticityDim.DEPTH, model_cls=MobileNetV2, params={'mode': 'auto'}, input_size=RESNET50_INPUT_SIZE,
                    ref_search_space=[
@@ -117,7 +118,8 @@ LIST_SEARCH_SPACE_DESCS = [
                        [0, 2, 5], [0, 2, 7], [0, 2, 9], [0, 5, 7], [0, 5, 9], [0, 7, 9], [2, 5, 7], [2, 5, 9],
                        [2, 7, 9],
                        [5, 7, 9],
-                       [0, 2, 5, 7], [0, 2, 5, 9], [0, 2, 7, 9], [0, 5, 7, 9], [2, 5, 7, 9], [0, 2, 5, 7, 9]
+                       [0, 2, 5, 7], [0, 2, 5, 9], [0, 2, 7, 9], [0, 5, 7, 9], [2, 5, 7, 9], [0, 2, 5, 7, 9],
+                       []
                    ]),
     *LIST_KERNEL_SS_DESCS,
     *LIST_WIDTH_SS_DESCS

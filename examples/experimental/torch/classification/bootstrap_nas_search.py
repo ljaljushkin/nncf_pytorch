@@ -118,7 +118,7 @@ def main_worker(current_gpu, config: SampleConfig):
 
     # Data loading code
     train_dataset, val_dataset = create_datasets(config)
-    train_loader, train_sampler, val_loader, init_loader = create_data_loaders(config, train_dataset, val_dataset)
+    train_loader, _, val_loader, _ = create_data_loaders(config, train_dataset, val_dataset)
 
     bn_adapt_args = BNAdaptationInitArgs(data_loader=wrap_dataloader_for_init(train_loader), device=config.device)
     nncf_config.register_extra_structs([bn_adapt_args])
@@ -145,6 +145,10 @@ def main_worker(current_gpu, config: SampleConfig):
         top1, top5, loss = validate(loader, model_, criterion, config, log_validation_info=False)
         return top1, top5, loss
 
+    def validate_model_fn_top1(model_, loader_):
+        top1, _, _ = validate_model_fn(model_, loader_)
+        return top1
+
     nncf_network = create_nncf_network(model, nncf_config)
 
     if config.search_mode_active:
@@ -155,20 +159,21 @@ def main_worker(current_gpu, config: SampleConfig):
 
         load_state(model, model_weights, is_resume=True)
 
-        top1, top5, loss = validate_model_fn(model, val_loader)
-        print(f'SuperNetwork Top 1: {top1}')
+        top1_acc = validate_model_fn_top1(model, val_loader)
+        print(f'SuperNetwork Top 1: {top1_acc}')
 
-        search_algo = SearchAlgorithm(model, elasticity_ctrl, nncf_config)
+        search_algo = SearchAlgorithm.from_config(model, elasticity_ctrl, nncf_config)
 
-        elasticity_ctrl, best_config, metrics = search_algo.run(validate_model_fn, val_loader, config.checkpoint_save_dir, tensorboard_writer=config.tb)
+        elasticity_ctrl, best_config, performance_metrics = search_algo.run(validate_model_fn_top1, val_loader, config.checkpoint_save_dir, tensorboard_writer=config.tb)
+
         print(best_config)
-        print(metrics)
+        print(performance_metrics)
 
         search_algo.search_progression_to_csv()
         search_algo.evaluators_to_csv()
 
-        top1, top5, loss = validate(val_loader, model, criterion, config)
-        print(top1, elasticity_ctrl.multi_elasticity_handler.count_flops_and_weights_for_active_subnet()[0]/2000000)
+        top1_acc = validate_model_fn_top1(model, val_loader)
+        print(top1_acc, elasticity_ctrl.multi_elasticity_handler.count_flops_and_weights_for_active_subnet()[0]/2000000)
         assert best_config == elasticity_ctrl.multi_elasticity_handler.get_active_config()
 
     if 'test' in config.mode:

@@ -224,6 +224,10 @@ def main_worker(current_gpu, config: SampleConfig):
         top1, top5, loss = validate(loader, model_, criterion, config, log_validation_info=False)
         return top1, top5, loss
 
+    def validate_model_fn_top1(model_, loader_):
+        top1, _, _ = validate_model_fn(model_, loader_)
+        return top1
+
     nncf_network = create_nncf_network(model, nncf_config)
 
     resuming_checkpoint_path = config.resuming_checkpoint_path
@@ -235,7 +239,7 @@ def main_worker(current_gpu, config: SampleConfig):
 
     if 'train' in config.mode:
         # Validate supernetwork
-        top1, _, _ = validate(val_loader, model, criterion, config)
+        top1_acc = validate_model_fn_top1(model, val_loader)
 
         nncf_network, elasticity_ctrl = training_algorithm.run(train_epoch_fn, train_loader,
                                                                validate_model_fn, val_loader, optimizer,
@@ -247,7 +251,7 @@ def main_worker(current_gpu, config: SampleConfig):
         else:
             search_algo = SearchAlgorithm.from_checkpoint(nncf_network, elasticity_ctrl, bn_adapt_args, resuming_checkpoint_path)
 
-        elasticity_ctrl, best_config, performance_metrics = search_algo.run(validate_model_fn, val_loader, config.checkpoint_save_dir, tensorboard_writer=config.tb)
+        elasticity_ctrl, best_config, performance_metrics = search_algo.run(validate_model_fn_top1, val_loader, config.checkpoint_save_dir, tensorboard_writer=config.tb)
 
         print(best_config)
         print(performance_metrics)

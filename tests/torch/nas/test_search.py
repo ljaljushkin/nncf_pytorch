@@ -18,10 +18,11 @@ from typing import Dict
 from typing import List
 from typing import NamedTuple
 
+from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
 from tests.torch.helpers import create_ones_mock_dataloader
 from tests.torch.helpers import DummyDataLoader
 from tests.torch.helpers import get_empty_config
-from tests.torch.nas.creators import create_bnas_model_and_ctrl_by_test_desc
+from tests.torch.nas.creators import create_bnas_model_and_ctrl_by_test_desc, create_bootstrap_training_model_and_ctrl
 from tests.torch.nas.creators import create_bootstrap_nas_training_algo
 from tests.torch.nas.creators import NAS_MODEL_DESCS
 from tests.torch.nas.models.synthetic import ThreeConvModel
@@ -120,19 +121,20 @@ def prepare_search_algorithm(nas_model_name):
         pytest.skip(
             f'Skip test for {nas_model_name} as exploration is underway to better manage its search space'
         )
-    model, ctrl, _ = create_bootstrap_nas_training_algo(nas_model_name)
-
+    model = NAS_MODEL_DESCS[nas_model_name][0]()
     nncf_config = get_empty_config(input_sample_sizes=NAS_MODEL_DESCS[nas_model_name][1])
-    nncf_config['bootstrapNAS'] = {'training': {'algorithm': 'progressive_shrinking'},
-                                   'search': {"algorithm": "NSGA2", "num_evals": 2, "population": 1}}
+    nncf_config['bootstrapNAS'] = {'training': {'algorithm': 'progressive_shrinking'}}
     nncf_config['input_info'][0].update({'filler': 'random'})
     if nas_model_name == 'densenet_121':
-        nncf_config['bootstrapNAS']['training'] = {
-            'elasticity': {'depth': {'min_block_size': 10, 'max_block_size': 117}}}
-    elasticity_ctrl = ctrl.elasticity_controller
+        nncf_config['bootstrapNAS']['training']['elasticity'] = {'depth': {'min_block_size': 10, 'max_block_size': 117}}
+    else:
+        nncf_config['bootstrapNAS']['training']['elasticity'] = {'available_elasticity_dims': ['kernel', 'width', 'depth']}
+    nncf_config['bootstrapNAS']['search'] = {"algorithm": "NSGA2", "num_evals": 2, "population": 1}
     nncf_config = NNCFConfig.from_dict(nncf_config)
-    nncf_config.register_extra_structs([BNAdaptationInitArgs(data_loader=DummyDataLoader(), device=None)])
-    return SearchAlgorithm(model, elasticity_ctrl, nncf_config)
+    model, ctrl = create_bootstrap_training_model_and_ctrl(model, nncf_config)
+    elasticity_ctrl = ctrl.elasticity_controller
+    elasticity_ctrl.multi_elasticity_handler.enable_all()
+    return SearchAlgorithm.from_config(model, elasticity_ctrl, nncf_config)
 
 
 def test_design_upper_bounds(nas_model_name):
@@ -145,15 +147,10 @@ def test_num_variables(nas_model_name):
     assert search.num_vars == len(NAS_MODELS_SEARCH_ENCODING[nas_model_name])
 
 
-def test_create_default_evaluators(nas_model_name, tmp_path):
+def test_create_default_evaluators(nas_model_name, tmp_path, mocker):
     search = prepare_search_algorithm(nas_model_name)
-
-    def fake_acc_validate_fn(model, val_loader):
-        return 0, 0, 0
-    search.run(fake_acc_validate_fn, None, tmp_path)
+    search.run(lambda model, val_loader: 0, None, tmp_path)
     evaluators = search.evaluators
     assert len(evaluators) == 2
-    assert not evaluators[0].use_model_for_evaluation
     assert evaluators[0].name == 'flops'
-    assert evaluators[1].use_model_for_evaluation
     assert evaluators[1].name == 'top1_acc'

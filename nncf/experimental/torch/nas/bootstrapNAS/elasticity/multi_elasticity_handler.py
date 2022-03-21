@@ -282,3 +282,42 @@ class MultiElasticityHandler(ElasticityHandler):
     @staticmethod
     def _get_current_method_name() -> str:
         return inspect.stack()[1].function
+
+
+    def get_design_vars_info(self) -> float:
+        active_handlers = {
+            dim: self._handlers[dim] for dim in self._handlers if self._is_handler_enabled_map[dim]
+        }
+        num_vars = 0
+        vars_upper = []
+        for handler_id, handler in active_handlers.items():
+            if handler_id is ElasticityDim.DEPTH:
+                num_vars += 1
+                vars_upper.append(len(handler.get_search_space()) - 1)
+            else:
+                num_vars += len(handler.get_search_space())
+                vars_upper += [len(handler.get_search_space()[i]) - 1 for i in
+                                     range(len(handler.get_search_space()))]
+        return num_vars, vars_upper
+
+
+    def get_config_from_pymoo(self, x : List) -> SubnetConfig:
+        active_handlers = {
+            dim: self._handlers[dim] for dim in self._handlers if self._is_handler_enabled_map[dim]
+        }
+        index_pos = 0
+        sample = SubnetConfig()
+        for handler_id, handler in active_handlers.items():
+            if handler_id is ElasticityDim.KERNEL:
+                sample[handler_id] = [self.kernel_search_space[j - index_pos][x[j]] for j in
+                               range(index_pos, index_pos + len(self.kernel_search_space))]
+                index_pos += len(self.kernel_search_space)
+            elif handler_id is ElasticityDim.WIDTH:
+                sample[handler_id] = {key - index_pos: self.width_search_space[key - index_pos][x[key]] for
+                               key in range(index_pos, index_pos + len(self.width_search_space))}
+                index_pos += len(self.width_search_space)
+            elif handler_id is ElasticityDim.DEPTH:
+                #TODO
+                sample[handler_id] = self.depth_search_space[x[index_pos]]
+                index_pos += 1
+        return sample
