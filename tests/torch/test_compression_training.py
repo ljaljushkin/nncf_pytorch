@@ -49,7 +49,7 @@ GLOBAL_CONFIG = {
                 {
                     'configs': {
                         'mobilenet_v2_cifar10_nas_SMALL.json': {
-                            'expected_accuracy': 81.59,
+                            'expected_accuracy': 88.67, # 81.59,
                             'train_steps': 2,
                             'weights': 'mobilenet_v2_cifar10_93.91.pth',
                             'absolute_tolerance_train': 1.0,
@@ -57,9 +57,12 @@ GLOBAL_CONFIG = {
                             'is_experimental': True,
                             'main_filename': 'bootstrap_nas.py',
                             'checkpoint_name': 'supernet',
+                            # Search
+                            'subnet_checkpoint_name': 'subnetwork_best',
+                            'subnet_expected_accuracy': 88.67
                         },
                         'resnet50_cifar10_nas_SMALL.json': {
-                            'expected_accuracy': 22.36,
+                            'expected_accuracy': 91.19, # 87.36, 22.36,
                             'train_steps': 2,
                             'weights': 'resnet50_cifar10_93.65.pth',
                             'absolute_tolerance_train': 2.0,
@@ -67,9 +70,12 @@ GLOBAL_CONFIG = {
                             'is_experimental': True,
                             'main_filename': 'bootstrap_nas.py',
                             'checkpoint_name': 'supernet',
+                            # Search
+                            'subnet_checkpoint_name': 'subnetwork_best',
+                            'subnet_expected_accuracy': 88.67
                         },
                         'vgg11_bn_cifar10_nas_SMALL.json': {
-                            'expected_accuracy': 19.26,
+                            'expected_accuracy': 87.75, # 77.76, 19.26,
                             'train_steps': 2,
                             'weights': 'vgg11_bn_cifar10_92.39.pth',
                             'absolute_tolerance_train': 2.0,
@@ -77,6 +83,9 @@ GLOBAL_CONFIG = {
                             'is_experimental': True,
                             'main_filename': 'bootstrap_nas.py',
                             'checkpoint_name': 'supernet',
+                            # Search
+                            'subnet_checkpoint_name': 'subnetwork_best',
+                            'subnet_expected_accuracy': 88.67
                         },
                     },
                 },
@@ -127,7 +136,7 @@ GLOBAL_CONFIG = {
                             'absolute_tolerance_train': 1.5,
                             'absolute_tolerance_eval': 2e-2
                         },
-                        'efficient_net_b0_cifar10_nas_SMALL.json': {
+                        'efficient_net_b0_cifar100_nas_SMALL.json': {
                             # TODO: fix supernet training (ticket 73814)
                             'expected_accuracy': 10.04,
                             'train_steps': 2,
@@ -137,6 +146,9 @@ GLOBAL_CONFIG = {
                             'is_experimental': True,
                             'main_filename': 'bootstrap_nas.py',
                             'checkpoint_name': 'supernet',
+                            # Search
+                            'subnet_checkpoint_name': 'subnetwork_best',
+                            'subnet_expected_accuracy': 88.67
                         },
                     }
                 },
@@ -215,6 +227,9 @@ for sample_type_, datasets in GLOBAL_CONFIG.items():
             absolute_tolerance_eval_ = config_params.get('absolute_tolerance_eval', 1e-3)
             weights_path_ = config_params.get('weights', None)
             epochs = config_params.get('epochs', None)
+
+            subnet_expected_accuracy_ = config_params.get('subnet_expected_accuracy', 100)
+
             if weights_path_:
                 weights_path_ = os.path.join(sample_type_, dataset_name_, weights_path_)
             for execution_arg_ in execution_args:
@@ -227,6 +242,8 @@ for sample_type_, datasets in GLOBAL_CONFIG.items():
                     'config': str(config_path_)
                 }
                 checkpoint_name = config_params.get('checkpoint_name', get_name(jconfig))
+                subnet_checkpoint_name = config_params.get('subnet_checkpoint_name', get_name(jconfig))
+
                 if batch_size:
                     args_['batch-size'] = batch_size
                 if epochs:
@@ -241,7 +258,9 @@ for sample_type_, datasets in GLOBAL_CONFIG.items():
                     'expected_accuracy': expected_accuracy_,
                     'absolute_tolerance_train': absolute_tolerance_train_,
                     'absolute_tolerance_eval': absolute_tolerance_eval_,
-                    'checkpoint_name': checkpoint_name
+                    'checkpoint_name': checkpoint_name,
+                    'subnet_checkpoint_name': subnet_checkpoint_name,
+                    'subnet_expected_accuracy': subnet_expected_accuracy_
                 }
                 CONFIG_PARAMS.append(tuple([test_config_, args_, execution_arg_, dataset_name_]))
 
@@ -322,6 +341,14 @@ def test_compression_train(_params, tmp_path, case_common_dirs):
     better_accuracy_tolerance = 3
     tolerance = tc['absolute_tolerance_train'] if actual_acc < ref_acc else better_accuracy_tolerance
     assert actual_acc == approx(ref_acc, abs=tolerance)
+
+    # Check search results
+    checkpoint_path = os.path.join(args['checkpoint-save-dir'], tc['subnet_checkpoint_name'] + '.pth')
+    assert os.path.exists(checkpoint_path)
+    actual_acc = torch.load(checkpoint_path)['best_acc1']
+    ref_acc = tc['subnet_expected_accuracy']
+    assert actual_acc > ref_acc
+
 
 
 @pytest.mark.dependency(depends=["train"])

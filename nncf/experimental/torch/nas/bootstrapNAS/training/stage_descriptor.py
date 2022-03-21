@@ -16,6 +16,7 @@ from typing import List
 
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
 
+DEFAULT_STAGE_LR_RATE = 3.5e-06
 
 class SDescriptorParamNames:
     TRAIN_DIMS = 'train_dims'
@@ -37,13 +38,17 @@ class StageDescriptor:
                  reorg_weights: bool = False,
                  bn_adapt: bool = False,
                  depth_indicator: int = 1,
-                 width_indicator: int = 1):
+                 width_indicator: int = 1,
+                 init_lr = None,
+                 epochs_lr = None):
         self.train_dims = train_dims
         self.epochs = epochs
         self.depth_indicator = depth_indicator
         self.width_indicator = width_indicator
         self.reorg_weights = reorg_weights
         self.bn_adapt = bn_adapt
+        self.init_lr = init_lr
+        self.epochs_lr = epochs_lr
 
     def __eq__(self, other: 'StageDescriptor'):
         return self.__dict__ == other.__dict__
@@ -77,7 +82,7 @@ class StageDescriptor:
         return cls(**kwargs)
 
     def get_state(self) -> Dict[str, Any]:
-        return {
+        state_dict = {
             self._state_names.TRAIN_DIMS: [dim.value for dim in self.train_dims],
             self._state_names.EPOCHS: self.epochs,
             self._state_names.REORG_WEIGHTS: self.reorg_weights,
@@ -85,3 +90,8 @@ class StageDescriptor:
             self._state_names.DEPTH_INDICATOR: self.depth_indicator,
             self._state_names.BN_ADAPT: self.bn_adapt,
         }
+        if self.init_lr is not None:
+            state_dict['init_lr'] = self.init_lr
+        if self.epochs_lr is not None:
+            state_dict['epochs_lr'] = self.epochs_lr
+        return state_dict

@@ -4,12 +4,24 @@
       "sample_size": [1, 3, 32, 32]
     },
     "multiprocessing_distributed": false,
+    "optimizer": {
+        "type": "sgd",
+        "no_decay_keys": "bn#bias",
+        "base_lr": 2.5e-6,
+        "weight_decay": 3e-7,
+        "label_smoothing": 0.1
+    },
     "bootstrapNAS": {
         "training": {
             "algorithm": "progressive_shrinking",
             "batchnorm_adaptation": {
                 "num_bn_adaptation_samples": 2
             }
+        },
+        "search": {
+            "algorithm": "NSGA2",
+            "num_evals": 2,
+            "population": 1
         }
     }
 }
