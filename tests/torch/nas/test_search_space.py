@@ -101,7 +101,7 @@ LIST_SEARCH_SPACE_DESCS = [
     COMMON_DEPTH_BASIC_DESC,
     ElasticityDesc(ElasticityDim.DEPTH, model_cls=DepthBasicConvTestModel,
                    params={'mode': 'auto', 'min_block_size': 2},
-                   ref_search_space=[]),
+                   ref_search_space=[[]]),
     COMMON_DEPTH_SUPERNET_DESC,
     ElasticityDesc(ElasticityDim.DEPTH, model_cls=ResNet18, params={'mode': 'auto'}, input_size=RESNET50_INPUT_SIZE,
                    ref_search_space=[
