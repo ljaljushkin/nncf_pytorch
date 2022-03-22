@@ -112,14 +112,14 @@ class EpochBasedTrainingAlgorithm:
         return self._training_ctrl.elasticity_controller
 
     def run(self,
-            train_epoch_fn,
-            train_loader,
-            val_fn,
-            val_loader,
-            optimizer,
-            checkpoint_save_dir,
-            tensorboard_writer=None,
-            train_iters=None) -> Tuple[NNCFNetwork, ElasticityController]:
+            train_epoch_fn: TrainEpochFnType,
+            train_loader: DataLoaderType,
+            val_fn: ValFnType,
+            val_loader: DataLoaderType,
+            optimizer: OptimizerType,
+            checkpoint_save_dir: str,
+            tensorboard_writer: Optional[TensorboardWriterType] = None) -> Tuple[NNCFNetwork, ElasticityController],
+            train_iters: Optional[float] = None) -> Tuple[NNCFNetwork, ElasticityController]:
         """
         Implements a training loop for supernet training.
 

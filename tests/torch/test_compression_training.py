@@ -227,9 +227,7 @@ for sample_type_, datasets in GLOBAL_CONFIG.items():
             absolute_tolerance_eval_ = config_params.get('absolute_tolerance_eval', 1e-3)
             weights_path_ = config_params.get('weights', None)
             epochs = config_params.get('epochs', None)
-
             subnet_expected_accuracy_ = config_params.get('subnet_expected_accuracy', 100)
-
             if weights_path_:
                 weights_path_ = os.path.join(sample_type_, dataset_name_, weights_path_)
             for execution_arg_ in execution_args:

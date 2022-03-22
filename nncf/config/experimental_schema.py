@@ -232,7 +232,7 @@ BOOTSTRAP_NAS_TRAINING_SCHEMA = {
         "elasticity": ELASTICITY_SCHEMA,
         "lr_schedule": LR_SCHEDULE_SCHEMA,
         "train_steps": with_attributes(NUMBER,
-                                     description="Defines the number of of samples used for each training epoch."),
+                                       description="Defines the number of samples used for each training epoch."),
     },
     "additionalProperties": False
 }
@@ -258,6 +258,7 @@ BOOTSTRAP_NAS_SEARCH_SCHEMA = {
     },
     "additionalProperties": False
 }
+
 
 BOOTSTRAP_NAS_SCHEMA = {
     "type": "object",

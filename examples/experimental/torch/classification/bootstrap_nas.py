@@ -16,8 +16,7 @@ import warnings
 from pathlib import Path
 from shutil import copyfile
 
-import torch
-import torch.nn as nn
+from torch import nn
 
 from examples.torch.classification.main import create_data_loaders
 from examples.torch.classification.main import create_datasets
@@ -31,6 +30,8 @@ from examples.torch.common.execution import get_execution_mode
 from examples.torch.common.execution import set_seed
 from examples.torch.common.execution import start_worker
 from examples.torch.common.model_loader import load_model
+from examples.torch.common.optimizer import get_parameter_groups
+from examples.torch.common.optimizer import make_optimizer
 from examples.torch.common.sample_config import SampleConfig
 from examples.torch.common.sample_config import create_sample_config
 from examples.torch.common.utils import SafeMLFLow
@@ -42,7 +43,7 @@ from examples.torch.common.utils import is_pretrained_model_requested
 from examples.torch.common.utils import print_args
 from nncf.config.structures import BNAdaptationInitArgs
 from nncf.experimental.torch.nas.bootstrapNAS.search import SearchAlgorithm
-from nncf.experimental.torch.nas.bootstrapNAS.training import EpochBasedTrainingAlgorithm
+from nncf.experimental.torch.nas.bootstrapNAS import EpochBasedTrainingAlgorithm
 from nncf.torch.initialization import default_criterion_fn
 from nncf.torch.initialization import wrap_dataloader_for_init
 from nncf.torch.model_creation import create_nncf_network
@@ -211,8 +212,6 @@ def main_worker(current_gpu, config: SampleConfig):
                        weights_path=config.get('weights'))
 
     model.to(config.device)
-
-    validate(val_loader, model, criterion, config)
 
     optimizer = get_optimizer(model, opt_config)
 

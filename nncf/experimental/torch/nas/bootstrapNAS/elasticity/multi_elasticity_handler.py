@@ -283,7 +283,6 @@ class MultiElasticityHandler(ElasticityHandler):
     def _get_current_method_name() -> str:
         return inspect.stack()[1].function
 
-
     def get_design_vars_info(self) -> float:
         active_handlers = {
             dim: self._handlers[dim] for dim in self._handlers if self._is_handler_enabled_map[dim]
@@ -299,7 +298,6 @@ class MultiElasticityHandler(ElasticityHandler):
                 vars_upper += [len(handler.get_search_space()[i]) - 1 for i in
                                      range(len(handler.get_search_space()))]
         return num_vars, vars_upper
-
 
     def get_config_from_pymoo(self, x : List) -> SubnetConfig:
         active_handlers = {

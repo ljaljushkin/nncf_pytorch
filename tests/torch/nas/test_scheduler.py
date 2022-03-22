@@ -77,10 +77,6 @@ class TestScheduler:
         scheduler.epoch_step()
         ref_desc = StageDescriptor(train_dims=[ElasticityDim.KERNEL], epochs=1, init_lr=DEFAULT_STAGE_LR_RATE, epochs_lr=1)
         act_desc, act_idx = scheduler.get_current_stage_desc()
-        print(schedule_params.list_stage_descriptions[0].__dict__)
-        print(ref_desc.__dict__)
-        print(act_desc.__dict__)
-        print(ref_desc.__dict__ == act_desc.__dict__)
         assert ref_desc == act_desc
         assert act_idx == 0
 

@@ -46,16 +46,16 @@ REF_BUILDING_BLOCKS_FOR_RESNET = [
 
 REF_BUILDING_BLOCKS_FOR_MOBILENETV2 = [
     BuildingBlock(
-        'MobileNetV2/Sequential[features]/InvertedResidual[2]/Sequential[conv]/NNCFBatchNorm[3]/batch_norm_0',
+        'MobileNetV2/Sequential[features]/InvertedResidual[2]/Sequential[conv]/NNCFBatchNorm2d[3]/batch_norm_0',
         'MobileNetV2/Sequential[features]/InvertedResidual[3]/__add___0'),
     BuildingBlock(
-        'MobileNetV2/Sequential[features]/InvertedResidual[4]/Sequential[conv]/NNCFBatchNorm[3]/batch_norm_0',
+        'MobileNetV2/Sequential[features]/InvertedResidual[4]/Sequential[conv]/NNCFBatchNorm2d[3]/batch_norm_0',
         'MobileNetV2/Sequential[features]/InvertedResidual[5]/__add___0'),
     BuildingBlock(
         'MobileNetV2/Sequential[features]/InvertedResidual[5]/__add___0',
         'MobileNetV2/Sequential[features]/InvertedResidual[6]/__add___0'),
     BuildingBlock(
-        'MobileNetV2/Sequential[features]/InvertedResidual[7]/Sequential[conv]/NNCFBatchNorm[3]/batch_norm_0',
+        'MobileNetV2/Sequential[features]/InvertedResidual[7]/Sequential[conv]/NNCFBatchNorm2d[3]/batch_norm_0',
         'MobileNetV2/Sequential[features]/InvertedResidual[8]/__add___0'),
     BuildingBlock(
         'MobileNetV2/Sequential[features]/InvertedResidual[8]/__add___0',
@@ -64,13 +64,13 @@ REF_BUILDING_BLOCKS_FOR_MOBILENETV2 = [
         'MobileNetV2/Sequential[features]/InvertedResidual[9]/__add___0',
         'MobileNetV2/Sequential[features]/InvertedResidual[10]/__add___0'),
     BuildingBlock(
-        'MobileNetV2/Sequential[features]/InvertedResidual[11]/Sequential[conv]/NNCFBatchNorm[3]/batch_norm_0',
+        'MobileNetV2/Sequential[features]/InvertedResidual[11]/Sequential[conv]/NNCFBatchNorm2d[3]/batch_norm_0',
         'MobileNetV2/Sequential[features]/InvertedResidual[12]/__add___0'),
     BuildingBlock(
         'MobileNetV2/Sequential[features]/InvertedResidual[12]/__add___0',
         'MobileNetV2/Sequential[features]/InvertedResidual[13]/__add___0'),
     BuildingBlock(
-        'MobileNetV2/Sequential[features]/InvertedResidual[14]/Sequential[conv]/NNCFBatchNorm[3]/batch_norm_0',
+        'MobileNetV2/Sequential[features]/InvertedResidual[14]/Sequential[conv]/NNCFBatchNorm2d[3]/batch_norm_0',
         'MobileNetV2/Sequential[features]/InvertedResidual[15]/__add___0'),
     BuildingBlock(
         'MobileNetV2/Sequential[features]/InvertedResidual[15]/__add___0',
@@ -186,19 +186,19 @@ REF_BUILDING_BLOCKS_FOR_EFFICIENT_NET = [
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[1]/__mul___0'),
     BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___1',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/__mul___0'),
-    BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[1]/NNCFBatchNorm[_bn2]/batch_norm_0',
+    BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[1]/NNCFBatchNorm2d[_bn2]/batch_norm_0',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/__add___0'),
     BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/MemoryEfficientSwish[_swish]/__mul___1',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/__mul___0'),
     BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___1',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/__mul___0'),
-    BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/NNCFBatchNorm[_bn2]/batch_norm_0',
+    BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/NNCFBatchNorm2d[_bn2]/batch_norm_0',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/__add___0'),
     BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/MemoryEfficientSwish[_swish]/__mul___1',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/__mul___0'),
     BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/MemoryEfficientSwish[_swish]/__mul___1',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/__mul___0'),
-    BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/NNCFBatchNorm[_bn2]/batch_norm_0',
+    BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/NNCFBatchNorm2d[_bn2]/batch_norm_0',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/__add___0'),
     BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/MemoryEfficientSwish[_swish]/__mul___1',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/__mul___0'),
@@ -208,7 +208,7 @@ REF_BUILDING_BLOCKS_FOR_EFFICIENT_NET = [
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/__mul___0'),
     BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___1',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/__mul___0'),
-    BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/NNCFBatchNorm[_bn2]/batch_norm_0',
+    BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/NNCFBatchNorm2d[_bn2]/batch_norm_0',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/__add___0'),
     BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___1',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/__mul___0'),
@@ -218,7 +218,7 @@ REF_BUILDING_BLOCKS_FOR_EFFICIENT_NET = [
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/__mul___0'),
     BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/MemoryEfficientSwish[_swish]/__mul___1',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/__mul___0'),
-    BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/NNCFBatchNorm[_bn2]/batch_norm_0',
+    BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/NNCFBatchNorm2d[_bn2]/batch_norm_0',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/__add___0'),
     BuildingBlock('EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/MemoryEfficientSwish[_swish]/__mul___1',
                   'EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/__mul___0'),
