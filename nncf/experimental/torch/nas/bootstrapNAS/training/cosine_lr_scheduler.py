@@ -102,8 +102,7 @@ class CosineLRScheduler(BaseCompressionScheduler):
 
     @classmethod
     def from_state(cls, state: Dict[str, Any], optimizer):
-        new_dict = state.copy()
-        return cls(optimizer, new_dict['num_steps_in_epoch'], new_dict['base_lr'], new_dict['num_epochs'], new_dict['warmup_epochs'], new_dict['warmup_lr'])
+        return cls(optimizer, **state)
 
     def get_state(self) -> Dict[str, Any]:
         state_dict = {
