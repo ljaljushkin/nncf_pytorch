@@ -22,16 +22,15 @@ from nncf.common.utils.logger import logger as nncf_logger
 
 
 def adjust_learning_rate(optimizer, epoch, init_lr, epochs, batch=0, nBatch=None, lr_schedule_type='cosine'):
-    """ adjust learning of a given optimizer and return the new learning rate """
     new_lr = calc_learning_rate(epoch, init_lr, epochs, batch, nBatch, lr_schedule_type)
     for param_group in optimizer.param_groups:
         param_group['lr'] = new_lr
     return new_lr
 
 
-def warmup_adjust_learning_rate(optimizer, T_total, nBatch, epoch, batch=0, warmup_lr=0):
+def warmup_adjust_learning_rate(optimizer, init_lr, T_total, nBatch, epoch, batch=0, warmup_lr=0):
     T_cur = epoch * nBatch + batch + 1
-    new_lr = T_cur / T_total * (self.init_lr - warmup_lr) + warmup_lr
+    new_lr = T_cur / T_total * (init_lr - warmup_lr) + warmup_lr
     for param_group in optimizer.param_groups:
         param_group['lr'] = new_lr
     return new_lr
@@ -62,8 +61,9 @@ class CosineLRScheduler(BaseCompressionScheduler):
     def step(self, next_step: Optional[int] = None) -> None:
         super().step(next_step)
         step_from_epoch_start = self.current_step - (self.current_epoch*(self._num_steps_in_epoch+1))
-        if self.current_epoch < self._warmup_epochs:
+        if self.current_epoch < self._warmup_epochs and self.current_epoch != -1:
             new_lr = warmup_adjust_learning_rate(optimizer=self._optimizer,
+                                                 init_lr=self._base_lr,
                                                  T_total=self._warmup_epochs * self._num_steps_in_epoch,
                                                  nBatch=self._num_steps_in_epoch,
                                                  epoch=self.current_epoch,
@@ -72,7 +72,7 @@ class CosineLRScheduler(BaseCompressionScheduler):
         else:
             new_lr = adjust_learning_rate(optimizer=self._optimizer,
                                           epoch=self.current_epoch - self._warmup_epochs,
-                                          init_lr=self._base_lr,
+                                          init_lr=self._warmup_lr,
                                           epochs=self._num_epochs,
                                           batch=step_from_epoch_start,
                                           nBatch=self._num_steps_in_epoch,
