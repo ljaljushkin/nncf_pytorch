@@ -17,6 +17,7 @@ from pathlib import Path
 from shutil import copyfile
 
 from torch import nn
+from torch.optim import SGD
 
 from examples.torch.classification.main import create_data_loaders
 from examples.torch.classification.main import create_datasets
@@ -30,8 +31,6 @@ from examples.torch.common.execution import get_execution_mode
 from examples.torch.common.execution import set_seed
 from examples.torch.common.execution import start_worker
 from examples.torch.common.model_loader import load_model
-from examples.torch.common.optimizer import get_parameter_groups
-from examples.torch.common.optimizer import make_optimizer
 from examples.torch.common.sample_config import SampleConfig
 from examples.torch.common.sample_config import create_sample_config
 from examples.torch.common.utils import SafeMLFLow
@@ -94,14 +93,14 @@ def get_optimizer(model, opt_config):
         if opt_type == 'sgd':
             opt_param = {} if opt_param is None else opt_param
             momentum, nesterov = opt_param.get('momentum', 0.9), opt_param.get('nesterov', True)
-            optimizer = torch.optim.SGD(net_params, init_lr, momentum=momentum, nesterov=nesterov)
+            optimizer = SGD(net_params, init_lr, momentum=momentum, nesterov=nesterov)
         elif opt_type == 'adam':
             optimizer = torch.optim.Adam(net_params, init_lr)
         else:
             raise NotImplementedError
         return optimizer
 
-    no_decay_keys = opt_config.no_decay_keys
+    no_decay_keys = opt_config.no_decay_keys if 'no_decay_keys' in opt_config else False
 
     if no_decay_keys:
         keys = no_decay_keys.split('#')
@@ -119,10 +118,10 @@ def get_optimizer(model, opt_config):
                 if param.requires_grad:
                     net_params.append(param)
 
-    opt_type = opt_config.type
+    opt_type = opt_config.type if 'type' in opt_config else "sgd"
     opt_param = None
-    init_lr = opt_config.base_lr
-    weight_decay = opt_config.weight_decay
+    init_lr = opt_config.base_lr if 'base_lr' in opt_config else 3e-4
+    weight_decay = opt_config.weight_decay if 'weight_decay' in opt_config else 3e-7
 
     optimizer = build_optimizer(net_params, opt_type, opt_param, init_lr, weight_decay, no_decay_keys)
 
@@ -186,7 +185,7 @@ def main_worker(current_gpu, config: SampleConfig):
     opt_config = config.get('optimizer', {})
 
     # define loss function (criterion)
-    if opt_config.label_smoothing:
+    if 'label_smoothing' in opt_config:
         criterion = lambda pred, target: \
             cross_entropy_with_label_smoothing(pred, target, opt_config.label_smoothing)
     else:

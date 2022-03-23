@@ -118,7 +118,7 @@ class EpochBasedTrainingAlgorithm:
             val_loader: DataLoaderType,
             optimizer: OptimizerType,
             checkpoint_save_dir: str,
-            tensorboard_writer: Optional[TensorboardWriterType] = None) -> Tuple[NNCFNetwork, ElasticityController],
+            tensorboard_writer: Optional[TensorboardWriterType] = None,
             train_iters: Optional[float] = None) -> Tuple[NNCFNetwork, ElasticityController]:
         """
         Implements a training loop for supernet training.
