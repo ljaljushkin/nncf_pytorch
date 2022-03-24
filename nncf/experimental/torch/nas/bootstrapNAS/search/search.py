@@ -47,21 +47,21 @@ class SearchParams:
     """
     Storage class for search parameters.
     """
-    def __init__(self, num_evals, num_contstraints, population,
+    def __init__(self, num_evals, num_constraints, population,
                  seed, crossover_prob, crossover_eta,
                  mutation_prob, mutation_eta, acc_delta, ref_acc):
-        self._num_evals = num_evals
-        self._num_constraints = num_contstraints
-        self._population = population
+        self.num_evals = num_evals
+        self.num_constraints = num_constraints
+        self.population = population
         if population > num_evals:
             raise ValueError("Population size must not be greater than number of evaluations.")
-        self._seed = seed
-        self._crossover_prob = crossover_prob
-        self._crossover_eta = crossover_eta
-        self._mutation_prob = mutation_prob
-        self._mutation_eta = mutation_eta
-        self._acc_delta = acc_delta
-        self._ref_acc = ref_acc
+        self.seed = seed
+        self.crossover_prob = crossover_prob
+        self.crossover_eta = crossover_eta
+        self.mutation_prob = mutation_prob
+        self.mutation_eta = mutation_eta
+        self.acc_delta = acc_delta
+        self.ref_acc = ref_acc
 
     @classmethod
     def from_dict(cls, search_config: Dict[str, Any]) -> 'SearchParams':
@@ -88,7 +88,7 @@ class BaseSearchAlgorithm:
     def __init__(self):
         self._use_default_evaluators = True
         self._evaluators = None
-        self._bad_requests = []
+        self.bad_requests = []
 
     @abstractmethod
     def run(self, validate_fn: Callable, val_loader: DataLoader, checkpoint_save_dir: str,
@@ -104,7 +104,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
                  elasticity_ctrl: ElasticityController,
                  nncf_config: NNCFConfig,
                  verbose=True):
-        super(SearchAlgorithm, self).__init__()
+        super().__init__()
         self._model = model
         self._elasticity_ctrl = elasticity_ctrl
         self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
@@ -118,11 +118,12 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self._val_loader = None
         evo_algo = search_config['algorithm']
         if evo_algo == EvolutionaryAlgorithms.NSGA2.value:
-            self._algorithm = NSGA2(pop_size=self.search_params._population,
+            self._algorithm = NSGA2(pop_size=self.search_params.population,
                                     sampling=get_sampling("int_lhs"),
-                                    crossover=get_crossover("int_sbx", prob=self.search_params._crossover_prob,
-                                                            eta=self.search_params._crossover_eta),
-                                    mutation=get_mutation("int_pm", prob=self.search_params._mutation_prob, eta=self.search_params._mutation_eta),
+                                    crossover=get_crossover("int_sbx", prob=self.search_params.crossover_prob,
+                                                            eta=self.search_params.crossover_eta),
+                                    mutation=get_mutation("int_pm", prob=self.search_params.mutation_prob,
+                                                            eta=self.search_params.mutation_eta),
                                     eliminate_duplicates=True,
                                     save_history=True,
                                     )
@@ -138,32 +139,30 @@ class SearchAlgorithm(BaseSearchAlgorithm):
 
         bn_adapt_params = nncf_config.get('compression', {}).get('initializer', {}).get('batchnorm_adaptation', {})
         bn_adapt_algo_kwargs = get_bn_adapt_algo_kwargs(nncf_config, bn_adapt_params)
-        self._bn_adaptation = BatchnormAdaptationAlgorithm(**bn_adapt_algo_kwargs)
+        self.bn_adaptation = BatchnormAdaptationAlgorithm(**bn_adapt_algo_kwargs)
         self._search_records = []
         self._problem = None
-        self._best_config = None
-        self._best_vals = None
-        self._best_pair_objective = float('inf')
+        self.best_config = None
+        self.best_vals = None
+        self.best_pair_objective = float('inf')
         self.checkpoint_save_dir = None
 
     @property
     def evaluators(self) -> List[Evaluator]:
-        if self._evaluators is not []:
+        if self._evaluators:
             return self._evaluators
-        else:
-            raise RuntimeError("Evaluators haven't been defined")
+        raise RuntimeError("Evaluators haven't been defined")
 
     @property
     def acc_delta(self) -> float:
-        return self.search_params._acc_delta
+        return self.search_params.acc_delta
 
     @acc_delta.setter
     def acc_delta(self, val: float) -> NoReturn:
-        if val > 50:
-            val = 50
+        val = min(val, 50)
         if val > 5:
             nncf_logger.warning("Accuracy delta was set to a value greater than 5")
-        self.search_params._acc_delta = val
+        self.search_params.acc_delta = val
 
     @property
     def vars_lower(self) -> List[float]:
@@ -199,7 +198,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         ElasticityController, SubnetConfig, Tuple[float, ...]]:
         nncf_logger.info("Searching for optimal subnet.")
         if ref_acc != 100:
-            self.search_params._ref_acc = ref_acc
+            self.search_params.ref_acc = ref_acc
         self._tb = tensorboard_writer
         self.checkpoint_save_dir = checkpoint_save_dir
         if evaluators is not None:
@@ -211,41 +210,42 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self.update_evaluators_for_input_model()
         self._problem = SearchProblem(self)
         self._result = minimize(self._problem, self._algorithm,
-                                ('n_gen', int(self.search_params._num_evals / self.search_params._population)),
-                                seed=self.search_params._seed,
+                                ('n_gen', int(self.search_params.num_evals / self.search_params.population)),
+                                seed=self.search_params.seed,
                                 # save_history=True,
                                 verbose=self._verbose)
 
-        if self._best_config is not None:
-            self._elasticity_ctrl.multi_elasticity_handler.activate_subnet_for_config(self._best_config)
-            self._bn_adaptation.run(self._model)
+        if self.best_config is not None:
+            self._elasticity_ctrl.multi_elasticity_handler.activate_subnet_for_config(self.best_config)
+            self.bn_adaptation.run(self._model)
         else:
             nncf_logger.warning("Couldn't find a subnet that satisfies the requirements. Returning maximum subnet.")
             self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
-            self._bn_adaptation.run(self._model)
-            self._best_config = self._elasticity_ctrl.multi_elasticity_handler.get_active_config()
-            self._best_vals = [None, None]
+            self.bn_adaptation.run(self._model)
+            self.best_config = self._elasticity_ctrl.multi_elasticity_handler.get_active_config()
+            self.best_vals = [None, None]
 
-        return self._elasticity_ctrl, self._best_config, self._best_vals
+        return self._elasticity_ctrl, self.best_config, self.best_vals
 
     def update_evaluators_for_input_model(self) -> NoReturn:
         self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
         for evaluator in self._evaluators:
-            if hasattr(evaluator, '_ref_acc'):
-                evaluator._ref_acc = self.search_params._ref_acc
+            if hasattr(evaluator, 'ref_acc'):
+                evaluator.ref_acc = self.search_params.ref_acc
                 top1_acc = evaluator.evaluate_model(self._model)
                 evaluator.input_model_value = top1_acc
-                if top1_acc > evaluator._ref_acc - 0.01 or top1_acc < evaluator._ref_acc - 0.01:
-                    nncf_logger.warning(f"Accuracy obtained from evaluation {value} differs from reference accuracy {evaluator._ref_acc}")
-                    if evaluator._ref_acc == 100:
+                if top1_acc > evaluator.ref_acc - 0.01 or top1_acc < evaluator.ref_acc - 0.01:
+                    nncf_logger.warning(f"Accuracy obtained from evaluation {value} differs from "
+                                        f"reference accuracy {evaluator.ref_acc}")
+                    if evaluator.ref_acc == 100:
                         nncf_logger.info("Adjusting reference accuracy to accuracy obtained from evaluation")
-                        evaluator._ref_acc = top1_acc
-                    elif evaluator._ref_acc < 100: # REMOVE. Not Needed because we want to make a distiction between both values.
+                        evaluator.ref_acc = top1_acc
+                    elif evaluator.ref_acc < 100: # REMOVE. Not Needed because we want to distinguish both values.
                         nncf_logger.info("Using reference accuracy.")
-                        evaluator.input_model_value = evaluator._ref_acc
-                self.search_params._ref_acc = evaluator._ref_acc
+                        evaluator.input_model_value = evaluator.ref_acc
+                self.search_params.ref_acc = evaluator.ref_acc
             else:
-                if evaluator._use_model_for_evaluation:
+                if evaluator.use_model_for_evaluation:
                     value = evaluator.evaluate_model(self._model)
                 else:
                     value = evaluator.evaluate_with_elasticity_handler()
@@ -269,7 +269,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         pass
 
     def evaluators_to_csv(self) -> NoReturn:
-        for evaluator in self._evaluators:
+        for evaluator in self.evaluators:
             evaluator.export_cache_to_csv(self._log_dir)
 
     def _add_default_evaluators(self, validate_fn: Callable, val_loader: DataLoader) -> NoReturn:
@@ -277,7 +277,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self._num_obj = 2
         self._evaluators = []
         flop_evaluator = Evaluator("flops", get_flops_for_active_subnet, 0, self._elasticity_ctrl)
-        flop_evaluator._use_model_for_evaluation = False
+        flop_evaluator.use_model_for_evaluation = False
         self._evaluators.append(flop_evaluator)
         self._evaluators.append(AccuracyEvaluator(validate_fn, val_loader))
 
@@ -293,35 +293,34 @@ class SearchProblem(Problem):
         self._search = search
         self._elasticity_handler = self._search._elasticity_ctrl.multi_elasticity_handler
         self._dims_enabled = self._elasticity_handler.get_available_elasticity_dims()
-        self._best_dist_ideal = float('inf')
         self._iter = 0
-        self._evaluators = search._evaluators
+        self._evaluators = search.evaluators
         self._model = search._model
         self._lower_bound_acc = search.search_params._ref_acc - search.acc_delta
 
     def _evaluate(self, x: List[float], out: Dict[str, Any], *args, **kargs) -> NoReturn:
-        evaluators_arr = [[] for i in range(len(self._search._evaluators))]
+        evaluators_arr = [[] for i in range(len(self._search.evaluators))]
 
-        for i in range(len(x)):
-            sample = self._elasticity_handler.get_config_from_pymoo(x[i])
+        for _, x_i in enumerate(x):
+            sample = self._elasticity_handler.get_config_from_pymoo(x_i)
             self._elasticity_handler.activate_subnet_for_config(sample)
             if sample != self._elasticity_handler.get_active_config():
                 nncf_logger.warning("Requested configuration was invalid")
                 nncf_logger.warning(f"Requested: {sample}")
                 nncf_logger.warning(f"Provided: {self._elasticity_handler.get_active_config()}")
-                self._search._bad_requests.append((sample, self._elasticity_handler.get_active_config()))
+                self._search.bad_requests.append((sample, self._elasticity_handler.get_active_config()))
 
             result = [sample]
 
             eval_idx = 0
             bn_adaption_executed = False
             for evaluator in self._evaluators:
-                in_cache, value = evaluator.retrieve_from_cache(tuple(x[i]))
+                in_cache, value = evaluator.retrieve_from_cache(tuple(x_i))
                 if not in_cache:
                     if not bn_adaption_executed:
-                        self._search._bn_adaptation.run(self._model)
+                        self._search.bn_adaptation.run(self._model)
                         bn_adaption_executed = True
-                    value = evaluator.evaluate_from_pymoo(self._model, tuple(x[i]))
+                    value = evaluator.evaluate_from_pymoo(self._model, tuple(x_i))
                 evaluators_arr[eval_idx].append(value)
                 eval_idx += 1
 
@@ -332,21 +331,21 @@ class SearchProblem(Problem):
             self._search._search_records.append(result)
 
         self._iter += 1
-        out["F"] = np.column_stack([arr for arr in evaluators_arr])
+        out["F"] = np.column_stack(list(evaluators_arr))
 
     def _save_checkpoint_best_subnetwork(self, config):
         acc_within_tolerance = 0
         pair_objective = None
         for evaluator in self._evaluators:
             if hasattr(evaluator, '_ref_acc'):
-                acc_within_tolerance = evaluator._curr_value
+                acc_within_tolerance = evaluator.current_value
             else:
-                pair_objective = evaluator._curr_value
+                pair_objective = evaluator.current_value
         if acc_within_tolerance < (self._lower_bound_acc * -1.0):
-            if pair_objective < self._search._best_pair_objective:
-                self._search._best_pair_objective = pair_objective
-                self._search._best_config = config
-                self._search._best_vals = [evaluator._curr_value for evaluator in self._evaluators]
+            if pair_objective < self._search.best_pair_objective:
+                self._search.best_pair_objective = pair_objective
+                self._search.best_config = config
+                self._search.best_vals = [evaluator.current_value for evaluator in self._evaluators]
                 print(f"Best: {acc_within_tolerance}, {pair_objective}")
                 checkpoint_path = Path(self._search.checkpoint_save_dir, 'subnetwork_best.pth')
                 checkpoint = {

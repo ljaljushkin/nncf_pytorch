@@ -33,18 +33,35 @@ def get_weights_for_active_subnet(elasticity_handler: MultiElasticityHandler) ->
 
 class Evaluator:
     """
-    An interface for handling measurements collected on a target device. Evaluators make use of functions provided by the users to measure a particular property, e.g., accuracy, latency, etc.
+    An interface for handling measurements collected on a target device. Evaluators make use
+    of functions provided by the users to measure a particular property, e.g., accuracy, latency, etc.
     """
     def __init__(self, name: str, eval_func: Callable, ideal_val: float, elasticity_ctrl: ElasticityController):
         self.name = name
         self._eval_func = eval_func
-        self._curr_value = 0
+        self._current_value = 0
         self._ideal_value = ideal_val
         self._elasticity_ctrl = elasticity_ctrl
         self._use_model_for_evaluation = True
         self.cache = {}
         self.input_model_value = None
         #TODO(pablo): Here we should store some super-network signature that is associated with this evaluator
+
+    @property
+    def current_value(self):
+        return self._current_value
+
+    @current_value.setter
+    def current_value(self, val : float) -> NoReturn:
+        self._current_value = val
+
+    @property
+    def use_model_for_evaluation(self):
+        return self._use_model_for_evaluation
+
+    @use_model_for_evaluation.setter
+    def use_model_for_evaluation(self, val: bool) -> NoReturn:
+        self._use_model_for_evaluation = val
 
     def evaluate_from_pymoo(self, model: NNCFNetwork, pymoo_repr):
         if self._use_model_for_evaluation:
@@ -79,7 +96,7 @@ class Evaluator:
             'eval_func': self._eval_func,
             'curr_value': self._curr_value,
             'ideal_value': self._ideal_value,
-            'elasticity_controller_compression_state': self.elasticity_ctrl.get_state(),
+            'elasticity_controller_compression_state': self._elasticity_ctrl.get_state(),
             'use_model_for_evaluation': self._use_model_for_evaluation,
             'cache': self.cache,
             'input_model_value': self.input_model_value
@@ -119,12 +136,20 @@ class AccuracyEvaluator(Evaluator):
     def __init__(self, eval_func, val_loader, is_top1=True, ref_acc=100):
         if is_top1:
             name = "top1_acc"
-        super(AccuracyEvaluator, self).__init__(name, eval_func, 100, None)
+        super().__init__(name, eval_func, 100, None)
         self._is_top1 = is_top1
         self._val_loader = val_loader
         self._use_model_for_evaluation = True
         self._ideal_value = 100
         self._ref_acc = ref_acc
+
+    @property
+    def ref_acc(self) -> float:
+        return self._ref_acc
+
+    @ref_acc.setter
+    def ref_acc(self, val: float) -> NoReturn:
+        self._ref_acc = val
 
     def evaluate_model(self, model: NNCFNetwork) -> Tuple[float, ...]:
         self._curr_value = self._eval_func(model, self._val_loader) * -1.0
