@@ -62,7 +62,7 @@ class CosineLRScheduler(BaseCompressionScheduler):
         super().step(next_step)
         step_from_epoch_start = self.current_step - (self.current_epoch*(self._num_steps_in_epoch+1))
         if self.current_epoch < self._warmup_epochs and self.current_epoch != -1:
-            new_lr = warmup_adjust_learning_rate(optimizer=self._optimizer,
+            warmup_adjust_learning_rate(optimizer=self._optimizer,
                                                  init_lr=self._base_lr,
                                                  T_total=self._warmup_epochs * self._num_steps_in_epoch,
                                                  nBatch=self._num_steps_in_epoch,
@@ -70,7 +70,7 @@ class CosineLRScheduler(BaseCompressionScheduler):
                                                  batch=step_from_epoch_start,
                                                  warmup_lr=self._warmup_lr)
         else:
-            new_lr = adjust_learning_rate(optimizer=self._optimizer,
+            adjust_learning_rate(optimizer=self._optimizer,
                                           epoch=self.current_epoch - self._warmup_epochs,
                                           init_lr=self._warmup_lr,
                                           epochs=self._num_epochs,
