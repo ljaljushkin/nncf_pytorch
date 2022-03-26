@@ -66,9 +66,9 @@ class ProgressiveShrinkingController(BNASTrainingController):
                                                 self._progressivity_of_elasticity)
 
     def set_training_lr_scheduler_args(self, optimizer, train_iters): # loader_len):
-        params = self._lr_schedule_config.get('params', None)
-        num_epochs = None if params is None else params.get("num_epochs", None)
-        base_lr = None if params is None else params.get("base_lr", None)
+        params = self._lr_schedule_config.get('params', {})
+        num_epochs = params.get('num_epochs', None)
+        base_lr = params.get('base_lr', None)
 
         if base_lr is not None:
             nncf_logger.info("Global LR scheduler in use")

@@ -49,7 +49,7 @@ def calc_learning_rate(epoch, init_lr, n_epochs, batch=0, nBatch=None, lr_schedu
 
 
 class CosineLRScheduler(BaseCompressionScheduler):
-    def __init__(self, optimizer, num_steps_in_epoch, *, base_lr, num_epochs, warmup_epochs=0, warmup_lr=None):
+    def __init__(self, optimizer, num_steps_in_epoch, *, base_lr, num_epochs, warmup_epochs=0, warmup_lr=3.4e-4):
         super().__init__()
         self._base_lr = base_lr
         self._num_epochs = num_epochs
@@ -72,7 +72,7 @@ class CosineLRScheduler(BaseCompressionScheduler):
         else:
             adjust_learning_rate(optimizer=self._optimizer,
                                           epoch=self.current_epoch - self._warmup_epochs,
-                                          init_lr=self._warmup_lr,
+                                          init_lr=self._base_lr,
                                           epochs=self._num_epochs,
                                           batch=step_from_epoch_start,
                                           nBatch=self._num_steps_in_epoch,

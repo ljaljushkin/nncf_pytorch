@@ -181,9 +181,9 @@ STAGE_DESCRIPTOR_SCHEMA = {
         "bn_adapt": with_attributes(BOOLEAN,
                                     description="if True, triggers batchnorm adaptation in the beginning of the stage"),
         "init_lr": with_attributes(NUMBER,
-                                   description="TBD"),
+                                   description="Initial learning rate for a stage. If specified in the stage descriptor, it will trigger a reset of the learning rate at the beginning of the stage."),
         "epochs_lr": with_attributes(NUMBER,
-                                     description="TBD")
+                                     description="Number of epochs to compute the adjustment of the learning rate.")
     },
     "description": "Defines a supernet training stage: how many epochs it takes, which elasticities with which "
                    "settings are enabled, whether some operation should happen in the beginning",
