@@ -113,24 +113,8 @@ class StageLRScheduler(BaseLRScheduler):
     def stage_step(self, stage_desc: StageDescriptor):
         self.reset(stage_desc.init_lr, stage_desc.epochs_lr)
 
-    @BaseCompressionScheduler.current_epoch.setter
-    def current_epoch(self, val: float) -> NoReturn:
-        if val < 0:
-            self._current_epoch = 0
-            nncf_logger.warning("LR Current Epoch was set to 0.")
-        else:
-            self._current_epoch = val
-
-    @BaseCompressionScheduler.current_step.setter
-    def current_step(self, val: float) -> NoReturn:
-        if val < 0:
-            self._current_step = 0
-            nncf_logger.warning("LR Current step was set to 0.")
-        else:
-            self._current_step = val
-
     def reset(self, base_lr, num_epochs):
         self._num_epochs = num_epochs
         self._base_lr = base_lr
-        self.current_epoch = 0
-        self.current_step = 0
+        self.epoch_step(0)
+        self.step(0)
