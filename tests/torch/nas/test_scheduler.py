@@ -22,6 +22,7 @@ from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elastic_width import El
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.multi_elasticity_handler import MultiElasticityHandler
 from nncf.experimental.torch.nas.bootstrapNAS.training.base_training import BNASTrainingAlgorithm
+from nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler import GlobalLRScheduler
 from nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler import StageLRScheduler
 from nncf.experimental.torch.nas.bootstrapNAS.training.progressive_shrinking_builder import ProgressiveShrinkingBuilder
 from nncf.experimental.torch.nas.bootstrapNAS.training.progressive_shrinking_controller import \
@@ -73,8 +74,9 @@ class TestScheduler:
         training_ctrl_mock = mocker.MagicMock(spec=BNASTrainingAlgorithm)
         training_ctrl_mock._lr_schedule_config = {}
         scheduler = BootstrapNASScheduler(training_ctrl_mock, schedule_params, LIST_DIMS__KDW, LIST_DIMS__KDW)
-        # scheduler.set_stage_lr_scheduler(CosineLRScheduler(mocker.stub(), 10, num_epochs=1, base_lr=DEFAULT_STAGE_LR_RATE))
-        scheduler.set_stage_lr_scheduler(StageLRScheduler(mocker.stub(), 10))
+        optimizer_mock = mocker.stub()
+        optimizer_mock.param_groups = [{'lr': 1}]
+        scheduler.set_lr_scheduler(StageLRScheduler(optimizer_mock, 10))
         scheduler.epoch_step()
         ref_desc = StageDescriptor(train_dims=[ElasticityDim.KERNEL], epochs=1, init_lr=DEFAULT_STAGE_LR_RATE, epochs_lr=1)
         act_desc, act_idx = scheduler.get_current_stage_desc()
@@ -123,8 +125,8 @@ class TestScheduler:
                                                        ProgressiveShrinkingBuilder.DEFAULT_PROGRESSIVITY,
                                                        schedule_params, lr_schedule_config)
         scheduler = training_algo.scheduler
-        lr_scheduler = CosineLRScheduler(mocker.stub(), mocker.stub(), base_lr=None, num_epochs=None)
-        scheduler.set_global_lr_scheduler(lr_scheduler)
+        lr_scheduler = GlobalLRScheduler(mocker.stub(), mocker.stub(), base_lr=None, num_epochs=None)
+        scheduler.set_lr_scheduler(lr_scheduler)
         scheduler.epoch_step()
         assert is_handler_enabled_map == {
             ElasticityDim.WIDTH: False,
