@@ -20,7 +20,8 @@ from nncf.api.compression import CompressionStage
 from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
 from nncf.common.statistics import NNCFStatistics
 from nncf.common.utils.logger import logger as nncf_logger
-from nncf.experimental.torch.nas.bootstrapNAS.training.cosine_lr_scheduler import CosineLRScheduler
+from nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler import GlobalLRScheduler
+from nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler import StageLRScheduler
 from nncf.experimental.torch.nas.bootstrapNAS.training.scheduler import NASSchedulerParams
 from nncf.torch.algo_selector import ZeroCompressionLoss
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_controller import ElasticityController
@@ -75,14 +76,11 @@ class ProgressiveShrinkingController(BNASTrainingController):
             # Global lr scheduler
             if num_epochs is None:
                 params['num_epochs'] = self.get_total_num_epochs()
-            lr_scheduler = CosineLRScheduler(optimizer, train_iters, **params)
-            self._scheduler.set_global_lr_scheduler(lr_scheduler)
+            lr_scheduler = GlobalLRScheduler(optimizer, train_iters, **params)
         else:
             nncf_logger.info("Stage LR scheduler in use")
-            # Stage lr scheduler
-            params = {"base_lr": None, "num_epochs": None}
-            lr_scheduler = CosineLRScheduler(optimizer, train_iters, **params)
-            self._scheduler.set_stage_lr_scheduler(lr_scheduler)
+            lr_scheduler = StageLRScheduler(optimizer, train_iters)
+        self._scheduler.set_lr_scheduler(lr_scheduler)
 
     @property
     def multi_elasticity_handler(self) -> MultiElasticityHandler:

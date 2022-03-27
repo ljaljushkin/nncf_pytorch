@@ -13,8 +13,7 @@
 
 import pytest
 
-from nncf.experimental.torch.nas.bootstrapNAS.training.cosine_lr_scheduler import CosineLRScheduler
-from nncf.experimental.torch.nas.bootstrapNAS.training.cosine_lr_scheduler import warmup_adjust_learning_rate
+from nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler import GlobalLRScheduler
 
 LR_SCHEDULER_PARAMS = {
             'base_lr': 2.5e-6,
@@ -26,42 +25,40 @@ LR_SCHEDULER_PARAMS = {
 class TestCosineLRScheduler:
     def test_warmup_lr(self, mocker):
         warmup_lr = mocker.patch(
-            'nncf.experimental.torch.nas.bootstrapNAS.training.cosine_lr_scheduler.warmup_adjust_learning_rate')
+            'nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler.warmup_adjust_learning_rate')
         optimizer = mocker.stub()
         optimizer.param_groups = [{'lr': 0}]
         num_steps_in_epoch = 10
         params = LR_SCHEDULER_PARAMS
-        lr_scheduler = CosineLRScheduler(optimizer, num_steps_in_epoch, **params)
+        lr_scheduler = GlobalLRScheduler(optimizer, num_steps_in_epoch, **params)
         lr_scheduler.current_epoch = 0
         lr_scheduler.step()
         warmup_lr.assert_called()
-        # print(warmup_adjust_learning_rate(optimizer, 1, 5, 1, 0))
-        # assert optimizer.param_groups[0]['lr'] == 1
 
     def test_adjust_lr(self, mocker):
         adjust_lr = mocker.patch(
-            'nncf.experimental.torch.nas.bootstrapNAS.training.cosine_lr_scheduler.adjust_learning_rate')
+            'nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler.adjust_learning_rate')
         optimizer = mocker.stub()
         optimizer.param_groups = [{'lr': 0}]
         num_steps_in_epoch = 10
         params = LR_SCHEDULER_PARAMS
         params['warmup_epochs'] = 0
-        lr_scheduler = CosineLRScheduler(optimizer, num_steps_in_epoch, **params)
+        lr_scheduler = GlobalLRScheduler(optimizer, num_steps_in_epoch, **params)
         lr_scheduler.current_epoch = 0
         lr_scheduler.step()
         adjust_lr.assert_called()
 
     def test_warmup_to_regular(self, mocker):
         warmup_lr = mocker.patch(
-            'nncf.experimental.torch.nas.bootstrapNAS.training.cosine_lr_scheduler.warmup_adjust_learning_rate')
+            'nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler.warmup_adjust_learning_rate')
         adjust_lr = mocker.patch(
-            'nncf.experimental.torch.nas.bootstrapNAS.training.cosine_lr_scheduler.adjust_learning_rate')
+            'nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler.adjust_learning_rate')
         optimizer = mocker.stub()
         optimizer.param_groups = [{'lr': 0}]
         num_steps_in_epoch = 10
         params = LR_SCHEDULER_PARAMS
         params['warmup_epochs'] = 1
-        lr_scheduler = CosineLRScheduler(optimizer, num_steps_in_epoch, **params)
+        lr_scheduler = GlobalLRScheduler(optimizer, num_steps_in_epoch, **params)
         lr_scheduler.current_epoch = 0
         lr_scheduler.step()
         warmup_lr.assert_called()
@@ -73,7 +70,7 @@ class TestCosineLRScheduler:
         optimizer = mocker.stub()
         optimizer.param_groups = [{'lr': 0}]
         params = LR_SCHEDULER_PARAMS
-        lr_scheduler = CosineLRScheduler(optimizer, 10, **params)
+        lr_scheduler = GlobalLRScheduler(optimizer, 10, **params)
         assert lr_scheduler.current_epoch == -1
         assert lr_scheduler.current_step == -1
         lr_scheduler.epoch_step()
