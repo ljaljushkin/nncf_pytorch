@@ -14,6 +14,7 @@
 import pytest
 
 from nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler import GlobalLRScheduler
+from nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler import StageLRScheduler
 
 LR_SCHEDULER_PARAMS = {
             'base_lr': 2.5e-6,
@@ -69,8 +70,7 @@ class TestCosineLRScheduler:
     def test_reset(self, mocker):
         optimizer = mocker.stub()
         optimizer.param_groups = [{'lr': 0}]
-        params = LR_SCHEDULER_PARAMS
-        lr_scheduler = GlobalLRScheduler(optimizer, 10, **params)
+        lr_scheduler = StageLRScheduler(optimizer, 10)
         assert lr_scheduler.current_epoch == -1
         assert lr_scheduler.current_step == -1
         lr_scheduler.epoch_step()
