@@ -71,7 +71,7 @@ class TestCosineLRScheduler:
         optimizer = mocker.stub()
         optimizer.param_groups = [{'lr': 1}]
         lr_scheduler = StageLRScheduler(optimizer, 10)
-        lr_scheduler._base_lr = 2.5e-4
+        lr_scheduler._init_lr = 2.5e-4
         lr_scheduler._num_epochs = 10
         assert lr_scheduler.current_epoch == -1
         assert lr_scheduler.current_step == -1

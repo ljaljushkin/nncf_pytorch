@@ -11,14 +11,13 @@
  limitations under the License.
 """
 
+from abc import abstractmethod
 import math
 from typing import Any
 from typing import Dict
-from typing import NoReturn
 from typing import Optional
 
 from nncf.common.schedulers import BaseCompressionScheduler
-from nncf.common.utils.logger import logger as nncf_logger
 from nncf.experimental.torch.nas.bootstrapNAS.training.stage_descriptor import StageDescriptor
 
 
@@ -50,14 +49,35 @@ def calc_learning_rate(epoch, init_lr, n_epochs, batch=0, nBatch=None, lr_schedu
 
 
 class BaseLRScheduler(BaseCompressionScheduler):
-    def __init__(self, optimizer, num_steps_in_epoch, *, base_lr, num_epochs, warmup_epochs=0, warmup_lr=3.4e-4):
+    def __init__(self, optimizer, num_steps_in_epoch):
         super().__init__()
+        self._optimizer = optimizer
+        self._num_steps_in_epoch = num_steps_in_epoch
+
+    @abstractmethod
+    def stage_step(self, stage_desc: StageDescriptor):
+        pass
+
+    @classmethod
+    def from_state(cls, state: Dict[str, Any], optimizer):
+        return cls(optimizer, **state)
+
+
+class GlobalLRScheduler(BaseLRScheduler):
+    def __init__(self, optimizer, num_steps_in_epoch, *, base_lr, num_epochs, warmup_epochs=0, warmup_lr=3.4e-4):
+        super().__init__(optimizer, num_steps_in_epoch)
         self._base_lr = base_lr
         self._num_epochs = num_epochs
         self._warmup_epochs = warmup_epochs
         self._warmup_lr = warmup_lr
-        self._optimizer = optimizer
-        self._num_steps_in_epoch = num_steps_in_epoch
+
+    @classmethod
+    def from_config(cls, optimizer, params):
+        return cls(optimizer, params['num_steps_in_epoch'], **params)
+
+    def stage_step(self, stage_desc: StageDescriptor):
+        # do nothing
+        pass
 
     def step(self, next_step: Optional[int] = None) -> None:
         super().step(next_step)
@@ -79,13 +99,6 @@ class BaseLRScheduler(BaseCompressionScheduler):
                                           nBatch=self._num_steps_in_epoch,
                                           lr_schedule_type='cosine')
 
-    def stage_step(self, stage_desc: StageDescriptor):
-        pass
-
-    @classmethod
-    def from_state(cls, state: Dict[str, Any], optimizer):
-        return cls(optimizer, **state)
-
     def get_state(self) -> Dict[str, Any]:
         state_dict = {
             'num_steps_in_epoch': self._num_steps_in_epoch,
@@ -96,25 +109,40 @@ class BaseLRScheduler(BaseCompressionScheduler):
         }
         return state_dict
 
-
-class GlobalLRScheduler(BaseLRScheduler):
-    def __init__(self, optimizer, num_steps_in_epoch, *, base_lr, num_epochs, warmup_epochs=0, warmup_lr=3.4e-4):
-        super().__init__(optimizer, num_steps_in_epoch, **{'base_lr': base_lr, 'num_epochs': num_epochs, 'warmup_epochs': warmup_epochs, 'warmup_lr': warmup_lr})
-
-    def stage_step(self, stage_desc: StageDescriptor):
-        # do nothing
-        pass
-
-
 class StageLRScheduler(BaseLRScheduler):
     def __init__(self, optimizer, num_steps_in_epoch):
-        super().__init__(optimizer, num_steps_in_epoch, **{'base_lr': None, 'num_epochs': None})
+        super().__init__(optimizer, num_steps_in_epoch)
+        self._init_lr = None
+        self._num_epochs = None
+
+    @classmethod
+    def from_config(cls, optimizer, params):
+        return cls(optimizer, params['num_steps_in_epoch'])
 
     def stage_step(self, stage_desc: StageDescriptor):
         self.reset(stage_desc.init_lr, stage_desc.epochs_lr)
 
-    def reset(self, base_lr, num_epochs):
+    def step(self, next_step: Optional[int] = None) -> None:
+        super().step(next_step)
+        step_from_epoch_start = self.current_step - (self.current_epoch*(self._num_steps_in_epoch+1))
+        adjust_learning_rate(optimizer=self._optimizer,
+                             epoch=self.current_epoch,
+                             init_lr=self._init_lr,
+                             epochs=self._num_epochs,
+                             batch=step_from_epoch_start,
+                             nBatch=self._num_steps_in_epoch,
+                             lr_schedule_type='cosine')
+
+    def get_state(self) -> Dict[str, Any]:
+        state_dict = {
+            'num_steps_in_epoch': self._num_steps_in_epoch,
+            'init_lr': self._init_lr,
+            'num_epochs': self._num_epochs
+        }
+        return state_dict
+
+    def reset(self, init_lr, num_epochs):
         self._num_epochs = num_epochs
-        self._base_lr = base_lr
+        self._init_lr = init_lr
         self.epoch_step(0)
         self.step(0)
