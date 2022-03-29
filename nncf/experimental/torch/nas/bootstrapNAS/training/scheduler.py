@@ -282,17 +282,3 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
                     "Stage learning rate in use but epochs_lr value for stage wasn't set. "
                     "Using number of epochs for stage {epochs}".format(epochs=desc.epochs))
                 desc.epochs_lr = desc.epochs
-
-    @staticmethod
-    def _get_default_params() -> Dict[str, List[Dict]]:
-        # TODO(nlyalyus): Perform some studies to determine default params (ticket 76938)
-        nncf_logger.warning("Getting default parameters in scheduler")
-        return {
-            "list_stage_descriptions": [
-                {"train_dims": ["kernel"], "epochs": 1},
-                {"train_dims": ["kernel", "depth"], "epochs": 1},
-                {"train_dims": ["kernel", "depth"], "epochs": 1},
-                {"train_dims": ["kernel", "depth", "width"], "epochs": 1},
-                {"train_dims": ["kernel", "depth", "width"], "epochs": 1, "reorg_weights": True, "bn_adapt": True}
-            ]
-        }

@@ -66,7 +66,7 @@ class ProgressiveShrinkingController(BNASTrainingController):
         self._scheduler = BootstrapNASScheduler(self, schedule_params, self._available_elasticity_dims,
                                                 self._progressivity_of_elasticity)
 
-    def set_training_lr_scheduler_args(self, optimizer, train_iters): # loader_len):
+    def set_training_lr_scheduler_args(self, optimizer, train_iters):
         params = self._lr_schedule_config.get('params', {})
         num_epochs = params.get('num_epochs', None)
         base_lr = params.get('base_lr', None)
