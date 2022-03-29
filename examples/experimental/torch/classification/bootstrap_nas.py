@@ -112,6 +112,8 @@ def main_worker(current_gpu, config: SampleConfig):
 
     set_seed(config)
 
+    opt_config = config.get('optimizer', {})
+
     # define loss function (criterion)
     if 'label_smoothing' in opt_config:
         criterion = lambda pred, target: \
