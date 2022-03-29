@@ -37,6 +37,12 @@
                 }
             }
         },
+        "search": {
+            "algorithm": "NSGA2",
+            "num_evals": 4,
+            "population": 1,
+            "acc_delta": 2
+        }
     },
     "model_params": {
         "model_name": "efficientnet-b0"
