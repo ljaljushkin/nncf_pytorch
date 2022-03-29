@@ -15,23 +15,23 @@ import pytest
 
 from nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler import GlobalLRScheduler
 from nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler import StageLRScheduler
+from nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler import LRSchedulerParams
 
-LR_SCHEDULER_PARAMS = {
+LR_SCHEDULER_PARAMS = LRSchedulerParams.from_dict({
+            'num_steps_in_epoch': 10,
             'base_lr': 2.5e-6,
             'num_epochs': 5,
             'warmup_epochs': 2,
-            'warmup_lr': 1
-        }
+        })
 
-class TestCosineLRScheduler:
+
+class TestLRScheduler:
     def test_warmup_lr(self, mocker):
         warmup_lr = mocker.patch(
             'nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler.warmup_adjust_learning_rate')
         optimizer = mocker.stub()
         optimizer.param_groups = [{'lr': 0}]
-        num_steps_in_epoch = 10
-        params = LR_SCHEDULER_PARAMS
-        lr_scheduler = GlobalLRScheduler(optimizer, num_steps_in_epoch, **params)
+        lr_scheduler = GlobalLRScheduler.from_config(optimizer, LR_SCHEDULER_PARAMS)
         lr_scheduler.epoch_step(0)
         lr_scheduler.step()
         warmup_lr.assert_called()
@@ -41,10 +41,9 @@ class TestCosineLRScheduler:
             'nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler.adjust_learning_rate')
         optimizer = mocker.stub()
         optimizer.param_groups = [{'lr': 0}]
-        num_steps_in_epoch = 10
         params = LR_SCHEDULER_PARAMS
-        params['warmup_epochs'] = 0
-        lr_scheduler = GlobalLRScheduler(optimizer, num_steps_in_epoch, **params)
+        params.warmup_epochs = 0
+        lr_scheduler = GlobalLRScheduler.from_config(optimizer, params)
         lr_scheduler.epoch_step(0)
         lr_scheduler.step()
         adjust_lr.assert_called()
@@ -56,10 +55,9 @@ class TestCosineLRScheduler:
             'nncf.experimental.torch.nas.bootstrapNAS.training.lr_scheduler.adjust_learning_rate')
         optimizer = mocker.stub()
         optimizer.param_groups = [{'lr': 0}]
-        num_steps_in_epoch = 10
         params = LR_SCHEDULER_PARAMS
-        params['warmup_epochs'] = 1
-        lr_scheduler = GlobalLRScheduler(optimizer, num_steps_in_epoch, **params)
+        params.warmup_epochs = 1
+        lr_scheduler = GlobalLRScheduler.from_config(optimizer, params)
         lr_scheduler.epoch_step(0)
         lr_scheduler.step()
         warmup_lr.assert_called()
@@ -70,7 +68,7 @@ class TestCosineLRScheduler:
     def test_reset(self, mocker):
         optimizer = mocker.stub()
         optimizer.param_groups = [{'lr': 1}]
-        lr_scheduler = StageLRScheduler(optimizer, 10)
+        lr_scheduler = StageLRScheduler.from_config(optimizer, LR_SCHEDULER_PARAMS)
         lr_scheduler._init_lr = 2.5e-4
         lr_scheduler._num_epochs = 10
         assert lr_scheduler.current_epoch == -1
@@ -83,6 +81,6 @@ class TestCosineLRScheduler:
         lr_scheduler.step()
         assert lr_scheduler.current_epoch == 1
         assert lr_scheduler.current_step == 1
-        lr_scheduler.reset(LR_SCHEDULER_PARAMS['base_lr'], LR_SCHEDULER_PARAMS['num_epochs'])
+        lr_scheduler.reset(LR_SCHEDULER_PARAMS.base_lr, LR_SCHEDULER_PARAMS.num_epochs)
         assert lr_scheduler.current_epoch == 0
         assert lr_scheduler.current_step == 0

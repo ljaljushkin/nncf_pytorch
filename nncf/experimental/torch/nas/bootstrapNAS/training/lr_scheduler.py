@@ -111,7 +111,7 @@ class GlobalLRScheduler(BaseLRScheduler):
     """
     Global LR scheduler prevents LR adjustments per stage.
     """
-    def __init__(self, optimizer: OptimizerType, *, num_steps_in_epoch: float, base_lr: float, num_epochs: float, warmup_epochs: float = 0, warmup_lr: float = 3.4e-4):
+    def __init__(self, optimizer: OptimizerType, num_steps_in_epoch: float, *, base_lr: float, num_epochs: float, warmup_epochs: float = 0, warmup_lr: float = 3.4e-4):
         super().__init__(optimizer, num_steps_in_epoch)
         self._base_lr = base_lr
         self._num_epochs = num_epochs
