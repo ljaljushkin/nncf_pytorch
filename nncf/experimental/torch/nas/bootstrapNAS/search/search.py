@@ -97,7 +97,7 @@ class SearchParams:
     @classmethod
     def from_dict(cls, search_config: Dict[str, Any]) -> 'SearchParams':
         """
-        Initializes params storage class from Dict.
+        Initializes search params storage class from Dict.
 
         :param search_config: Dictionary with search configuration.
         :return: Instance of the storage class
@@ -128,7 +128,8 @@ class BaseSearchAlgorithm:
 
         """
         self._use_default_evaluators = True
-        self._evaluators = None
+        self._evaluators = []
+        self._accuracy_evaluator = None
         self._log_dir = None
         self._search_records = []
         self.bad_requests = []
@@ -298,12 +299,13 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             self.search_params.ref_acc = ref_acc
         self._tb = tensorboard_writer
         self.checkpoint_save_dir = checkpoint_save_dir
+        self._accuracy_evaluator = AccuracyEvaluator(validate_fn, val_loader)
         if evaluators is not None:
             self._use_default_evaluators = False
             self._evaluators = evaluators
             self.num_obj = len(evaluators)
         else:
-            self._add_default_evaluators(validate_fn, val_loader)
+            self._add_default_evaluators()
         self.update_evaluators_for_input_model()
         self._problem = SearchProblem(self)
         self._result = minimize(self._problem, self._algorithm,
@@ -332,27 +334,8 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         """
         self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
         for evaluator in self._evaluators:
-            if hasattr(evaluator, 'ref_acc'):
-                evaluator.ref_acc = self.search_params.ref_acc
-                top1_acc = evaluator.evaluate_model(self._model)
-                evaluator.input_model_value = top1_acc
-                if top1_acc > evaluator.ref_acc - 0.01 or top1_acc < evaluator.ref_acc - 0.01:
-                    nncf_logger.warning("Accuracy obtained from evaluation {value} differs from "
-                                        "reference accuracy {ref_acc}".format(value=top1_acc,
-                                                                              ref_acc=evaluator.ref_acc))
-                    if evaluator.ref_acc == 100:
-                        nncf_logger.info("Adjusting reference accuracy to accuracy obtained from evaluation")
-                        evaluator.ref_acc = top1_acc
-                    elif evaluator.ref_acc < 100:
-                        nncf_logger.info("Using reference accuracy.")
-                        evaluator.input_model_value = evaluator.ref_acc
-                self.search_params.ref_acc = evaluator.ref_acc
-            else:
-                if evaluator.use_model_for_evaluation:
-                    value = evaluator.evaluate_model(self._model)
-                else:
-                    value = evaluator.evaluate_with_elasticity_handler()
-                evaluator.input_model_value = value
+            evaluator.input_model_value = evaluator.evaluate_model(self._model)
+        self._accuracy_evaluator.update_reference_accuracy(self.search_params)
 
     def visualize_search_progression(self, filename='search_progression.pth') -> NoReturn:
         # TODO(pablo): Plot and save image
@@ -381,7 +364,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         for evaluator in self.evaluators:
             evaluator.export_cache_to_csv(self._log_dir)
 
-    def _add_default_evaluators(self, validate_fn: Callable, val_loader: DataLoader) -> NoReturn:
+    def _add_default_evaluators(self) -> NoReturn:
         """
         Instantiate default evaluators
 
@@ -395,7 +378,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         macs_evaluator = Evaluator("MACs", get_macs_for_active_subnet, 0, self._elasticity_ctrl)
         macs_evaluator.use_model_for_evaluation = False
         self._evaluators.append(macs_evaluator)
-        self._evaluators.append(AccuracyEvaluator(validate_fn, val_loader))
+        self._evaluators.append(self._accuracy_evaluator)
 
 
 class SearchProblem(Problem):
@@ -455,7 +438,7 @@ class SearchProblem(Problem):
                     if not bn_adaption_executed:
                         self._search.bn_adaptation.run(self._model)
                         bn_adaption_executed = True
-                    value = evaluator.evaluate_from_pymoo(self._model, tuple(x_i))
+                    value = evaluator.evaluate_and_add_to_cache_from_pymoo(self._model, tuple(x_i))
                 evaluators_arr[eval_idx].append(value)
                 eval_idx += 1
 
@@ -477,6 +460,7 @@ class SearchProblem(Problem):
         """
         acc_within_tolerance = 0
         pair_objective = None
+        # TODO: How can we use here the same idea of the self.accuracy_evaluator. ???
         for evaluator in self._evaluators:
             if hasattr(evaluator, '_ref_acc'):
                 acc_within_tolerance = evaluator.current_value

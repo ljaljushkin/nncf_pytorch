@@ -47,15 +47,6 @@ def get_macs_for_active_subnet(elasticity_handler: MultiElasticityHandler) -> fl
     flops, _ = elasticity_handler.count_flops_and_weights_for_active_subnet()
     return flops/2000000   # MACs
 
-def get_weights_for_active_subnet(elasticity_handler: MultiElasticityHandler) -> float:
-    """
-    Gets the number of weights in the active sub-network for convolution and fully connected layers.
-
-    :param elasticity_handler: Interface for handling super-network elasticity.
-    :return: Number of weights for active sub-network
-    """
-    _, num_weights = elasticity_handler.count_flops_and_weights_for_active_subnet()
-    return num_weights
 
 class Evaluator:
     """
@@ -111,7 +102,7 @@ class Evaluator:
         """
         self._use_model_for_evaluation = val
 
-    def evaluate_from_pymoo(self, model: NNCFNetwork, pymoo_repr: Tuple[float, ...]):
+    def evaluate_and_add_to_cache_from_pymoo(self, model: NNCFNetwork, pymoo_repr: Tuple[float, ...]):
         """
         Evaluates active sub-network and uses Pymoo representation for insertion in cache.
 
@@ -120,12 +111,9 @@ class Evaluator:
                             in Pymoo.
         :return: the value obtained from the model evaluation.
         """
-        if self._use_model_for_evaluation:
-            value = self.evaluate_model(model)
-        else:
-            value = self.evaluate_with_elasticity_handler()
-        self.add_to_cache(pymoo_repr, value)
-        return value
+        self._current_value = self.evaluate_model(model)
+        self.add_to_cache(pymoo_repr, self._current_value)
+        return self._current_value
 
     def evaluate_model(self, model: NNCFNetwork) -> float:
         """
@@ -134,19 +122,11 @@ class Evaluator:
         :param model: Active sub-network
         :return: value obtained from evaluation.
         """
-        self._curr_value = self._eval_func(model)
-        return self._curr_value
-
-    def evaluate_with_elasticity_handler(self) -> Tuple[float, ...]:
-        """
-        Evaluates metric for active sub-network using elasticity handler
-
-        :return: value obtained from evaluation
-        """
         if self._use_model_for_evaluation:
-            raise RuntimeError("Evaluator set to evaluate with model but elasticity handler was requested.")
-        self._curr_value = self._eval_func(self._elasticity_ctrl.multi_elasticity_handler)
-        return self._curr_value
+            self._current_value = self._eval_func(model)
+        else:
+            self._current_value = self._eval_func(self._elasticity_ctrl.multi_elasticity_handler)
+        return self._current_value
 
     def add_to_cache(self, subnet_config_repr: Tuple[float, ...], measurement: float) -> NoReturn:
         """
@@ -276,22 +256,8 @@ class AccuracyEvaluator(Evaluator):
         :param model: Active sub-network
         :return: accuracy from active sub-network.
         """
-        self._curr_value = self._eval_func(model, self._val_loader) * -1.0
-        return self._curr_value
-
-    def evaluate_from_pymoo(self, model: NNCFNetwork, pymoo_repr: Tuple[float, ...]) -> NoReturn:
-        """
-        Obtain accuracy for active sub-network and stores value to cache.
-
-        :param model: Active sub-network
-        :param pymoo_repr: Sub-network represented by the values of the design variables of
-        the search algorithm.
-        :return:
-        """
-        value = self.evaluate_model(model)
-        self._curr_value = value
-        self.add_to_cache(pymoo_repr, value)
-        return value
+        self._current_value = self._eval_func(model, self._val_loader) * -1.0
+        return self._current_value
 
     def get_state(self) -> Dict[str, Any]:
         """
@@ -319,3 +285,17 @@ class AccuracyEvaluator(Evaluator):
         evaluator.cache = new_dict['cache']
         evaluator.input_model_value = new_dict['input_model_value']
         return evaluator
+
+    def update_reference_accuracy(self, search_params):
+        self.ref_acc = search_params.ref_acc
+        if self.input_model_value > self.ref_acc - 0.01 or self.input_model_value < self.ref_acc + 0.01:
+            nncf_logger.warning("Accuracy obtained from evaluation {value} differs from "
+                                        "reference accuracy {ref_acc}".format(value=self.input_model_value,
+                                                                              ref_acc=self.ref_acc))
+            if self.ref_acc == 100:
+                nncf_logger.info("Adjusting reference accuracy to accuracy obtained from evaluation")
+                self.ref_acc = self.input_model_value
+            elif self.ref_acc < 100:
+                nncf_logger.info("Using reference accuracy.")
+                self.input_model_value = self.ref_acc
+        search_params.ref_acc = self.ref_acc
