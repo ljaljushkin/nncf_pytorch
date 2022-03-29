@@ -18,7 +18,6 @@ from shutil import copyfile
 
 import torch
 from torch import nn
-from torch.optim import SGD
 
 from examples.torch.classification.main import create_data_loaders
 from examples.torch.classification.main import create_datasets
@@ -32,6 +31,8 @@ from examples.torch.common.execution import get_execution_mode
 from examples.torch.common.execution import set_seed
 from examples.torch.common.execution import start_worker
 from examples.torch.common.model_loader import load_model
+from examples.torch.common.optimizer import get_parameter_groups
+from examples.torch.common.optimizer import make_optimizer
 from examples.torch.common.sample_config import SampleConfig
 from examples.torch.common.sample_config import create_sample_config
 from examples.torch.common.utils import SafeMLFLow
@@ -55,78 +56,6 @@ def get_nas_argument_parser():
     parser.add_argument('--train-steps', default=None, type=int,
                         help='Enables running training for the given number of steps')
     return parser
-
-
-def get_optimizer(model, opt_config):
-    def get_parameters(model, keys=None, mode='include'):
-        if keys is None:
-            for name, param in model.named_parameters():
-                if param.requires_grad: yield param
-        elif mode == 'include':
-            for name, param in model.named_parameters():
-                flag = False
-                for key in keys:
-                    if key in name:
-                        flag = True
-                        break
-                if flag and param.requires_grad: yield param
-        elif mode == 'exclude':
-            for name, param in model.named_parameters():
-                flag = True
-                for key in keys:
-                    if key in name:
-                        flag = False
-                        break
-                if flag and param.requires_grad: yield param
-        else:
-            raise ValueError('do not support: %s' % mode)
-
-    def build_optimizer(net_params, opt_type, opt_param, init_lr, weight_decay, no_decay_keys):
-        if no_decay_keys:
-            assert isinstance(net_params, list) and len(net_params) == 2
-            net_params = [
-                {'params': net_params[0], 'weight_decay': weight_decay},
-                {'params': net_params[1], 'weight_decay': 0},
-            ]
-        else:
-            net_params = [{'params': net_params, 'weight_decay': weight_decay}]
-
-        if opt_type == 'sgd':
-            opt_param = {} if opt_param is None else opt_param
-            momentum, nesterov = opt_param.get('momentum', 0.9), opt_param.get('nesterov', True)
-            optimizer = SGD(net_params, init_lr, momentum=momentum, nesterov=nesterov)
-        elif opt_type == 'adam':
-            optimizer = torch.optim.Adam(net_params, init_lr)
-        else:
-            raise NotImplementedError
-        return optimizer
-
-    no_decay_keys = opt_config.no_decay_keys if 'no_decay_keys' in opt_config else False
-
-    if no_decay_keys:
-        keys = no_decay_keys.split('#')
-        net_params = [
-            get_parameters(model, keys, mode='exclude'),
-            get_parameters(model, keys, mode='include'),
-        ]
-    else:
-        # noinspection PyBroadException
-        try:
-            net_params = model.weight_parameters()
-        except Exception:
-            net_params = []
-            for param in model.parameters():
-                if param.requires_grad:
-                    net_params.append(param)
-
-    opt_type = opt_config.type if 'type' in opt_config else "sgd"
-    opt_param = None
-    init_lr = opt_config.base_lr if 'base_lr' in opt_config else 3e-4
-    weight_decay = opt_config.weight_decay if 'weight_decay' in opt_config else 3e-7
-
-    optimizer = build_optimizer(net_params, opt_type, opt_param, init_lr, weight_decay, no_decay_keys)
-
-    return optimizer
 
 
 def label_smooth(target, num_classes: int, label_smoothing=0.1):
@@ -183,8 +112,6 @@ def main_worker(current_gpu, config: SampleConfig):
 
     set_seed(config)
 
-    opt_config = config.get('optimizer', {})
-
     # define loss function (criterion)
     if 'label_smoothing' in opt_config:
         criterion = lambda pred, target: \
@@ -213,7 +140,9 @@ def main_worker(current_gpu, config: SampleConfig):
 
     model.to(config.device)
 
-    optimizer = get_optimizer(model, opt_config)
+    # define optimizer
+    params_to_optimize = get_parameter_groups(model, config)
+    optimizer, lr_scheduler = make_optimizer(params_to_optimize, config)
 
     def train_epoch_fn(loader, model_, compression_ctrl, epoch, optimizer_):
         train_epoch(loader, model_, criterion, train_criterion_fn, optimizer_, compression_ctrl, epoch, config,
