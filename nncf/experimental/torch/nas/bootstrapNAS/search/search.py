@@ -33,10 +33,14 @@ from pymoo.optimize import minimize
 import torch
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+import io
+import matplotlib.pyplot as plt
+import PIL.Image
+
 
 from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import AccuracyEvaluator
-from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import Evaluator
-from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import get_macs_for_active_subnet
+from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import BaseEvaluator
+from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import MACsEvaluator
 from nncf import NNCFConfig
 from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
 from nncf.common.utils.logger import logger as nncf_logger
@@ -81,11 +85,11 @@ class SearchParams:
         :param acc_delta: Tolerated accuracy delta to select a single sub-network from Pareto front.
         :param ref_acc: Accuracy of input model or reference.
         """
-        self.num_evals = num_evals
         self.num_constraints = num_constraints
         self.population = population
         if population > num_evals:
             raise ValueError("Population size must not be greater than number of evaluations.")
+        self.num_evals = num_evals // population * population
         self.seed = seed
         self.crossover_prob = crossover_prob
         self.crossover_eta = crossover_eta
@@ -130,6 +134,7 @@ class BaseSearchAlgorithm:
         self._use_default_evaluators = True
         self._evaluators = []
         self._accuracy_evaluator = None
+        self._efficiency_evaluator = None
         self._log_dir = None
         self._search_records = []
         self.bad_requests = []
@@ -140,7 +145,7 @@ class BaseSearchAlgorithm:
 
     @abstractmethod
     def run(self, validate_fn: Callable, val_loader: DataLoader, checkpoint_save_dir: str,
-            evaluators: Optional[List[Evaluator]] = None, ref_acc: Optional[float] = 100,
+            efficiency_evaluator: Optional[BaseEvaluator] = None, ref_acc: Optional[float] = 100,
             tensorboard_writer: Optional[SummaryWriter] = None) -> Tuple[ElasticityController,
                                                                          SubnetConfig, Tuple[float, ...]]:
         """This method should implement how to run the search algorithm."""
@@ -210,7 +215,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self.type_var = np.int
 
     @property
-    def evaluators(self) -> List[Evaluator]:
+    def evaluators(self) -> List[BaseEvaluator]:
         """
         Gets a list of the evaluators used by the search algorithm.
 
@@ -279,18 +284,19 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         raise NotImplementedError
 
     def run(self, validate_fn: ValFnType, val_loader: DataLoaderType, checkpoint_save_dir: str,
-            evaluators: Optional[List[Evaluator]] = None, ref_acc: Optional[float] = 100,
-            tensorboard_writer: Optional[SummaryWriter] = None) -> Tuple[
-        ElasticityController, SubnetConfig, Tuple[float, ...]]:
+            efficiency_evaluator: Optional[BaseEvaluator] = None, ref_acc: Optional[float] = 100,
+            tensorboard_writer: Optional[SummaryWriter] = None, evaluator_checkpoint = None) -> Tuple[ElasticityController,
+                                                                         SubnetConfig, Tuple[float, ...]]:
         """
         Runs the search algorithm
 
         :param validate_fn: Function used to validate the accuracy of the model.
         :param val_loader: Data loader used by the validation function.
         :param checkpoint_save_dir: Path to save checkpoints.
-        :param evaluators: External evaluators.
+        :param efficiency_evaluator: External efficiency evaluator.
         :param ref_acc: Reference Accuracy for sub-network selection.
         :param tensorboard_writer: Tensorboard writer to log data points.
+        :param evaluator_checkpoint:
         :return: Elasticity controller with discovered sub-network, sub-network configuration and
                 its performance metrics.
         """
@@ -299,13 +305,20 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             self.search_params.ref_acc = ref_acc
         self._tb = tensorboard_writer
         self.checkpoint_save_dir = checkpoint_save_dir
-        self._accuracy_evaluator = AccuracyEvaluator(validate_fn, val_loader)
-        if evaluators is not None:
+        self._accuracy_evaluator = AccuracyEvaluator(self._model, validate_fn, val_loader)
+        self.num_obj = 2
+        if efficiency_evaluator is not None:
             self._use_default_evaluators = False
-            self._evaluators = evaluators
-            self.num_obj = len(evaluators)
+            self._efficiency_evaluator = efficiency_evaluator
         else:
-            self._add_default_evaluators()
+            self._use_default_evaluators = True
+            self._efficiency_evaluator = MACsEvaluator(self._elasticity_ctrl)
+        self._evaluators.append(self._efficiency_evaluator)
+        self._evaluators.append(self._accuracy_evaluator)
+
+        if evaluator_checkpoint:
+            self.update_evaluators_from_saved_state(evaluator_checkpoint)
+
         self.update_evaluators_for_input_model()
         self._problem = SearchProblem(self)
         self._result = minimize(self._problem, self._algorithm,
@@ -334,12 +347,25 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         """
         self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
         for evaluator in self._evaluators:
-            evaluator.input_model_value = evaluator.evaluate_model(self._model)
+            evaluator.input_model_value = evaluator.evaluate_subnet()
         self._accuracy_evaluator.update_reference_accuracy(self.search_params)
+        self.best_pair_objective = self._efficiency_evaluator.input_model_value
 
-    def visualize_search_progression(self, filename='search_progression.pth') -> NoReturn:
-        # TODO(pablo): Plot and save image
-        pass
+    def visualize_search_progression(self, filename='search_progression') -> NoReturn:
+        plt.figure()
+        colormap = plt.cm.get_cmap('viridis')
+        col = range(int(self.search_params.num_evals / self.search_params.population))
+        for i in range(0, len(self._search_records), self.search_params.population):
+            plt.scatter([abs(row[2]) for row in self._search_records][i:i+self.search_params.population],
+                        [abs(row[4]) for row in self._search_records][i:i+self.search_params.population],
+                        s=9, c=[col[int(i/self.search_params.population)]]*self.search_params.population, alpha=0.5,
+                        marker='D', cmap=colormap)
+        plt.scatter(*tuple([ev.input_model_value for ev in self.evaluators]), marker='s',
+                    s=120, color='blue', label='Input Model', edgecolors='black')
+        if None not in self.best_vals:
+            plt.scatter(*tuple([abs(val) for val in self.best_vals]), marker='o', s=120,color='yellow', label='BootstrapNAS A',
+                        edgecolors='black', linewidth=2.5)
+        plt.savefig(f'{self._log_dir}/{filename}.png')
 
     def save_evaluators_state(self) -> NoReturn:
         """
@@ -350,11 +376,14 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         for evaluator in self._evaluators:
             eval_state = evaluator.get_state()
             evaluators_state.append(eval_state)
-        torch.save(Path(self.checkpoint_save_dir), 'evaluators_state.pth')
+        torch.save(evaluators_state, Path(self.checkpoint_save_dir, 'evaluators_state.pth'))
 
-    def load_evaluators_state(self) -> NoReturn:
-        # TODO(pablo)
-        pass
+    def update_evaluators_from_saved_state(self, state_path) -> NoReturn:
+        state = torch.load(state_path)
+        for state_dict in state:
+            for evaluator in self.evaluators:
+                if state_dict['name'] == evaluator.name:
+                    evaluator.update_from_state(state_dict)
 
     def evaluators_to_csv(self) -> NoReturn:
         """
@@ -364,27 +393,20 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         for evaluator in self.evaluators:
             evaluator.export_cache_to_csv(self._log_dir)
 
-    def _add_default_evaluators(self) -> NoReturn:
-        """
-        Instantiate default evaluators
+    @property
+    def efficiency_evaluator(self):
+        return self._efficiency_evaluator
 
-        :param validate_fn: Function used to obtain accuracy of a sub-network
-        :param val_loader: Data loader used by the validation function.
-        :return:
-        """
-        self.num_obj = 2
-        self._use_default_evaluators = True
-        self._evaluators = []
-        macs_evaluator = Evaluator("MACs", get_macs_for_active_subnet, 0, self._elasticity_ctrl)
-        macs_evaluator.use_model_for_evaluation = False
-        self._evaluators.append(macs_evaluator)
-        self._evaluators.append(self._accuracy_evaluator)
+    @property
+    def accuracy_evaluator(self):
+        return self._accuracy_evaluator
 
 
 class SearchProblem(Problem):
     """
     Pymoo problem with design variables and evaluation methods.
     """
+
     def __init__(self, search: SearchAlgorithm):
         """
         Initializes search problem
@@ -403,6 +425,8 @@ class SearchProblem(Problem):
         self._dims_enabled = self._elasticity_handler.get_available_elasticity_dims()
         self._iter = 0
         self._evaluators = search.evaluators
+        self._accuracy_evaluator = search.accuracy_evaluator
+        self._efficiency_evaluator = search.efficiency_evaluator
         self._model = search._model
         self._lower_bound_acc = search.search_params.ref_acc - search.acc_delta
 
@@ -438,7 +462,7 @@ class SearchProblem(Problem):
                     if not bn_adaption_executed:
                         self._search.bn_adaptation.run(self._model)
                         bn_adaption_executed = True
-                    value = evaluator.evaluate_and_add_to_cache_from_pymoo(self._model, tuple(x_i))
+                    value = evaluator.evaluate_and_add_to_cache_from_pymoo(tuple(x_i))
                 evaluators_arr[eval_idx].append(value)
                 eval_idx += 1
 
@@ -458,14 +482,8 @@ class SearchProblem(Problem):
         :param config: Best sub-network configuration
         :return:
         """
-        acc_within_tolerance = 0
-        pair_objective = None
-        # TODO: How can we use here the same idea of the self.accuracy_evaluator. ???
-        for evaluator in self._evaluators:
-            if hasattr(evaluator, '_ref_acc'):
-                acc_within_tolerance = evaluator.current_value
-            else:
-                pair_objective = evaluator.current_value
+        acc_within_tolerance = self._accuracy_evaluator.current_value
+        pair_objective = self._efficiency_evaluator.current_value
         if acc_within_tolerance < (self._lower_bound_acc * -1.0):
             if pair_objective < self._search.best_pair_objective:
                 self._search.best_pair_objective = pair_objective
