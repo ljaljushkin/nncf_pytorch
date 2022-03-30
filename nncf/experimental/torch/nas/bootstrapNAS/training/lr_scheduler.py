@@ -132,7 +132,7 @@ class GlobalLRScheduler(BaseLRScheduler):
         if self.current_epoch < self._warmup_epochs and self.current_epoch != -1:
             warmup_adjust_learning_rate(optimizer=self._optimizer,
                                                  init_lr=self._base_lr,
-                                                 T_total=self._warmup_epochs * self._num_steps_in_epoch,
+                                                 t_total=self._warmup_epochs * self._num_steps_in_epoch,
                                                  n_batch=self._num_steps_in_epoch,
                                                  epoch=self.current_epoch,
                                                  batch=step_from_epoch_start,

@@ -90,6 +90,9 @@ class TestLRScheduler:
                       0.00010933334580446199, 7.535651367065242e-05, 4.532200128141378e-05,
                       2.1614928215679784e-05]
 
+    GLOBAL_LR_UPDATE = [0.00030625000000000004, 2.4975334105353397e-06, 2.3453833500548297e-06,
+                        1.8521920926271442e-06, 1.1715118505883583e-06]
+
     def test_lr_value_update(self, mocker):
         optimizer = mocker.stub()
         optimizer.param_groups = [{'lr': 3.4e-4}]
@@ -102,3 +105,12 @@ class TestLRScheduler:
                 lr_scheduler.step()
                 if j == 0:
                     assert optimizer.param_groups[0]['lr'] == pytest.approx(TestLRScheduler.STAGE_LR_UPDATE[i])
+
+        optimizer.param_groups = [{'lr': 3.4e-4}]
+        lr_scheduler = GlobalLRScheduler.from_config(optimizer, LR_SCHEDULER_PARAMS)
+        for i in range(lr_scheduler._num_epochs):
+            lr_scheduler.epoch_step()
+            for j in range(lr_scheduler._num_steps_in_epoch):
+                lr_scheduler.step()
+                if j == 0:
+                    assert optimizer.param_groups[0]['lr'] == pytest.approx(TestLRScheduler.GLOBAL_LR_UPDATE[i])
