@@ -84,3 +84,21 @@ class TestLRScheduler:
         lr_scheduler.reset(LR_SCHEDULER_PARAMS.base_lr, LR_SCHEDULER_PARAMS.num_epochs)
         assert lr_scheduler.current_epoch == 0
         assert lr_scheduler.current_step == 0
+
+    STAGE_LR_UPDATE = [0.00025, 0.0002450367107096179, 0.00023054099068775188,
+                      0.00020766398316545648, 0.0001782224114456341, 0.00014455430813002887,
+                      0.00010933334580446199, 7.535651367065242e-05, 4.532200128141378e-05,
+                      2.1614928215679784e-05]
+
+    def test_lr_value_update(self, mocker):
+        optimizer = mocker.stub()
+        optimizer.param_groups = [{'lr': 3.4e-4}]
+        lr_scheduler = StageLRScheduler.from_config(optimizer, LR_SCHEDULER_PARAMS)
+        lr_scheduler._init_lr = 2.5e-4
+        lr_scheduler._num_epochs = 10
+        for i in range(lr_scheduler._num_epochs):
+            lr_scheduler.epoch_step()
+            for j in range(lr_scheduler._num_steps_in_epoch):
+                lr_scheduler.step()
+                if j == 0:
+                    assert optimizer.param_groups[0]['lr'] == pytest.approx(TestLRScheduler.STAGE_LR_UPDATE[i])
