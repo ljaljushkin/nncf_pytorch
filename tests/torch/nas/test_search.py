@@ -74,18 +74,33 @@ def prepare_test_model(search_desc):
     nncf_config.register_extra_structs([bn_adapt_args])
     return model, elasticity_ctrl, nncf_config
 
+def prepare_search_algorithm(nas_model_name):
+    if 'inception_v3' in nas_model_name:
+        pytest.skip(
+            f'Skip test for {nas_model_name} as it fails because of 2 issues: '
+            'not able to set DynamicInputOp to train-only layers (ticket 60976) and '
+            'invalid padding update in elastic kernel (ticket 60990)')
 
-def test_activate_maximum_subnet_at_init():
-    search_desc = SearchTestDesc(model_creator=ThreeConvModel,
-                                 algo_params={'width': {'min_width': 1, 'width_step': 1}},
-                                 input_sizes=ThreeConvModel.INPUT_SIZE,
-                                 )
-    model, elasticity_ctrl, nncf_config = prepare_test_model(search_desc)
-    SearchAlgorithm(model, elasticity_ctrl, nncf_config)
-    config_init = elasticity_ctrl.multi_elasticity_handler.get_active_config()
-    elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
-    assert config_init == elasticity_ctrl.multi_elasticity_handler.get_active_config()
-
+    elif nas_model_name in ['efficient_net_b0', 'shufflenetv2']:
+        pytest.skip(
+            f'Skip test for {nas_model_name} as exploration is underway to better manage its search space'
+        )
+    model = NAS_MODEL_DESCS[nas_model_name][0]()
+    nncf_config = get_empty_config(input_sample_sizes=NAS_MODEL_DESCS[nas_model_name][1])
+    nncf_config['bootstrapNAS'] = {'training': {'algorithm': 'progressive_shrinking'}}
+    nncf_config['input_info'][0].update({'filler': 'random'})
+    if nas_model_name == 'densenet_121':
+        nncf_config['bootstrapNAS']['training']['elasticity'] = {
+            'depth': {'min_block_size': 10, 'max_block_size': 117}}
+    else:
+        nncf_config['bootstrapNAS']['training']['elasticity'] = {
+            'available_elasticity_dims': ['kernel', 'width', 'depth']}
+    nncf_config['bootstrapNAS']['search'] = {"algorithm": "NSGA2", "num_evals": 2, "population": 1}
+    nncf_config = NNCFConfig.from_dict(nncf_config)
+    model, ctrl = create_bootstrap_training_model_and_ctrl(model, nncf_config)
+    elasticity_ctrl = ctrl.elasticity_controller
+    elasticity_ctrl.multi_elasticity_handler.enable_all()
+    return SearchAlgorithm.from_config(model, elasticity_ctrl, nncf_config)
 
 NAS_MODELS_SEARCH_ENCODING = {
     'resnet18': [1, 3, 7, 15, 1, 1, 3, 3, 7, 7, 15, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15],
@@ -110,50 +125,47 @@ NAS_MODELS_SEARCH_ENCODING = {
 }
 
 
-def prepare_search_algorithm(nas_model_name):
-    if 'inception_v3' in nas_model_name:
-        pytest.skip(
-            f'Skip test for {nas_model_name} as it fails because of 2 issues: '
-            'not able to set DynamicInputOp to train-only layers (ticket 60976) and '
-            'invalid padding update in elastic kernel (ticket 60990)')
+class TestSearchAlgorithm:
 
-    elif nas_model_name in ['efficient_net_b0', 'shufflenetv2']:
-        pytest.skip(
-            f'Skip test for {nas_model_name} as exploration is underway to better manage its search space'
-        )
-    model = NAS_MODEL_DESCS[nas_model_name][0]()
-    nncf_config = get_empty_config(input_sample_sizes=NAS_MODEL_DESCS[nas_model_name][1])
-    nncf_config['bootstrapNAS'] = {'training': {'algorithm': 'progressive_shrinking'}}
-    nncf_config['input_info'][0].update({'filler': 'random'})
-    if nas_model_name == 'densenet_121':
-        nncf_config['bootstrapNAS']['training']['elasticity'] = {'depth': {'min_block_size': 10, 'max_block_size': 117}}
-    else:
-        nncf_config['bootstrapNAS']['training']['elasticity'] = {'available_elasticity_dims': ['kernel', 'width', 'depth']}
-    nncf_config['bootstrapNAS']['search'] = {"algorithm": "NSGA2", "num_evals": 2, "population": 1}
-    nncf_config = NNCFConfig.from_dict(nncf_config)
-    model, ctrl = create_bootstrap_training_model_and_ctrl(model, nncf_config)
-    elasticity_ctrl = ctrl.elasticity_controller
-    elasticity_ctrl.multi_elasticity_handler.enable_all()
-    return SearchAlgorithm.from_config(model, elasticity_ctrl, nncf_config)
+    def test_activate_maximum_subnet_at_init(self):
+        search_desc = SearchTestDesc(model_creator=ThreeConvModel,
+                                     algo_params={'width': {'min_width': 1, 'width_step': 1}},
+                                     input_sizes=ThreeConvModel.INPUT_SIZE,
+                                     )
+        model, elasticity_ctrl, nncf_config = prepare_test_model(search_desc)
+        SearchAlgorithm(model, elasticity_ctrl, nncf_config)
+        config_init = elasticity_ctrl.multi_elasticity_handler.get_active_config()
+        elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
+        assert config_init == elasticity_ctrl.multi_elasticity_handler.get_active_config()
+
+    def test_design_upper_bounds(self, nas_model_name):
+        search = prepare_search_algorithm(nas_model_name)
+        assert search.vars_upper == NAS_MODELS_SEARCH_ENCODING[nas_model_name]
+
+    def test_num_variables(self, nas_model_name):
+        search = prepare_search_algorithm(nas_model_name)
+        assert search.num_vars == len(NAS_MODELS_SEARCH_ENCODING[nas_model_name])
 
 
-def test_design_upper_bounds(nas_model_name):
-    search = prepare_search_algorithm(nas_model_name)
-    assert search.vars_upper == NAS_MODELS_SEARCH_ENCODING[nas_model_name]
+class TestSearchEvaluators:
+
+    def test_create_default_evaluators(self, nas_model_name, tmp_path, mocker):
+        if nas_model_name in ['squeezenet1_0', 'pnasnetb']:
+            pytest.skip(
+                f'Skip test for {nas_model_name} as it fails.')
+        search = prepare_search_algorithm(nas_model_name)
+        search.run(lambda model, val_loader: 0, None, tmp_path)
+        evaluators = search.evaluators
+        assert len(evaluators) == 2
+        assert evaluators[0].name == 'MACs'
+        assert evaluators[1].name == 'top1_acc'
+
+    def test_accuracy_evaluator_update_ref_value(self, nas_model_name):
+        pass
+        # search = prepare_search_algorithm(nas_model_name)
+        # search_params = {'ref_acc': 87.5}
+        # acc_evaluator = search.evaluators[1]
 
 
-def test_num_variables(nas_model_name):
-    search = prepare_search_algorithm(nas_model_name)
-    assert search.num_vars == len(NAS_MODELS_SEARCH_ENCODING[nas_model_name])
-
-
-def test_create_default_evaluators(nas_model_name, tmp_path, mocker):
-    if nas_model_name in ['squeezenet1_0', 'pnasnetb']:
-        pytest.skip(
-            f'Skip test for {nas_model_name} as it fails.')
-    search = prepare_search_algorithm(nas_model_name)
-    search.run(lambda model, val_loader: 0, None, tmp_path)
-    evaluators = search.evaluators
-    assert len(evaluators) == 2
-    assert evaluators[0].name == 'MACs'
-    assert evaluators[1].name == 'top1_acc'
+    def test_use_external_efficiency_evaluator(self):
+        pass
