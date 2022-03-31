@@ -10,7 +10,9 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
+from collections import OrderedDict
 from collections import deque
+from copy import copy
 from copy import deepcopy
 from enum import Enum
 from functools import cmp_to_key
@@ -29,6 +31,7 @@ from nncf.common.graph.definitions import MODEL_OUTPUT_OP_NAME
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNodeName
 from nncf.common.graph.graph_matching import find_subgraphs_matching_pattern
+from nncf.common.utils.logger import logger as nncf_logger
 from nncf.torch.dynamic_graph.operation_address import OperationAddress
 from nncf.torch.graph.graph import PTNNCFGraph
 from nncf.torch.graph.operator_metatypes import PTDropoutMetatype
@@ -38,7 +41,6 @@ from nncf.torch.graph.operator_metatypes import PTRELUMetatype
 from nncf.torch.hardware.fused_patterns import PT_HW_FUSED_PATTERNS
 from nncf.torch.layers import NNCF_MODULES_OP_NAMES
 from nncf.torch.nncf_network import NNCFNetwork
-from nncf.common.utils.logger import logger as nncf_logger
 
 IgnoredNameOperators = [*PTDropoutMetatype.get_all_aliases(), MODEL_OUTPUT_OP_NAME]
 OrdinalIDs = List[List[int]]
@@ -127,6 +129,11 @@ class PotentialBuildingBlock:
     def __init__(self, start_node: SearchGraphNode, end_node: SearchGraphNode):
         self.start_node = start_node
         self.end_node = end_node
+
+    def __hash__(self):
+        MULTIPLY_CONSTANT = 1000
+        assert self.end_node.main_id < MULTIPLY_CONSTANT
+        return self.start_node.main_id * MULTIPLY_CONSTANT + self.end_node.main_id
 
     def __eq__(self, __o: 'PotentialBuildingBlock') -> bool:
         return self.start_node == __o.start_node and self.end_node == __o.end_node
@@ -304,8 +311,12 @@ def get_search_graph(original_graph: PTNNCFGraph) -> SearchGraph:
     """
     Returns a transformed representation of the network graph for blocks searching.
     """
-    nx_merged_graph = get_merged_original_graph_with_pattern(original_graph.get_nx_graph_copy())
+    original_graph_copy = original_graph.get_nx_graph_copy()
+    nx_merged_graph = get_merged_original_graph_with_pattern(original_graph_copy)
+    # nx_merged_graph = original_graph_copy
+    nx.drawing.nx_pydot.write_dot(nx_merged_graph, 'merged_graph.dot')
     sgraph = SearchGraph(nx_merged_graph)
+    nx.drawing.nx_pydot.write_dot(sgraph.get_nx_graph(), 'search_graph.dot')
     return sgraph
 
 
@@ -564,8 +575,19 @@ def restore_node_name_in_orig_graph(building_blocks: List[PotentialBuildingBlock
     for block in building_blocks:
         id_st = block.start_node.bottom_id  # dummy node
         id_end = block.end_node.bottom_id
-        block_in_orig_format = BuildingBlock(orig_graph.get_node_key_by_id(id_st).split(' ')[-1],
+        start_node_name = orig_graph.get_node_key_by_id(id_st).split(' ')[-1]
+        block_in_orig_format = BuildingBlock(start_node_name,
                                              orig_graph.get_node_key_by_id(id_end).split(' ')[-1])
+        if not block.start_node.is_dummy:
+            start_node = orig_graph.get_node_by_name(start_node_name)
+            previous_nodes = orig_graph.get_previous_nodes(start_node)
+            num_inputs = len(previous_nodes)
+            if num_inputs != 1:
+                print(f'number of inputs of start node ({start_node_name}) is expected to be 1, not {num_inputs}')
+                continue
+            new_start_node = previous_nodes[0]
+            block_in_orig_format.start_node_name = new_start_node.node_name
+            id_st = new_start_node.node_id
         building_block_in_orig_format.append(block_in_orig_format)
         ordinal_ids.append([id_st, id_end])
     return building_block_in_orig_format, ordinal_ids
@@ -597,6 +619,38 @@ def get_potential_candidate_for_block(search_graph: SearchGraph) -> Tuple[ShapeV
             add_node_to_aux_struct(node, edge_attr[NNCFGraph.ACTIVATION_SHAPE_EDGE_ATTR], act_input_shape)
             break
     return act_input_shape, act_output_shape
+
+
+def format_blocks_for_skipping(building_blocks: BuildingBlocks,
+                               ordinal_ids: OrdinalIDs,
+                               graph: NNCFGraph) -> Tuple[BuildingBlocks, OrdinalIDs]:
+    """
+    Formats building blocks for skipping via TracingContext. Building block contains names of start and end nodes that
+    are supposed to be skipped by construction: the same shape on input and output. But TracingContext has a slightly
+    different format: start node is not skipped, but produces an output that is bypassed until the end node, i.e. the
+    next node after start node and the rest nodes until end node are skipped only. This method replaces start node name
+    with the name of previous node in the list of building blocks and it also replaces start node id in the list of
+    ordinal ids.
+
+    :param building_blocks: TBD
+    :param ordinal_ids: TBD
+    :param graph: TBD
+    :return: TBD
+    """
+    new_building_blocks = copy(building_blocks)
+    new_ordinal_ids = copy(ordinal_ids)
+
+    for i, block in enumerate(new_building_blocks):
+        start_node = graph.get_node_by_name(block.start_node_name)
+        previous_nodes = graph.get_previous_nodes(start_node)
+        num_inputs = len(previous_nodes)
+        if num_inputs != 1:
+            print(f'number of inputs of start node ({block.start_node_name}) is expected to be 1, not {num_inputs}')
+            continue
+        new_start_node = previous_nodes[0]
+        block.start_node_name = new_start_node.node_name
+        new_ordinal_ids[i][0] = new_start_node.node_id
+    return new_building_blocks, new_ordinal_ids
 
 
 def get_building_blocks(compressed_model: NNCFNetwork,
@@ -633,6 +687,7 @@ def get_building_blocks(compressed_model: NNCFNetwork,
             if start_node.node_type == IgnoredNameOperators or len(pred_start_node) != 1:
                 continue
             for end_node in act_output_shape[shape]:
+                # TODO: sort ids and use bisect to quickly navigate to bigger main_id
                 if end_node.main_id <= start_node.main_id:
                     continue
                 if end_node.bottom_id - start_node.main_id > max_block_size:
@@ -654,13 +709,13 @@ def get_building_blocks(compressed_model: NNCFNetwork,
     sorted_blocks = sorted(blocks, key=cmp_to_key(compare_for_building_block))
     if not allow_linear_combination:
         sorted_blocks = remove_linear_combination(sorted_blocks)
-    if not allow_nested_blocks:
-        sorted_blocks = remove_nested_blocks(sorted_blocks)
+    # if not allow_nested_blocks:
+    #     sorted_blocks = remove_nested_blocks(sorted_blocks)
+    sorted_blocks = list(OrderedDict.fromkeys(sorted_blocks))
     num_layers_in_blocks = [(pblock.end_node.bottom_id - pblock.start_node.main_id) for pblock in sorted_blocks]
     nncf_logger.info('Number of operations in the blocks: {}'.format(str(num_layers_in_blocks)))
     building_blocks_in_orig_graph, ordinals_id = restore_node_name_in_orig_graph(sorted_blocks, orig_graph)
     group_dependent = get_group_of_dependent_blocks(building_blocks_in_orig_graph)
-
     return building_blocks_in_orig_graph, ordinals_id, group_dependent
 
 
@@ -671,7 +726,8 @@ def remove_nested_blocks(sorted_blocks: List[PotentialBuildingBlock]) -> List[Po
     :param: List of building blocks.
     :return: List of building blocks without nested blocks.
     """
-    return [list(group_block)[-1] for _, group_block in groupby(sorted_blocks, lambda block: block.start_node.main_id)]
+
+    # return [list(group_block)[0] for _, group_block in groupby(sorted_blocks, lambda block: block.start_node.main_id)]
 
 
 def get_group_of_dependent_blocks(blocks: BuildingBlocks) -> GroupedBlockIDs:

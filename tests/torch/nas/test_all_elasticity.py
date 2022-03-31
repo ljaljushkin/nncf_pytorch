@@ -129,12 +129,14 @@ def test_random_multi_elasticity(_seed, nas_model_name):
 
     multi_elasticity_handler = ctrl.multi_elasticity_handler
     model.do_dummy_forward()
+    graph = model.get_graph()
+    graph.visualize_graph('supernet.dot')
 
     multi_elasticity_handler.disable_all()
-    multi_elasticity_handler.enable_elasticity(ElasticityDim.KERNEL)
-    multi_elasticity_handler.activate_random_subnet()
-    model.do_dummy_forward()
-    check_subnet_visualization(multi_elasticity_handler, model, nas_model_name, stage='kernel')
+    # multi_elasticity_handler.enable_elasticity(ElasticityDim.KERNEL)
+    # multi_elasticity_handler.activate_random_subnet()
+    # model.do_dummy_forward()
+    # check_subnet_visualization(multi_elasticity_handler, model, nas_model_name, stage='kernel')
 
     multi_elasticity_handler.enable_elasticity(ElasticityDim.DEPTH)
     multi_elasticity_handler.activate_random_subnet()
@@ -143,13 +145,20 @@ def test_random_multi_elasticity(_seed, nas_model_name):
             f'Skip test for {nas_model_name} as it fails with error: Given groups=1, weight of '
             'size [48, 256, 1, 1], expected input[1, 32, 4, 4] to have 256 channels, but got 32 channels instead')
     model.do_dummy_forward()
-    check_subnet_visualization(multi_elasticity_handler, model, nas_model_name, stage='depth')
+    model.rebuild_graph()
+    graph = model.get_graph()
+    graph.visualize_graph('no_1_block.dot')
+    # check_subnet_visualization(multi_elasticity_handler, model, nas_model_name, stage='depth')
 
-    multi_elasticity_handler.enable_elasticity(ElasticityDim.WIDTH)
-    multi_elasticity_handler.width_handler.width_num_params_indicator = 1
-    multi_elasticity_handler.activate_random_subnet()
-    model.do_dummy_forward()
-    check_subnet_visualization(multi_elasticity_handler, model, nas_model_name, stage='width')
+
+    # nx_graph = graph.get_graph_for_structure_analysis()
+    # check_nx_graph(nx_graph, path_to_dot, graph_dir, sort_dot_graph=True)
+
+    # multi_elasticity_handler.enable_elasticity(ElasticityDim.WIDTH)
+    # multi_elasticity_handler.width_handler.width_num_params_indicator = 1
+    # multi_elasticity_handler.activate_random_subnet()
+    # model.do_dummy_forward()
+    # check_subnet_visualization(multi_elasticity_handler, model, nas_model_name, stage='width')
 
 
 ###########################

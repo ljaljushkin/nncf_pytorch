@@ -126,9 +126,28 @@ def create_bootstrap_nas_training_algo(model_name) -> Tuple[NNCFNetwork, Progres
     nncf_config = get_empty_config(input_sample_sizes=NAS_MODEL_DESCS[model_name][1])
     nncf_config['bootstrapNAS'] = {'training': {'algorithm': 'progressive_shrinking'}}
     nncf_config['input_info'][0].update({'filler': 'random'})
-    if model_name == 'densenet_121':
-        nncf_config['bootstrapNAS']['training'] = {
-            'elasticity': {'depth': {'min_block_size': 10, 'max_block_size': 117}}}
+    # if model_name == 'densenet_121':
+    nncf_config['bootstrapNAS']['training'] = {
+        'elasticity': {
+            'available_elasticity_dims': ['depth'],
+            'depth': {
+                'min_block_size': 1, 'max_block_size': 4,
+                # 'skipped_blocks': [
+                #     [
+                #         # works: skip sigmoid amd mul
+                #         # 'EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0',
+                #         # 'EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/MemoryEfficientSwish[_swish]/__mul___1'
+                #
+                #         # RuntimeError: The size of tensor a (8) must match the size of tensor b (32) at non-singleton dimension 1
+                #         # on 17 EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/__mul___0, which is logical
+                #         # skipped node names:
+                #         #          EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/NNCFUserConv2dStaticSamePadding[_se_expand]/conv2d_0
+                #         #          EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/sigmoid_0
+                #         'EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/MemoryEfficientSwish[_swish]/__mul___1',
+                #         'EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/sigmoid_0'
+                #     ],
+                # ]
+            }}}
 
     input_info_list = create_input_infos(nncf_config)
     dummy_forward = create_dummy_forward_fn(input_info_list)

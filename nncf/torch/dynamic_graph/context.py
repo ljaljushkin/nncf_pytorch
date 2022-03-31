@@ -362,6 +362,7 @@ class TracingContext:
         self.graph = DynamicGraph()
 
     def set_active_skipped_block(self, block_indexes: List[int]):
+        block_indexes = sorted(block_indexes)
         if self.active_block_indexes is not None:
             self.start_node_name_of_skipped_block = []
             self.end_node_name_of_skipped_block = []

@@ -400,6 +400,11 @@ class ElasticDepthBuilder(SingleElasticityBuilder):
 
         tracing_context.set_elastic_blocks(self._skipped_blocks, self._ordinal_ids)
         node_names_per_block = self._get_node_names_per_block(target_model, self._skipped_blocks)
+        nncf_logger.info('Number of operations in the blocks: {}'.format(str(list(map(len, node_names_per_block.values())))))
+        for node_names, block in zip(node_names_per_block.values(), self._skipped_blocks):
+            print('\n')
+            print(block)
+            print(*node_names, sep='\n')
 
         return ElasticDepthHandler(target_model, self._skipped_blocks, self._skip_dependencies,
                                    node_names_per_block, self._ordinal_ids)
