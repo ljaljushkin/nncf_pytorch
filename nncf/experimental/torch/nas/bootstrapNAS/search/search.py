@@ -41,6 +41,9 @@ import PIL.Image
 from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import AccuracyEvaluator
 from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import BaseEvaluator
 from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import MACsEvaluator
+from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator_handler import BaseEvaluatorHandler
+from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator_handler import AccuracyEvaluatorHandler
+from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator_handler import EfficiencyEvaluatorHandler
 from nncf import NNCFConfig
 from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
 from nncf.common.utils.logger import logger as nncf_logger
@@ -132,9 +135,9 @@ class BaseSearchAlgorithm:
 
         """
         self._use_default_evaluators = True
-        self._evaluators = []
-        self._accuracy_evaluator = None
-        self._efficiency_evaluator = None
+        self._evaluator_handlers = []
+        self._accuracy_evaluator_handler = None
+        self._efficiency_evaluator_handler = None
         self._log_dir = None
         self._search_records = []
         self.bad_requests = []
@@ -215,15 +218,15 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self.type_var = np.int
 
     @property
-    def evaluators(self) -> List[BaseEvaluator]:
+    def evaluator_handlers(self) -> List[BaseEvaluatorHandler]:
         """
         Gets a list of the evaluators used by the search algorithm.
 
         :return: List of available evaluators.
         """
-        if self._evaluators:
-            return self._evaluators
-        raise RuntimeError("Evaluators haven't been defined")
+        if self._evaluator_handlers:
+            return self._evaluator_handlers
+        raise RuntimeError("Evaluator handlers haven't been defined")
 
     @property
     def acc_delta(self) -> float:
@@ -305,21 +308,19 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             self.search_params.ref_acc = ref_acc
         self._tb = tensorboard_writer
         self.checkpoint_save_dir = checkpoint_save_dir
-        self._accuracy_evaluator = AccuracyEvaluator(self._model, validate_fn, val_loader)
+        self._accuracy_evaluator_handler = AccuracyEvaluatorHandler(AccuracyEvaluator(self._model, validate_fn, val_loader), self._elasticity_ctrl)
         self.num_obj = 2
         if efficiency_evaluator is not None:
             self._use_default_evaluators = False
-            self._efficiency_evaluator = efficiency_evaluator
+            self._efficiency_evaluator_handler = EfficiencyEvaluatorHandler(efficiency_evaluator, self._elasticity_ctrl)
         else:
             self._use_default_evaluators = True
-            self._efficiency_evaluator = MACsEvaluator(self._elasticity_ctrl)
-        self._evaluators.append(self._efficiency_evaluator)
-        self._evaluators.append(self._accuracy_evaluator)
+            # TODO: Remove elasticity controller from MACsEvaluator
+            self._efficiency_evaluator_handler = EfficiencyEvaluatorHandler(MACsEvaluator(self._elasticity_ctrl),
+                                                                            self._elasticity_ctrl)
+        self._evaluator_handlers.append(self._efficiency_evaluator_handler)
+        self._evaluator_handlers.append(self._accuracy_evaluator_handler)
 
-        if evaluator_checkpoint:
-            self.update_evaluators_from_saved_state(evaluator_checkpoint)
-
-        self.update_evaluators_for_input_model()
         self._problem = SearchProblem(self)
         self._result = minimize(self._problem, self._algorithm,
                                 ('n_gen', int(self.search_params.num_evals / self.search_params.population)),
@@ -339,18 +340,6 @@ class SearchAlgorithm(BaseSearchAlgorithm):
 
         return self._elasticity_ctrl, self.best_config, self.best_vals
 
-    def update_evaluators_for_input_model(self) -> NoReturn:
-        """
-        Update evaluators information based on input model.
-
-        :return:
-        """
-        self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
-        for evaluator in self._evaluators:
-            evaluator.input_model_value = evaluator.evaluate_subnet()
-        self._accuracy_evaluator.update_reference_accuracy(self.search_params)
-        self.best_pair_objective = self._efficiency_evaluator.input_model_value
-
     def visualize_search_progression(self, filename='search_progression') -> NoReturn:
         plt.figure()
         colormap = plt.cm.get_cmap('viridis')
@@ -360,7 +349,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
                         [abs(row[4]) for row in self._search_records][i:i+self.search_params.population],
                         s=9, c=[col[int(i/self.search_params.population)]]*self.search_params.population, alpha=0.5,
                         marker='D', cmap=colormap)
-        plt.scatter(*tuple([ev.input_model_value for ev in self.evaluators]), marker='s',
+        plt.scatter(*tuple([ev.input_model_value for ev in self.evaluator_handlers]), marker='s',
                     s=120, color='blue', label='Input Model', edgecolors='black')
         if None not in self.best_vals:
             plt.scatter(*tuple([abs(val) for val in self.best_vals]), marker='o', s=120,color='yellow', label='BootstrapNAS A',
@@ -372,34 +361,27 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         Save state of evaluators used in search.
         :return:
         """
-        evaluators_state = []
-        for evaluator in self._evaluators:
-            eval_state = evaluator.get_state()
-            evaluators_state.append(eval_state)
-        torch.save(evaluators_state, Path(self.checkpoint_save_dir, 'evaluators_state.pth'))
-
-    def update_evaluators_from_saved_state(self, state_path) -> NoReturn:
-        state = torch.load(state_path)
-        for state_dict in state:
-            for evaluator in self.evaluators:
-                if state_dict['name'] == evaluator.name:
-                    evaluator.update_from_state(state_dict)
+        evaluator_handlers_state = []
+        for evaluator_handler in self._evaluator_handlers:
+            eval_state = evaluator_handler.evaluator.get_state()
+            evaluator_handlers_state.append(eval_state)
+        torch.save(evaluator_handlers_state, Path(self.checkpoint_save_dir, 'evaluators_state.pth'))
 
     def evaluators_to_csv(self) -> NoReturn:
         """
         Export evaluators' information used by search algorithm to CSV
         :return:
         """
-        for evaluator in self.evaluators:
-            evaluator.export_cache_to_csv(self._log_dir)
+        for evaluator_handler in self.evaluator_handlers:
+            evaluator_handler.evaluator.export_cache_to_csv(self._log_dir)
 
     @property
-    def efficiency_evaluator(self):
-        return self._efficiency_evaluator
+    def efficiency_evaluator_handler(self):
+        return self._efficiency_evaluator_handler
 
     @property
-    def accuracy_evaluator(self):
-        return self._accuracy_evaluator
+    def accuracy_evaluator_handler(self):
+        return self._accuracy_evaluator_handler
 
 
 class SearchProblem(Problem):
@@ -424,9 +406,9 @@ class SearchProblem(Problem):
         self._elasticity_handler = self._search._elasticity_ctrl.multi_elasticity_handler
         self._dims_enabled = self._elasticity_handler.get_available_elasticity_dims()
         self._iter = 0
-        self._evaluators = search.evaluators
-        self._accuracy_evaluator = search.accuracy_evaluator
-        self._efficiency_evaluator = search.efficiency_evaluator
+        self._evaluator_handlers = search.evaluator_handlers
+        self._accuracy_evaluator_handler = search.accuracy_evaluator_handler
+        self._efficiency_evaluator_handler = search.efficiency_evaluator_handler
         self._model = search._model
         self._lower_bound_acc = search.search_params.ref_acc - search.acc_delta
 
@@ -440,7 +422,7 @@ class SearchProblem(Problem):
         :param kargs:
         :return:
         """
-        evaluators_arr = [[] for i in range(len(self._search.evaluators))]
+        evaluators_arr = [[] for i in range(len(self._search.evaluator_handlers))]
 
         for _, x_i in enumerate(x):
             sample = self._elasticity_handler.get_config_from_pymoo(x_i)
@@ -456,17 +438,17 @@ class SearchProblem(Problem):
 
             eval_idx = 0
             bn_adaption_executed = False
-            for evaluator in self._evaluators:
-                in_cache, value = evaluator.retrieve_from_cache(tuple(x_i))
+            for evaluator_handler in self._evaluator_handlers:
+                in_cache, value = evaluator_handler.retrieve_from_cache(tuple(x_i))
                 if not in_cache:
                     if not bn_adaption_executed:
                         self._search.bn_adaptation.run(self._model)
                         bn_adaption_executed = True
-                    value = evaluator.evaluate_and_add_to_cache_from_pymoo(tuple(x_i))
+                    value = evaluator_handler.evaluate_and_add_to_cache_from_pymoo(tuple(x_i))
                 evaluators_arr[eval_idx].append(value)
                 eval_idx += 1
 
-                result.append(evaluator.name)
+                result.append(evaluator_handler.name)
                 result.append(value)
 
             self._save_checkpoint_best_subnetwork(sample)
@@ -482,8 +464,8 @@ class SearchProblem(Problem):
         :param config: Best sub-network configuration
         :return:
         """
-        acc_within_tolerance = self._accuracy_evaluator.current_value
-        pair_objective = self._efficiency_evaluator.current_value
+        acc_within_tolerance = self._accuracy_evaluator_handler.current_value
+        pair_objective = self._efficiency_evaluator_handler.current_value
         if acc_within_tolerance < (self._lower_bound_acc * -1.0):
             if pair_objective < self._search.best_pair_objective:
                 self._search.best_pair_objective = pair_objective
@@ -492,6 +474,7 @@ class SearchProblem(Problem):
                 checkpoint_path = Path(self._search.checkpoint_save_dir, 'subnetwork_best.pth')
                 checkpoint = {
                     'best_acc1': acc_within_tolerance * -1.0,
+                    'best_efficiency': pair_objective,
                     'subnet_config': config
                 }
                 torch.save(checkpoint, checkpoint_path)

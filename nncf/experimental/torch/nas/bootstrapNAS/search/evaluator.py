@@ -60,7 +60,6 @@ class BaseEvaluator:
         self._current_value = -1
         self._ideal_value = ideal_val
         self.cache = {}
-        self.input_model_value = None
         #TODO(pablo): Here we should store some super-network signature that is associated with this evaluator
 
     @property
@@ -78,7 +77,7 @@ class BaseEvaluator:
         """
         self._current_value = val
 
-    def evaluate_and_add_to_cache_from_pymoo(self, pymoo_repr: Tuple[float, ...]):
+    def evaluate_and_add_to_cache_from_pymoo(self, pymoo_repr: Tuple[float, ...]) -> float:
         """
         Evaluates active sub-network and uses Pymoo representation for insertion in cache.
 
@@ -204,7 +203,7 @@ class AccuracyEvaluator(BaseEvaluator):
     A particular kind of evaluator for collecting model's accuracy measurements
     """
 
-    def __init__(self, model: ModelType, eval_func: AccValFnType, val_loader: DataLoaderType, is_top1: Optional[bool] = True, ref_acc: Optional[float] = 100):
+    def __init__(self, model: ModelType, eval_func: AccValFnType, val_loader: DataLoaderType, is_top1: Optional[bool] = True):
         """
         Initializes Accuracy operator
 
@@ -219,22 +218,6 @@ class AccuracyEvaluator(BaseEvaluator):
         self._eval_func = eval_func
         self._val_loader = val_loader
         self._is_top1 = is_top1
-        self._ref_acc = ref_acc
-
-    @property
-    def ref_acc(self) -> float:
-        """
-        :return: reference accuracy
-        """
-        return self._ref_acc
-
-    @ref_acc.setter
-    def ref_acc(self, val: float) -> NoReturn:
-        """
-        :param val: value to update the reference accuracy value.
-        :return:
-        """
-        self._ref_acc = val
 
     def evaluate_subnet(self) -> float:
         """
@@ -253,7 +236,6 @@ class AccuracyEvaluator(BaseEvaluator):
         """
         state = super().get_state()
         state['is_top1'] = self._is_top1
-        state['ref_acc'] = self._ref_acc
         return state
 
     def update_from_state(self, state: Dict[str, Any]) -> NoReturn:
@@ -266,18 +248,4 @@ class AccuracyEvaluator(BaseEvaluator):
         super().update_from_state(state)
         new_dict = state.copy()
         self._is_top1 = new_dict['is_top1']
-        self._ref_acc = new_dict['ref_acc']
 
-    def update_reference_accuracy(self, search_params):
-        self.ref_acc = search_params.ref_acc
-        if self.input_model_value > self.ref_acc - 0.01 or self.input_model_value < self.ref_acc + 0.01:
-            nncf_logger.warning("Accuracy obtained from evaluation {value} differs from "
-                                        "reference accuracy {ref_acc}".format(value=self.input_model_value,
-                                                                              ref_acc=self.ref_acc))
-            if self.ref_acc == 100:
-                nncf_logger.info("Adjusting reference accuracy to accuracy obtained from evaluation")
-                self.ref_acc = self.input_model_value
-            elif self.ref_acc < 100:
-                nncf_logger.info("Using reference accuracy.")
-                self.input_model_value = self.ref_acc
-        search_params.ref_acc = self.ref_acc
