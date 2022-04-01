@@ -463,7 +463,7 @@ class SearchProblem(Problem):
                 result.append(value)
 
             self._save_checkpoint_best_subnetwork(sample)
-            self.search_records.append(result)
+            self._search_records.append(result)
 
         self._iter += 1
         out["F"] = np.column_stack(list(evaluators_arr))
