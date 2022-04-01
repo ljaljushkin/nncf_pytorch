@@ -33,9 +33,7 @@ from pymoo.optimize import minimize
 import torch
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-import io
 import matplotlib.pyplot as plt
-import PIL.Image
 
 
 from nncf.experimental.torch.nas.bootstrapNAS.search.evaluator import AccuracyEvaluator
@@ -315,8 +313,11 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             self._efficiency_evaluator_handler = EfficiencyEvaluatorHandler(efficiency_evaluator, self._elasticity_ctrl)
         else:
             self._use_default_evaluators = True
-            # TODO: Remove elasticity controller from MACsEvaluator
-            self._efficiency_evaluator_handler = EfficiencyEvaluatorHandler(MACsEvaluator(self._elasticity_ctrl),
+
+            def get_macs_for_active_subnet() -> float:
+                flops, _ = self._elasticity_ctrl.multi_elasticity_handler.count_flops_and_weights_for_active_subnet()
+                return flops / 2000000  # MACs
+            self._efficiency_evaluator_handler = EfficiencyEvaluatorHandler(MACsEvaluator(get_macs_for_active_subnet),
                                                                             self._elasticity_ctrl)
         self._evaluator_handlers.append(self._efficiency_evaluator_handler)
         self._evaluator_handlers.append(self._accuracy_evaluator_handler)

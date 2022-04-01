@@ -21,7 +21,6 @@ from typing import TypeVar
 import csv
 
 from nncf.common.utils.logger import logger as nncf_logger
-from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_controller import ElasticityController
 
 DataLoaderType = TypeVar('DataLoaderType')
 ModelType = TypeVar('ModelType')
@@ -127,7 +126,6 @@ class BaseEvaluator:
             'current_value': self._current_value,
             'ideal_value': self._ideal_value,
             'cache': self.cache,
-            'input_model_value': self.input_model_value
         }
         return state_dict
 
@@ -143,7 +141,6 @@ class BaseEvaluator:
         self._ideal_value = new_dict['ideal_value']
         self._current_value = new_dict['current_value']
         self.cache = new_dict['cache']
-        self.input_model_value = new_dict['input_model_value']
 
     def load_cache_from_csv(self, cache_file_path: str) -> NoReturn:
         """
@@ -173,19 +170,9 @@ class BaseEvaluator:
 
 
 class MACsEvaluator(BaseEvaluator):
-    def __init__(self, elasticity_ctrl: ElasticityController):
+    def __init__(self, eval_func):
         super().__init__("MACs", 0)
-        self._elasticity_ctrl = elasticity_ctrl
-
-    def get_macs_for_active_subnet(self) -> float:
-        """
-        Gets the MACs for the active sub-network
-
-        :param elasticity_handler: Interface for handling super-network elasticity.
-        :return: Multiply-accumulate operations for active sub-network
-        """
-        flops, _ = self._elasticity_ctrl.multi_elasticity_handler.count_flops_and_weights_for_active_subnet()
-        return flops / 2000000  # MACs
+        self.eval_func = eval_func
 
     def evaluate_subnet(self) -> float:
         """
@@ -194,7 +181,7 @@ class MACsEvaluator(BaseEvaluator):
         :param model: Active sub-network
         :return: value obtained from evaluation.
         """
-        self._current_value = self.get_macs_for_active_subnet()
+        self._current_value = self.eval_func()
         return self._current_value
 
 

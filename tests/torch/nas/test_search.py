@@ -155,7 +155,7 @@ class TestSearchEvaluators:
                 f'Skip test for {nas_model_name} as it fails.')
         search = prepare_search_algorithm(nas_model_name)
         search.run(lambda model, val_loader: 0, None, tmp_path)
-        evaluators = search.evaluators
+        evaluators = search.evaluator_handlers
         assert len(evaluators) == 2
         assert evaluators[0].name == 'MACs'
         assert evaluators[1].name == 'top1_acc'
