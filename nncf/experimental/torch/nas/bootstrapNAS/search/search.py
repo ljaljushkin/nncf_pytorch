@@ -144,6 +144,10 @@ class BaseSearchAlgorithm:
         self.best_pair_objective = float('inf')
         self._tb = None
 
+    @property
+    def search_records(self):
+        return self._search_records
+
     @abstractmethod
     def run(self, validate_fn: Callable, val_loader: DataLoader, checkpoint_save_dir: str,
             efficiency_evaluator: Optional[BaseEvaluator] = None, ref_acc: Optional[float] = 100,
@@ -160,7 +164,7 @@ class BaseSearchAlgorithm:
         """
         with open(f'{self._log_dir}/{filename}', 'w', encoding='utf8') as progression:
             writer = csv.writer(progression)
-            for record in self._search_records:
+            for record in self.search_records:
                 writer.writerow(record)
 
 
@@ -342,12 +346,18 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         return self._elasticity_ctrl, self.best_config, self.best_vals
 
     def visualize_search_progression(self, filename='search_progression') -> NoReturn:
+        """
+        Visualizes search progression and saves the resulting figure.
+
+        :param filename:
+        :return:
+        """
         plt.figure()
         colormap = plt.cm.get_cmap('viridis')
         col = range(int(self.search_params.num_evals / self.search_params.population))
-        for i in range(0, len(self._search_records), self.search_params.population):
-            plt.scatter([abs(row[2]) for row in self._search_records][i:i+self.search_params.population],
-                        [abs(row[4]) for row in self._search_records][i:i+self.search_params.population],
+        for i in range(0, len(self.search_records), self.search_params.population):
+            plt.scatter([abs(row[2]) for row in self.search_records][i:i+self.search_params.population],
+                        [abs(row[4]) for row in self.search_records][i:i+self.search_params.population],
                         s=9, c=[col[int(i/self.search_params.population)]]*self.search_params.population, alpha=0.5,
                         marker='D', cmap=colormap)
         plt.scatter(*tuple([ev.input_model_value for ev in self.evaluator_handlers]), marker='s',
@@ -374,7 +384,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         :return:
         """
         for evaluator_handler in self.evaluator_handlers:
-            evaluator_handler.evaluator.export_cache_to_csv(self._log_dir)
+            evaluator_handler.export_cache_to_csv(self._log_dir)
 
     @property
     def efficiency_evaluator_handler(self):
@@ -403,7 +413,7 @@ class SearchProblem(Problem):
                          xu=search.vars_upper,
                          type_var=search.type_var)
         self._search = search
-        self._search_records = search._search_records
+        self._search_records = search.search_records
         self._elasticity_handler = self._search._elasticity_ctrl.multi_elasticity_handler
         self._dims_enabled = self._elasticity_handler.get_available_elasticity_dims()
         self._iter = 0
@@ -453,7 +463,7 @@ class SearchProblem(Problem):
                 result.append(value)
 
             self._save_checkpoint_best_subnetwork(sample)
-            self._search_records.append(result)
+            self.search_records.append(result)
 
         self._iter += 1
         out["F"] = np.column_stack(list(evaluators_arr))
@@ -471,7 +481,8 @@ class SearchProblem(Problem):
             if pair_objective < self._search.best_pair_objective:
                 self._search.best_pair_objective = pair_objective
                 self._search.best_config = config
-                self._search.best_vals = [evaluator.current_value for evaluator in self._evaluators]
+                self._search.best_vals = [evaluator_handler.current_value for evaluator_handler
+                                          in self._evaluator_handlers]
                 checkpoint_path = Path(self._search.checkpoint_save_dir, 'subnetwork_best.pth')
                 checkpoint = {
                     'best_acc1': acc_within_tolerance * -1.0,

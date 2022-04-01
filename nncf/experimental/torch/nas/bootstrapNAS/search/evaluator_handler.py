@@ -9,12 +9,6 @@ class BaseEvaluatorHandler:
         self.elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
         self.input_model_value = evaluator.evaluate_subnet()
 
-    def retrieve_from_cache(self, subnet_config_repr: Tuple[float, ...]) -> Tuple[bool, float]:
-        return self.evaluator.retrieve_from_cache(subnet_config_repr)
-
-    def evaluate_and_add_to_cache_from_pymoo(self, pymoo_repr: Tuple[float, ...]) -> float:
-        return self.evaluator.evaluate_and_add_to_cache_from_pymoo(pymoo_repr)
-
     @property
     def name(self):
         return self.evaluator.name
@@ -22,6 +16,16 @@ class BaseEvaluatorHandler:
     @property
     def current_value(self):
         return self.evaluator.current_value
+
+    def retrieve_from_cache(self, subnet_config_repr: Tuple[float, ...]) -> Tuple[bool, float]:
+        return self.evaluator.retrieve_from_cache(subnet_config_repr)
+
+    def evaluate_and_add_to_cache_from_pymoo(self, pymoo_repr: Tuple[float, ...]) -> float:
+        return self.evaluator.evaluate_and_add_to_cache_from_pymoo(pymoo_repr)
+
+    def export_cache_to_csv(self, cache_file_path: str) -> NoReturn:
+        self.evaluator.export_cache_to_csv(cache_file_path)
+
 
 class EfficiencyEvaluatorHandler(BaseEvaluatorHandler):
     def __init__(self, efficiency_evaluator, elasticity_ctrl):
