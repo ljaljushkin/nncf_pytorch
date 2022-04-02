@@ -25,6 +25,8 @@ class SDescriptorParamNames:
     WIDTH_INDICATOR = 'width_indicator'
     DEPTH_INDICATOR = 'depth_indicator'
     BN_ADAPT = 'bn_adapt'
+    INIT_LR = 'init_lr'
+    EPOCHS_LR = 'epochs_lr'
 
 
 class StageDescriptor:
@@ -66,6 +68,8 @@ class StageDescriptor:
             cls._state_names.WIDTH_INDICATOR: config.get(cls._state_names.WIDTH_INDICATOR, 1),
             cls._state_names.DEPTH_INDICATOR: config.get(cls._state_names.DEPTH_INDICATOR, 1),
             cls._state_names.BN_ADAPT: config.get(cls._state_names.BN_ADAPT, False),
+            cls._state_names.INIT_LR: config.get(cls._state_names.INIT_LR, None),
+            cls._state_names.EPOCHS_LR: config.get(cls._state_names.EPOCHS_LR, None)
         }
         return cls(**kwargs)
 
