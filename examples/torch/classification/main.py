@@ -322,7 +322,7 @@ def train(config, compression_ctrl, model, criterion, criterion_fn, lr_scheduler
         is_best = is_best_by_accuracy or compression_stage > best_compression_stage
         if is_best:
             best_acc1 = acc1
-        config.mlflow.safe_call('log_metric', "best_acc1", best_acc1)
+        # config.mlflow.safe_call('log_metric', "best_acc1", best_acc1)
         best_compression_stage = max(compression_stage, best_compression_stage)
         acc = best_acc1 / 100
         if config.metrics_dump is not None:
@@ -345,7 +345,7 @@ def train(config, compression_ctrl, model, criterion, criterion_fn, lr_scheduler
             make_additional_checkpoints(checkpoint_path, is_best, epoch + 1, config)
 
             for key, value in prepare_for_tensorboard(statistics).items():
-                config.mlflow.safe_call('log_metric', 'compression/statistics/{0}'.format(key), value, epoch)
+                # config.mlflow.safe_call('log_metric', 'compression/statistics/{0}'.format(key), value, epoch)
                 config.tb.add_scalar("compression/statistics/{0}".format(key), value, len(train_loader) * epoch)
 
 
@@ -629,9 +629,9 @@ def validate(val_loader, model, criterion, config, epoch=0, log_validation_info=
             config.tb.add_scalar("val/loss", losses.avg, len(val_loader) * epoch)
             config.tb.add_scalar("val/top1", top1.avg, len(val_loader) * epoch)
             config.tb.add_scalar("val/top5", top5.avg, len(val_loader) * epoch)
-            config.mlflow.safe_call('log_metric', "val/loss", float(losses.avg), epoch)
-            config.mlflow.safe_call('log_metric', "val/top1", float(top1.avg), epoch)
-            config.mlflow.safe_call('log_metric', "val/top5", float(top5.avg), epoch)
+            # config.mlflow.safe_call('log_metric', "val/loss", float(losses.avg), epoch)
+            # config.mlflow.safe_call('log_metric', "val/top1", float(top1.avg), epoch)
+            # config.mlflow.safe_call('log_metric', "val/top5", float(top5.avg), epoch)
 
         if log_validation_info:
             logger.info(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}\n'.format(top1=top1, top5=top5))
