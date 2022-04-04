@@ -168,9 +168,6 @@ def main_worker(current_gpu, config: SampleConfig):
                                                                          resuming_checkpoint_path)
 
     if 'train' in config.mode:
-        # Validate supernetwork
-        top1_acc = validate_model_fn_top1(model, val_loader)
-
         nncf_network, elasticity_ctrl = training_algorithm.run(train_epoch_fn, train_loader,
                                                                validate_model_fn, val_loader, optimizer,
                                                                config.checkpoint_save_dir, config.tb,
