@@ -105,7 +105,7 @@ def main(argv):
 # pylint:disable=too-many-branches,too-many-statements
 def main_worker(current_gpu, config: SampleConfig):
     configure_device(current_gpu, config)
-    config.mlflow = SafeMLFLow(config)
+    # config.mlflow = SafeMLFLow(config)
     if is_main_process():
         configure_logging(logger, config)
         print_args(config)
@@ -169,8 +169,8 @@ def main_worker(current_gpu, config: SampleConfig):
 
     if 'train' in config.mode:
         # Validate supernetwork
-        top1_acc = validate_model_fn_top1(model, val_loader)
-
+        # top1_acc = validate_model_fn_top1(model, val_loader)
+        # print('supernet acc1: {}'.format(top1_acc))
         nncf_network, elasticity_ctrl = training_algorithm.run(train_epoch_fn, train_loader,
                                                                validate_model_fn, val_loader, optimizer,
                                                                config.checkpoint_save_dir, config.tb,
