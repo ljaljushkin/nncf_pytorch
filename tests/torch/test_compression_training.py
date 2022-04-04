@@ -226,6 +226,7 @@ class NASTrainingTestDescriptor(CompressionTrainingTestDescriptor):
         self.data_parallel()
         self.num_train_steps_ = None
         self.checkpoint_name = 'supernet'
+        self.timeout_seconds(2 * 60 * 60)  # 2 hours
 
     def num_train_steps(self, num_steps: int):
         self.num_train_steps_ = num_steps
@@ -403,6 +404,7 @@ class TestCompression:
         validator = desc.get_validator()
         args = validator.get_default_args(tmp_path)
 
+        print(args)
         validator.validate_sample(args, mocker)
 
         self._validate_train_metric(desc)

@@ -11,17 +11,22 @@
         ]
     },
     "batch_size": 256,
-    "batch_size_val": 256,
+    "batch_size_val": 512,
     "multiprocessing_distributed": false,
     "optimizer": {
         "type": "sgd",
         "momentum": 0.9,
+        "gamma": 0.5,
         "nesterov": true,
-        "weight_decay": 3e-7,
-        "base_lr": 1.0,
+//        "weight_decay": 3e-7,
+//        "base_lr": 1.0,
         // 2.5e-6,
-        "label_smoothing": 0.1,
-        "no_decay_keys": "bn#bias"
+//        "label_smoothing": 0.1,
+//        "no_decay_keys": "bn#bias",
+        "optimizer_params": {
+            "momentum": 0.9,
+            "nesterov": true
+        }
     },
     "bootstrapNAS": {
         "training": {
@@ -31,7 +36,7 @@
                 "width"
             ],
             "batchnorm_adaptation": {
-                "num_bn_adaptation_samples": 1500
+                "num_bn_adaptation_samples": 2
             },
             "schedule": {
                 "list_stage_descriptions": [
@@ -40,10 +45,10 @@
                             "depth"
                         ],
                         "epochs": 20,
-                        "depth_indicator": 1,
-                        "init_lr": 2.5e-6,
+                        "depth_indicator": 3,
+                        "init_lr": 2.5e-6, // 3.5e-6, //2.5e-6,
                         "epochs_lr": 20,
-                        "warmup_epochs": 5
+//                        "warmup_epochs": 5
                     }
                 ]
             },
@@ -66,45 +71,97 @@
                     "max_block_size": 5,
                     "min_block_size": 4,
                     "skipped_blocks": [
-                        //                        [
-                        //                            "EfficientNet/MemoryEfficientSwish[_swish]/__mul___0",
-                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/MemoryEfficientSwish[_swish]/__mul___0"
-                        //                        ],
-                        //                        [
-                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___0",
-                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___1"
-                        //                        ],
-                        //                        [
-                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___0",
-                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___1"
-                        //                        ]
-                        // first 3 blocks
                         //                        //                        [
-                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/NNCFBatchNorm[_bn2]/batch_norm_0",
-                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/__add___0"
+                        //                        //                            "EfficientNet/MemoryEfficientSwish[_swish]/__mul___0",
+                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/MemoryEfficientSwish[_swish]/__mul___0"
                         //                        //                        ],
-                        //                        ////                        [
-                        //                        ////                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/__add___0",
-                        //                        ////                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/__add___0"
-                        //                        ////                        ],
                         //                        //                        [
-                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/__add___0",
-                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/__add___0"
+                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___0",
+                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___1"
+                        //                        //                        ],
+                        //                        //                        [
+                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___0",
+                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___1"
                         //                        //                        ]
-                        //                    ]
-                        // middle 3 blocks
-                        [
-                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/MemoryEfficientSwish[_swish]/__mul___0",
-                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/MemoryEfficientSwish[_swish]/__mul___1"
-                        ],
-                        [
-                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___0",
-                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___1"
-                        ],
-                        [
-                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___0",
-                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___1"
-                        ]
+                        //                        // first 3 blocks
+                        //                        //                        //                        [
+                        //                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/NNCFBatchNorm[_bn2]/batch_norm_0",
+                        //                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/__add___0"
+                        //                        //                        //                        ],
+                        //                        //                        ////                        [
+                        //                        //                        ////                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/__add___0",
+                        //                        //                        ////                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/__add___0"
+                        //                        //                        ////                        ],
+                        //                        //                        //                        [
+                        //                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/__add___0",
+                        //                        //                        //                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/__add___0"
+                        //                        //                        //                        ]
+                        //                        //                    ]
+                        //                        // middle 3 blocks
+//                                                [
+//                                                    "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/MemoryEfficientSwish[_swish]/__mul___0",
+//                                                    "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/MemoryEfficientSwish[_swish]/__mul___1"
+//                                                ],
+//                                                [
+//                                                    "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___0",
+//                                                    "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___1"
+//                                                ],
+//                                                [
+//                                                    "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___0",
+//                                                    "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___1"
+//                                                ]
+                        // first 3 +
+//                        [
+//                            "EfficientNet/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/MemoryEfficientSwish[_swish]/__mul___0"
+//                        ],
+//                        [
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___1"
+//                        ],
+//                        [
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___1"
+//                        ],
+//                        // first 3 -
+//                        [
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/MemoryEfficientSwish[_swish]/__mul___1"
+//                        ],
+//                        [
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/MemoryEfficientSwish[_swish]/__mul___1"
+//                        ],
+//                        // middle 3 +
+//                        [
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/MemoryEfficientSwish[_swish]/__mul___1"
+//                        ],
+//                        [
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___1"
+//                        ],
+//                        [
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___1"
+//                        ],
+//                        // middle 3 -
+//                        [
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/MemoryEfficientSwish[_swish]/__mul___1"
+//                        ],
+//                        [
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/MemoryEfficientSwish[_swish]/__mul___1"
+//                        ],
+//                        [
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/MemoryEfficientSwish[_swish]/__mul___1"
+//                        ],
+//                        [
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/MemoryEfficientSwish[_swish]/__mul___0",
+//                            "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/MemoryEfficientSwish[_swish]/__mul___1]"
+//                        ]
                     ]
                 }
             }
