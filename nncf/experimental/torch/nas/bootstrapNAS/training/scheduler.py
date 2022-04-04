@@ -267,15 +267,15 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
     def _validate_lr(self):
         for desc in self._list_stage_descriptors:
             # Check if global learning rate has been set
-            if desc.init_lr is not None and bool(self._training_ctrl._lr_schedule_config):
-                raise ValueError(
-                    f"Global learning rate scheduler is in use. Cannot set stage learning rate: {desc.init_lr}"
-                )
+            # if desc.init_lr is not None:
+            #     raise ValueError(
+            #         f"Global learning rate scheduler is in use. Cannot set stage learning rate: {desc.init_lr}"
+            #     )
             # Check if stage learning rate has been set
-            elif desc.init_lr is None and not bool(self._training_ctrl._lr_schedule_config):
-                nncf_logger.warning(
-                    "Stage learning rate in use but init_lr value for stage wasn't set. Using default value of 3.5e-6")
-                desc.init_lr = DEFAULT_STAGE_LR_RATE
+            # elif desc.init_lr is None:
+            #     nncf_logger.warning(
+            #         "Stage learning rate in use but init_lr value for stage wasn't set. Using default value of 3.5e-6")
+            #     desc.init_lr = DEFAULT_STAGE_LR_RATE
 
             if desc.init_lr is not None and desc.epochs_lr is None:
                 nncf_logger.warning(
