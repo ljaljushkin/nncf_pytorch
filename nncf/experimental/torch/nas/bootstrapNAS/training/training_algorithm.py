@@ -10,6 +10,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
+import json
 from pathlib import Path
 from shutil import copyfile
 from typing import Any
@@ -20,7 +21,6 @@ from typing import Tuple
 from typing import TypeVar
 
 import torch
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from nncf import NNCFConfig
 from nncf.api.compression import CompressionAlgorithmController
@@ -80,7 +80,8 @@ class EpochBasedTrainingAlgorithm:
     def __init__(self,
                  nncf_network: NNCFNetwork,
                  training_ctrl: BNASTrainingController,
-                 checkpoint: Optional[Dict[str, Any]] = None):
+                 checkpoint: Optional[Dict[str, Any]] = None,
+                 config=None):
         """
         Initializes the training algorithm
 
@@ -96,6 +97,7 @@ class EpochBasedTrainingAlgorithm:
         self._min_subnet_best_acc1 = 0
         self._optimizer = None
         self._optimizer_state = None
+        self._config = config
         if checkpoint is not None:
             resuming_model_state_dict = checkpoint[self._state_names.MODEL_STATE]
             load_state(self._model, resuming_model_state_dict, is_resume=True)
@@ -152,6 +154,8 @@ class EpochBasedTrainingAlgorithm:
             except ModuleNotFoundError:
                 nncf_logger.warning("Tensorboard installation not found! Install tensorboard Python package "
                                     "in order for BootstrapNAS tensorboard data to be dumped")
+        tensorboard_writer.add_text('nncf_config',
+                                         json.dumps(self._config, indent=4, sort_keys=False).replace("\n", "\n\n"), 0)
 
         total_num_epochs = self._training_ctrl.get_total_num_epochs()
 
@@ -234,7 +238,7 @@ class EpochBasedTrainingAlgorithm:
         algo_name = nncf_config.get('bootstrapNAS', {}).get('training', {}).get('algorithm', 'progressive_shrinking')
         training_ctrl, model = create_compressed_model_from_algo_names(nncf_network, nncf_config,
                                                                        algo_names=[algo_name])
-        return EpochBasedTrainingAlgorithm(model, training_ctrl)
+        return EpochBasedTrainingAlgorithm(model, training_ctrl, config=nncf_config)
 
     @classmethod
     def from_checkpoint(cls,
