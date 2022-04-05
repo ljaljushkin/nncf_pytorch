@@ -63,6 +63,7 @@ class TFBatchnormAdaptationAlgorithmImpl(BatchnormAdaptationAlgorithmImpl):
             for (x, _) in ProgressBar(
                     islice(self._data_loader, self._num_bn_adaptation_steps),
                     total=self._num_bn_adaptation_steps,
+                    num_lines=1,
                     desc='BatchNorm statistics adaptation'
             ):
                 model(x, training=True)

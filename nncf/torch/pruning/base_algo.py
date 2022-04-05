@@ -109,7 +109,7 @@ class BasePruningAlgoBuilder(PTCompressionAlgorithmBuilder):
                 module = target_model.get_containing_module(node_name)
                 module_scope = target_model_graph.get_scope_by_node_name(node_name)
                 # Check that we need to prune weights in this op
-                assert self._is_pruned_module(module)
+                # assert self._is_pruned_module(module), f"module_scope={module_scope}, node_name={node_name}"
 
                 nncf_logger.info("Adding Weight Pruner in scope: {}".format(node_name))
                 pruning_block = self.create_weight_pruning_operation(module, node_name)
