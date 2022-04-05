@@ -234,7 +234,7 @@ class NASTrainingTestDescriptor(CompressionTrainingTestDescriptor):
         self.num_train_steps_ = None
         self.checkpoint_name = 'supernet'
         self.subnet_expected_accuracy_ = None
-        self.subnet_checkpoint_name = 'subnetwork_best'
+        self.subnet_checkpoint_name = 'subnetwork'
 
     def num_train_steps(self, num_steps: int):
         self.num_train_steps_ = num_steps
@@ -315,7 +315,7 @@ NAS_DESCRIPTORS = [
     NASTrainingTestDescriptor()
         .real_dataset('cifar10')
         .config_name('mobilenet_v2_nas_SMALL.json')
-        .expected_accuracy(73.45)
+        .expected_accuracy(80.95)
         .subnet_expected_accuracy(88.67)
         .weights_filename('mobilenet_v2_cifar10_93.91.pth')
         .absolute_tolerance_train(1.0)
@@ -323,23 +323,23 @@ NAS_DESCRIPTORS = [
     NASTrainingTestDescriptor()
         .real_dataset('cifar10')
         .config_name('resnet50_nas_SMALL.json')
-        .expected_accuracy(87.02)
         .subnet_expected_accuracy(88.67)
+        .expected_accuracy(87.25)
         .weights_filename('resnet50_cifar10_93.65.pth')
         .absolute_tolerance_train(2.0)
         .absolute_tolerance_eval(2e-2),
     NASTrainingTestDescriptor()
         .real_dataset('cifar10')
         .config_name('vgg11_bn_nas_SMALL.json')
-        .expected_accuracy(90.46)
         .subnet_expected_accuracy(88.67)
+        .expected_accuracy(89.43)
         .weights_filename('vgg11_bn_cifar10_92.39.pth')
         .absolute_tolerance_train(2.0)
         .absolute_tolerance_eval(2e-2),
     NASTrainingTestDescriptor()
         .real_dataset('cifar100')
         .config_name('efficient_net_b0_nas_SMALL.json')
-        .expected_accuracy(10.04)
+        .expected_accuracy(1)
         .subnet_expected_accuracy(88.67)
         .weights_filename('efficient_net_b0_cifar100_87.02.pth')
         .absolute_tolerance_train(1.0)
