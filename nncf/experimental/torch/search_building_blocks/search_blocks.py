@@ -11,9 +11,6 @@
  limitations under the License.
 """
 from collections import deque
-from copy import deepcopy
-from enum import Enum
-from functools import cmp_to_key
 from itertools import combinations
 from itertools import groupby
 from typing import Any
@@ -23,12 +20,18 @@ from typing import Set
 from typing import Tuple
 
 import networkx as nx
+import os
 import torch
+from copy import deepcopy
+from enum import Enum
+from functools import cmp_to_key
+from networkx.drawing.nx_agraph import to_agraph
 
 from nncf.common.graph.definitions import MODEL_OUTPUT_OP_NAME
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNodeName
 from nncf.common.graph.graph_matching import find_subgraphs_matching_pattern
+from nncf.common.utils.logger import logger as nncf_logger
 from nncf.torch.dynamic_graph.operation_address import OperationAddress
 from nncf.torch.graph.graph import PTNNCFGraph
 from nncf.torch.graph.operator_metatypes import PTDropoutMetatype
@@ -38,7 +41,6 @@ from nncf.torch.graph.operator_metatypes import PTRELUMetatype
 from nncf.torch.hardware.fused_patterns import PT_HW_FUSED_PATTERNS
 from nncf.torch.layers import NNCF_MODULES_OP_NAMES
 from nncf.torch.nncf_network import NNCFNetwork
-from nncf.common.utils.logger import logger as nncf_logger
 
 IgnoredNameOperators = [*PTDropoutMetatype.get_all_aliases(), MODEL_OUTPUT_OP_NAME]
 OrdinalIDs = List[List[int]]
@@ -299,6 +301,48 @@ class SearchGraph:
         """
         return self._nx_graph
 
+    def _get_graph_for_visualization(self) -> nx.DiGraph:
+        """
+        :return: A user-friendly graph .dot file, making it easier to debug the network and setup
+        ignored/target scopes.
+        """
+        out_graph = nx.DiGraph()
+        for node in self.get_all_nodes():
+            attrs_node = {}
+            if node.is_merged:
+                attrs_node['label'] = f"main: {node.main_id} bottom: {node.bottom_id} {node.node_type}"
+            else:
+                attrs_node['label'] = f"id: {node.data.get('id')} {node.node_type}"
+            out_graph.add_node(node.node_key, **attrs_node)
+
+        for u, v in self._nx_graph.edges:
+            edge = self._nx_graph.edges[u, v]
+            style = 'solid'
+            # label=edge[SearchGraph.ACTIVATION_INPUT_SHAPE_ATTR]
+            out_graph.add_edge(u, v, style=style)
+
+        mapping = {k: v['label'] for k, v in out_graph.nodes.items()}
+        out_graph = nx.relabel_nodes(out_graph, mapping)
+        for node in out_graph.nodes.values():
+            node.pop('label')
+
+        return out_graph
+
+    def visualize_graph(self, path: str):
+        out_graph = self._get_graph_for_visualization()
+        nx.drawing.nx_pydot.write_dot(out_graph, path)
+        try:
+            A = to_agraph(out_graph)
+            A.layout('dot')
+            png_path = os.path.splitext(path)[0] + '.png'
+            A.draw(png_path)
+        except ImportError:
+            nncf_logger.warning('Graphviz is not installed - only the .dot model visualization format will be used. '
+                                'Install pygraphviz into your Python environment and graphviz system-wide to enable '
+                                'PNG rendering.')
+        except Exception:  # pylint:disable=broad-except
+            nncf_logger.warning('Failed to render graph to PNG')
+
 
 def get_search_graph(original_graph: PTNNCFGraph) -> SearchGraph:
     """
@@ -481,7 +525,7 @@ def check_graph_has_no_act_layer_duplication_after_block_removal(sgraph: SearchG
         pred_start_node = sgraph.get_prev_nodes(pred_start_node[0].node_key)
 
     if pred_start_node[0].node_type[-1] in PTRELUMetatype.get_all_aliases() \
-        and next_end_node[0].node_type[0] in PTRELUMetatype.get_all_aliases():
+            and next_end_node[0].node_type[0] in PTRELUMetatype.get_all_aliases():
         return False
     return True
 
@@ -619,6 +663,7 @@ def get_building_blocks(compressed_model: NNCFNetwork,
 
     orig_graph = compressed_model.get_original_graph()  # PTNNCFGraph
     sgraph = get_search_graph(orig_graph)
+    sgraph.visualize_graph('search_graph.dot')
 
     fn_rules = [check_graph_has_no_duplicate_edges_after_block_removal,
                 check_graph_has_no_act_layer_duplication_after_block_removal,
@@ -635,6 +680,8 @@ def get_building_blocks(compressed_model: NNCFNetwork,
             for end_node in act_output_shape[shape]:
                 if end_node.main_id <= start_node.main_id:
                     continue
+                # TODO: not correct in a general case. simple path. how long does it. might hang?
+                #   max_block_size != cutoff (+-1)? for _all_simple_paths_graph, because cutoff is a depth, not number of nodes
                 if end_node.bottom_id - start_node.main_id > max_block_size:
                     continue
                 if end_node.bottom_id - start_node.main_id < min_block_size:
@@ -650,12 +697,15 @@ def get_building_blocks(compressed_model: NNCFNetwork,
                         break
                 if all_rules_is_true:
                     blocks.append(PotentialBuildingBlock(start_node, end_node))
-
+    allow_overlapped_blocks = True
     sorted_blocks = sorted(blocks, key=cmp_to_key(compare_for_building_block))
     if not allow_linear_combination:
         sorted_blocks = remove_linear_combination(sorted_blocks)
     if not allow_nested_blocks:
         sorted_blocks = remove_nested_blocks(sorted_blocks)
+    if not allow_overlapped_blocks:
+        sorted_blocks = remove_overlapping_blocks(sorted_blocks)
+    # TODO: is invalid
     num_layers_in_blocks = [(pblock.end_node.bottom_id - pblock.start_node.main_id) for pblock in sorted_blocks]
     nncf_logger.info('Number of operations in the blocks: {}'.format(str(num_layers_in_blocks)))
     building_blocks_in_orig_graph, ordinals_id = restore_node_name_in_orig_graph(sorted_blocks, orig_graph)
@@ -672,6 +722,16 @@ def remove_nested_blocks(sorted_blocks: List[PotentialBuildingBlock]) -> List[Po
     :return: List of building blocks without nested blocks.
     """
     return [list(group_block)[-1] for _, group_block in groupby(sorted_blocks, lambda block: block.start_node.main_id)]
+
+
+def remove_overlapping_blocks(sorted_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
+    """
+    Remove overlapping building blocks.
+
+    :param: List of building blocks.
+    :return: List of building blocks that have no intersection with each other - no overlapping blocks.
+    """
+    return sorted_blocks
 
 
 def get_group_of_dependent_blocks(blocks: BuildingBlocks) -> GroupedBlockIDs:
@@ -762,6 +822,8 @@ def get_type_building_block(op_addresses_in_block: Set[OperationAddress]) -> Bui
             count_matmul += 1
         if op_address.operator_name in PTLinearMetatype.get_all_aliases():
             count_fc += 1
+    # TODO: more strict rules, to avoid double counting
+    #   no conv, no add ??
     if count_fc == 4 and count_matmul == 2:
         return BuildingBlockType.MSHA
     if count_fc == 2 and count_matmul == 0:

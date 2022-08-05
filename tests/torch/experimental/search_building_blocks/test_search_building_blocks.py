@@ -355,3 +355,31 @@ def test_building_block_algo_param(algo_params: SearchBBlockAlgoParamsCase):
                                        allow_linear_combination=algo_params.allow_linear_combination)
 
     assert blocks == algo_params.ref_blocks
+
+# def test_remove_nested_blocks():
+#     start_node = SearchGraphNode()
+#     end_node = SearchGraphNode()
+#     PotentialBuildingBlock(start_node, end_node)
+
+    # class PotentialBuildingBlock:
+    #     """
+    #     Describes a building block that is uniquely defined by the start and end nodes.
+    #     """
+    #
+    #     def __init__(self, start_node: SearchGraphNode, end_node: SearchGraphNode):
+    #         self.start_node = start_node
+    #         self.end_node = end_node
+    #
+    #     def __eq__(self, __o: 'PotentialBuildingBlock') -> bool:
+    #         return self.start_node == __o.start_node and self.end_node == __o.end_node
+
+
+    # def remove_nested_blocks(sorted_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
+    #     """
+    #     Remove nested building blocks.
+    #
+    #     :param: List of building blocks.
+    #     :return: List of building blocks without nested blocks.
+    #     """
+    #     return [list(group_block)[-1] for _, group_block in
+    #             groupby(sorted_blocks, lambda block: block.start_node.main_id)]
