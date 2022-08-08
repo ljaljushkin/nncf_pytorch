@@ -10,12 +10,14 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
+import time
 from collections import deque
 from itertools import combinations
 from itertools import groupby
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Set
 from typing import Tuple
 
@@ -174,7 +176,17 @@ class BuildingBlock:
         return BuildingBlock(**state)
 
 
+class ExtendedBuildingBlock:
+    def __init__(self, basic_block: BuildingBlock,
+                 ordinal_ids: Optional[List[int]],
+                 op_adresses: Optional[Set[OperationAddress]]):
+        self.basic_block = basic_block
+        self.ordinal_ids = ordinal_ids
+        self.op_adresses = op_adresses
+
+
 BuildingBlocks = List[BuildingBlock]
+ExtendedBuildingBlocks = List[ExtendedBuildingBlock]
 
 
 class BuildingBlockType(Enum):
@@ -598,21 +610,27 @@ def remove_linear_combination(sorted_building_blocks: List[PotentialBuildingBloc
     return result_blocks
 
 
+# TODO: rename to more general. convert
 def restore_node_name_in_orig_graph(building_blocks: List[PotentialBuildingBlock],
-                                    orig_graph: PTNNCFGraph) -> Tuple[BuildingBlocks, OrdinalIDs]:
+                                    orig_graph: PTNNCFGraph,
+                                    compressed_model: NNCFNetwork) -> ExtendedBuildingBlocks:
     """
     Restore the original names and ids of the start and end of the block in original graph.
     """
     building_block_in_orig_format = []
-    ordinal_ids = []
     for block in building_blocks:
+        # TODO(nlyalyus): why bottom id??? why dummy_node?? what is the connection?? why not main_id?
         id_st = block.start_node.bottom_id  # dummy node
         id_end = block.end_node.bottom_id
+        # TODO(nlyalyus): looks as a hack...
         block_in_orig_format = BuildingBlock(orig_graph.get_node_key_by_id(id_st).split(' ')[-1],
                                              orig_graph.get_node_key_by_id(id_end).split(' ')[-1])
-        building_block_in_orig_format.append(block_in_orig_format)
-        ordinal_ids.append([id_st, id_end])
-    return building_block_in_orig_format, ordinal_ids
+
+        op_addresses = get_all_node_op_addresses_in_block(compressed_model, block_in_orig_format)
+        ordinal_ids = [id_st, id_end]
+        ext_block = ExtendedBuildingBlock(block_in_orig_format, ordinal_ids, op_addresses)
+        building_block_in_orig_format.append(ext_block)
+    return building_block_in_orig_format
 
 
 def get_potential_candidate_for_block(search_graph: SearchGraph) -> Tuple[ShapeVsNodesMap, ShapeVsNodesMap]:
@@ -643,11 +661,23 @@ def get_potential_candidate_for_block(search_graph: SearchGraph) -> Tuple[ShapeV
     return act_input_shape, act_output_shape
 
 
+def timeit(method):
+    def timed(*args, **kw):
+        ts = time.time()
+        result = method(*args, **kw)
+        te = time.time()
+        print('TIMEIT: {}  {:2.2f} ms'.format(method.__name__, (te - ts) * 1000))
+        return result
+
+    return timed
+
+
+@timeit
 def get_building_blocks(compressed_model: NNCFNetwork,
                         max_block_size: int = 50,
                         min_block_size: int = 6,
                         allow_linear_combination: bool = False,
-                        allow_nested_blocks: bool = True, ) -> Tuple[BuildingBlocks, OrdinalIDs, GroupedBlockIDs]:
+                        allow_nested_blocks: bool = True, ) -> Tuple[BuildingBlocks, GroupedBlockIDs]:
     """
     This algorithm finds building blocks based on the analysis of the transformed graph.
     A building block is a block that satisfies the following rules:
@@ -665,6 +695,7 @@ def get_building_blocks(compressed_model: NNCFNetwork,
     sgraph = get_search_graph(orig_graph)
     sgraph.visualize_graph('search_graph.dot')
 
+    # TODO: form all other conditions as rules??? min, max block, nested, intersected...
     fn_rules = [check_graph_has_no_duplicate_edges_after_block_removal,
                 check_graph_has_no_act_layer_duplication_after_block_removal,
                 check_graph_has_no_hanging_edges_after_block_removal]
@@ -682,10 +713,10 @@ def get_building_blocks(compressed_model: NNCFNetwork,
                     continue
                 # TODO: not correct in a general case. simple path. how long does it. might hang?
                 #   max_block_size != cutoff (+-1)? for _all_simple_paths_graph, because cutoff is a depth, not number of nodes
-                if end_node.bottom_id - start_node.main_id > max_block_size:
-                    continue
-                if end_node.bottom_id - start_node.main_id < min_block_size:
-                    continue
+                # if end_node.bottom_id - start_node.main_id > max_block_size:
+                #     continue
+                # if end_node.bottom_id - start_node.main_id < min_block_size:
+                #     continue
                 if end_node.node_type in IgnoredNameOperators:
                     continue
 
@@ -703,15 +734,28 @@ def get_building_blocks(compressed_model: NNCFNetwork,
         sorted_blocks = remove_linear_combination(sorted_blocks)
     if not allow_nested_blocks:
         sorted_blocks = remove_nested_blocks(sorted_blocks)
-    if not allow_overlapped_blocks:
-        sorted_blocks = remove_overlapping_blocks(sorted_blocks)
-    # TODO: is invalid
-    num_layers_in_blocks = [(pblock.end_node.bottom_id - pblock.start_node.main_id) for pblock in sorted_blocks]
-    nncf_logger.info('Number of operations in the blocks: {}'.format(str(num_layers_in_blocks)))
-    building_blocks_in_orig_graph, ordinals_id = restore_node_name_in_orig_graph(sorted_blocks, orig_graph)
-    group_dependent = get_group_of_dependent_blocks(building_blocks_in_orig_graph)
+    # if not allow_overlapped_blocks:
+    #     sorted_blocks = remove_overlapping_blocks(sorted_blocks)
 
-    return building_blocks_in_orig_graph, ordinals_id, group_dependent
+    # TODO(nlyalyus): why not store OrdinalIDs inside each BuildingBlock? as well as OpAddresses[Optional]
+    ext_building_blocks = restore_node_name_in_orig_graph(sorted_blocks, orig_graph, compressed_model)
+
+    filtered_building_blocks = []
+    for block in ext_building_blocks:
+        # maybe can do beforehand???
+        num_ops_in_block = len(block.op_adresses)
+        nncf_logger.info('Number of operations in the blocks: {}'.format(num_ops_in_block))
+        if num_ops_in_block > max_block_size:
+            continue
+        if num_ops_in_block < min_block_size:
+            continue
+
+        filtered_building_blocks.append(block)
+
+    #
+    group_dependent = get_group_of_dependent_blocks(ext_building_blocks)
+
+    return ext_building_blocks, group_dependent
 
 
 def remove_nested_blocks(sorted_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
@@ -758,6 +802,7 @@ def get_group_of_dependent_blocks(blocks: BuildingBlocks) -> GroupedBlockIDs:
     return groups
 
 
+@timeit
 def get_building_blocks_info(bblocks: BuildingBlocks, compressed_model: NNCFNetwork) -> List[BuildingBlockInfo]:
     """
     Returns additional information about building blocks.

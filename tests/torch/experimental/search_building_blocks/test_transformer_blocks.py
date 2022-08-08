@@ -615,3 +615,70 @@ def test_transformer_building_blocks(desc: TransformerSearchBBlockParamsCase):
         assert act_bi.building_block.start_node_name == ref_bi.start_node_name
         assert act_bi.building_block.end_node_name == ref_bi.end_node_name
         assert len(act_bi.op_addresses) == ref_bi.num_ops
+
+
+@pytest.mark.parametrize(
+    (
+            'start_ids',
+            'end_ids',
+            'remaining_pairs'
+    ),
+    [
+        (
+                [1, 2, 3, 4],
+                [2, 3, 4, 5],
+                {0, 1, 2, 3}
+        ),
+        (
+                [1, 2, 3, 4],
+                [5, 5, 5, 5],
+                {3}
+        ),
+        (
+                [1, 1, 1, 1],
+                [2, 3, 4, 5],
+                {0}
+        ),
+        (
+                [1, 1, 2, 2],
+                [2, 3, 3, 4],
+                {0, 2}
+        ),
+        (
+                [1, 2, 1, 2],
+                [3, 3, 4, 4],
+                {2}
+        ),
+        (
+                [1, 3, 3, 4, 5, 10, 11],
+                [4, 5, 6, 7, 6, 14, 12],
+                {1, 4, 6}
+        ),
+        (
+                [1, 2, 3, 4],
+                [5, 4, 6, 9],
+                {1}
+        ),
+    ]
+)
+def test_filtering(start_ids, end_ids, remaining_pairs):
+    n = len(start_ids)
+    all_ids = set(range(0, n))
+    pair_id_to_remove = set()
+    for curr_id in range(n - 1):
+        if curr_id in pair_id_to_remove:
+            continue
+        # remove all blocks that are bigger or equal to the current and starts in the boundaries of the current block
+        for next_id in range(curr_id + 1, n):
+            if start_ids[next_id] >= end_ids[curr_id]:
+                break
+            if next_id in pair_id_to_remove:
+                continue
+            current_len = end_ids[curr_id] - start_ids[curr_id]  # replace with number of ops
+            next_len = end_ids[next_id] - start_ids[next_id]
+            if current_len <= next_len:
+                pair_id_to_remove.add(next_id)
+            else:
+                pair_id_to_remove.add(curr_id)
+    actual_remaining_pairs = all_ids - pair_id_to_remove
+    assert remaining_pairs == actual_remaining_pairs
