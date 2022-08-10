@@ -13,6 +13,8 @@
 from typing import Callable
 from typing import Dict
 from typing import List
+from typing import Optional
+from typing import Set
 from typing import Union
 
 import pytest
@@ -25,6 +27,7 @@ from transformers import AutoModelForQuestionAnswering
 from nncf.experimental.torch.search_building_blocks.search_blocks import BuildingBlockType
 from nncf.experimental.torch.search_building_blocks.search_blocks import get_building_blocks
 from nncf.experimental.torch.search_building_blocks.search_blocks import get_building_blocks_info
+from nncf.experimental.torch.search_building_blocks.search_blocks import get_indexes_of_overlapping_blocks
 from tests.torch.helpers import create_compressed_model_and_algo_for_test
 from tests.torch.helpers import get_empty_config
 from tests.torch.nas.helpers import move_model_to_cuda_if_available
@@ -606,8 +609,8 @@ def test_transformer_building_blocks(desc: TransformerSearchBBlockParamsCase):
     nncf_config = get_empty_config(input_info=desc.input_info)
     nncf_model, _ = create_compressed_model_and_algo_for_test(model, nncf_config)
 
-    blocks, _, group_dependent = get_building_blocks(nncf_model, allow_nested_blocks=False)
-    blocks_info = get_building_blocks_info(blocks, nncf_model)
+    ext_blocks, group_dependent = get_building_blocks(nncf_model, allow_nested_blocks=False)
+    blocks_info = get_building_blocks_info(ext_blocks, nncf_model)
 
     assert len(blocks_info) == len(desc.ref_blocks), 'different number of blocks'
     for act_bi, ref_bi in zip(blocks_info, desc.ref_blocks):
@@ -617,68 +620,99 @@ def test_transformer_building_blocks(desc: TransformerSearchBBlockParamsCase):
         assert len(act_bi.op_addresses) == ref_bi.num_ops
 
 
-@pytest.mark.parametrize(
-    (
-            'start_ids',
-            'end_ids',
-            'remaining_pairs'
+class FilterBlockTestDesc:
+    def __init__(self,
+                 start_ids: List[int],
+                 end_ids: List[int],
+                 overlapping_blocks_ids: Optional[Set[int]] = None,
+                 num_ops_in_block: Optional[List[int]] = None,
+                 name: Optional[str] = None):
+        self.start_ids = start_ids
+        self.end_ids = end_ids
+        self.overlapping_blocks_ids = overlapping_blocks_ids
+        if self.overlapping_blocks_ids is None:
+            self.overlapping_blocks_ids = set()
+        self.num_ops_in_block = num_ops_in_block
+        if self.num_ops_in_block is None:
+            self.num_ops_in_block = [e - s for s, e in zip(self.start_ids, self.end_ids)]
+        self.name = name
+        if self.name is None:
+            self.name = '__'.join(f'{s}:{e}' for s, e in zip(self.start_ids, self.end_ids))
+
+    def __str__(self):
+        return self.name
+
+
+LIST_FILTER_BLOCK_DESCS = [
+    FilterBlockTestDesc(
+        start_ids=[1, 2, 3, 4],
+        end_ids=[2, 3, 4, 5],
     ),
-    [
-        (
-                [1, 2, 3, 4],
-                [2, 3, 4, 5],
-                {0, 1, 2, 3}
-        ),
-        (
-                [1, 2, 3, 4],
-                [5, 5, 5, 5],
-                {3}
-        ),
-        (
-                [1, 1, 1, 1],
-                [2, 3, 4, 5],
-                {0}
-        ),
-        (
-                [1, 1, 2, 2],
-                [2, 3, 3, 4],
-                {0, 2}
-        ),
-        (
-                [1, 2, 1, 2],
-                [3, 3, 4, 4],
-                {2}
-        ),
-        (
-                [1, 3, 3, 4, 5, 10, 11],
-                [4, 5, 6, 7, 6, 14, 12],
-                {1, 4, 6}
-        ),
-        (
-                [1, 2, 3, 4],
-                [5, 4, 6, 9],
-                {1}
-        ),
-    ]
-)
-def test_filtering(start_ids, end_ids, remaining_pairs):
-    n = len(start_ids)
-    all_ids = set(range(0, n))
-    pair_id_to_remove = set()
-    for curr_id in range(n - 1):
-        if curr_id in pair_id_to_remove:
-            continue
-        # remove all blocks that are bigger or equal to the current and starts in the boundaries of the current block
-        for next_id in range(curr_id + 1, n):
-            if start_ids[next_id] >= end_ids[curr_id]:
-                break
-            if next_id in pair_id_to_remove:
-                continue
-            current_len = end_ids[curr_id] - start_ids[curr_id]  # replace with number of ops
-            next_len = end_ids[next_id] - start_ids[next_id]
-            if current_len <= next_len:
-                pair_id_to_remove.add(next_id)
-            else:
-                pair_id_to_remove.add(curr_id)
-    actual_remaining_pairs = all_ids - pair_id_to_remove
-    assert remaining_pairs == actual_remaining_pairs
+    FilterBlockTestDesc(
+        start_ids=[1, 2, 3, 4],
+        end_ids=[5, 5, 5, 5],
+        overlapping_blocks_ids={0, 1, 2}
+    ),
+    FilterBlockTestDesc(
+        start_ids=[1, 1, 1, 1],
+        end_ids=[2, 3, 4, 5],
+        overlapping_blocks_ids={1, 2, 3}
+    ),
+    FilterBlockTestDesc(
+        start_ids=[1, 1, 2, 2],
+        end_ids=[2, 3, 3, 4],
+        overlapping_blocks_ids={1, 3}
+    ),
+    FilterBlockTestDesc(
+        start_ids=[1, 1, 2, 2],
+        end_ids=[4, 3, 3, 4],
+        overlapping_blocks_ids={0, 1, 3}
+    ),
+    FilterBlockTestDesc(
+        start_ids=[1, 2, 2, 1],
+        end_ids=[4, 3, 4, 3],
+        overlapping_blocks_ids={0, 2, 3}
+    ),
+    FilterBlockTestDesc(
+        start_ids=[1, 3, 3, 4, 5, 10, 11],
+        end_ids=[4, 5, 6, 7, 6, 14, 12],
+        overlapping_blocks_ids={0, 2, 3, 5}
+    ),
+    FilterBlockTestDesc(
+        start_ids=[3, 10, 3, 5, 11, 1, 4],
+        end_ids=[6, 14, 5, 6, 12, 4, 7],
+        overlapping_blocks_ids={5, 0, 6, 1}
+    ),
+    FilterBlockTestDesc(
+        start_ids=[1, 2, 3, 4],
+        end_ids=[5, 4, 6, 9],
+        overlapping_blocks_ids={0, 2, 3}
+    ),
+    FilterBlockTestDesc(
+        start_ids=[1, 3, 2, 4],
+        end_ids=[5, 6, 4, 9],
+        overlapping_blocks_ids={0, 1, 3}
+    ),
+    FilterBlockTestDesc(
+        name='non_standard_num_ops',
+        start_ids=[1, 2, 2, 1],
+        end_ids=[4, 3, 4, 3],
+        num_ops_in_block=[1, 10, 2, 11],
+        overlapping_blocks_ids={1, 2, 3}
+    ),
+]
+
+
+@pytest.fixture(name='filter_blocks_desc', scope='function', params=LIST_FILTER_BLOCK_DESCS,
+                ids=map(str, LIST_FILTER_BLOCK_DESCS))
+def fixture_filter_blocks_desc(request) -> FilterBlockTestDesc:
+    return request.param
+
+
+def test_filtering(filter_blocks_desc: FilterBlockTestDesc):
+    actual_indexes_of_overlapping_blocks = get_indexes_of_overlapping_blocks(
+        filter_blocks_desc.start_ids,
+        filter_blocks_desc.end_ids,
+        filter_blocks_desc.num_ops_in_block
+    )
+    assert actual_indexes_of_overlapping_blocks == filter_blocks_desc.overlapping_blocks_ids

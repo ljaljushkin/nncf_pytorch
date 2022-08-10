@@ -192,11 +192,11 @@ def test_can_skip_cross_blocks():
     compressed_model, _ = create_compressed_model_and_algo_for_test(model, nncf_config)
     compressed_model.do_dummy_forward()
 
-    # skipped_blocks, _, ordinal_ids = get_building_blocks(compressed_model, name_model='efficientnet-b0')
+    # skipped_blocks, _ = get_building_blocks(compressed_model, name_model='efficientnet-b0')
     #
     # # pylint: disable=protected-access
     # ctx = compressed_model.get_tracing_context()
-    # ctx.set_elastic_blocks(skipped_blocks, ordinal_ids)
+    # ctx.set_elastic_blocks(skipped_blocks)
     # ctx.elastic_depth = True  # activate mode with elastic depth
     # ctx.set_active_skipped_block([0, 1, 2, 4, 7, 10, 11, 14, 15, 16, 17, 18, 19, 21, 22, 23])
     #

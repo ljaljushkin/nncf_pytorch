@@ -247,7 +247,7 @@ REF_COMPRESSION_STATE_FOR_TWO_CONV = {
                         'depth': {
                             'elasticity_params': {
                                 'allow_linear_combination': False,
-                                'allow_nested_blocks': False,
+                                'allow_overlapping_blocks': False,
                                 'max_block_size': 50,
                                 'min_block_size': 6,
                                 'skipped_blocks': [['ThreeConvModel/NNCFConv2d[conv1]/conv2d_0',
@@ -260,7 +260,6 @@ REF_COMPRESSION_STATE_FOR_TWO_CONV = {
                                 }
                             ],
                             'skipped_blocks_dependencies': {0: [0]},
-                            'ordinal_ids': [[1, 2]],
                         },
                         'width': {
                             'elasticity_params': {

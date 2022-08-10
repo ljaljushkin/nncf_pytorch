@@ -17,8 +17,8 @@ nncf_cfg = NNCFConfig.from_dict(nncf_cfgdict)
 
 nncf_ctrl, nncf_model = create_compressed_model(model, nncf_cfg)
 
-blocks, _, group_dependent = get_building_blocks(nncf_model, allow_nested_blocks=False)
-blocks_info = get_building_blocks_info(blocks, nncf_model)
+ext_blocks, group_dependent = get_building_blocks(nncf_model)
+blocks_info = get_building_blocks_info(ext_blocks, nncf_model)
 
 DETAIL = False
 g = nncf_model.get_graph()

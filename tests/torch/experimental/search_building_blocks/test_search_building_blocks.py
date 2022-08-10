@@ -10,9 +10,8 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-from functools import partial
-
 import pytest
+from functools import partial
 from torchvision.models import MobileNetV2
 
 from examples.torch.common.models import efficient_net
@@ -268,8 +267,9 @@ def test_building_block(model_creator, input_sizes, ref_skipped_blocks, ref_grou
     nncf_config = get_empty_config(input_sample_sizes=input_sizes)
     compressed_model, _ = create_compressed_model_and_algo_for_test(model, nncf_config)
 
-    blocks, _, group_dependent = get_building_blocks(compressed_model, allow_nested_blocks=False)
-    assert blocks == ref_skipped_blocks
+    ext_blocks, group_dependent = get_building_blocks(compressed_model)
+    skipped_blocks = [eb.basic_block for eb in ext_blocks]
+    assert skipped_blocks == ref_skipped_blocks
     assert group_dependent == ref_group_dependent
 
 
@@ -277,23 +277,64 @@ class SearchBBlockAlgoParamsCase:
     def __init__(self,
                  min_block_size: int = 1,
                  max_block_size: int = 100,
-                 allow_nested_blocks: bool = False,
+                 allow_overlapping_blocks: bool = False,
                  allow_linear_combination: bool = True,
                  ref_blocks=None):
         self.max_block_size = max_block_size
         self.min_block_size = min_block_size
-        self.allow_nested_blocks = allow_nested_blocks
+        self.allow_overlapping_blocks = allow_overlapping_blocks
         self.allow_linear_combination = allow_linear_combination
         self.ref_blocks = [] if ref_blocks is None else ref_blocks
 
 
 @pytest.mark.parametrize('algo_params', (
-    (
-        SearchBBlockAlgoParamsCase(max_block_size=7,
-                                   ref_blocks=[BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
-                                                             "ResNet/Sequential[layer1]/BasicBlock[0]/relu_1")]),
-        SearchBBlockAlgoParamsCase(max_block_size=8,
-                                   ref_blocks=[BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
+        (
+                SearchBBlockAlgoParamsCase(max_block_size=7,
+                                           ref_blocks=[BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
+                                                                     "ResNet/Sequential[layer1]/BasicBlock[0]/relu_1")]),
+                SearchBBlockAlgoParamsCase(max_block_size=8,
+                                           ref_blocks=[BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
+                                                                     "ResNet/Sequential[layer1]/BasicBlock[0]/relu_1"),
+                                                       BuildingBlock("ResNet/Sequential[layer1]/BasicBlock[0]/relu_1",
+                                                                     "ResNet/Sequential[layer1]/BasicBlock[1]/relu_1"),
+                                                       BuildingBlock("ResNet/Sequential[layer2]/BasicBlock[0]/relu_1",
+                                                                     "ResNet/Sequential[layer2]/BasicBlock[1]/relu_1"),
+                                                       BuildingBlock("ResNet/Sequential[layer3]/BasicBlock[0]/relu_1",
+                                                                     "ResNet/Sequential[layer3]/BasicBlock[1]/relu_1"),
+                                                       BuildingBlock("ResNet/Sequential[layer4]/BasicBlock[0]/relu_1",
+                                                                     "ResNet/Sequential[layer4]/BasicBlock[1]/relu_1")
+                                                       ]),
+                SearchBBlockAlgoParamsCase(min_block_size=10,
+                                           max_block_size=20,
+                                           ref_blocks=[BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
+                                                                     "ResNet/Sequential[layer1]/BasicBlock[1]/relu_1")]),
+                SearchBBlockAlgoParamsCase(max_block_size=20,
+                                           allow_overlapping_blocks=True,
+                                           ref_blocks=[  # start nested block group
+                                               BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
+                                                             "ResNet/Sequential[layer1]/BasicBlock[0]/relu_1"),
+                                               # block A
+                                               BuildingBlock("ResNet/Sequential[layer1]/BasicBlock[0]/relu_1",
+                                                             "ResNet/Sequential[layer1]/BasicBlock[1]/relu_1"),
+                                               # block B
+                                               BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
+                                                             "ResNet/Sequential[layer1]/BasicBlock[1]/relu_1"),
+                                               # block C
+                                               # end nested block group
+                                               # C = A + B . A, B - nested blocks. Lin. combination A + B = block C
+                                               BuildingBlock("ResNet/Sequential[layer2]/BasicBlock[0]/relu_1",
+                                                             "ResNet/Sequential[layer2]/BasicBlock[1]/relu_1"),
+                                               BuildingBlock("ResNet/Sequential[layer3]/BasicBlock[0]/relu_1",
+                                                             "ResNet/Sequential[layer3]/BasicBlock[1]/relu_1"),
+                                               BuildingBlock("ResNet/Sequential[layer4]/BasicBlock[0]/relu_1",
+                                                             "ResNet/Sequential[layer4]/BasicBlock[1]/relu_1")]),
+                SearchBBlockAlgoParamsCase(max_block_size=20,
+                                           allow_overlapping_blocks=True,
+                                           allow_linear_combination=False,
+                                           ref_blocks=[
+                                               # nested block group is empty because parameter allow_linear_combination is false
+                                               # and the biggest block was deleted.
+                                               BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
                                                              "ResNet/Sequential[layer1]/BasicBlock[0]/relu_1"),
                                                BuildingBlock("ResNet/Sequential[layer1]/BasicBlock[0]/relu_1",
                                                              "ResNet/Sequential[layer1]/BasicBlock[1]/relu_1"),
@@ -302,45 +343,7 @@ class SearchBBlockAlgoParamsCase:
                                                BuildingBlock("ResNet/Sequential[layer3]/BasicBlock[0]/relu_1",
                                                              "ResNet/Sequential[layer3]/BasicBlock[1]/relu_1"),
                                                BuildingBlock("ResNet/Sequential[layer4]/BasicBlock[0]/relu_1",
-                                                             "ResNet/Sequential[layer4]/BasicBlock[1]/relu_1")
-                                               ]),
-        SearchBBlockAlgoParamsCase(min_block_size=10,
-                                   max_block_size=20,
-                                   ref_blocks=[BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
-                                                             "ResNet/Sequential[layer1]/BasicBlock[1]/relu_1")]),
-        SearchBBlockAlgoParamsCase(max_block_size=20,
-                                   allow_nested_blocks=True,
-                                   ref_blocks=[  # start nested block group
-                                       BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
-                                                     "ResNet/Sequential[layer1]/BasicBlock[0]/relu_1"),  # block A
-                                       BuildingBlock("ResNet/Sequential[layer1]/BasicBlock[0]/relu_1",
-                                                     "ResNet/Sequential[layer1]/BasicBlock[1]/relu_1"),  # block B
-                                       BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
-                                                     "ResNet/Sequential[layer1]/BasicBlock[1]/relu_1"),  # block C
-                                       # end nested block group
-                                       # C = A + B . A, B - nested blocks. Lin. combination A + B = block C
-                                       BuildingBlock("ResNet/Sequential[layer2]/BasicBlock[0]/relu_1",
-                                                     "ResNet/Sequential[layer2]/BasicBlock[1]/relu_1"),
-                                       BuildingBlock("ResNet/Sequential[layer3]/BasicBlock[0]/relu_1",
-                                                     "ResNet/Sequential[layer3]/BasicBlock[1]/relu_1"),
-                                       BuildingBlock("ResNet/Sequential[layer4]/BasicBlock[0]/relu_1",
-                                                     "ResNet/Sequential[layer4]/BasicBlock[1]/relu_1")]),
-        SearchBBlockAlgoParamsCase(max_block_size=20,
-                                   allow_nested_blocks=True,
-                                   allow_linear_combination=False,
-                                   ref_blocks=[
-                                       # nested block group is empty because parameter allow_linear_combination is false
-                                       # and the biggest block was deleted.
-                                       BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
-                                                     "ResNet/Sequential[layer1]/BasicBlock[0]/relu_1"),
-                                       BuildingBlock("ResNet/Sequential[layer1]/BasicBlock[0]/relu_1",
-                                                     "ResNet/Sequential[layer1]/BasicBlock[1]/relu_1"),
-                                       BuildingBlock("ResNet/Sequential[layer2]/BasicBlock[0]/relu_1",
-                                                     "ResNet/Sequential[layer2]/BasicBlock[1]/relu_1"),
-                                       BuildingBlock("ResNet/Sequential[layer3]/BasicBlock[0]/relu_1",
-                                                     "ResNet/Sequential[layer3]/BasicBlock[1]/relu_1"),
-                                       BuildingBlock("ResNet/Sequential[layer4]/BasicBlock[0]/relu_1",
-                                                     "ResNet/Sequential[layer4]/BasicBlock[1]/relu_1")]))
+                                                             "ResNet/Sequential[layer4]/BasicBlock[1]/relu_1")]))
 ))
 def test_building_block_algo_param(algo_params: SearchBBlockAlgoParamsCase):
     model = ResNet18()
@@ -348,12 +351,12 @@ def test_building_block_algo_param(algo_params: SearchBBlockAlgoParamsCase):
     nncf_config = get_empty_config(input_sample_sizes=RESNET50_INPUT_SIZE)
     compressed_model, _ = create_compressed_model_and_algo_for_test(model, nncf_config)
 
-    blocks, _, _ = get_building_blocks(compressed_model,
-                                       allow_nested_blocks=algo_params.allow_nested_blocks,
-                                       min_block_size=algo_params.min_block_size,
-                                       max_block_size=algo_params.max_block_size,
-                                       allow_linear_combination=algo_params.allow_linear_combination)
-
+    ext_blocks, _ = get_building_blocks(compressed_model,
+                                    allow_overlapping_blocks=algo_params.allow_overlapping_blocks,
+                                    min_block_size=algo_params.min_block_size,
+                                    max_block_size=algo_params.max_block_size,
+                                    allow_linear_combination=algo_params.allow_linear_combination)
+    blocks = [eb.basic_block for eb in ext_blocks]
     assert blocks == algo_params.ref_blocks
 
 # def test_remove_nested_blocks():
@@ -361,25 +364,25 @@ def test_building_block_algo_param(algo_params: SearchBBlockAlgoParamsCase):
 #     end_node = SearchGraphNode()
 #     PotentialBuildingBlock(start_node, end_node)
 
-    # class PotentialBuildingBlock:
-    #     """
-    #     Describes a building block that is uniquely defined by the start and end nodes.
-    #     """
-    #
-    #     def __init__(self, start_node: SearchGraphNode, end_node: SearchGraphNode):
-    #         self.start_node = start_node
-    #         self.end_node = end_node
-    #
-    #     def __eq__(self, __o: 'PotentialBuildingBlock') -> bool:
-    #         return self.start_node == __o.start_node and self.end_node == __o.end_node
+# class PotentialBuildingBlock:
+#     """
+#     Describes a building block that is uniquely defined by the start and end nodes.
+#     """
+#
+#     def __init__(self, start_node: SearchGraphNode, end_node: SearchGraphNode):
+#         self.start_node = start_node
+#         self.end_node = end_node
+#
+#     def __eq__(self, __o: 'PotentialBuildingBlock') -> bool:
+#         return self.start_node == __o.start_node and self.end_node == __o.end_node
 
 
-    # def remove_nested_blocks(sorted_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
-    #     """
-    #     Remove nested building blocks.
-    #
-    #     :param: List of building blocks.
-    #     :return: List of building blocks without nested blocks.
-    #     """
-    #     return [list(group_block)[-1] for _, group_block in
-    #             groupby(sorted_blocks, lambda block: block.start_node.main_id)]
+# def remove_nested_blocks(sorted_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
+#     """
+#     Remove nested building blocks.
+#
+#     :param: List of building blocks.
+#     :return: List of building blocks without nested blocks.
+#     """
+#     return [list(group_block)[-1] for _, group_block in
+#             groupby(sorted_blocks, lambda block: block.start_node.main_id)]

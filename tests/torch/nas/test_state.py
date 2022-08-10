@@ -109,7 +109,7 @@ COMMON_DEPTH_SUPERNET_DESC = ElasticityDesc(
     ref_state={
         'elasticity_params': {
             'allow_linear_combination': False,
-            'allow_nested_blocks': False,
+            'allow_overlapping_blocks': False,
             'max_block_size': 50,
             'min_block_size': 2,
             'skipped_blocks': None
@@ -121,7 +121,6 @@ COMMON_DEPTH_SUPERNET_DESC = ElasticityDesc(
             }
         ],
         EDBuilderStateNames.SKIPPED_BLOCKS_DEPENDENCIES: {0: [0]},
-        EDBuilderStateNames.OrdinalIds: [[1, 3]],
     },
     ref_search_space=[[0], []]
 )
@@ -141,7 +140,7 @@ COMMON_DEPTH_BASIC_DESC = ElasticityDesc(
     ref_state={
         'elasticity_params': {
             'allow_linear_combination': False,
-            'allow_nested_blocks': False,
+            'allow_overlapping_blocks': False,
             'max_block_size': 50,
             'min_block_size': 6,
             'skipped_blocks': [['DepthBasicConvTestModel/Sequential[branch_with_blocks]/NNCFConv2d[conv0]/conv2d_0',
@@ -149,7 +148,6 @@ COMMON_DEPTH_BASIC_DESC = ElasticityDesc(
         },
         EDBuilderStateNames.SKIPPED_BLOCKS: BASIC_ELASTIC_DEPTH_PARAMS['skipped_blocks_state'],
         EDBuilderStateNames.SKIPPED_BLOCKS_DEPENDENCIES: BASIC_ELASTIC_DEPTH_PARAMS['skipped_blocks_dependencies'],
-        EDBuilderStateNames.OrdinalIds: None,
     }
 )
 

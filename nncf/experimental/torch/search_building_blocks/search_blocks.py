@@ -28,6 +28,7 @@ from copy import deepcopy
 from enum import Enum
 from functools import cmp_to_key
 from networkx.drawing.nx_agraph import to_agraph
+from operator import itemgetter
 
 from nncf.common.graph.definitions import MODEL_OUTPUT_OP_NAME
 from nncf.common.graph.graph import NNCFGraph
@@ -183,6 +184,14 @@ class ExtendedBuildingBlock:
         self.basic_block = basic_block
         self.ordinal_ids = ordinal_ids
         self.op_adresses = op_adresses
+
+    @property
+    def start_node_name(self):
+        return self.basic_block.start_node_name
+
+    @property
+    def end_node_name(self):
+        return self.basic_block.end_node_name
 
 
 BuildingBlocks = List[BuildingBlock]
@@ -676,8 +685,7 @@ def timeit(method):
 def get_building_blocks(compressed_model: NNCFNetwork,
                         max_block_size: int = 50,
                         min_block_size: int = 6,
-                        allow_linear_combination: bool = False,
-                        allow_nested_blocks: bool = True, ) -> Tuple[BuildingBlocks, GroupedBlockIDs]:
+                        allow_linear_combination: bool = False) -> Tuple[ExtendedBuildingBlocks, GroupedBlockIDs]:
     """
     This algorithm finds building blocks based on the analysis of the transformed graph.
     A building block is a block that satisfies the following rules:
@@ -711,12 +719,6 @@ def get_building_blocks(compressed_model: NNCFNetwork,
             for end_node in act_output_shape[shape]:
                 if end_node.main_id <= start_node.main_id:
                     continue
-                # TODO: not correct in a general case. simple path. how long does it. might hang?
-                #   max_block_size != cutoff (+-1)? for _all_simple_paths_graph, because cutoff is a depth, not number of nodes
-                # if end_node.bottom_id - start_node.main_id > max_block_size:
-                #     continue
-                # if end_node.bottom_id - start_node.main_id < min_block_size:
-                #     continue
                 if end_node.node_type in IgnoredNameOperators:
                     continue
 
@@ -728,34 +730,79 @@ def get_building_blocks(compressed_model: NNCFNetwork,
                         break
                 if all_rules_is_true:
                     blocks.append(PotentialBuildingBlock(start_node, end_node))
-    allow_overlapped_blocks = True
     sorted_blocks = sorted(blocks, key=cmp_to_key(compare_for_building_block))
     if not allow_linear_combination:
         sorted_blocks = remove_linear_combination(sorted_blocks)
-    if not allow_nested_blocks:
-        sorted_blocks = remove_nested_blocks(sorted_blocks)
-    # if not allow_overlapped_blocks:
-    #     sorted_blocks = remove_overlapping_blocks(sorted_blocks)
 
-    # TODO(nlyalyus): why not store OrdinalIDs inside each BuildingBlock? as well as OpAddresses[Optional]
+    # TODO(nlyalyus) why not store OrdinalIDs inside each BuildingBlock? as well as OpAddresses[Optional]
     ext_building_blocks = restore_node_name_in_orig_graph(sorted_blocks, orig_graph, compressed_model)
 
     filtered_building_blocks = []
-    for block in ext_building_blocks:
+    start_ids = []
+    end_ids = []
+    num_ops_in_blocks = []
+    for ext_block in ext_building_blocks:
         # maybe can do beforehand???
-        num_ops_in_block = len(block.op_adresses)
-        nncf_logger.info('Number of operations in the blocks: {}'.format(num_ops_in_block))
+        num_ops_in_block = len(ext_block.op_adresses)
+        nncf_logger.info('Number of operations in the block: {}'.format(num_ops_in_block))
         if num_ops_in_block > max_block_size:
             continue
         if num_ops_in_block < min_block_size:
             continue
+        filtered_building_blocks.append(ext_block)
+        start_ids.append(ext_block.ordinal_ids[0])
+        end_ids.append(ext_block.ordinal_ids[1])
+        num_ops_in_blocks.append(num_ops_in_block)
 
-        filtered_building_blocks.append(block)
+    allow_overlapping_blocks = False  # skipping of overlapping blocks is not supported
+    if not allow_overlapping_blocks:
+        all_ids = set(range(len(filtered_building_blocks)))
+        ids_of_overlapping_blocks = get_indexes_of_overlapping_blocks(
+            start_ids=start_ids,
+            end_ids=end_ids,
+            num_ops_in_blocks=num_ops_in_blocks,
+        )
+        ids_of_remaining_blocks = all_ids - ids_of_overlapping_blocks
+        filtered_building_blocks = itemgetter(*ids_of_remaining_blocks)(filtered_building_blocks)
 
-    #
-    group_dependent = get_group_of_dependent_blocks(ext_building_blocks)
+    group_dependent = get_group_of_dependent_blocks(filtered_building_blocks)
 
-    return ext_building_blocks, group_dependent
+    return filtered_building_blocks, group_dependent
+
+
+def get_indexes_of_overlapping_blocks(start_ids: List[int],
+                                      end_ids: List[int],
+                                      num_ops_in_blocks: List[int]) -> Set[int]:
+    """
+    # TODO: TBD
+    :param num_ops_in_blocks:
+    :param start_ids:
+    :param end_ids:
+    :return:
+    """
+    n = len(start_ids)
+    indexes_to_sort, start_ids_sorted = zip(*sorted(enumerate(start_ids), key=itemgetter(1)))
+    end_ids_sorted = itemgetter(*indexes_to_sort)(end_ids)
+    num_ops_in_blocks_sorted = itemgetter(*indexes_to_sort)(num_ops_in_blocks)
+
+    pair_ids_to_remove = set()
+    for curr_id in range(n - 1):
+        if curr_id in pair_ids_to_remove:
+            continue
+        # remove all blocks that are bigger or equal to the current and starts in the boundaries of the current block
+        for next_id in range(curr_id + 1, n):
+            if start_ids_sorted[next_id] >= end_ids_sorted[curr_id]:
+                break
+            if next_id in pair_ids_to_remove:
+                continue
+            current_len = num_ops_in_blocks_sorted[curr_id]
+            next_len = end_ids_sorted[next_id] - start_ids_sorted[next_id]
+            id_to_remove = next_id if current_len <= next_len else curr_id
+            pair_ids_to_remove.add(id_to_remove)
+    original_pair_ids_to_remove = set()
+    if pair_ids_to_remove:
+        original_pair_ids_to_remove = set(itemgetter(*pair_ids_to_remove)(indexes_to_sort))
+    return original_pair_ids_to_remove
 
 
 def remove_nested_blocks(sorted_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
@@ -803,7 +850,7 @@ def get_group_of_dependent_blocks(blocks: BuildingBlocks) -> GroupedBlockIDs:
 
 
 @timeit
-def get_building_blocks_info(bblocks: BuildingBlocks, compressed_model: NNCFNetwork) -> List[BuildingBlockInfo]:
+def get_building_blocks_info(bblocks: ExtendedBuildingBlocks, compressed_model: NNCFNetwork) -> List[BuildingBlockInfo]:
     """
     Returns additional information about building blocks.
 
@@ -813,10 +860,10 @@ def get_building_blocks_info(bblocks: BuildingBlocks, compressed_model: NNCFNetw
     """
     bblocks_info = []
     for block in bblocks:
-        op_addresses = get_all_node_op_addresses_in_block(compressed_model, block)
+        op_addresses = block.op_adresses
         modules = get_all_modules_in_blocks(compressed_model, op_addresses)
         block_type = get_type_building_block(op_addresses)
-        bblocks_info.append(BuildingBlockInfo(block, op_addresses, modules, block_type))
+        bblocks_info.append(BuildingBlockInfo(block.basic_block, op_addresses, modules, block_type))
     return bblocks_info
 
 
