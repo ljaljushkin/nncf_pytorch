@@ -277,12 +277,10 @@ class SearchBBlockAlgoParamsCase:
     def __init__(self,
                  min_block_size: int = 1,
                  max_block_size: int = 100,
-                 allow_overlapping_blocks: bool = False,
                  allow_linear_combination: bool = True,
                  ref_blocks=None):
         self.max_block_size = max_block_size
         self.min_block_size = min_block_size
-        self.allow_overlapping_blocks = allow_overlapping_blocks
         self.allow_linear_combination = allow_linear_combination
         self.ref_blocks = [] if ref_blocks is None else ref_blocks
 
@@ -309,7 +307,6 @@ class SearchBBlockAlgoParamsCase:
                                            ref_blocks=[BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
                                                                      "ResNet/Sequential[layer1]/BasicBlock[1]/relu_1")]),
                 SearchBBlockAlgoParamsCase(max_block_size=20,
-                                           allow_overlapping_blocks=True,
                                            ref_blocks=[  # start nested block group
                                                BuildingBlock("ResNet/MaxPool2d[maxpool]/max_pool2d_0",
                                                              "ResNet/Sequential[layer1]/BasicBlock[0]/relu_1"),
@@ -329,7 +326,6 @@ class SearchBBlockAlgoParamsCase:
                                                BuildingBlock("ResNet/Sequential[layer4]/BasicBlock[0]/relu_1",
                                                              "ResNet/Sequential[layer4]/BasicBlock[1]/relu_1")]),
                 SearchBBlockAlgoParamsCase(max_block_size=20,
-                                           allow_overlapping_blocks=True,
                                            allow_linear_combination=False,
                                            ref_blocks=[
                                                # nested block group is empty because parameter allow_linear_combination is false
@@ -352,37 +348,8 @@ def test_building_block_algo_param(algo_params: SearchBBlockAlgoParamsCase):
     compressed_model, _ = create_compressed_model_and_algo_for_test(model, nncf_config)
 
     ext_blocks, _ = get_building_blocks(compressed_model,
-                                    allow_overlapping_blocks=algo_params.allow_overlapping_blocks,
-                                    min_block_size=algo_params.min_block_size,
-                                    max_block_size=algo_params.max_block_size,
-                                    allow_linear_combination=algo_params.allow_linear_combination)
+                                        min_block_size=algo_params.min_block_size,
+                                        max_block_size=algo_params.max_block_size,
+                                        allow_linear_combination=algo_params.allow_linear_combination)
     blocks = [eb.basic_block for eb in ext_blocks]
     assert blocks == algo_params.ref_blocks
-
-# def test_remove_nested_blocks():
-#     start_node = SearchGraphNode()
-#     end_node = SearchGraphNode()
-#     PotentialBuildingBlock(start_node, end_node)
-
-# class PotentialBuildingBlock:
-#     """
-#     Describes a building block that is uniquely defined by the start and end nodes.
-#     """
-#
-#     def __init__(self, start_node: SearchGraphNode, end_node: SearchGraphNode):
-#         self.start_node = start_node
-#         self.end_node = end_node
-#
-#     def __eq__(self, __o: 'PotentialBuildingBlock') -> bool:
-#         return self.start_node == __o.start_node and self.end_node == __o.end_node
-
-
-# def remove_nested_blocks(sorted_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
-#     """
-#     Remove nested building blocks.
-#
-#     :param: List of building blocks.
-#     :return: List of building blocks without nested blocks.
-#     """
-#     return [list(group_block)[-1] for _, group_block in
-#             groupby(sorted_blocks, lambda block: block.start_node.main_id)]

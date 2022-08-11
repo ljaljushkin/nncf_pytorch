@@ -13,7 +13,6 @@
 import time
 from collections import deque
 from itertools import combinations
-from itertools import groupby
 from typing import Any
 from typing import Dict
 from typing import List
@@ -763,9 +762,10 @@ def get_building_blocks(compressed_model: NNCFNetwork,
             num_ops_in_blocks=num_ops_in_blocks,
         )
         ids_of_remaining_blocks = all_ids - ids_of_overlapping_blocks
-        filtered_building_blocks = itemgetter(*ids_of_remaining_blocks)(filtered_building_blocks)
+        filtered_building_blocks = list(itemgetter(*ids_of_remaining_blocks)(filtered_building_blocks))
 
-    group_dependent = get_group_of_dependent_blocks(filtered_building_blocks)
+    filtered_basic_blocks = [eb.basic_block for eb in filtered_building_blocks]
+    group_dependent = get_group_of_dependent_blocks(filtered_basic_blocks)
 
     return filtered_building_blocks, group_dependent
 
@@ -781,8 +781,9 @@ def get_indexes_of_overlapping_blocks(start_ids: List[int],
     :return:
     """
     n = len(start_ids)
+    # TODO: can be a single value instead of iterable
     indexes_to_sort, start_ids_sorted = zip(*sorted(enumerate(start_ids), key=itemgetter(1)))
-    end_ids_sorted = itemgetter(*indexes_to_sort)(end_ids)
+    end_ids_sorted = list(itemgetter(*indexes_to_sort)(end_ids))
     num_ops_in_blocks_sorted = itemgetter(*indexes_to_sort)(num_ops_in_blocks)
 
     pair_ids_to_remove = set()
@@ -803,26 +804,6 @@ def get_indexes_of_overlapping_blocks(start_ids: List[int],
     if pair_ids_to_remove:
         original_pair_ids_to_remove = set(itemgetter(*pair_ids_to_remove)(indexes_to_sort))
     return original_pair_ids_to_remove
-
-
-def remove_nested_blocks(sorted_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
-    """
-    Remove nested building blocks.
-
-    :param: List of building blocks.
-    :return: List of building blocks without nested blocks.
-    """
-    return [list(group_block)[-1] for _, group_block in groupby(sorted_blocks, lambda block: block.start_node.main_id)]
-
-
-def remove_overlapping_blocks(sorted_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
-    """
-    Remove overlapping building blocks.
-
-    :param: List of building blocks.
-    :return: List of building blocks that have no intersection with each other - no overlapping blocks.
-    """
-    return sorted_blocks
 
 
 def get_group_of_dependent_blocks(blocks: BuildingBlocks) -> GroupedBlockIDs:
