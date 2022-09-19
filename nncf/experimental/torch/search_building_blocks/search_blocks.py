@@ -26,9 +26,11 @@ import torch
 from copy import deepcopy
 from enum import Enum
 from functools import cmp_to_key
+from functools import partial
 from networkx.drawing.nx_agraph import to_agraph
 from operator import itemgetter
 
+from nncf.common.graph import NNCFNode
 from nncf.common.graph.definitions import MODEL_OUTPUT_OP_NAME
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNodeName
@@ -74,6 +76,7 @@ class SearchGraphNode:
         """
         return self.data.get(SearchGraph.IS_DUMMY_NODE_ATTR)
 
+    # TODO: node presented??
     @property
     def node_name(self) -> NNCFNodeName:
         return self.data.get(NNCFGraph.NODE_NAME_ATTR)
@@ -230,7 +233,6 @@ class SearchGraph:
     A wrapper over the graph, which represents the DNN execution graph transformed
     by pattern matching, merging nodes and inserting auxiliary nodes.
     """
-    ACTIVATION_INPUT_SHAPE_ATTR = 'activation_input_shape'
     ACTIVATION_OUTPUT_SHAPE_ATTR = 'activation_output_shape'
     IS_MERGED_NODE_ATTR = 'is_merged'
     IS_DUMMY_NODE_ATTR = 'is_dummy'
@@ -330,16 +332,18 @@ class SearchGraph:
         for node in self.get_all_nodes():
             attrs_node = {}
             if node.is_merged:
-                attrs_node['label'] = f"main: {node.main_id} bottom: {node.bottom_id} {node.node_type}"
+                attrs_node['label'] = f"main: {node.main_id} bottom: {node.bottom_id} {node.node_key}"
+            elif node.is_dummy:
+                attrs_node['label'] = f'dummy {node.node_key}'
             else:
-                attrs_node['label'] = f"id: {node.data.get('id')} {node.node_type}"
+                attrs_node['label'] = f"id: {node.node_key}"
             out_graph.add_node(node.node_key, **attrs_node)
 
         for u, v in self._nx_graph.edges:
             edge = self._nx_graph.edges[u, v]
             style = 'solid'
             # label=edge[SearchGraph.ACTIVATION_INPUT_SHAPE_ATTR]
-            out_graph.add_edge(u, v, style=style)
+            out_graph.add_edge(u, v, label=edge[NNCFGraph.ACTIVATION_SHAPE_EDGE_ATTR], style=style)
 
         mapping = {k: v['label'] for k, v in out_graph.nodes.items()}
         out_graph = nx.relabel_nodes(out_graph, mapping)
@@ -384,8 +388,7 @@ def get_merged_original_graph_with_pattern(orig_graph: nx.DiGraph) -> nx.DiGraph
     merged_graph = deepcopy(orig_graph)
     nx.set_node_attributes(merged_graph, False, SearchGraph.IS_DUMMY_NODE_ATTR)
     nx.set_node_attributes(merged_graph, False, SearchGraph.IS_MERGED_NODE_ATTR)
-    nx.set_node_attributes(merged_graph, None, SearchGraph.ACTIVATION_INPUT_SHAPE_ATTR)
-    nx.set_node_attributes(merged_graph, None, SearchGraph.ACTIVATION_OUTPUT_SHAPE_ATTR)
+    # nx.set_node_attributes(merged_graph, None, SearchGraph.ACTIVATION_OUTPUT_SHAPE_ATTR)
     for match in matches:
         if len(match) == 1:
             continue
@@ -435,6 +438,13 @@ def add_node_to_aux_struct(node: SearchGraphNode, shape: List[int], shape_map: S
         shape_map[str_shape].add(node)
     else:
         shape_map[str_shape] = {node}
+
+
+def check_for_duplicates(graph: SearchGraph, start_node: SearchGraphNode, end_node: SearchGraphNode, id_pairs) -> bool:
+    current_pair_ids = (start_node.main_id, end_node.main_id)
+    if current_pair_ids in id_pairs:
+        return False
+    return True
 
 
 def check_graph_has_no_hanging_edges_after_block_removal(graph: SearchGraph,
@@ -624,20 +634,42 @@ def restore_node_name_in_orig_graph(building_blocks: List[PotentialBuildingBlock
                                     compressed_model: NNCFNetwork) -> ExtendedBuildingBlocks:
     """
     Restore the original names and ids of the start and end of the block in original graph.
+    Very cost expensive function, because of finding all op addresses in the block via nx.all_simple_paths function.
     """
     building_block_in_orig_format = []
+    overall = len(building_blocks)
+    not_matched = 0
+    max_diff = 10000
     for block in building_blocks:
         # TODO(nlyalyus): why bottom id??? why dummy_node?? what is the connection?? why not main_id?
         id_st = block.start_node.bottom_id  # dummy node
         id_end = block.end_node.bottom_id
+        first_skipped_node = orig_graph.get_node_by_id(id_st)
+        previous_nodes = orig_graph.get_previous_nodes(first_skipped_node)
+        # TODO: does not work
+        if len(previous_nodes) != 1:
+            names = '____'.join([n.node_name for n in previous_nodes])
+            nncf_logger.warning(f'multiple start nodes!!! {names}')
+            overall -= 1
+            continue
+        start_node_id = previous_nodes[0].node_id if not block.start_node.is_dummy else id_st
         # TODO(nlyalyus): looks as a hack...
-        block_in_orig_format = BuildingBlock(orig_graph.get_node_key_by_id(id_st).split(' ')[-1],
+        block_in_orig_format = BuildingBlock(orig_graph.get_node_key_by_id(start_node_id).split(' ')[-1],
+                                             orig_graph.get_node_key_by_id(id_end).split(' ')[-1])
+        block_for_ops = BuildingBlock(orig_graph.get_node_key_by_id(id_st).split(' ')[-1],
                                              orig_graph.get_node_key_by_id(id_end).split(' ')[-1])
 
-        op_addresses = get_all_node_op_addresses_in_block(compressed_model, block_in_orig_format)
+        op_addresses = get_all_node_op_addresses_in_block(compressed_model, block_for_ops)
+        actual_num = len(op_addresses)
+        calc_num = block.end_node.bottom_id - block.start_node.bottom_id
+        print(f'Actual length={actual_num} vs calculated={calc_num}')
+        if actual_num != calc_num:
+            not_matched += 1
+            max_diff = max(max_diff, abs(calc_num - actual_num))
         ordinal_ids = [id_st, id_end]
         ext_block = ExtendedBuildingBlock(block_in_orig_format, ordinal_ids, op_addresses)
         building_block_in_orig_format.append(ext_block)
+    assert not_matched == 0, f'number of incorrect lengths is {not_matched} out of {overall}, max diff={max_diff}'
     return building_block_in_orig_format
 
 
@@ -680,11 +712,23 @@ def timeit(method):
     return timed
 
 
+def itemgetter_force_tuple(*indexes):
+    """
+    itemgetter wrapper that always returns a tuple. The original function may return both, iterable and a single not
+    iterable element, which is not convenient in the general case.
+    """
+    getter = itemgetter(*indexes)
+    if len(indexes) == 1:
+        return lambda seq: (getter(seq),)  # Wrap in a tuple.
+    return getter
+
+
 @timeit
 def get_building_blocks(compressed_model: NNCFNetwork,
                         max_block_size: int = 50,
-                        min_block_size: int = 6,
-                        allow_linear_combination: bool = False) -> Tuple[ExtendedBuildingBlocks, GroupedBlockIDs]:
+                        min_block_size: int = 5,
+                        allow_linear_combination: bool = False,
+                        allow_overlapping_blocks: bool = False) -> Tuple[ExtendedBuildingBlocks, GroupedBlockIDs]:
     """
     This algorithm finds building blocks based on the analysis of the transformed graph.
     A building block is a block that satisfies the following rules:
@@ -697,18 +741,24 @@ def get_building_blocks(compressed_model: NNCFNetwork,
     - removing a block from the graph (that is, the layers included in the block are not executed)
       does not lead to duplicate activation layers
     """
-
+    if min_block_size > max_block_size:
+        raise AttributeError(f'Minimal value for block size {min_block_size} can not be more than maximum one '
+                             f'{max_block_size}. Change max_block_size or min_block_size.')
     orig_graph = compressed_model.get_original_graph()  # PTNNCFGraph
+    orig_graph.visualize_graph('orig_graph.dot')
     sgraph = get_search_graph(orig_graph)
-    sgraph.visualize_graph('search_graph.dot')
 
     # TODO: form all other conditions as rules??? min, max block, nested, intersected...
+    id_pairs = set()
     fn_rules = [check_graph_has_no_duplicate_edges_after_block_removal,
                 check_graph_has_no_act_layer_duplication_after_block_removal,
-                check_graph_has_no_hanging_edges_after_block_removal]
+                check_graph_has_no_hanging_edges_after_block_removal,
+                partial(check_for_duplicates, id_pairs=id_pairs)
+                ]
 
     blocks = []
     act_input_shape, act_output_shape = get_potential_candidate_for_block(sgraph)
+    sgraph.visualize_graph('search_graph.dot')
 
     for shape, start_nodes in act_input_shape.items():
         for start_node in start_nodes:
@@ -720,7 +770,9 @@ def get_building_blocks(compressed_model: NNCFNetwork,
                     continue
                 if end_node.node_type in IgnoredNameOperators:
                     continue
-
+                num_ops_in_block = end_node.bottom_id - start_node.bottom_id
+                if num_ops_in_block > max_block_size or num_ops_in_block < min_block_size:
+                    continue
                 # CHECK RULES
                 all_rules_is_true = True
                 for rule_fn in fn_rules:
@@ -728,46 +780,60 @@ def get_building_blocks(compressed_model: NNCFNetwork,
                         all_rules_is_true = False
                         break
                 if all_rules_is_true:
+                    id_pairs.add((start_node.main_id, end_node.main_id))
+                    nncf_logger.info(
+                        'Add pair : {}.  ({} -- {})'.format(num_ops_in_block, start_node.main_id, end_node.main_id))
                     blocks.append(PotentialBuildingBlock(start_node, end_node))
+    print(f'before sort {len(blocks)}')
+    # assert 0
+    if len(blocks) > 300:
+        nncf_logger.warning('Number of potential building blocks is too much. The processing time can be high. '
+                            'Shallow the accepted range for the length of building blocks via '
+                            'max_block_size and min_block_size to accelerate the search process.')
     sorted_blocks = sorted(blocks, key=cmp_to_key(compare_for_building_block))
+    # TODO: filter more before hard operations
+    # TODO: is allow linear needed?? if will remove overlapped
     if not allow_linear_combination:
         sorted_blocks = remove_linear_combination(sorted_blocks)
 
     # TODO(nlyalyus) why not store OrdinalIDs inside each BuildingBlock? as well as OpAddresses[Optional]
-    ext_building_blocks = restore_node_name_in_orig_graph(sorted_blocks, orig_graph, compressed_model)
+    # assert 0
 
-    filtered_building_blocks = []
+    # filtered_building_blocks = []
     start_ids = []
     end_ids = []
     num_ops_in_blocks = []
-    for ext_block in ext_building_blocks:
+    for block in sorted_blocks:
         # maybe can do beforehand???
-        num_ops_in_block = len(ext_block.op_adresses)
-        nncf_logger.info('Number of operations in the block: {}'.format(num_ops_in_block))
-        if num_ops_in_block > max_block_size:
-            continue
-        if num_ops_in_block < min_block_size:
-            continue
-        filtered_building_blocks.append(ext_block)
-        start_ids.append(ext_block.ordinal_ids[0])
-        end_ids.append(ext_block.ordinal_ids[1])
+        id_st = block.start_node.bottom_id  # dummy node
+        id_end = block.end_node.bottom_id
+        num_ops_in_block = id_end - id_st
+        nncf_logger.info('Number of operations in the block: {}.  ({} -- {})'.format(num_ops_in_block, id_st, id_end))
+        print(f'{block.start_node.node_name}')
+        print(f'{block.end_node.node_name}\n\n')
+        # if num_ops_in_block > max_block_size:
+        #     continue
+        # if num_ops_in_block < min_block_size:
+        #     continue
+        # filtered_building_blocks.append(block)
+        start_ids.append(id_st)
+        end_ids.append(id_end)
         num_ops_in_blocks.append(num_ops_in_block)
 
-    allow_overlapping_blocks = False  # skipping of overlapping blocks is not supported
+    filtered_building_blocks = sorted_blocks
     if not allow_overlapping_blocks:
-        all_ids = set(range(len(filtered_building_blocks)))
         ids_of_overlapping_blocks = get_indexes_of_overlapping_blocks(
             start_ids=start_ids,
             end_ids=end_ids,
             num_ops_in_blocks=num_ops_in_blocks,
         )
-        ids_of_remaining_blocks = all_ids - ids_of_overlapping_blocks
-        filtered_building_blocks = list(itemgetter(*ids_of_remaining_blocks)(filtered_building_blocks))
-
-    filtered_basic_blocks = [eb.basic_block for eb in filtered_building_blocks]
+        if ids_of_overlapping_blocks:
+            filtered_building_blocks = [block for i, block in enumerate(sorted_blocks) if
+                                        i not in ids_of_overlapping_blocks]
+    ext_building_blocks = restore_node_name_in_orig_graph(filtered_building_blocks, orig_graph, compressed_model)
+    filtered_basic_blocks = [eb.basic_block for eb in ext_building_blocks]
     group_dependent = get_group_of_dependent_blocks(filtered_basic_blocks)
-
-    return filtered_building_blocks, group_dependent
+    return ext_building_blocks, group_dependent
 
 
 def get_indexes_of_overlapping_blocks(start_ids: List[int],
@@ -780,17 +846,21 @@ def get_indexes_of_overlapping_blocks(start_ids: List[int],
     :param end_ids:
     :return:
     """
+    original_pair_ids_to_remove = set()
     n = len(start_ids)
+    if n <= 1:
+        return original_pair_ids_to_remove
+
     # TODO: can be a single value instead of iterable
     indexes_to_sort, start_ids_sorted = zip(*sorted(enumerate(start_ids), key=itemgetter(1)))
-    end_ids_sorted = list(itemgetter(*indexes_to_sort)(end_ids))
-    num_ops_in_blocks_sorted = itemgetter(*indexes_to_sort)(num_ops_in_blocks)
+    end_ids_sorted = itemgetter_force_tuple(*indexes_to_sort)(end_ids)
+    num_ops_in_blocks_sorted = itemgetter_force_tuple(*indexes_to_sort)(num_ops_in_blocks)
 
     pair_ids_to_remove = set()
     for curr_id in range(n - 1):
         if curr_id in pair_ids_to_remove:
             continue
-        # remove all blocks that are bigger or equal to the current and starts in the boundaries of the current block
+        # remove all blocks that are less or equal to the current and starts within the boundaries of the current block
         for next_id in range(curr_id + 1, n):
             if start_ids_sorted[next_id] >= end_ids_sorted[curr_id]:
                 break
@@ -798,11 +868,11 @@ def get_indexes_of_overlapping_blocks(start_ids: List[int],
                 continue
             current_len = num_ops_in_blocks_sorted[curr_id]
             next_len = end_ids_sorted[next_id] - start_ids_sorted[next_id]
-            id_to_remove = next_id if current_len <= next_len else curr_id
+            id_to_remove = next_id if next_len <= current_len else curr_id
             pair_ids_to_remove.add(id_to_remove)
-    original_pair_ids_to_remove = set()
+
     if pair_ids_to_remove:
-        original_pair_ids_to_remove = set(itemgetter(*pair_ids_to_remove)(indexes_to_sort))
+        original_pair_ids_to_remove = set(itemgetter_force_tuple(*pair_ids_to_remove)(indexes_to_sort))
     return original_pair_ids_to_remove
 
 
@@ -831,7 +901,8 @@ def get_group_of_dependent_blocks(blocks: BuildingBlocks) -> GroupedBlockIDs:
 
 
 @timeit
-def get_building_blocks_info(bblocks: ExtendedBuildingBlocks, compressed_model: NNCFNetwork) -> List[BuildingBlockInfo]:
+def get_building_blocks_info(bblocks: ExtendedBuildingBlocks, compressed_model: NNCFNetwork) -> List[
+    BuildingBlockInfo]:
     """
     Returns additional information about building blocks.
 
@@ -848,7 +919,8 @@ def get_building_blocks_info(bblocks: ExtendedBuildingBlocks, compressed_model: 
     return bblocks_info
 
 
-def get_all_node_op_addresses_in_block(compressed_model: NNCFNetwork, block: BuildingBlock) -> Set[OperationAddress]:
+def get_all_node_op_addresses_in_block(compressed_model: NNCFNetwork, block: BuildingBlock) -> Set[
+    OperationAddress]:
     """
     Returns set of operation addresses of all layers included in the block.
 
@@ -857,12 +929,21 @@ def get_all_node_op_addresses_in_block(compressed_model: NNCFNetwork, block: Bui
     :return: Set of operation addresses for building block.
     """
     graph = compressed_model.get_original_graph()
+    print(f'{block.start_node_name} --- {block.end_node_name}')
     simple_paths = graph.get_all_simple_paths(block.start_node_name, block.end_node_name)
     op_addresses = set()
+
+    i = 0
     for node_keys_in_path in simple_paths:
+        i += 1
         for node_key in node_keys_in_path:
             node = graph.get_node_by_key(node_key)
             op_addresses.add(OperationAddress.from_str(node.node_name))
+    print(f'num paths {i}')
+
+    if len(op_addresses) == 0:
+        print('invalid block!!!')
+        return set()
     start_op_address = OperationAddress.from_str(block.start_node_name)
     op_addresses.remove(start_op_address)
     return op_addresses

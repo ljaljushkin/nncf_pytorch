@@ -164,7 +164,7 @@ def test_skip_diff_blocks_on_resnet50():
     device = move_model_to_cuda_if_available(compressed_model)
 
     ctx = compressed_model.get_tracing_context()
-    ctx.set_elastic_blocks(skipped_blocks, [[26, 36], [46, 56], [66, 76], [86, 96]])
+    ctx.set_elastic_blocks(skipped_blocks)
     ctx.elastic_depth = True  # activate mode with elastic depth
     ctx.set_active_skipped_block([0, 1, 2, 3])
     compressed_model(torch.ones(RESNET50_INPUT_SIZE).to(device))
@@ -334,7 +334,10 @@ def get_model_with_elastic_depth(model, input_sample_sizes, skipped_blocks):
     nncf_config = get_empty_config(input_sample_sizes=input_sample_sizes)
 
     compressed_model, _ = create_compressed_model_and_algo_for_test(model, nncf_config)
-    compressed_model.get_tracing_context().set_elastic_blocks(skipped_blocks)
+    ctx = compressed_model.get_tracing_context()
+    ctx.set_elastic_blocks(skipped_blocks)
+    ctx.elastic_depth = True
+    ctx.set_active_skipped_block([0])
     return compressed_model
 
 
@@ -380,6 +383,7 @@ def get_ref_output_resnet50_after_backward__with_elastic_depth():
 
 def get_output_model__with_manual_skipping():
     model = DepthBasicConvTestModel(depth=3)
+    model.set_skipped_layers(['conv1'])
     output = model(torch.ones(model.INPUT_SIZE))
     return output
 
@@ -456,7 +460,7 @@ def test_check_dinamic_graph_not_grow():
 
     # pylint: disable=protected-access
     ctx = compressed_model.get_tracing_context()
-    ctx.set_elastic_blocks(skipped_blocks, [[26, 36], [46, 56], [66, 76], [86, 96]])
+    ctx.set_elastic_blocks(skipped_blocks)
     nodes_count = ctx.graph.get_nodes_count()
     ctx.elastic_depth = True  # activate mode with elastic depth
     ctx.set_active_skipped_block([0, 1, 2, 3])
