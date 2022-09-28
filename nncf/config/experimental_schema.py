@@ -76,16 +76,8 @@ ELASTIC_DEPTH_SCHEMA = {
                                           description="Defines maximal number of operations in the block. "
                                                       "Option is available for the auto mode only. "
                                                       "Default value is 50"),
-        "allow_nested_blocks": with_attributes(BOOLEAN,
-                                               description="If true, automatic block search will consider nested "
-                                                           "blocks: the ones that are part of bigger block. By "
-                                                           "default, nested blocks are declined during the search and "
-                                                           "bigger blocks are found only. False, by default"),
-        "allow_linear_combination": with_attributes(BOOLEAN,
-                                                    description="If False, automatic block search will decline blocks "
-                                                                "that are a combination of other blocks, "
-                                                                "in another words, that consist entirely of operations "
-                                                                "of other blocks. False, by default"),
+        "hw_fused_ops": with_attributes(BOOLEAN, # TODO: finish
+                                                    description="If True, automatic block search will . True, by default"),
     },
     "additionalProperties": False
 }
