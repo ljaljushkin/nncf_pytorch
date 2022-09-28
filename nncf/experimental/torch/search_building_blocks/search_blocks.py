@@ -12,7 +12,12 @@
 """
 
 from collections import deque
+from copy import deepcopy
+from enum import Enum
+from functools import cmp_to_key
+from functools import partial
 from itertools import combinations
+from operator import itemgetter
 from typing import Any
 from typing import Callable
 from typing import Dict
@@ -22,14 +27,7 @@ from typing import Set
 from typing import Tuple
 
 import networkx as nx
-import os
 import torch
-from copy import deepcopy
-from enum import Enum
-from functools import cmp_to_key
-from functools import partial
-from networkx.drawing.nx_agraph import to_agraph
-from operator import itemgetter
 
 from nncf.common.graph.definitions import MODEL_OUTPUT_OP_NAME
 from nncf.common.graph.graph import NNCFGraph
@@ -208,6 +206,10 @@ class EBBlocksStateNames:
 
 
 class ExtendedBuildingBlock:
+    """
+    Provides extended information about building block. In addition to the addresses of boundary operations, it defines
+    block type, indexes of start and end node and addresses all operations inside the block.
+    """
     _state_names = EBBlocksStateNames
 
     def __init__(self, basic_block: BuildingBlock,
@@ -271,23 +273,6 @@ class ExtendedBuildingBlock:
 
 BuildingBlocks = List[BuildingBlock]
 ExtendedBuildingBlocks = List[ExtendedBuildingBlock]
-
-
-class BuildingBlockInfo:
-    """
-    Describes additional information about the building block
-    the address of each layer, the modules contained and type of block.
-    """
-
-    def __init__(self,
-                 # building_block: BuildingBlock,
-                 block_type: BuildingBlockType,
-                 op_addresses: Set[OperationAddress]):
-        # modules: List[torch.nn.Module]):
-        # self.building_block = building_block
-        self.op_addresses = op_addresses
-        # self.modules = modules
-        self.block_type = block_type
 
 
 class SearchGraph:
@@ -426,17 +411,6 @@ class SearchGraph:
     def visualize_graph(self, path: str):
         out_graph = self._get_graph_for_visualization()
         nx.drawing.nx_pydot.write_dot(out_graph, path)
-        try:
-            A = to_agraph(out_graph)
-            A.layout('dot')
-            png_path = os.path.splitext(path)[0] + '.png'
-            A.draw(png_path)
-        except ImportError:
-            nncf_logger.warning('Graphviz is not installed - only the .dot model visualization format will be used. '
-                                'Install pygraphviz into your Python environment and graphviz system-wide to enable '
-                                'PNG rendering.')
-        except Exception:  # pylint:disable=broad-except
-            nncf_logger.warning('Failed to render graph to PNG')
 
 
 def get_search_graph(original_graph: PTNNCFGraph, hw_fused_ops: bool) -> SearchGraph:
@@ -451,9 +425,9 @@ def get_search_graph(original_graph: PTNNCFGraph, hw_fused_ops: bool) -> SearchG
 
 def get_merged_original_graph_with_pattern(orig_graph: nx.DiGraph, hw_fused_ops: bool) -> nx.DiGraph:
     """
+    :param orig_graph: Original graph of model
     :param hw_fused_ops: indicates whether to merge operations by hw fusing pattern. Merged operation can't be part
     of different skipping block.
-    :param orig_graph: Original graph of model
     :return: Graph with merged nodes by patterns
     """
     merged_graph = orig_graph
@@ -462,7 +436,7 @@ def get_merged_original_graph_with_pattern(orig_graph: nx.DiGraph, hw_fused_ops:
     # pylint: disable=protected-access
     pattern_fusing_graph = PT_HW_FUSED_PATTERNS.get_full_pattern_graph()
     matches = find_subgraphs_matching_pattern(orig_graph, pattern_fusing_graph)
-    # nx.set_node_attributes(merged_graph, False, SearchGraph.IS_DUMMY_NODE_ATTR)
+    nx.set_node_attributes(merged_graph, False, SearchGraph.IS_DUMMY_NODE_ATTR)
     nx.set_node_attributes(merged_graph, False, SearchGraph.IS_MERGED_NODE_ATTR)
     for match in matches:
         if len(match) == 1:
@@ -516,7 +490,9 @@ def add_node_to_aux_struct(node: SearchGraphNode, shape: List[int], shape_map: S
 
 
 def check_for_duplicates(graph: SearchGraph, start_node: SearchGraphNode, end_node: SearchGraphNode, id_pairs) -> bool:
-    # TODO: why not bottom?
+    """
+    Return False if the provided block duplicates other considered blocks.
+    """
     current_pair_ids = (start_node.main_id, end_node.main_id)
     if current_pair_ids in id_pairs:
         return False
@@ -545,14 +521,11 @@ def check_graph_has_no_hanging_edges_after_block_removal(graph: SearchGraph,
     #         end_node
 
     first_skipped_node = start_node
-    # input_nodes = graph.get_input_nodes()
-    # if first_skipped_node not in input_nodes and \
     if not first_skipped_node.is_dummy:
         previous_nodes = graph.get_previous_nodes(first_skipped_node)
         num_inputs = len(previous_nodes)
         assert num_inputs == 1, f'building block should have a single input, but it has {num_inputs} inputs.'
         start_node = previous_nodes[0]
-
     q = deque([start_node])
     addit_nodes = set()
     nodes = []
@@ -823,24 +796,28 @@ def is_target_block_type(start_node_id: int,
 
 class BlockFilteringStrategy(Enum):
     """
-    TODO:
+    Defines strategy for filtering overlapping blocks.
+    KEEP_SMALL - gives a preference to small blocks. It starts from the smallest block and filters all blocks that
+    intersect or include it. Then it finds the next smallest block from the remaining ones and repeats the procedure.
+    KEEP_SEQUENTIAL - gives a preference to sequential blocks, which follow each other in the model. This strategy
+    is helpful for Progressive Shrinking Algorithm.
     """
-    SMALL_FIRST = 'small_first'
-    SEQUENTIAL_FIRST = 'sequential_first'
+    KEEP_SMALL = 'keep_small'
+    KEEP_SEQUENTIAL = 'keep_sequential'
 
     @staticmethod
     def from_str(config_value: str) -> 'BlockFilteringStrategy':
-        if config_value == BlockFilteringStrategy.SMALL_FIRST.value:
-            return BlockFilteringStrategy.SMALL_FIRST
-        if config_value == BlockFilteringStrategy.SEQUENTIAL_FIRST.value:
-            return BlockFilteringStrategy.SEQUENTIAL_FIRST
+        if config_value == BlockFilteringStrategy.KEEP_SMALL.value:
+            return BlockFilteringStrategy.KEEP_SMALL
+        if config_value == BlockFilteringStrategy.KEEP_SEQUENTIAL.value:
+            return BlockFilteringStrategy.KEEP_SEQUENTIAL
         raise RuntimeError('Unknown Block Filtering Strategy string')
 
 
 def get_building_blocks(compressed_model: NNCFNetwork,
                         max_block_size: int = 50,
                         min_block_size: int = 6,
-                        block_filter_strategy=BlockFilteringStrategy.SEQUENTIAL_FIRST,
+                        block_filter_strategy=BlockFilteringStrategy.KEEP_SEQUENTIAL,
                         hw_fused_ops: bool = True,
                         target_block_types: Optional[List[BuildingBlockType]] = None) -> Tuple[ExtendedBuildingBlocks,
                                                                                                GroupedBlockIDs]:
@@ -882,7 +859,6 @@ def get_building_blocks(compressed_model: NNCFNetwork,
                     continue
                 if end_node.node_type in IgnoredNameOperators:
                     continue
-
                 num_ops_in_block = end_node.bottom_id - start_node.main_id
                 if start_node.is_dummy:
                     num_ops_in_block -= 1
@@ -919,13 +895,6 @@ def get_building_blocks(compressed_model: NNCFNetwork,
             start_node_id = previous_nodes[0].node_id
         id_end = block.end_node.bottom_id
         num_ops_in_block = id_end - start_node_id - 1
-        # if block.start_node.is_dummy:
-        #     num_ops_in_block -= 1
-        # TODO: overlapping should know whether node is dummy or not
-        #   find op_addresses using parent node id - remove parent, as it's not skipped
-        #   use start_id - 1 for
-        # TODO: introduce dummy as a separate node with its own id, do mapping from search graph ids to original graph id.
-        #   should affect all rules...
         start_ids.append(start_node_id)
         end_ids.append(id_end)
         num_ops_in_blocks.append(num_ops_in_block)
@@ -936,7 +905,7 @@ def get_building_blocks(compressed_model: NNCFNetwork,
     is_target_block_type_fn = partial(is_target_block_type, orig_graph=orig_graph,
                                       target_block_types=target_block_types)
     get_indexes_of_overlapping_blocks_fn = get_indexes_of_overlapping_blocks_seq
-    if block_filter_strategy == BlockFilteringStrategy.SMALL_FIRST:
+    if block_filter_strategy == BlockFilteringStrategy.KEEP_SMALL:
         get_indexes_of_overlapping_blocks_fn = get_indexes_of_overlapping_blocks_min
 
     ids_of_overlapping_blocks = get_indexes_of_overlapping_blocks_fn(
@@ -1132,24 +1101,6 @@ def get_group_of_dependent_blocks(blocks: BuildingBlocks) -> GroupedBlockIDs:
     groups[idx].append(len(blocks) - 1)
 
     return groups
-
-
-def get_building_blocks_info(bblocks: ExtendedBuildingBlocks,
-                             compressed_model: NNCFNetwork) -> List[BuildingBlockInfo]:
-    """
-    Returns additional information about building blocks.
-
-    :param bblocks: List of building blocks.
-    :param compressed_model: Target model.
-    :return: List with additional info for each building blocks.
-    """
-    bblocks_info = []
-    for block in bblocks:
-        op_addresses = block.op_addresses
-        modules = get_all_modules_in_blocks(compressed_model, op_addresses)
-        block_type = get_type_building_block(op_addresses)
-        bblocks_info.append(BuildingBlockInfo(block.basic_block, op_addresses, modules, block_type))
-    return bblocks_info
 
 
 def get_all_node_op_addresses_in_block(graph: NNCFGraph,

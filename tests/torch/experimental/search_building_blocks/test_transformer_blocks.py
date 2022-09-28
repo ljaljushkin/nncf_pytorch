@@ -99,6 +99,7 @@ LIST_CASES = [
     TransformerSearchBBlockParamsCase(
         name='ViT',
         input_info=dict(sample_size=[1, 3, 224, 224]),
+        # TODO: very heavy model! is it possible
         model_creator=partial(AutoModelForImageClassification.from_pretrained,
                               'google/vit-base-patch16-224'),
     ),
@@ -129,7 +130,7 @@ def test_transformer_building_blocks(desc: TransformerSearchBBlockParamsCase):
 
     ext_blocks, group_dependent = get_building_blocks(nncf_model,
                                                       target_block_types=[BuildingBlockType.MSHA, BuildingBlockType.FF],
-                                                      block_filter_strategy=BlockFilteringStrategy.SMALL_FIRST,
+                                                      block_filter_strategy=BlockFilteringStrategy.KEEP_SMALL,
                                                       hw_fused_ops=True)
     check_extended_blocks(desc.name, ext_blocks)
 

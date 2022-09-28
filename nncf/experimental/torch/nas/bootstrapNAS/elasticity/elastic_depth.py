@@ -276,8 +276,8 @@ class ElasticDepthParams(BaseElasticityParams):
          only. Default value is 50.
         :param min_block_size: Defines minimal number of operations in the skipping block. Option is available for the
          auto mode only. Default value is 6.
-         # TODO: finish
-        :param hw_fused_ops: If False, automatic block search will . True, by default.
+        :param hw_fused_ops: If True, automatic block search will not relate operations, which are fused on inference,
+         into different blocks for skipping. True, by default.
         :param skipped_blocks: list of building blocks to be skipped. The block is defined by names of start and end
         nodes. If the parameter is not specified blocks to skip are found automatically.
         """

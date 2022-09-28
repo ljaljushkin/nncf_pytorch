@@ -103,7 +103,6 @@ LIST_OF_ME_DESCS = [
             depth_stage=ModelStats(1_223_053_312, 6_602_432),
             width_stage=ModelStats(358_165_120, 1_134_752)
         ),
-        is_auto_skipped_blocks=True,
     ),
     THREE_CONV_TEST_DESC,
     MultiElasticityTestDesc(

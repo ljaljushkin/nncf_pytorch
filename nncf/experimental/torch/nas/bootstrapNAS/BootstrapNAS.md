@@ -67,7 +67,8 @@ List of parameters that can be used in the configuration file:
 
 `algorithm`: Defines training strategy for tuning supernet. By default, `progressive_shrinking`.
 
-`progressivity_of_elasticity`: Defines the order of adding a new elasticity dimension from stage to stage. examples=["width", "depth", "kernel"].
+`progressivity_of_elasticity`: Defines the order of adding a new elasticity dimension from stage to stage. 
+examples=["width", "depth", "kernel"].
 
 `batchnorm_adaptation`: Specifies the number of samples from the training dataset to use for model inference during the 
 BatchNorm statistics adaptation procedure for the compressed model.
