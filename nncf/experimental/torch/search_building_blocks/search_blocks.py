@@ -10,14 +10,8 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-
 from collections import deque
-from copy import deepcopy
-from enum import Enum
-from functools import cmp_to_key
-from functools import partial
 from itertools import combinations
-from operator import itemgetter
 from typing import Any
 from typing import Callable
 from typing import Dict
@@ -28,6 +22,11 @@ from typing import Tuple
 
 import networkx as nx
 import torch
+from copy import deepcopy
+from enum import Enum
+from functools import cmp_to_key
+from functools import partial
+from operator import itemgetter
 
 from nncf.common.graph.definitions import MODEL_OUTPUT_OP_NAME
 from nncf.common.graph.graph import NNCFGraph
@@ -489,15 +488,21 @@ def add_node_to_aux_struct(node: SearchGraphNode, shape: List[int], shape_map: S
         shape_map[str_shape] = {node}
 
 
-def check_for_duplicates(graph: SearchGraph, start_node: SearchGraphNode, end_node: SearchGraphNode, id_pairs) -> bool:
+def remove_duplicates(sorted_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
     """
-    Return False if the provided block duplicates other considered blocks.
+    Removes identical blocks - that have the same start and end nodes
+    :param sorted_blocks: a sorted list of block. Some determined order is required as soon as otherwise filtration
+    may lead to a different result.
+    :return: filtered list of blocks without duplicates
     """
-    current_pair_ids = (start_node.main_id, end_node.main_id)
-    if current_pair_ids in id_pairs:
-        return False
-    id_pairs.add(current_pair_ids)
-    return True
+    id_pairs = set()
+    filtered_blocks = []
+    for b in sorted_blocks:
+        current_pair_ids = (b.start_node.main_id, b.end_node.main_id)
+        if current_pair_ids not in id_pairs:
+            filtered_blocks.append(b)
+        id_pairs.add(current_pair_ids)
+    return filtered_blocks
 
 
 def check_graph_has_no_hanging_edges_after_block_removal(graph: SearchGraph,
@@ -632,7 +637,17 @@ def compare_for_building_block(a: PotentialBuildingBlock, b: PotentialBuildingBl
     """
     if a.end_node.bottom_id != b.end_node.bottom_id:
         return a.end_node.bottom_id - b.end_node.bottom_id
-    return b.start_node.main_id - a.start_node.main_id
+    # TODO: extract get_num_ops function
+    if a.start_node.main_id != b.start_node.main_id:
+        return a.start_node.main_id - b.start_node.main_id
+    num_ops_a = a.end_node.bottom_id - a.start_node.main_id
+    if a.start_node.is_dummy:
+        num_ops_a -= 1
+    num_ops_b = b.end_node.bottom_id - b.start_node.main_id
+    if b.start_node.is_dummy:
+        num_ops_b -= 1
+    return num_ops_a - num_ops_b
+
 
 
 def check_blocks_combination_is_block(block: PotentialBuildingBlock,
@@ -840,12 +855,9 @@ def get_building_blocks(compressed_model: NNCFNetwork,
     orig_graph = compressed_model.get_original_graph()  # PTNNCFGraph
     sgraph = get_search_graph(orig_graph, hw_fused_ops)
 
-    id_pairs = set()
     fn_rules = [check_graph_has_no_duplicate_edges_after_block_removal,
                 check_graph_has_no_act_layer_duplication_after_block_removal,
-                check_graph_has_no_hanging_edges_after_block_removal,
-                partial(check_for_duplicates, id_pairs=id_pairs)
-                ]
+                check_graph_has_no_hanging_edges_after_block_removal]
 
     blocks = []
     act_input_shape, act_output_shape = get_potential_candidate_for_block(sgraph)
@@ -878,8 +890,7 @@ def get_building_blocks(compressed_model: NNCFNetwork,
                             'Shallow the accepted range for the length of building blocks via '
                             'max_block_size and min_block_size to accelerate the search process.')
     sorted_blocks = sorted(blocks, key=cmp_to_key(compare_for_building_block))
-
-    filtered_building_blocks = sorted_blocks
+    filtered_building_blocks = remove_duplicates(sorted_blocks)
 
     start_ids = []
     end_ids = []
@@ -889,6 +900,7 @@ def get_building_blocks(compressed_model: NNCFNetwork,
         first_skipped_node = orig_graph.get_node_by_id(id_st)
         input_nodes = orig_graph.get_input_nodes()
         start_node_id = id_st
+        # TODO: extract function
         if first_skipped_node not in input_nodes and not block.start_node.is_dummy:
             previous_nodes = orig_graph.get_previous_nodes(first_skipped_node)
             num_inputs = len(previous_nodes)
