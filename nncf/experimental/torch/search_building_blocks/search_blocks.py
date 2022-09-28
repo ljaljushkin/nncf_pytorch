@@ -496,6 +496,7 @@ def check_for_duplicates(graph: SearchGraph, start_node: SearchGraphNode, end_no
     current_pair_ids = (start_node.main_id, end_node.main_id)
     if current_pair_ids in id_pairs:
         return False
+    id_pairs.add(current_pair_ids)
     return True
 
 
