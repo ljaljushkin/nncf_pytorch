@@ -11,7 +11,6 @@
  limitations under the License.
 """
 from collections import deque
-from itertools import combinations
 from typing import Any
 from typing import Callable
 from typing import Dict
@@ -124,15 +123,15 @@ ShapeVsNodesMap = Dict[str, Set[SearchGraphNode]]
 
 class PotentialBuildingBlock:
     """
-    Describes a building block that is uniquely defined by the start and end nodes.
+    Describes a building block that is uniquely defined by the first skipped node and end nodes.
     """
 
-    def __init__(self, start_node: SearchGraphNode, end_node: SearchGraphNode):
-        self.start_node = start_node
+    def __init__(self, first_skipped_node: SearchGraphNode, end_node: SearchGraphNode):
+        self.first_skipped_node = first_skipped_node
         self.end_node = end_node
 
     def __eq__(self, __o: 'PotentialBuildingBlock') -> bool:
-        return self.start_node == __o.start_node and self.end_node == __o.end_node
+        return self.first_skipped_node == __o.first_skipped_node and self.end_node == __o.end_node
 
 
 class BuildingBlock:
@@ -490,7 +489,7 @@ def add_node_to_aux_struct(node: SearchGraphNode, shape: List[int], shape_map: S
 
 def remove_duplicates(sorted_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
     """
-    Removes identical blocks - that have the same start and end nodes
+    Removes identical blocks - that have the same nodes on boundaries
     :param sorted_blocks: a sorted list of block. Some determined order is required as soon as otherwise filtration
     may lead to a different result.
     :return: filtered list of blocks without duplicates
@@ -498,7 +497,7 @@ def remove_duplicates(sorted_blocks: List[PotentialBuildingBlock]) -> List[Poten
     id_pairs = set()
     filtered_blocks = []
     for b in sorted_blocks:
-        current_pair_ids = (b.start_node.main_id, b.end_node.main_id)
+        current_pair_ids = (b.first_skipped_node.main_id, b.end_node.main_id)
         if current_pair_ids not in id_pairs:
             filtered_blocks.append(b)
         id_pairs.add(current_pair_ids)
@@ -506,17 +505,17 @@ def remove_duplicates(sorted_blocks: List[PotentialBuildingBlock]) -> List[Poten
 
 
 def check_graph_has_no_hanging_edges_after_block_removal(graph: SearchGraph,
-                                                         start_node: SearchGraphNode,
+                                                         first_skipped_node: SearchGraphNode,
                                                          end_node: SearchGraphNode) -> bool:
     """
-    The subgraph is traversed starting with the start_node and ending with the end_node
+    The subgraph is traversed starting with the first_skipped_node and ending with the end_node
     to determine that after deleting such a block there are no dangling edges in the graph.
     """
     #            A
     #           / \
     #          /   \
     #         /     \
-    #    start_node  |   Edge A-C is dangling edges
+    #    first_skipped_node  |   Edge A-C is dangling edges
     #        |       |
     #         \     /
     #          \   /
@@ -526,31 +525,31 @@ def check_graph_has_no_hanging_edges_after_block_removal(graph: SearchGraph,
     #            |
     #         end_node
 
-    first_skipped_node = start_node
+    first_skipped_node = first_skipped_node
     if not first_skipped_node.is_dummy:
         previous_nodes = graph.get_previous_nodes(first_skipped_node)
         num_inputs = len(previous_nodes)
         assert num_inputs == 1, f'building block should have a single input, but it has {num_inputs} inputs.'
-        start_node = previous_nodes[0]
-    q = deque([start_node])
+        first_skipped_node = previous_nodes[0]
+    q = deque([first_skipped_node])
     addit_nodes = set()
     nodes = []
-    current_node = start_node
+    current_node = first_skipped_node
     potential_end_nodes = []
     while len(q) != 0:
         current_node = q.pop()
-        if current_node.main_id != start_node.main_id:
+        if current_node.main_id != first_skipped_node.main_id:
             prev_nodes = graph.get_prev_nodes(current_node.node_key)
             if len(prev_nodes) > 1:
                 for pn in prev_nodes:
-                    if pn.bottom_id < start_node.bottom_id:
-                        print(f'False for [{start_node}, {end_node}]')
+                    if pn.bottom_id < first_skipped_node.bottom_id:
+                        print(f'False for [{first_skipped_node}, {end_node}]')
                         return False  # there is extra edge
                     addit_nodes.add(pn)
         if current_node.node_key == end_node.node_key:
             continue
         if current_node.main_id > end_node.main_id:
-            print(f'False for [{start_node}, {end_node}]')
+            print(f'False for [{first_skipped_node}, {end_node}]')
             return False
         if current_node not in nodes:
             nodes.append(current_node)
@@ -560,19 +559,19 @@ def check_graph_has_no_hanging_edges_after_block_removal(graph: SearchGraph,
             for next_node in next_nodes:
                 q.appendleft(next_node)
     if len(q) > 0 or len(potential_end_nodes) > 0:
-        print(f'False for [{start_node}, {end_node}]')
+        print(f'False for [{first_skipped_node}, {end_node}]')
         return False
     for node in addit_nodes:
         if node not in nodes:
-            print(f'False for [{start_node}, {end_node}]')
+            print(f'False for [{first_skipped_node}, {end_node}]')
             return False
     nodes.append(end_node)
-    print(f'True for [{start_node}, {end_node}]')
+    print(f'True for [{first_skipped_node}, {end_node}]')
     return True
 
 
 def check_graph_has_no_duplicate_edges_after_block_removal(sgraph: SearchGraph,
-                                                           start_node: SearchGraphNode,
+                                                           first_skipped_node: SearchGraphNode,
                                                            end_node: SearchGraphNode) -> bool:
     """
     This rule ensures that no duplicate edges will be created in the graph after a block is deleted.
@@ -586,24 +585,24 @@ def check_graph_has_no_duplicate_edges_after_block_removal(sgraph: SearchGraph,
     #         D          forbidden
 
     # pylint: disable=protected-access
-    if start_node.is_dummy:
+    if first_skipped_node.is_dummy:
         next_end_node = sgraph.get_next_nodes(end_node.node_key)
         if len(next_end_node) != 0:
-            attr = sgraph._nx_graph.get_edge_data(start_node.node_key, next_end_node[0].node_key)
+            attr = sgraph._nx_graph.get_edge_data(first_skipped_node.node_key, next_end_node[0].node_key)
         else:
             attr = None
     else:
-        pred_start_node = sgraph.get_prev_nodes(start_node.node_key)
+        previous_node = sgraph.get_prev_nodes(first_skipped_node.node_key)
         next_end_node = sgraph.get_next_nodes(end_node.node_key)
-        if len(pred_start_node) != 0 and len(next_end_node) != 0:
-            attr = sgraph._nx_graph.get_edge_data(pred_start_node[0].node_key, next_end_node[0].node_key)
+        if len(previous_node) != 0 and len(next_end_node) != 0:
+            attr = sgraph._nx_graph.get_edge_data(previous_node[0].node_key, next_end_node[0].node_key)
         else:
             attr = None
     return attr is None
 
 
 def check_graph_has_no_act_layer_duplication_after_block_removal(sgraph: SearchGraph,
-                                                                 start_node: SearchGraphNode,
+                                                                 first_skipped_node: SearchGraphNode,
                                                                  end_node: SearchGraphNode) -> bool:
     """
     This rule ensures that after the block is deleted there will be no duplication of activation layers.
@@ -616,14 +615,14 @@ def check_graph_has_no_act_layer_duplication_after_block_removal(sgraph: SearchG
     #         |
     #        relu        forbidden
 
-    pred_start_node = sgraph.get_prev_nodes(start_node.node_key)
+    previous_nodes = sgraph.get_prev_nodes(first_skipped_node.node_key)
     next_end_node = sgraph.get_next_nodes(end_node.node_key)
-    if len(next_end_node) == 0 or len(pred_start_node) == 0:
+    if len(next_end_node) == 0 or len(previous_nodes) == 0:
         return True
-    if pred_start_node[0].is_dummy:
-        pred_start_node = sgraph.get_prev_nodes(pred_start_node[0].node_key)
+    if previous_nodes[0].is_dummy:
+        previous_nodes = sgraph.get_prev_nodes(previous_nodes[0].node_key)
 
-    if pred_start_node[0].node_type[-1] in PTRELUMetatype.get_all_aliases() \
+    if previous_nodes[0].node_type[-1] in PTRELUMetatype.get_all_aliases() \
             and next_end_node[0].node_type[0] in PTRELUMetatype.get_all_aliases():
         return False
     return True
@@ -633,78 +632,20 @@ def compare_for_building_block(a: PotentialBuildingBlock, b: PotentialBuildingBl
     """
     Orders the blocks in ascending order of the end node index.
     If the indices of the end nodes are the same, the blocks are ordered by the
-    index of the start node.
+    index of the first skipped node.Otherwise - by number of operations in the block.
     """
     if a.end_node.bottom_id != b.end_node.bottom_id:
         return a.end_node.bottom_id - b.end_node.bottom_id
     # TODO: extract get_num_ops function
-    if a.start_node.main_id != b.start_node.main_id:
-        return a.start_node.main_id - b.start_node.main_id
-    num_ops_a = a.end_node.bottom_id - a.start_node.main_id
-    if a.start_node.is_dummy:
+    if a.first_skipped_node.main_id != b.first_skipped_node.main_id:
+        return a.first_skipped_node.main_id - b.first_skipped_node.main_id
+    num_ops_a = a.end_node.bottom_id - a.first_skipped_node.main_id
+    if a.first_skipped_node.is_dummy:
         num_ops_a -= 1
-    num_ops_b = b.end_node.bottom_id - b.start_node.main_id
-    if b.start_node.is_dummy:
+    num_ops_b = b.end_node.bottom_id - b.first_skipped_node.main_id
+    if b.first_skipped_node.is_dummy:
         num_ops_b -= 1
     return num_ops_a - num_ops_b
-
-
-
-def check_blocks_combination_is_block(block: PotentialBuildingBlock,
-                                      combination: Tuple[PotentialBuildingBlock]) -> bool:
-    """
-    Checks that a combination of blocks is a given block.
-    """
-    if block.start_node.main_id != combination[0].start_node.main_id:
-        return False
-    if block.end_node.bottom_id != combination[-1].end_node.bottom_id:
-        return False
-    i = 0
-    while i < len(combination) - 1:
-        curr_end_node = combination[i].end_node
-        next_start_node = combination[i + 1].start_node
-        if curr_end_node.node_key in next_start_node.node_key:
-            i += 1
-            continue
-        return False
-    return True
-
-
-def search_lin_combination(block: PotentialBuildingBlock, blocks: List[PotentialBuildingBlock]) -> bool:
-    """
-    Checks that a given block is linear combination of some blocks.
-    A linear combination of blocks is a sequence of blocks following each other in the graph
-    and connected by one edge.
-    """
-    max_num = len(blocks)
-    for i in range(max_num, 1, -1):
-        all_combinations = list(combinations(blocks, i))
-        for combo in all_combinations:
-            if check_blocks_combination_is_block(block, combo):
-                return True
-    return False
-
-
-def remove_linear_combination(sorted_building_blocks: List[PotentialBuildingBlock]) -> List[PotentialBuildingBlock]:
-    """
-    Search and remove of block which is a combination of other blocks following each other.
-    """
-    result_blocks = []
-    start_to_idx = {}
-    last_node = None
-    for block in sorted_building_blocks:
-        if last_node == block.end_node:
-            if block.start_node.main_id in start_to_idx:
-                if not search_lin_combination(block, result_blocks[start_to_idx[block.start_node.main_id]:]):
-                    result_blocks.append(block)
-                    last_node = block.end_node
-        else:
-            result_blocks.append(block)
-            last_node = block.end_node
-            if block.start_node.main_id not in start_to_idx:
-                start_to_idx[block.start_node.main_id] = len(result_blocks) - 1
-
-    return result_blocks
 
 
 def get_building_block_for_original_graph(building_blocks: List[PotentialBuildingBlock],
@@ -715,29 +656,8 @@ def get_building_block_for_original_graph(building_blocks: List[PotentialBuildin
     """
     building_block_in_orig_format = []
     for block in building_blocks:
-        id_st = block.start_node.main_id
         id_end = block.end_node.bottom_id
-        first_skipped_node = orig_graph.get_node_by_id(id_st)
-        input_nodes = orig_graph.get_input_nodes()
-        start_node_id = id_st
-        if first_skipped_node not in input_nodes and not block.start_node.is_dummy:
-            previous_nodes = orig_graph.get_previous_nodes(first_skipped_node)
-            num_inputs = len(previous_nodes)
-            assert num_inputs == 1, f'building block should have a single input, but it has {num_inputs} inputs.'
-            start_node_id = previous_nodes[0].node_id
-
-        # block_for_ops = BuildingBlock(orig_graph.get_node_key_by_id(id_st).split(' ')[-1],
-        #                               orig_graph.get_node_key_by_id(id_end).split(' ')[-1])
-        # op_addresses = get_all_node_op_addresses_in_block(orig_graph, block_for_ops)
-        # block_type = get_type_building_block(op_addresses)
-        # first_skipped_node = orig_graph.get_node_by_id(id_st)
-        # input_nodes = orig_graph.get_input_nodes()
-        # start_node_id = id_st
-        # if first_skipped_node not in input_nodes:# and not block.start_node.is_dummy:
-        #     previous_nodes = orig_graph.get_previous_nodes(first_skipped_node)
-        #     num_inputs = len(previous_nodes)
-        #     assert num_inputs == 1, f'building block should have a single input, but it has {num_inputs} inputs.'
-        #     start_node_id = previous_nodes[0].node_id
+        start_node_id = get_start_node_id(block, orig_graph)
         block_in_orig_format = BuildingBlock(orig_graph.get_node_key_by_id(start_node_id).split(' ')[-1],
                                              orig_graph.get_node_key_by_id(id_end).split(' ')[-1])
         ordinal_ids = [start_node_id, id_end]
@@ -792,12 +712,11 @@ def is_target_block_type(start_node_id: int,
                          orig_graph: NNCFGraph,
                          target_block_types: Optional[List[BuildingBlockType]] = None) -> bool:
     """
-    TBD
-    Returns additional information about building block.
-
+    Returns true if block has a type equal to one of the specified.
     :param start_node_id: bottom index of the starting node in search graph
     :param end_node_id: bottom index of the ending node in search graph
     :param orig_graph: original non-compressed graph.
+    :param target_block_types: list of block types to match the type of the given block
     :return: additional info for the building blocks - block type and addresses of all operations inside the block .
     """
     if target_block_types is None:
@@ -862,29 +781,29 @@ def get_building_blocks(compressed_model: NNCFNetwork,
     blocks = []
     act_input_shape, act_output_shape = get_potential_candidate_for_block(sgraph)
 
-    for shape, start_nodes in act_input_shape.items():
-        for start_node in start_nodes:
-            pred_start_node = sgraph.get_prev_nodes(start_node.node_key)
-            if start_node.node_type == IgnoredNameOperators or len(pred_start_node) != 1:
+    for shape, first_skipped_nodes in act_input_shape.items():
+        for first_skipped_node in first_skipped_nodes:
+            previous_nodes = sgraph.get_prev_nodes(first_skipped_node.node_key)
+            if first_skipped_node.node_type == IgnoredNameOperators or len(previous_nodes) != 1:
                 continue
             for end_node in act_output_shape[shape]:
-                if end_node.main_id <= start_node.main_id:
+                if end_node.main_id <= first_skipped_node.main_id:
                     continue
                 if end_node.node_type in IgnoredNameOperators:
                     continue
-                num_ops_in_block = end_node.bottom_id - start_node.main_id
-                if start_node.is_dummy:
+                num_ops_in_block = end_node.bottom_id - first_skipped_node.main_id
+                if first_skipped_node.is_dummy:
                     num_ops_in_block -= 1
                 if num_ops_in_block > max_block_size or num_ops_in_block < min_block_size:
                     continue
                 # CHECK RULES
                 all_rules_is_true = True
                 for rule_fn in fn_rules:
-                    if not rule_fn(sgraph, start_node, end_node):
+                    if not rule_fn(sgraph, first_skipped_node, end_node):
                         all_rules_is_true = False
                         break
                 if all_rules_is_true:
-                    blocks.append(PotentialBuildingBlock(start_node, end_node))
+                    blocks.append(PotentialBuildingBlock(first_skipped_node, end_node))
     if len(blocks) > 300:
         nncf_logger.warning('Number of potential building blocks is too much. The processing time can be high. '
                             'Shallow the accepted range for the length of building blocks via '
@@ -896,16 +815,7 @@ def get_building_blocks(compressed_model: NNCFNetwork,
     end_ids = []
     num_ops_in_blocks = []
     for block in filtered_building_blocks:
-        id_st = block.start_node.main_id
-        first_skipped_node = orig_graph.get_node_by_id(id_st)
-        input_nodes = orig_graph.get_input_nodes()
-        start_node_id = id_st
-        # TODO: extract function
-        if first_skipped_node not in input_nodes and not block.start_node.is_dummy:
-            previous_nodes = orig_graph.get_previous_nodes(first_skipped_node)
-            num_inputs = len(previous_nodes)
-            assert num_inputs == 1, f'building block should have a single input, but it has {num_inputs} inputs.'
-            start_node_id = previous_nodes[0].node_id
+        start_node_id = get_start_node_id(block, orig_graph)
         id_end = block.end_node.bottom_id
         num_ops_in_block = id_end - start_node_id - 1
         start_ids.append(start_node_id)
@@ -947,6 +857,25 @@ def get_building_blocks(compressed_model: NNCFNetwork,
     return ext_building_blocks, group_dependent
 
 
+def get_start_node_id(block: PotentialBuildingBlock, orig_graph: NNCFGraph) -> int:
+    """
+    Returns id of the starting node of the block - the node right before first skipped node.
+    :param block: potential building block
+    :param orig_graph: original nncf graph
+    :return: id of starting node
+    """
+    id_st = block.first_skipped_node.main_id
+    first_skipped_node = orig_graph.get_node_by_id(id_st)
+    input_nodes = orig_graph.get_input_nodes()
+    start_node_id = id_st
+    if first_skipped_node not in input_nodes and not block.first_skipped_node.is_dummy:
+        previous_nodes = orig_graph.get_previous_nodes(first_skipped_node)
+        num_inputs = len(previous_nodes)
+        assert num_inputs == 1, f'building block should have a single input, but it has {num_inputs} inputs.'
+        start_node_id = previous_nodes[0].node_id
+    return start_node_id
+
+
 def get_indexes_of_overlapping_blocks_seq(
         start_ids: List[int],
         end_ids: List[int],
@@ -974,9 +903,6 @@ def get_indexes_of_overlapping_blocks_seq(
         ids_of_not_overlapping_nodes = nx.dag_longest_path(block_graph, weight='cost')
         print(f'longest path: {ids_of_not_overlapping_nodes}')
         node_ids_to_remove = set()
-        # for node_id in ids_of_not_overlapping_nodes:
-        #     node_ids_to_remove.add(node_id)
-        node_ids_to_remove = set()
         for i in range(len(ids_of_not_overlapping_nodes) - 1):
             data = block_graph.get_edge_data(ids_of_not_overlapping_nodes[i], ids_of_not_overlapping_nodes[i + 1])
             ids_of_not_overlapping_blocks.add(data['attr']['block_id'])
@@ -987,10 +913,6 @@ def get_indexes_of_overlapping_blocks_seq(
         right_border = ids_of_not_overlapping_nodes[-1]
         for node_id1, node_id2, data in block_graph.edges(data=True):
             i = data['attr']['block_id']
-            # if node_id1 in ids_of_not_overlapping_nodes and node_id2 in ids_of_not_overlapping_nodes:
-            #     ids_of_not_overlapping_blocks.add(i)
-            #     continue
-            # TODO: should equal be really filtered??
             does_intersect_found_block = left_border < start_ids[i] < right_border or \
                                          left_border < end_ids[i] < right_border
             does_include_found_block = start_ids[i] <= left_border <= end_ids[i] and \
@@ -1049,7 +971,6 @@ def get_indexes_of_overlapping_blocks_min(
         right_border = end_ids[found_block_id]
         ids_to_remove = []
         for i in list_of_all_block_indexes:
-            # TODO: should equal be really filtered??
             does_intersect_found_block = left_border < start_ids[i] < right_border or \
                                          left_border < end_ids[i] < right_border
             does_include_found_block = start_ids[i] <= left_border <= end_ids[i] and \
@@ -1060,34 +981,6 @@ def get_indexes_of_overlapping_blocks_min(
         for i in ids_to_remove:
             list_of_all_block_indexes.remove(i)
     return result
-
-    # original_pair_ids_to_remove = set()
-    # n = len(start_ids)
-    # if n <= 1:
-    #     return original_pair_ids_to_remove
-    # indexes_to_sort, start_ids_sorted = zip(*sorted(enumerate(start_ids), key=itemgetter(1)))
-    # end_ids_sorted = itemgetter_force_tuple(*indexes_to_sort)(end_ids)
-    # num_ops_in_blocks_sorted = itemgetter_force_tuple(*indexes_to_sort)(num_ops_in_blocks)
-    #
-    # pair_ids_to_remove = set()
-    # for curr_id in range(n - 1):
-    #     if curr_id in pair_ids_to_remove:
-    #         continue
-    #     # remove all blocks that are less the current and starts within the boundaries of the current block
-    #     for next_id in range(curr_id + 1, n):
-    #         if start_ids_sorted[next_id] >= end_ids_sorted[curr_id]:
-    #             break
-    #         if next_id in pair_ids_to_remove:
-    #             continue
-    #         current_len = num_ops_in_blocks_sorted[curr_id]
-    #         next_len = end_ids_sorted[next_id] - start_ids_sorted[next_id]
-    #         id_to_remove = next_id if next_len < current_len else curr_id
-    #         print(f'current {curr_id}=({start_ids_sorted[curr_id]},{end_ids_sorted[curr_id]}) next {next_id}=({start_ids_sorted[next_id]}, {end_ids_sorted[next_id]}) to_remove={id_to_remove}')
-    #         pair_ids_to_remove.add(id_to_remove)
-    #
-    # if pair_ids_to_remove:
-    #     original_pair_ids_to_remove = set(itemgetter_force_tuple(*pair_ids_to_remove)(indexes_to_sort))
-    # return original_pair_ids_to_remove
 
 
 def get_group_of_dependent_blocks(blocks: BuildingBlocks) -> GroupedBlockIDs:
