@@ -628,6 +628,17 @@ def check_graph_has_no_act_layer_duplication_after_block_removal(sgraph: SearchG
     return True
 
 
+def get_num_ops_in_block(first_skipped_node: SearchGraphNode, end_node: SearchGraphNode) -> int:
+    """
+    Calculates number of operations in the block by using indexes. Indexes should be in execution order.
+    The block is defined by first and last skipped node.
+    """
+    num_ops = end_node.bottom_id - first_skipped_node.main_id
+    if first_skipped_node.is_dummy:
+        num_ops -= 1
+    return num_ops
+
+
 def compare_for_building_block(a: PotentialBuildingBlock, b: PotentialBuildingBlock):
     """
     Orders the blocks in ascending order of the end node index.
@@ -636,15 +647,10 @@ def compare_for_building_block(a: PotentialBuildingBlock, b: PotentialBuildingBl
     """
     if a.end_node.bottom_id != b.end_node.bottom_id:
         return a.end_node.bottom_id - b.end_node.bottom_id
-    # TODO: extract get_num_ops function
     if a.first_skipped_node.main_id != b.first_skipped_node.main_id:
         return a.first_skipped_node.main_id - b.first_skipped_node.main_id
-    num_ops_a = a.end_node.bottom_id - a.first_skipped_node.main_id
-    if a.first_skipped_node.is_dummy:
-        num_ops_a -= 1
-    num_ops_b = b.end_node.bottom_id - b.first_skipped_node.main_id
-    if b.first_skipped_node.is_dummy:
-        num_ops_b -= 1
+    num_ops_a = get_num_ops_in_block(a.first_skipped_node, a.end_node)
+    num_ops_b = get_num_ops_in_block(b.first_skipped_node, b.end_node)
     return num_ops_a - num_ops_b
 
 
@@ -791,9 +797,7 @@ def get_building_blocks(compressed_model: NNCFNetwork,
                     continue
                 if end_node.node_type in IgnoredNameOperators:
                     continue
-                num_ops_in_block = end_node.bottom_id - first_skipped_node.main_id
-                if first_skipped_node.is_dummy:
-                    num_ops_in_block -= 1
+                num_ops_in_block = get_num_ops_in_block(first_skipped_node, end_node)
                 if num_ops_in_block > max_block_size or num_ops_in_block < min_block_size:
                     continue
                 # CHECK RULES
