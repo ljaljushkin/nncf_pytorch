@@ -34,6 +34,7 @@ from nncf.experimental.torch.search_building_blocks.search_blocks import Extende
 from nncf.experimental.torch.search_building_blocks.search_blocks import ExtendedBuildingBlocks
 from nncf.experimental.torch.search_building_blocks.search_blocks import get_building_blocks
 from nncf.experimental.torch.search_building_blocks.search_blocks import get_indexes_of_overlapping_blocks_min
+from nncf.experimental.torch.search_building_blocks.search_blocks import get_indexes_of_overlapping_blocks_seq
 from tests.common.helpers import TEST_ROOT
 from tests.torch.helpers import create_compressed_model_and_algo_for_test
 from tests.torch.helpers import get_empty_config
@@ -99,7 +100,6 @@ LIST_CASES = [
     TransformerSearchBBlockParamsCase(
         name='ViT',
         input_info=dict(sample_size=[1, 3, 224, 224]),
-        # TODO: very heavy model! is it possible
         model_creator=partial(AutoModelForImageClassification.from_pretrained,
                               'google/vit-base-patch16-224'),
     ),
@@ -139,15 +139,18 @@ class FilterBlockTestDesc:
     def __init__(self,
                  start_ids: List[int],
                  end_ids: List[int],
-                 overlapping_blocks_ids: Optional[Set[int]] = None,
+                 overlapping_blocks_ids_min: Optional[Set[int]] = None,
+                 overlapping_blocks_ids_seq: Optional[Set[int]] = None,
                  num_ops_in_block: Optional[List[int]] = None,
                  name: Optional[str] = None):
-        # block_filter_strategy: BlockFilterStrategy = None):
         self.start_ids = start_ids
         self.end_ids = end_ids
-        self.overlapping_blocks_ids = overlapping_blocks_ids
-        if self.overlapping_blocks_ids is None:
-            self.overlapping_blocks_ids = set()
+        self.overlapping_blocks_ids_min = overlapping_blocks_ids_min
+        if self.overlapping_blocks_ids_min is None:
+            self.overlapping_blocks_ids_min = set()
+        self.overlapping_blocks_ids_seq = overlapping_blocks_ids_seq
+        if self.overlapping_blocks_ids_seq is None:
+            self.overlapping_blocks_ids_seq = self.overlapping_blocks_ids_min
         self.num_ops_in_block = num_ops_in_block
         if self.num_ops_in_block is None:
             self.num_ops_in_block = [e - s for s, e in zip(self.start_ids, self.end_ids)]
@@ -176,61 +179,66 @@ LIST_FILTER_BLOCK_DESCS = [
     FilterBlockTestDesc(
         start_ids=[1, 2, 3, 4],
         end_ids=[5, 5, 5, 5],
-        overlapping_blocks_ids={0, 1, 2}
+        overlapping_blocks_ids_min={0, 1, 2},
+        overlapping_blocks_ids_seq={1, 2, 3}
     ),
     FilterBlockTestDesc(
         start_ids=[1, 1, 1, 1],
         end_ids=[2, 3, 4, 5],
-        overlapping_blocks_ids={1, 2, 3}
+        overlapping_blocks_ids_min={1, 2, 3},
     ),
     FilterBlockTestDesc(
         start_ids=[1, 1, 2, 2],
         end_ids=[2, 3, 3, 4],
-        overlapping_blocks_ids={1, 3}
+        overlapping_blocks_ids_min={1, 3}
     ),
     FilterBlockTestDesc(
         start_ids=[1, 1, 2, 2],
         end_ids=[4, 3, 3, 4],
-        overlapping_blocks_ids={0, 1, 3}
+        overlapping_blocks_ids_min={0, 1, 3},
+        overlapping_blocks_ids_seq={0, 2, 3}
     ),
     FilterBlockTestDesc(
         start_ids=[1, 2, 2, 1],
         end_ids=[4, 3, 4, 3],
-        overlapping_blocks_ids={0, 2, 3}
+        overlapping_blocks_ids_min={0, 2, 3}
     ),
     FilterBlockTestDesc(
         start_ids=[1, 3, 3, 4, 5, 10, 11],
         end_ids=[4, 5, 6, 7, 6, 14, 12],
-        overlapping_blocks_ids={0, 2, 3, 5}
+        overlapping_blocks_ids_min={0, 2, 3, 5},
+        overlapping_blocks_ids_seq={1, 2, 4, 6}
     ),
     FilterBlockTestDesc(
         start_ids=[3, 10, 3, 5, 11, 1, 4],
         end_ids=[6, 14, 5, 6, 12, 4, 7],
-        overlapping_blocks_ids={0, 1, 5, 6}
+        overlapping_blocks_ids_min={0, 1, 5, 6},
+        overlapping_blocks_ids_seq={0, 4, 5, 6}
     ),
     FilterBlockTestDesc(
         start_ids=[1, 2, 3, 4],
         end_ids=[5, 4, 6, 9],
-        overlapping_blocks_ids={0, 2}
+        overlapping_blocks_ids_min={0, 2}
     ),
     FilterBlockTestDesc(
         start_ids=[1, 3, 2, 4],
         end_ids=[5, 6, 4, 9],
-        overlapping_blocks_ids={0, 1}
+        overlapping_blocks_ids_min={0, 1}
     ),
     FilterBlockTestDesc(
         name='non_standard_num_ops',
         start_ids=[1, 2, 2, 1],
         end_ids=[4, 3, 4, 3],
         num_ops_in_block=[1, 10, 2, 11],
-        overlapping_blocks_ids={1, 2, 3}
+        overlapping_blocks_ids_min={1, 2, 3},
+        overlapping_blocks_ids_seq={0, 2, 3}
     ),
     FilterBlockTestDesc(
         name='SSD_mobilenet',
         start_ids=[45, 48, 45, 51, 48, 54, 51, 57, 54, 60, 57, 63, 60, 66, 63],
         end_ids=[51, 54, 54, 57, 57, 60, 60, 63, 63, 66, 66, 69, 69, 72, 72],
         num_ops_in_block=[6, 6, 9, 6, 9, 6, 9, 6, 9, 6, 9, 6, 9, 6, 9],
-        overlapping_blocks_ids={1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14}
+        overlapping_blocks_ids_min={1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14}
     ),
     FilterBlockTestDesc(
         name='efficient-net-b0',
@@ -239,35 +247,32 @@ LIST_FILTER_BLOCK_DESCS = [
         end_ids=[17, 35, 53, 56, 72, 90, 93, 109, 127, 130, 146, 149, 165, 183, 186, 202, 205, 221, 239, 242, 258, 261,
                  277, 280, 296],
         num_ops_in_block=[7, 7, 7, 19, 7, 7, 19, 7, 7, 19, 7, 19, 7, 7, 19, 7, 19, 7, 7, 19, 7, 19, 7, 19, 7],
-        overlapping_blocks_ids={3, 6, 9, 11, 14, 16, 19, 21, 23}
+        overlapping_blocks_ids_min={3, 6, 9, 11, 14, 16, 19, 21, 23},
+        overlapping_blocks_ids_seq={3, 6, 8, 10, 13, 15, 18, 20, 22}
     ),
     FilterBlockTestDesc(
         name='mobilenet-v3',
         start_ids=[6, 6, 22, 37, 51, 51, 45, 66, 66, 60, 81, 81, 95, 95, 89, 110, 124, 124, 118, 139, 139, 133],
         end_ids=[12, 14, 31, 43, 57, 57, 60, 72, 72, 75, 87, 87, 101, 101, 104, 116, 130, 130, 133, 145, 145, 148],
         num_ops_in_block=[6, 8, 9, 6, 6, 6, 15, 6, 6, 15, 6, 6, 6, 6, 15, 6, 6, 6, 15, 6, 6, 15],
-        overlapping_blocks_ids={1, 5, 6, 8, 9, 11, 13, 14, 17, 18, 20, 21}
+        overlapping_blocks_ids_min={1, 5, 6, 8, 9, 11, 13, 14, 17, 18, 20, 21},
+        overlapping_blocks_ids_seq={1, 4, 5, 7, 8, 10, 12, 14, 16, 17, 19, 20}
     ),
     FilterBlockTestDesc(
         name='resnet50_unfused',
         start_ids=[5, 17, 16, 16, 27, 26, 16, 26, 16],
         end_ids=[10, 23, 25, 26, 33, 35, 35, 36, 36],
         num_ops_in_block=[5, 6, 9, 10, 6, 9, 19, 10, 20],
-        overlapping_blocks_ids={2, 3, 5, 6, 7, 8},
+        overlapping_blocks_ids_min={2, 3, 5, 6, 7, 8},
+        overlapping_blocks_ids_seq={1, 2, 4, 6, 7, 8},
     ),
-    # FilterBlockTestDesc(
-    #     name='resnet50_sequential',
-    #     start_ids=[5, 17, 16, 16, 27, 26, 16, 26, 16],
-    #     end_ids=[10, 23, 25, 26, 33, 35, 35, 36, 36],
-    #     num_ops_in_block=[5, 6, 9, 10, 6, 9, 19, 10, 20],
-    #     overlapping_blocks_ids={1, 2, 3, 4, 6, 7, 8},
-    # ),
     FilterBlockTestDesc(
         name='part_of_BERT',
         start_ids=[10, 9, 10, 9, 32, 33, 32, 38, 39, 38, 39, 61, 62, 61, 67, 68, 67, 68],
         end_ids=[32, 32, 33, 33, 38, 39, 39, 61, 61, 62, 62, 67, 68, 68, 90, 90, 91, 91],
         num_ops_in_block=[21, 23, 22, 24, 6, 5, 7, 23, 21, 24, 22, 6, 5, 7, 23, 21, 24, 22],
-        overlapping_blocks_ids={1, 2, 3, 4, 6, 7, 9, 10, 11, 13, 14, 16, 17}
+        overlapping_blocks_ids_min={1, 2, 3, 4, 6, 7, 9, 10, 11, 13, 14, 16, 17},
+        overlapping_blocks_ids_seq={1, 2, 3, 5, 6, 8, 9, 10, 12, 13, 15, 16, 17}
     )
 ]
 
@@ -278,10 +283,17 @@ def fixture_filter_blocks_desc(request) -> FilterBlockTestDesc:
     return request.param
 
 
-def test_filtering(filter_blocks_desc: FilterBlockTestDesc):
+def test_filter_with_keeping_small(filter_blocks_desc: FilterBlockTestDesc):
     actual_indexes_of_overlapping_blocks = get_indexes_of_overlapping_blocks_min(
         filter_blocks_desc.start_ids,
         filter_blocks_desc.end_ids,
-        filter_blocks_desc.num_ops_in_block
+        filter_blocks_desc.num_ops_in_block,
     )
-    assert actual_indexes_of_overlapping_blocks == filter_blocks_desc.overlapping_blocks_ids
+    assert actual_indexes_of_overlapping_blocks == filter_blocks_desc.overlapping_blocks_ids_min
+
+    actual_indexes_of_overlapping_blocks = get_indexes_of_overlapping_blocks_seq(
+        filter_blocks_desc.start_ids,
+        filter_blocks_desc.end_ids,
+        filter_blocks_desc.num_ops_in_block,
+    )
+    assert actual_indexes_of_overlapping_blocks == filter_blocks_desc.overlapping_blocks_ids_seq
