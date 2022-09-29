@@ -1,7 +1,7 @@
 {
     "blocks": [
         {
-            "start_node_name": "SqueezeNet/Sequential[features]/Fire[3]/ReLU[squeeze_activation]/relu__0",
+            "start_node_name": "SqueezeNet/Sequential[features]/Fire[3]/NNCFConv2d[squeeze]/conv2d_0",
             "end_node_name": "SqueezeNet/Sequential[features]/Fire[4]/ReLU[squeeze_activation]/relu__0"
         },
         {
@@ -9,7 +9,7 @@
             "end_node_name": "SqueezeNet/Sequential[features]/Fire[7]/cat_0"
         },
         {
-            "start_node_name": "SqueezeNet/Sequential[features]/Fire[8]/ReLU[squeeze_activation]/relu__0",
+            "start_node_name": "SqueezeNet/Sequential[features]/Fire[8]/NNCFConv2d[squeeze]/conv2d_0",
             "end_node_name": "SqueezeNet/Sequential[features]/Fire[9]/ReLU[squeeze_activation]/relu__0"
         },
         {

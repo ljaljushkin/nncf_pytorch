@@ -293,7 +293,7 @@ class ElasticDepthParams(BaseElasticityParams):
         """
         kwargs = {
             cls._state_names.MAX_BLOCK_SIZE: config.get(cls._state_names.MAX_BLOCK_SIZE, 50),
-            cls._state_names.MIN_BLOCK_SIZE: config.get(cls._state_names.MIN_BLOCK_SIZE, 6),
+            cls._state_names.MIN_BLOCK_SIZE: config.get(cls._state_names.MIN_BLOCK_SIZE, 5),
             cls._state_names.HW_FUSED_OPS: config.get(cls._state_names.HW_FUSED_OPS, True),
             cls._state_names.SKIPPED_BLOCKS: config.get(cls._state_names.SKIPPED_BLOCKS),
         }

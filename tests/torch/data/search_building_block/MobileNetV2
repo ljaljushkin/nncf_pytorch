@@ -1,11 +1,11 @@
 {
     "blocks": [
         {
-            "start_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[2]/Sequential[conv]/NNCFBatchNorm2d[3]/batch_norm_0",
+            "start_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[2]/Sequential[conv]/NNCFConv2d[2]/conv2d_0",
             "end_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[3]/__add___0"
         },
         {
-            "start_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[4]/Sequential[conv]/NNCFBatchNorm2d[3]/batch_norm_0",
+            "start_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[4]/Sequential[conv]/NNCFConv2d[2]/conv2d_0",
             "end_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[5]/__add___0"
         },
         {
@@ -13,7 +13,7 @@
             "end_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[6]/__add___0"
         },
         {
-            "start_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[7]/Sequential[conv]/NNCFBatchNorm2d[3]/batch_norm_0",
+            "start_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[7]/Sequential[conv]/NNCFConv2d[2]/conv2d_0",
             "end_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[8]/__add___0"
         },
         {
@@ -25,7 +25,7 @@
             "end_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[10]/__add___0"
         },
         {
-            "start_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[11]/Sequential[conv]/NNCFBatchNorm2d[3]/batch_norm_0",
+            "start_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[11]/Sequential[conv]/NNCFConv2d[2]/conv2d_0",
             "end_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[12]/__add___0"
         },
         {
@@ -33,7 +33,7 @@
             "end_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[13]/__add___0"
         },
         {
-            "start_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[14]/Sequential[conv]/NNCFBatchNorm2d[3]/batch_norm_0",
+            "start_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[14]/Sequential[conv]/NNCFConv2d[2]/conv2d_0",
             "end_node_name": "MobileNetV2/Sequential[features]/InvertedResidual[15]/__add___0"
         },
         {

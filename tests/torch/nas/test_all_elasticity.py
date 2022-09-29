@@ -252,7 +252,7 @@ REF_COMPRESSION_STATE_FOR_TWO_CONV = {
                             'elasticity_params': {
                                 'hw_fused_ops': True,
                                 'max_block_size': 50,
-                                'min_block_size': 6,
+                                'min_block_size': 5,
                                 'skipped_blocks': [['ThreeConvModel/NNCFConv2d[conv1]/conv2d_0',
                                                     'ThreeConvModel/NNCFConv2d[conv_to_skip]/conv2d_0']]
                             },

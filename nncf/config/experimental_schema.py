@@ -66,7 +66,7 @@ ELASTIC_DEPTH_SCHEMA = {
         "min_block_size": with_attributes(NUMBER,
                                           description="Defines minimal number of operations in the skipping block. "
                                                       "Option is available for the auto mode only. "
-                                                      "Default value is 6"),
+                                                      "Default value is 5"),
         "max_block_size": with_attributes(NUMBER,
                                           description="Defines maximal number of operations in the block. "
                                                       "Option is available for the auto mode only. "

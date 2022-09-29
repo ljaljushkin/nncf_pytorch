@@ -1,7 +1,7 @@
 {
     "blocks": [
         {
-            "start_node_name": "PNASNet/relu_0",
+            "start_node_name": "PNASNet/NNCFConv2d[conv1]/conv2d_0",
             "end_node_name": "PNASNet/Sequential[layer1]/CellB[0]/relu_2"
         },
         {

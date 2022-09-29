@@ -135,7 +135,7 @@ COMMON_DEPTH_BASIC_DESC = ElasticityDesc(
         'elasticity_params': {
             'hw_fused_ops': True,
             'max_block_size': 50,
-            'min_block_size': 6,
+            'min_block_size': 5,
             'skipped_blocks': [['DepthBasicConvTestModel/Sequential[branch_with_blocks]/NNCFConv2d[conv0]/conv2d_0',
                                 'DepthBasicConvTestModel/Sequential[branch_with_blocks]/NNCFConv2d[conv1]/conv2d_0']]
         },

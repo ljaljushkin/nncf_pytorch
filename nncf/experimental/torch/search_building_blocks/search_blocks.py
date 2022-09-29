@@ -757,7 +757,7 @@ class BlockFilteringStrategy(Enum):
 
 def get_building_blocks(compressed_model: NNCFNetwork,
                         max_block_size: int = 50,
-                        min_block_size: int = 6,
+                        min_block_size: int = 5,
                         block_filter_strategy=BlockFilteringStrategy.KEEP_SEQUENTIAL,
                         hw_fused_ops: bool = True,
                         target_block_types: Optional[List[BuildingBlockType]] = None) -> Tuple[ExtendedBuildingBlocks,
@@ -813,7 +813,8 @@ def get_building_blocks(compressed_model: NNCFNetwork,
                             'Shallow the accepted range for the length of building blocks via '
                             'max_block_size and min_block_size to accelerate the search process.')
     sorted_blocks = sorted(blocks, key=cmp_to_key(compare_for_building_block))
-    filtered_building_blocks = remove_duplicates(sorted_blocks)
+    filtered_building_blocks = sorted_blocks
+    # filtered_building_blocks = remove_duplicates(sorted_blocks)
 
     start_ids = []
     end_ids = []
