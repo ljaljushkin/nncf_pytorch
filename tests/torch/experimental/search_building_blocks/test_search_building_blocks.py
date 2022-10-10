@@ -18,13 +18,17 @@ from typing import Type
 from typing import Union
 
 import os
+
+import logging
 import pytest
 import torch
 from functools import partial
 from torchvision.models import MobileNetV2
 
 from examples.torch.common.models import efficient_net
+from nncf.common.utils.logger import set_log_level
 from nncf.experimental.torch.search_building_blocks.search_blocks import BuildingBlock
+from nncf.experimental.torch.search_building_blocks.search_blocks import BuildingBlockType
 from nncf.experimental.torch.search_building_blocks.search_blocks import BuildingBlocks
 from nncf.experimental.torch.search_building_blocks.search_blocks import GroupedBlockIDs
 from nncf.experimental.torch.search_building_blocks.search_blocks import get_building_blocks
@@ -104,6 +108,7 @@ LIST_BB_PARAMS_CASES = [
 
 @pytest.mark.parametrize('desc', LIST_BB_PARAMS_CASES, ids=map(str, LIST_BB_PARAMS_CASES))
 def test_building_block(desc: BuildingBlockParamsCase):
+    set_log_level(logging.DEBUG)
     model = desc.model_creator()
     move_model_to_cuda_if_available(model)
     nncf_config = get_empty_config(input_sample_sizes=desc.input_sizes)
@@ -112,7 +117,8 @@ def test_building_block(desc: BuildingBlockParamsCase):
     ext_blocks, group_dependent = get_building_blocks(compressed_model,
                                                       max_block_size=desc.max_block_size,
                                                       min_block_size=desc.min_block_size,
-                                                      hw_fused_ops=desc.hw_fused_ops)
+                                                      hw_fused_ops=desc.hw_fused_ops,
+                                                      target_block_types=[BuildingBlockType.BOTTLENECK])
     skipped_blocks = [eb.basic_block for eb in ext_blocks]
     check_blocks_and_groups(str(desc), skipped_blocks, group_dependent)
 
