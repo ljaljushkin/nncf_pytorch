@@ -146,7 +146,7 @@ class NNCFGraphPatternIO:
         self.output_edges = output_edges
 
 
-#pylint:disable=too-many-public-methods
+# pylint:disable=too-many-public-methods
 class NNCFGraph:
     """
     Wrapper over a regular directed acyclic graph that represents a control flow/execution graph of a DNN
@@ -268,6 +268,26 @@ class NNCFGraph:
         start_node_key = self.get_node_key_by_id(start_node.node_id)
         end_node_key = self.get_node_key_by_id(end_node.node_id)
         return nx.all_simple_paths(self._nx_graph, start_node_key, end_node_key)
+
+    def get_subgraph(self,
+                     start_node_name: NNCFNodeName,
+                     end_node_name: NNCFNodeName):
+        """
+        Generates all simple paths in the NNCFGraph from start node to end node.
+        A simple path is a path with no repeated nodes.
+
+        :param start_node_name: a name of starting node for path
+        :param end_node_name: a name of node at which to end path
+        :return: A generator that produces lists of simple paths. If there are no paths between the start and end nodes
+        the generator produces no output.
+        """
+        start_node = self.get_node_by_name(start_node_name)
+        end_node = self.get_node_by_name(end_node_name)
+        start_node_key = self.get_node_key_by_id(start_node.node_id)
+        end_node_key = self.get_node_key_by_id(end_node.node_id)
+        simple_paths = nx.all_simple_paths(self._nx_graph, start_node_key, end_node_key)
+        node_keys = {node_key for node_keys_in_path in simple_paths for node_key in node_keys_in_path}
+        return self._nx_graph.subgraph(node_keys)
 
     @staticmethod
     def _nx_node_to_nncf_node(nx_node: dict) -> NNCFNode:
@@ -511,7 +531,7 @@ class NNCFGraph:
             nncf_logger.warning('Graphviz is not installed - only the .dot model visualization format will be used. '
                                 'Install pygraphviz into your Python environment and graphviz system-wide to enable '
                                 'PNG rendering.')
-        except Exception:  #pylint:disable=broad-except
+        except Exception:  # pylint:disable=broad-except
             nncf_logger.warning('Failed to render graph to PNG')
 
     def get_graph_for_structure_analysis(self, extended: bool = False) -> nx.DiGraph:

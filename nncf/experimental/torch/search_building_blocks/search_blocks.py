@@ -28,6 +28,8 @@ import torch
 from nncf.common.graph.definitions import MODEL_OUTPUT_OP_NAME
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNodeName
+from nncf.common.graph.graph_matching import find_subgraphs_matching_pattern
+from nncf.common.graph.patterns import GraphPattern
 from nncf.common.utils.logger import logger as nncf_logger
 from nncf.experimental.torch.search_building_blocks.search_graph import SearchGraph
 from nncf.experimental.torch.search_building_blocks.search_graph import SearchGraphNode
@@ -44,6 +46,10 @@ from nncf.torch.graph.graph import PTNNCFGraph
 from nncf.torch.graph.operator_metatypes import PTDropoutMetatype
 from nncf.torch.graph.operator_metatypes import PTLinearMetatype
 from nncf.torch.graph.operator_metatypes import PTMatMulMetatype
+from nncf.torch.graph.pattern_operations import ARITHMETIC_OPERATIONS
+from nncf.torch.graph.pattern_operations import BATCH_NORMALIZATION_OPERATIONS
+from nncf.torch.graph.pattern_operations import LINEAR_OPERATIONS
+from nncf.torch.graph.pattern_operations import RELU_OPERATIONS
 from nncf.torch.layers import NNCF_MODULES_OP_NAMES
 from nncf.torch.nncf_network import NNCFNetwork
 
@@ -115,6 +121,7 @@ class BuildingBlockType(Enum):
     """
     MSHA = 'MSHA'
     FF = 'FF'
+    BOTTLENECK = 'Bottleneck'
     Unknown = 'unknown'
 
     @staticmethod
@@ -123,6 +130,8 @@ class BuildingBlockType(Enum):
             return BuildingBlockType.MSHA
         if config_value == BuildingBlockType.FF.value:
             return BuildingBlockType.FF
+        if config_value == BuildingBlockType.BOTTLENECK.value:
+            return BuildingBlockType.BOTTLENECK
         return BuildingBlockType.Unknown
 
     def __eq__(self, other: 'BuildingBlockType'):
@@ -256,6 +265,7 @@ def get_building_block_for_original_graph(building_blocks: List[PotentialBuildin
     Very cost expensive function, because of finding all op addresses in the block via nx.all_simple_paths function.
     """
     building_block_in_orig_format = []
+    nncf_logger.debug('Filtered candidates of building blocks: ')
     for block in building_blocks:
         id_end = block.end_node.bottom_id
         start_node_id = get_start_node_id(block, orig_graph)
@@ -266,6 +276,7 @@ def get_building_block_for_original_graph(building_blocks: List[PotentialBuildin
         block_type = get_type_building_block(op_addresses)
         ext_block = ExtendedBuildingBlock(block_in_orig_format, block_type, ordinal_ids, op_addresses)
         building_block_in_orig_format.append(ext_block)
+        nncf_logger.debug('[{}, {}]'.format(start_node_id, id_end))
     return building_block_in_orig_format
 
 
@@ -329,6 +340,67 @@ def is_target_block_type(start_node_id: int,
     return block_type in target_block_types
 
 
+def get_predefined_bottleneck_pattern():
+    pattern = GraphPattern()
+    input_pattern_node = pattern.add_node(label='*INPUT_NODE*', type=GraphPattern.NON_PATTERN_NODE_TYPE)
+    conv1 = pattern.add_node(**LINEAR_OPERATIONS)
+    bn1 = pattern.add_node(**BATCH_NORMALIZATION_OPERATIONS)
+    relu1 = pattern.add_node(**RELU_OPERATIONS)
+
+    conv2 = pattern.add_node(**LINEAR_OPERATIONS)
+    bn2 = pattern.add_node(**BATCH_NORMALIZATION_OPERATIONS)
+    relu2 = pattern.add_node(**RELU_OPERATIONS)
+
+    conv3 = pattern.add_node(**LINEAR_OPERATIONS)
+    bn3 = pattern.add_node(**BATCH_NORMALIZATION_OPERATIONS)
+
+    add = pattern.add_node(**ARITHMETIC_OPERATIONS)
+    relu3 = pattern.add_node(**RELU_OPERATIONS)
+
+    pattern.add_edge(input_pattern_node, conv1)
+
+    pattern.add_edge(conv1, bn1)
+    pattern.add_edge(bn1, relu1)
+    pattern.add_edge(relu1, conv2)
+
+    pattern.add_edge(conv2, bn2)
+    pattern.add_edge(bn2, relu2)
+
+    pattern.add_edge(relu2, conv3)
+    pattern.add_edge(conv3, bn3)
+
+    pattern.add_edge(bn3, add)
+    pattern.add_edge(input_pattern_node, add)
+
+    pattern.add_edge(add, relu3)
+    return pattern
+
+
+def is_target_block_type_pattern(start_node_id: int,
+                                 end_node_id: int,
+                                 orig_graph: NNCFGraph,
+                                 target_block_types: Optional[List[BuildingBlockType]] = None) -> bool:
+    """
+    Returns true if block has a type equal to one of the specified.
+    :param start_node_id: bottom index of the starting node in search graph
+    :param end_node_id: bottom index of the ending node in search graph
+    :param orig_graph: original non-compressed graph.
+    :param target_block_types: list of block types to match the type of the given block
+    :return: additional info for the building blocks - block type and addresses of all operations inside the block .
+    """
+    if target_block_types is None:
+        return True
+    block = BuildingBlock(orig_graph.get_node_key_by_id(start_node_id).split(' ')[-1],
+                          orig_graph.get_node_key_by_id(end_node_id).split(' ')[-1])
+    # extract a subgraph to not trace the whole graph
+    subgraph = orig_graph.get_subgraph(block.start_node_name, block.end_node_name)
+    bn_pattern = get_predefined_bottleneck_pattern()
+    bn_pattern.dump_graph('bn.dot')
+    matches = find_subgraphs_matching_pattern(subgraph, bn_pattern)
+    block_type = BuildingBlockType.BOTTLENECK if matches else BuildingBlockType.Unknown
+    return block_type in target_block_types
+
+
 class BlockFilteringStrategy(Enum):
     """
     Defines strategy for filtering overlapping blocks.
@@ -352,7 +424,7 @@ class BlockFilteringStrategy(Enum):
 def get_building_blocks(compressed_model: NNCFNetwork,
                         max_block_size: int = 50,
                         min_block_size: int = 5,
-                        block_filter_strategy=BlockFilteringStrategy.KEEP_SEQUENTIAL,
+                        block_filter_strategy=BlockFilteringStrategy.KEEP_SMALL,
                         hw_fused_ops: bool = True,
                         target_block_types: Optional[List[BuildingBlockType]] = None) -> Tuple[ExtendedBuildingBlocks,
                                                                                                GroupedBlockIDs]:
@@ -448,6 +520,7 @@ def remove_overlapping_blocks(building_blocks: List[PotentialBuildingBlock],
     start_ids = []
     end_ids = []
     num_ops_in_blocks = []
+    nncf_logger.debug('Potential candidates of building blocks: ')
     for block in building_blocks:
         start_node_id = get_start_node_id(block, orig_graph)
         id_end = block.end_node.bottom_id
@@ -455,7 +528,8 @@ def remove_overlapping_blocks(building_blocks: List[PotentialBuildingBlock],
         start_ids.append(start_node_id)
         end_ids.append(id_end)
         num_ops_in_blocks.append(num_ops_in_block)
-    is_target_block_type_fn = partial(is_target_block_type, orig_graph=orig_graph,
+        nncf_logger.debug('[{}, {}], #ops={}'.format(start_node_id, id_end, num_ops_in_block))
+    is_target_block_type_fn = partial(is_target_block_type_pattern, orig_graph=orig_graph,
                                       target_block_types=target_block_types)
     get_indexes_of_overlapping_blocks_fn = get_indexes_of_overlapping_blocks_seq
     if block_filter_strategy == BlockFilteringStrategy.KEEP_SMALL:

@@ -11,6 +11,7 @@
  limitations under the License.
 """
 import json
+import logging
 import os
 from functools import partial
 from typing import Callable
@@ -28,6 +29,7 @@ from transformers import AutoModelForAudioClassification
 from transformers import AutoModelForImageClassification
 from transformers import AutoModelForQuestionAnswering
 
+from nncf.common.utils.logger import set_log_level
 from nncf.experimental.torch.search_building_blocks.search_blocks import BlockFilteringStrategy
 from nncf.experimental.torch.search_building_blocks.search_blocks import BuildingBlockType
 from nncf.experimental.torch.search_building_blocks.search_blocks import ExtendedBuildingBlock
@@ -123,6 +125,7 @@ def fixture_transformer_search_params_desc(request):
 
 
 def test_transformer_building_blocks(desc: TransformerSearchBBlockParamsCase):
+    set_log_level(logging.DEBUG)
     model = desc.model_creator()
     move_model_to_cuda_if_available(model)
     nncf_config = get_empty_config(input_info=desc.input_info)
