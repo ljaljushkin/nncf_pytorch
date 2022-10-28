@@ -1,37 +1,42 @@
 import itertools
 from collections import defaultdict
 from functools import partial
-from pathlib import Path
-from typing import DefaultDict, List
+from typing import DefaultDict
+from typing import List
 from unittest.mock import patch
 
 import numpy as np
 import onnx
 import pytest
 import torch
-from nncf.torch.sparsity.movement.layers import SparseConfig
-from nncf.torch.sparsity.movement.layers import SparseConfigByScope
+from onnx import numpy_helper
+from pytest import approx
+from transformers import TrainingArguments
+from transformers.trainer_callback import TrainerControl
+from transformers.trainer_callback import TrainerState
+
 from nncf.common.sparsity.schedulers import PolynomialThresholdScheduler
 from nncf.common.sparsity.statistics import MovementSparsityStatistics
-from nncf.common.utils.helpers import matches_any, should_consider_scope
+from nncf.common.utils.helpers import matches_any
+from nncf.common.utils.helpers import should_consider_scope
 from nncf.torch import create_compressed_model
 from nncf.torch.layer_utils import CompressionParameter
 from nncf.torch.layers import NNCFLinear
 from nncf.torch.module_operations import UpdateWeightAndBias
-from nncf.torch.sparsity.movement.algo import (ImportanceLoss,
-                                               MovementSparsifier,
-                                               MovementSparsityController,
-                                               SparseStructure, StructuredMask)
-from onnx import numpy_helper
-from pytest import approx
-from tests.torch.sparsity.movement.helpers import (BaseCallback, ConfigBuilder,
-                                                   bert_tiny_torch_model,
-                                                   bert_tiny_unpretrained,
-                                                   initialize_sparsifer_parameters,
-                                                   run_movement_pipeline)
+from nncf.torch.sparsity.movement.algo import ImportanceLoss
+from nncf.torch.sparsity.movement.algo import MovementSparsifier
+from nncf.torch.sparsity.movement.algo import MovementSparsityController
+from nncf.torch.sparsity.movement.algo import SparseStructure
+from nncf.torch.sparsity.movement.algo import StructuredMask
+from nncf.torch.sparsity.movement.layers import SparseConfig
+from nncf.torch.sparsity.movement.layers import SparseConfigByScope
+from tests.torch.sparsity.movement.helpers import BaseCallback
+from tests.torch.sparsity.movement.helpers import ConfigBuilder
+from tests.torch.sparsity.movement.helpers import bert_tiny_torch_model
+from tests.torch.sparsity.movement.helpers import bert_tiny_unpretrained
+from tests.torch.sparsity.movement.helpers import initialize_sparsifer_parameters
+from tests.torch.sparsity.movement.helpers import run_movement_pipeline
 from tests.torch.test_algo_common import BasicLinearTestModel
-from transformers import TrainingArguments
-from transformers.trainer_callback import TrainerControl, TrainerState
 
 
 def check_sparsified_layer_mode(sparsifier: MovementSparsifier, module: NNCFLinear, config: SparseConfig):
@@ -135,10 +140,10 @@ def get_linear_layer_equiv_weight_bias(module: NNCFLinear):
 
 
 @pytest.mark.parametrize("sparse_structure_by_scopes", [
-    ["block", [2, 2], "{re}fc"],
-    ["per_dim", [0], "{re}fc"],
-    ["per_dim", [1], "{re}fc"],
-    ["fine", [1, 1], "{re}fc"],
+    {"mode": "block", "sparse_factors": [2, 2], "target_scopes": "{re}fc"},
+    {"mode": "per_dim", "axis": 0, "target_scopes": "{re}fc"},
+    {"mode": "per_dim", "axis": 1, "target_scopes": "{re}fc"},
+    {"mode": "fine", "sparse_factors": [1, 1], "target_scopes": "{re}fc"},
 ])
 def test_layer_actual_behavior_matches_sparsifer_mask(tmp_path, sparse_structure_by_scopes):
     nncf_config = ConfigBuilder(sparse_structure_by_scopes=[sparse_structure_by_scopes]).build(
