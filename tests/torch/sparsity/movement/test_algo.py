@@ -9,6 +9,8 @@ import numpy as np
 import onnx
 import pytest
 import torch
+from nncf.torch.sparsity.movement.layers import SparseConfig
+from nncf.torch.sparsity.movement.layers import SparseConfigByScope
 from nncf.common.sparsity.schedulers import PolynomialThresholdScheduler
 from nncf.common.sparsity.statistics import MovementSparsityStatistics
 from nncf.common.utils.helpers import matches_any, should_consider_scope
@@ -30,16 +32,20 @@ from transformers import TrainingArguments
 from transformers.trainer_callback import TrainerControl, TrainerState
 
 
-def check_sparsified_layer_mode(sparsifier: MovementSparsifier, module: NNCFLinear, mode, grid_size):
+def check_sparsified_layer_mode(sparsifier: MovementSparsifier, module: NNCFLinear, config: SparseConfig):
     weight_shape = module.weight.shape
     assert isinstance(sparsifier._weight_importance, CompressionParameter)
-    if mode == SparseStructure.BLOCK:
-        ref_weight_importance = torch.zeros([weight_shape[0] // grid_size[0], weight_shape[1] // grid_size[1]])
-    elif mode == SparseStructure.PER_DIM:
-        ref_weight_importance = torch.zeros([1, weight_shape[grid_size[0]]])
+    if config.mode == SparseStructure.BLOCK:
+        ref_weight_importance = torch.zeros([
+            weight_shape[0] // config.sparse_factors[0],
+            weight_shape[1] // config.sparse_factors[1]
+        ])
+    elif config.mode == SparseStructure.PER_DIM:
+        ref_weight_importance = torch.zeros([1, weight_shape[config.sparse_axis]])
     else:
         ref_weight_importance = torch.zeros(weight_shape)
-    assert torch.allclose(sparsifier._weight_importance, ref_weight_importance)  # TODO: should not use internal variables here
+    assert torch.allclose(sparsifier._weight_importance,
+                          ref_weight_importance)  # TODO: should not use internal variables here
 
     if module.bias is not None:
         assert isinstance(sparsifier._bias_importance, CompressionParameter)
@@ -50,14 +56,28 @@ def check_sparsified_layer_mode(sparsifier: MovementSparsifier, module: NNCFLine
 @ pytest.mark.parametrize('nncf_config_builder', [
     ConfigBuilder(),  # mixed mode
     ConfigBuilder(sparse_structure_by_scopes=[]),  # implicit all fine
-    ConfigBuilder(sparse_structure_by_scopes=[["fine", [1, 1], "{re}.*"]]),  # explicit all fine
-    ConfigBuilder(sparse_structure_by_scopes=[["block", [8, 8], "{re}.*"]]),  # all block
-    ConfigBuilder(sparse_structure_by_scopes=[["per_dim", [0], "{re}.*"]]),  # all per_dim
-    ConfigBuilder(sparse_structure_by_scopes=[["per_dim", [1], "{re}.*"]]),  # all per_dim
-    ConfigBuilder(sparse_structure_by_scopes=[["block", [16, 16], "{re}.*query.*"]]),  # mixed of explicit and implicit
-    ConfigBuilder(sparse_structure_by_scopes=[["per_dim", [0], "{re}.*BertIntermediate.*"]]),
-    ConfigBuilder(sparse_structure_by_scopes=[["per_dim", [0], "{re}.*BertIntermediate.*"],
-                                              ["block", [4, 4], "{re}.*attention.*"]]),
+    ConfigBuilder(sparse_structure_by_scopes=[
+        {"mode": "fine", "sparse_factors": [1, 1], "target_scopes": "{re}.*"}
+    ]),  # explicit all fine
+    ConfigBuilder(sparse_structure_by_scopes=[
+        {"mode": "block", "sparse_factors": [8, 8], "target_scopes": "{re}.*"}
+    ]),  # all block
+    ConfigBuilder(sparse_structure_by_scopes=[
+        {"mode": "per_dim", "axis": 0, "target_scopes": "{re}.*"}
+    ]),  # all per_dim
+    ConfigBuilder(sparse_structure_by_scopes=[
+        {"mode": "per_dim", "axis": 1, "target_scopes": "{re}.*"}
+    ]),  # all per_dim
+    ConfigBuilder(sparse_structure_by_scopes=[
+        {"mode": "block", "sparse_factors": [16, 16], "target_scopes": "{re}.*query.*"}
+    ]),  # mixed of explicit and implicit
+    ConfigBuilder(sparse_structure_by_scopes=[
+        {"mode": "per_dim", "axis": 0, "target_scopes": "{re}.*BertIntermediate.*"}
+    ]),
+    ConfigBuilder(sparse_structure_by_scopes=[
+        {"mode": "per_dim", "axis": 0, "target_scopes": "{re}.*BertIntermediate.*"},
+        {"mode": "block", "sparse_factors": [4, 4], "target_scopes": "{re}.*attention.*"}
+    ]),
     # MovementSparsityConfigBuilder().sparse_structure_by_scopes([["block", [5, 5, 5], "{re}.*"]]),  # wrong config
     # MovementSparsityConfigBuilder().sparse_structure_by_scopes([["block", [5, 5], "{re}.*"]]),  # wrong config
 ])
@@ -78,12 +98,14 @@ def test_can_create_movement_sparsity_layers(tmp_path, nncf_config_builder):
                 if isinstance(op, UpdateWeightAndBias) and isinstance(op.operand, MovementSparsifier):
                     count_movement_op += 1
                     sparsifier = op.operand
-                    for mode, grid_size, expression in nncf_config_builder.get('sparse_structure_by_scopes'):
-                        if matches_any(str(scope), expression):
-                            check_sparsified_layer_mode(sparsifier, module, mode, grid_size)
+                    configs = nncf_config_builder.get('sparse_structure_by_scopes')
+                    sparse_configs_by_scopes = [SparseConfigByScope.from_config(c) for c in configs]
+                    for config in sparse_configs_by_scopes:
+                        if matches_any(str(scope), config.target_scopes):
+                            check_sparsified_layer_mode(sparsifier, module, config.sparse_config)
                             break  # only test the first matched expression. Need tests to confirm only one matched expression matched for each layer.
                     else:
-                        check_sparsified_layer_mode(sparsifier, module, SparseStructure.FINE, (1, 1))
+                        check_sparsified_layer_mode(sparsifier, module, SparseConfig(SparseStructure.FINE, (1, 1)))
             assert count_movement_op == 1
 
 
@@ -117,9 +139,9 @@ def test_can_create_structured_masks(tmp_path):
 ])
 def test_controller_structured_mask_filling(tmp_path, description):
     sparse_structure_by_scopes = [
-        ["block", [1, 1], "{re}.*attention*"],
-        ["per_dim", [0], "{re}.*BertIntermediate.*"],
-        ["per_dim", [1], "{re}.*BertOutput.*"],
+        {"mode": "block", "sparse_factors": [1, 1], "target_scopes": "{re}.*attention*"},
+        {"mode": "per_dim", "axis": 0, "target_scopes": "{re}.*BertIntermediate.*"},
+        {"mode": "per_dim", "axis": 1, "target_scopes": "{re}.*BertOutput.*"},
     ]
     nncf_config = ConfigBuilder(sparse_structure_by_scopes=sparse_structure_by_scopes).build(log_dir=tmp_path)
     compression_ctrl, compressed_model = create_compressed_model(bert_tiny_unpretrained(), nncf_config)
