@@ -21,14 +21,14 @@ strict digraph  {
 "0 /nncf_model_input_0" -> "1 MultiBranchesModel/ReLU/relu_0";
 "1 MultiBranchesModel/ReLU/relu_0" -> "3 MultiBranchesModel/NNCFConv2d[conv_a]/SymmetricQuantizer/symmetric_quantize_0";
 "1 MultiBranchesModel/ReLU/relu_0" -> "5 MultiBranchesModel/MaxPool2d[max_pool_b]/AsymmetricQuantizer/asymmetric_quantize_0";
-"1 MultiBranchesModel/ReLU/relu_0" -> "10 MultiBranchesModel/NNCFConv2d[conv_c]/AsymmetricQuantizer/asymmetric_quantize_0";
-"1 MultiBranchesModel/ReLU/relu_0" -> "13 MultiBranchesModel/NNCFConv2d[conv_d]/SymmetricQuantizer/symmetric_quantize_0";
 "2 MultiBranchesModel/NNCFConv2d[conv_a]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]/symmetric_quantize_0" -> "4 MultiBranchesModel/NNCFConv2d[conv_a]/conv2d_0";
 "3 MultiBranchesModel/NNCFConv2d[conv_a]/SymmetricQuantizer/symmetric_quantize_0" -> "4 MultiBranchesModel/NNCFConv2d[conv_a]/conv2d_0";
-"4 MultiBranchesModel/NNCFConv2d[conv_a]/conv2d_0" -> "15 /nncf_model_output_0";
 "5 MultiBranchesModel/MaxPool2d[max_pool_b]/AsymmetricQuantizer/asymmetric_quantize_0" -> "6 MultiBranchesModel/MaxPool2d[max_pool_b]/max_pool2d_0";
 "6 MultiBranchesModel/MaxPool2d[max_pool_b]/max_pool2d_0" -> "8 MultiBranchesModel/NNCFConv2d[conv_b]/conv2d_0";
 "7 MultiBranchesModel/NNCFConv2d[conv_b]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]/symmetric_quantize_0" -> "8 MultiBranchesModel/NNCFConv2d[conv_b]/conv2d_0";
+"1 MultiBranchesModel/ReLU/relu_0" -> "10 MultiBranchesModel/NNCFConv2d[conv_c]/AsymmetricQuantizer/asymmetric_quantize_0";
+"1 MultiBranchesModel/ReLU/relu_0" -> "13 MultiBranchesModel/NNCFConv2d[conv_d]/SymmetricQuantizer/symmetric_quantize_0";
+"4 MultiBranchesModel/NNCFConv2d[conv_a]/conv2d_0" -> "15 /nncf_model_output_0";
 "8 MultiBranchesModel/NNCFConv2d[conv_b]/conv2d_0" -> "16 /nncf_model_output_1";
 "9 MultiBranchesModel/NNCFConv2d[conv_c]/ModuleDict[pre_ops]/UpdateWeight[0]/SymmetricQuantizer[op]/symmetric_quantize_0" -> "11 MultiBranchesModel/NNCFConv2d[conv_c]/conv2d_0";
 "10 MultiBranchesModel/NNCFConv2d[conv_c]/AsymmetricQuantizer/asymmetric_quantize_0" -> "11 MultiBranchesModel/NNCFConv2d[conv_c]/conv2d_0";
