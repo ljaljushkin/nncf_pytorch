@@ -33,6 +33,7 @@ from tests.torch.quantization.test_hawq_precision_init import check_bitwidth_gra
 from tests.torch.quantization.test_hawq_precision_init import create_test_dataloaders
 from tests.torch.quantization.test_hawq_precision_init import get_path_to_bitwidth_dump
 from tests.torch.quantization.test_hawq_precision_init import precision_init_dumping_worker
+from tests.torch.quantization.test_hawq_precision_init import pretrained_inception_v3
 from tests.torch.quantization.test_hawq_precision_init import ssd_vgg_512_test
 from tests.torch.quantization.quantization_helpers import compare_multi_gpu_dump
 from tests.torch.quantization.quantization_helpers import get_quantization_config_without_range_init
@@ -119,9 +120,9 @@ AUTOQ_TEST_PARAMS = (
                     config_builder=AutoQConfigBuilder().eval_subset_ratio(RATIO)),
     AutoQTestStruct(model_creator=resnet50,
                     config_builder=AutoQConfigBuilder().with_ratio(RATIO).eval_subset_ratio(RATIO)),
-    AutoQTestStruct(model_creator=inception_v3,
+    AutoQTestStruct(model_creator=pretrained_inception_v3,
                     config_builder=AutoQConfigBuilder().with_sample_size([2, 3, 299, 299]).with_ratio(RATIO)),
-    AutoQTestStruct(model_creator=inception_v3,
+    AutoQTestStruct(model_creator=pretrained_inception_v3,
                     config_builder=AutoQConfigBuilder().with_sample_size([2, 3, 299, 299]).
                     with_ignored_scope(['Inception3/BasicConv2d[Conv2d_2a_3x3]/NNCFConv2d[conv]/conv2d_0'],
                                        target_group=QuantizerGroup.WEIGHTS).eval_subset_ratio(RATIO)),

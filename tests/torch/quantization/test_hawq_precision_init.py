@@ -311,6 +311,11 @@ INCV3_BITWIDTH_PER_MODULE = [8, 8, 8,
 INCV3_BITS_COMPLEXITY = map(lambda x, y: x * y, INCV3_FLOPS_PER_MODULE, INCV3_BITWIDTH_PER_MODULE)
 INCV3_COMPRESSION_RATIO = sum(INCV3_FLOPS_PER_MODULE) * 8 / sum(INCV3_BITS_COMPLEXITY)
 
+
+def pretrained_inception_v3():
+    return inception_v3(pretrained=True)
+
+
 HAWQ_TEST_PARAMS = (
     HAWQTestStruct(config_builder=HAWQConfigBuilder().staged()),
     HAWQTestStruct(config_builder=HAWQConfigBuilder().for_trial()),
@@ -323,20 +328,20 @@ HAWQ_TEST_PARAMS = (
                    config_builder=HAWQConfigBuilder().with_ratio(1.11).for_vpu()),
     HAWQTestStruct(model_creator=resnet50,
                    config_builder=HAWQConfigBuilder().for_vpu().liberal_mode().with_ratio(1.5)),
-    HAWQTestStruct(model_creator=inception_v3,
+    HAWQTestStruct(model_creator=pretrained_inception_v3,
                    avg_traces_creator=lambda x, y: get_avg_traces(x, y)[:95],
                    config_builder=HAWQConfigBuilder().with_sample_size([2, 3, 299, 299]).for_vpu().with_ratio(1)),
-    HAWQTestStruct(model_creator=inception_v3,
+    HAWQTestStruct(model_creator=pretrained_inception_v3,
                    avg_traces_creator=lambda x, y: get_avg_traces(x, y)[:94],
                    config_builder=HAWQConfigBuilder().with_sample_size([2, 3, 299, 299]).for_vpu().liberal_mode().
                    with_ignored_scope(['Inception3/BasicConv2d[Conv2d_2a_3x3]/NNCFConv2d[conv]/conv2d_0'],
                                       target_group=QuantizerGroup.WEIGHTS).with_ratio(1.5)),
-    HAWQTestStruct(model_creator=inception_v3,
+    HAWQTestStruct(model_creator=pretrained_inception_v3,
                    avg_traces_creator=lambda x, y: get_avg_traces(x, y)[:9],
                    config_builder=HAWQConfigBuilder().with_sample_size([2, 3, 299, 299]).for_vpu().liberal_mode().
                    with_target_scope([r'{re}.*InceptionE\[Mixed_7c\].*']).
                    with_ratio(1.3).check_compression_ratio(INCV3_COMPRESSION_RATIO).add_flops()),
-    HAWQTestStruct(model_creator=inception_v3,
+    HAWQTestStruct(model_creator=pretrained_inception_v3,
                    avg_traces_creator=lambda x, y: get_avg_traces(x, y)[:95],
                    config_builder=HAWQConfigBuilder().with_sample_size(
                        [2, 3, 299, 299]).for_vpu().liberal_mode().with_ratio(1.5)),
