@@ -160,10 +160,8 @@ class PTExporter(Exporter):
             torch.onnx.export(model, tuple(input_tensor_list), save_path,
                               input_names=input_names,
                               output_names=output_names,
-                              # enable_onnx_checker=False,
                               opset_version=opset_version,
-                              # Do not fuse Conv+BN in ONNX. May cause dropout elements to appear in ONNX.
-                              training=torch.onnx.TrainingMode.TRAINING)
+                              training=torch.onnx.TrainingMode.EVAL)
             model.enable_dynamic_graph_building()
         model.forward = original_forward
         model.to(original_device)
