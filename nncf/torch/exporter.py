@@ -163,7 +163,7 @@ class PTExporter(Exporter):
                               # enable_onnx_checker=False,
                               opset_version=opset_version,
                               # Do not fuse Conv+BN in ONNX. May cause dropout elements to appear in ONNX.
-                              training=True)
+                              training=torch.onnx.TrainingMode.TRAINING)
             model.enable_dynamic_graph_building()
         model.forward = original_forward
         model.to(original_device)
