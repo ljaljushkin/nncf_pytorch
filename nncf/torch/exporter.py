@@ -98,7 +98,7 @@ class PTExporter(Exporter):
     """
 
     _ONNX_FORMAT = 'onnx'
-    _ONNX_DEFAULT_OPSET = 10
+    _ONNX_DEFAULT_OPSET = 13
 
 
     @staticmethod
@@ -210,7 +210,9 @@ class PTExporter(Exporter):
                                   input_names=input_names,
                                   output_names=output_names,
                                   opset_version=opset_version,
-                                  training=torch.onnx.TrainingMode.TRAINING)
+                                  operator_export_type=torch.onnx.OperatorExportTypes.ONNX_ATEN_FALLBACK,
+                                  training=torch.onnx.TrainingMode.EVAL
+                )
             model.enable_dynamic_graph_building()
         model.forward = original_forward
         model.to(original_device)

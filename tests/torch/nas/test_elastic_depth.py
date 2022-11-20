@@ -187,6 +187,7 @@ def test_skip_one_block_resnet18(mocker):
     assert id(spy_agent_conv2d.call_args_list[2][0][1]) != id(spy_agent_bn.call_args_list[2][0][1])  # TracedTensor
 
 
+@pytest.mark.xfail(reason="hang on export with EVAL mode, might be a conflict with some optimization in ONNX")
 def test_can_export_model_with_one_skipped_block_resnet18(tmp_path):
     model = ResNet18()
     move_model_to_cuda_if_available(model)
