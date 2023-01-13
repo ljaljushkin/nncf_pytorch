@@ -190,13 +190,18 @@ def get_pruning_groups(graph: NNCFGraph,
     for node in all_nodes_to_prune:
         root_group = BlockGroup([DimensionBlock(MaskProducer(node.node_id))])
         roots[node.node_id] = root_group
+
+        # assert isinstance(node.layer_attributes, (LinearLayerAttributes, ConvolutionLayerAttributes))
+        # mask = PropagationMask({node.layer_attributes.get_target_dim_for_compression(): root_group})
+        output_tensors_shapes = [x.tensor_shape for x in graph.get_output_edges(node)]
+        assert len(output_tensors_shapes) == 1
+        output_tensors_shape = output_tensors_shapes[0]
         # TODO: make dimension map common here
         #  Usually it's module.target_weight_dim_for_compression [Torch] or get_filter_axis(layer, weight_attr) [TF]
         #  Ideally, node should know this. Is it part of layer attributes??
         #  NO: it's not weight dim for compression, it's output shape dimension that is affected by pruning
-        # assert isinstance(node.layer_attributes, (LinearLayerAttributes, ConvolutionLayerAttributes))
-        # mask = PropagationMask({node.layer_attributes.get_target_dim_for_compression(): root_group})
-        mask = PropagationMask({2: root_group})
+        target_output_dim_for_compression = len(output_tensors_shape) - 1
+        mask = PropagationMask({target_output_dim_for_compression: root_group})
         node.data['output_mask'] = mask
 
     # 2. Propagate masks
