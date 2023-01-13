@@ -73,31 +73,22 @@ class MaskPropagationAlgorithm:
         Mask propagation in graph:
         to propagate masks run method mask_propagation (of metaop of current node) on all nodes in topological order.
         """
-        # finished_ids = []
-        for node in self._graph.topological_sort():
-            cls = self.get_meta_operation_by_type_name(node.node_type)
-            # out_graph = self.get_visualized_graph()
-            # current_id = node.node_id
-            # out_graph.graph['graph'] = {
-            #     "label": "Current node: {}\n" \
-            #              "Finished nodes: {}".format(current_id, finished_ids),
-            #     "labelloc": "t"}
-            # finished_ids.append(current_id)
-            # pth = deepcopy(dump_path)
-            # write_dot_graph(out_graph, pth)
-            cls.mask_propagation(node, self._graph, self._tensor_processor)
-
         def get_attributes_fn(node: NNCFNode) -> Dict[str, Any]:
             # input_masks = get_input_masks(node, self._graph)
             from nncf.experimental.common.pruning.nodes_grouping import PropagationMask
-            result = {'metatype': str(node.metatype.name)}  # , 'attr': str(node.layer_attributes)}
+            result = {'metatype': str(node.metatype.name)}
+            if node.layer_attributes:
+                result.update(map(lambda pair: (pair[0], str(pair[1])), node.layer_attributes.__dict__.items()))
             if 'output_mask' in node.data:
                 output_mask: PropagationMask = node.data['output_mask']
                 if output_mask:
                     result['output_mask'] = json.dumps(output_mask.get_state(), indent=4)
-                    print(result['output_mask'])
-            # print(result)
             return result
+        save_for_netron(self._graph, f'original.xml', get_attributes_fn=get_attributes_fn)
+
+        for node in self._graph.topological_sort():
+            cls = self.get_meta_operation_by_type_name(node.node_type)
+            cls.mask_propagation(node, self._graph, self._tensor_processor)
         save_for_netron(self._graph, f'propagated.xml', get_attributes_fn=get_attributes_fn)
 
     def symbolic_mask_propagation(self, prunable_layers_types: List[str],
