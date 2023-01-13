@@ -1,6 +1,7 @@
 from typing import Type, List, Optional
 from collections import defaultdict
 
+from nncf.common.logging import nncf_logger
 from nncf.common.graph.graph import NNCFNode
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.tensor import NNCFTensor
@@ -114,13 +115,13 @@ class LinearPruningOp(BasePruningOp):
             # Propagating batch dims
             input_tensors_shapes = [x.tensor_shape for x in graph.get_input_edges(node)]
             input_shape_len = len(input_tensors_shapes[0])
-            for dim, block in input_masks[0].dim_block_map.items():
+            for dim, block in input_masks[0].dim_group_map.items():
                 if dim ==  input_shape_len - 1:
                     blocks = block if isinstance(block, list) else [block]
                     for block in blocks:
                         block.close_branch()
                 else:
-                    output_mask.dim_block_map[dim] = block
+                    output_mask.dim_group_map[dim] = block
 
         elif len(input_masks) == 2:
             input_tensors_shapes = [x.tensor_shape for x in graph.get_input_edges(node)]
@@ -128,7 +129,7 @@ class LinearPruningOp(BasePruningOp):
             input_shape_len = len(input_tensors_shapes[0])
             # Join consumed masks
             # TODO: Consider that input tensors are in the right order
-            left_dim_block, right_dim_block = [input_masks[i].dim_block_map for i in range(2)]
+            left_dim_block, right_dim_block = [input_masks[i].dim_group_map for i in range(2)]
             def _both_dim_blocks_exist(left_idx, right_idx):
                 if left_idx in left_dim_block or \
                     right_idx in right_dim_block:
@@ -141,12 +142,12 @@ class LinearPruningOp(BasePruningOp):
             # Propagating batch dims
             for dim in range(input_shape_len - 2):
                 if _both_dim_blocks_exist(dim, dim):
-                   output_mask.dim_block_map[dim] = BlockGroup.join_groups(left_dim_block[dim],
+                   output_mask.dim_group_map[dim] = BlockGroup.join_groups(left_dim_block[dim],
                                                                            right_dim_block[dim])
             # Propagating left rows / right cols
             for idx, dim in enumerate(range(input_shape_len - 2, input_shape_len)):
-                if dim in input_masks[idx].dim_block_map:
-                    output_mask.dim_block_map[dim] = input_masks[idx].dim_block_map[dim]
+                if dim in input_masks[idx].dim_group_map:
+                    output_mask.dim_group_map[dim] = input_masks[idx].dim_group_map[dim]
 
             # Close branch
             if _both_dim_blocks_exist(input_shape_len - 1, input_shape_len - 2):
@@ -226,14 +227,30 @@ class ElementwisePruningOp(BasePruningOp):
     @classmethod
     def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph,
                          tensor_processor: Type[NNCFPruningBaseTensorProcessor]) -> None:
-        #TODO: Make eltwise common
-        # This case is for true div
-        identity_mask_propagation(node, graph)
-        return
+        # #TODO: Make eltwise common
+        # # This case is for true div
+        # identity_mask_propagation(node, graph)
+        # return
         input_masks = get_input_masks(node, graph)
-        output_mask = input_masks[0]
-        if output_mask is not None:
-            output_mask = tensor_processor.elementwise_mask_propagation(input_masks)
+        if not input_masks:
+            input_masks = [None]
+
+        output_mask = input_masks[0]  # elif all(m is None for m in input_masks):
+        if len(input_masks) == 1:
+            nncf_logger.warning("ElementWise with a single input is not properly supported."
+                                "The second input might be a constant without node in the graph. "
+                                "The constant should be in the graph or in the node attributes."
+                                "It's also should be pruned in accordance with an input mask")
+
+        # TODO: invalidate branch if another branch has mask==None
+        # if all(isinstance(m, PropagationMask) and not m.is_invalid for m in input_masks):
+        # if any(m is None for m in input_masks):
+        #     for m in input_masks:
+        #         m.is_invalid = False
+        else:
+            output_mask = input_masks[0]
+            if output_mask is not None:
+                output_mask = tensor_processor.elementwise_mask_propagation(input_masks)
 
         node.data['output_mask'] = output_mask
 
@@ -323,22 +340,22 @@ class ReshapePruningOp(BasePruningOp):
 
         output_mask = PropagationMask()
         if mode == 'extend':
-            map = mask.dim_block_map
-            for dim, group in mask.dim_block_map.items():
+            map = mask.dim_group_map
+            for dim, group in mask.dim_group_map.items():
                 if isinstance(group, list):
                     raise NotImplementedError('Extend reshape for several groups is not supported yet')
                 shape_map = [input_shape[dim], [output_shape[x] for x in inp_map[dim]]]
                 new_groups = group.split_blocks_by_reshape(shape_map)
                 for new_group, in_dim in zip(new_groups, inp_map[dim]):
-                    output_mask.dim_block_map[in_dim] = new_group
+                    output_mask.dim_group_map[in_dim] = new_group
             return output_mask
 
         if mode == 'shrink':
             grouping = defaultdict(list)
-            for inp_idx, groups in mask.dim_block_map.items():
+            for inp_idx, groups in mask.dim_group_map.items():
                 groups = groups if isinstance(groups, list) else [groups]
                 grouping[inp_map[inp_idx]].extend(groups)
-            output_mask.dim_block_map = dict(grouping)
+            output_mask.dim_group_map = dict(grouping)
             return output_mask
 
 
@@ -356,8 +373,8 @@ class TransposePruningOp(BasePruningOp):
         assert len(input_masks) == 1
         input_mask = input_masks[0]
         new_order = node.layer_attributes.permutation
-        idx_map = [(old_idx, new_idx) for new_idx, old_idx in enumerate(new_order) if old_idx in input_mask.dim_block_map]
-        output_mask = PropagationMask({new_idx: input_mask.dim_block_map[old_idx] for old_idx, new_idx in idx_map})
+        idx_map = [(old_idx, new_idx) for new_idx, old_idx in enumerate(new_order) if old_idx in input_mask.dim_group_map]
+        output_mask = PropagationMask({new_idx: input_mask.dim_group_map[old_idx] for old_idx, new_idx in idx_map})
 
         node.data['output_mask'] = output_mask
 
@@ -398,4 +415,5 @@ class StopMaskForwardPruningOp(BasePruningOp):
     @classmethod
     def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph,
                          tensor_processor: Type[NNCFPruningBaseTensorProcessor]) -> None:
+        # TODO: should invalidate all groups in the incoming mask
         node.data['output_mask'] = None
