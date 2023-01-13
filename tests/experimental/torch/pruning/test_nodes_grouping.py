@@ -73,9 +73,12 @@ TEST_DESCS = [
         ),
         ref_groups=[
             PruningNodeGroup({
-                MinimalDimensionBlock(64, 0, 1),
-                MinimalDimensionBlock(64, 0, 2),
-                MinimalDimensionBlock(64, 0, 3)
+                MinimalDimensionBlock(64, 0, 11),
+                MinimalDimensionBlock(64, 0, 12),
+                MinimalDimensionBlock(64, 0, 15)
+            }),
+            PruningNodeGroup({
+                MinimalDimensionBlock(1, 0, 34)
             })
         ]
     ),

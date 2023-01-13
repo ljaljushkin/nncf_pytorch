@@ -241,20 +241,22 @@ class ElementwisePruningOp(BasePruningOp):
 
         output_mask = input_masks[0]  # elif all(m is None for m in input_masks):
         if len(input_masks) == 1:
-            nncf_logger.warning("ElementWise with a single input is not properly supported."
+            nncf_logger.warning(f"ElementWise with a single input is not properly supported. node_name={node.node_name}"
                                 "The second input might be a constant without node in the graph. "
                                 "The constant should be in the graph or in the node attributes."
                                 "It's also should be pruned in accordance with an input mask")
 
         # TODO: invalidate branch if another branch has mask==None
-        # if all(isinstance(m, PropagationMask) and not m.is_invalid for m in input_masks):
-        # if any(m is None for m in input_masks):
-        #     for m in input_masks:
-        #         m.is_invalid = False
-        else:
-            output_mask = input_masks[0]
-            if output_mask is not None:
-                output_mask = tensor_processor.elementwise_mask_propagation(input_masks)
+        if any(m is None for m in input_masks):
+            output_mask = None
+            for m in input_masks:
+                if m:
+                    m.invalidate_groups()
+
+        # else:
+        #     output_mask = input_masks[0]
+        #     if output_mask is not None:
+        #         output_mask = tensor_processor.elementwise_mask_propagation(input_masks)
 
         node.data['output_mask'] = output_mask
 
@@ -380,7 +382,7 @@ class TransposePruningOp(BasePruningOp):
         if isinstance(node.layer_attributes, TransposeLayerAttributes):
             input_tensors_shapes = [x.tensor_shape for x in graph.get_input_edges(node)]
             assert len(input_tensors_shapes) == 1
-            new_order = list(input_tensors_shapes[0])
+            new_order = list(range(len(input_tensors_shapes[0])))
             dim0 = node.layer_attributes.dim0
             dim1 = node.layer_attributes.dim1
             new_order[dim1], new_order[dim0] = new_order[dim0], new_order[dim1]

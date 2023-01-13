@@ -129,13 +129,16 @@ class BlockGroup:
 
 class PropagationMask:
     def __init__(self,
-                 # TODO: shouldn't be duality
+                 # TODO: shouldn't be duality: List or not List
                  dim_group_map: Dict[int, Union[BlockGroup, List[BlockGroup]]]= None):
         self.dim_group_map = dim_group_map if dim_group_map is not None else {}
 
     def invalidate_groups(self):
         for group in self.dim_group_map.values():
             group.invalidate()
+
+    def is_invalid(self):
+        return any(group.is_invalid for group in self.dim_group_map.values())
 
     def get_state(self):
         result = {}
