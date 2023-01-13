@@ -1,6 +1,10 @@
+from copy import deepcopy
 from typing import Type, List, Optional
 from collections import defaultdict
 
+from nncf.common.graph.layer_attributes import GroupNormLayerAttributes
+from nncf.common.graph.layer_attributes import PermuteLayerAttributes
+from nncf.common.graph.layer_attributes import TransposeLayerAttributes
 from nncf.common.logging import nncf_logger
 from nncf.common.graph.graph import NNCFNode
 from nncf.common.graph.graph import NNCFGraph
@@ -372,7 +376,17 @@ class TransposePruningOp(BasePruningOp):
         input_masks = get_input_masks(node, graph)
         assert len(input_masks) == 1
         input_mask = input_masks[0]
-        new_order = node.layer_attributes.permutation
+
+        if isinstance(node.layer_attributes, TransposeLayerAttributes):
+            input_tensors_shapes = [x.tensor_shape for x in graph.get_input_edges(node)]
+            assert len(input_tensors_shapes) == 1
+            new_order = list(input_tensors_shapes[0])
+            dim0 = node.layer_attributes.dim0
+            dim1 = node.layer_attributes.dim1
+            new_order[dim1], new_order[dim0] = new_order[dim0], new_order[dim1]
+        elif isinstance(node.layer_attributes, PermuteLayerAttributes):
+            new_order = node.layer_attributes.permutation
+
         idx_map = [(old_idx, new_idx) for new_idx, old_idx in enumerate(new_order) if old_idx in input_mask.dim_group_map]
         output_mask = PropagationMask({new_idx: input_mask.dim_group_map[old_idx] for old_idx, new_idx in idx_map})
 

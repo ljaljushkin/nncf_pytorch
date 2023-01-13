@@ -190,9 +190,10 @@ def get_pruning_groups(graph: NNCFGraph,
         # TODO: make dimension map common here
         #  Usually it's module.target_weight_dim_for_compression [Torch] or get_filter_axis(layer, weight_attr) [TF]
         #  Ideally, node should know this. Is it part of layer attributes??
-        assert isinstance(node.layer_attributes, (LinearLayerAttributes, ConvolutionLayerAttributes))
+        #  NO: it's not weight dim for compression, it's output shape dimension that is affected by pruning
+        # assert isinstance(node.layer_attributes, (LinearLayerAttributes, ConvolutionLayerAttributes))
         # mask = PropagationMask({node.layer_attributes.get_target_dim_for_compression(): root_group})
-        mask = PropagationMask({1: root_group})
+        mask = PropagationMask({2: root_group})
         node.data['output_mask'] = mask
 
     # 2. Propagate masks

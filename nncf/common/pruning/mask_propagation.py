@@ -76,7 +76,7 @@ class MaskPropagationAlgorithm:
         def get_attributes_fn(node: NNCFNode) -> Dict[str, Any]:
             # input_masks = get_input_masks(node, self._graph)
             from nncf.experimental.common.pruning.nodes_grouping import PropagationMask
-            result = {'metatype': str(node.metatype.name)}
+            result = {'metatype': str(node.metatype.name), 'node_id': str(node.node_id)}
             if node.layer_attributes:
                 result.update(map(lambda pair: (pair[0], str(pair[1])), node.layer_attributes.__dict__.items()))
             if 'output_mask' in node.data:
@@ -89,7 +89,9 @@ class MaskPropagationAlgorithm:
         for node in self._graph.topological_sort():
             cls = self.get_meta_operation_by_type_name(node.node_type)
             cls.mask_propagation(node, self._graph, self._tensor_processor)
-        save_for_netron(self._graph, f'propagated.xml', get_attributes_fn=get_attributes_fn)
+            save_for_netron(self._graph, f'propagated_{node.node_id}.xml', get_attributes_fn=get_attributes_fn)
+
+        save_for_netron(self._graph, f'propagated_all.xml', get_attributes_fn=get_attributes_fn)
 
     def symbolic_mask_propagation(self, prunable_layers_types: List[str],
                                   can_prune_after_analysis: Dict[int, PruningAnalysisDecision]) \
