@@ -1,7 +1,12 @@
-from typing import List, Dict
+from dataclasses import dataclass
+from typing import Dict
+from typing import List
+from typing import Set
 
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNode
+from nncf.common.graph.layer_attributes import ConvolutionLayerAttributes
+from nncf.common.graph.layer_attributes import LinearLayerAttributes
 from nncf.common.pruning.mask_propagation import MaskPropagationAlgorithm
 
 
@@ -16,6 +21,7 @@ class DimensionBlock:
         self._opened_branches = opened_branches
         self._closed_branches = closed_branches
         self._group = None
+        self._is_invalid = False
 
     def split_by_reshape(self, shape_map):
         # TODO: make it common !!!
@@ -34,7 +40,6 @@ class DimensionBlock:
                            closed_branches=self._closed_branches)
         return [a, b]
 
-
     def open_branch(self):
         self._opened_branches += 1
 
@@ -47,10 +52,18 @@ class DimensionBlock:
 
 class BlockGroup:
     def __init__(self, blocks) -> None:
-        self._blocks = blocks # type: DimensionBlock
+        self._blocks = blocks  # type: List[DimensionBlock]
         for block in blocks:
-            block.set_group(self)
+            block.set_group(self)  # TODO: circle dependency, bad smell
         self._childs = []
+        self.is_invalid = False
+
+    def invalidate(self):
+        for block in self._blocks:
+            block.is_invalid = True
+        # TODO(nlyalyus): are you sure that all should be affected?
+        for child in self._childs:
+            child.invalidate()
 
     def get_actual_groups(self):
         if not self._childs:
@@ -102,22 +115,48 @@ class BlockGroup:
 
 
 class MaskProducer:
-    def __init__(self, id_)  -> None:
+    def __init__(self, id_) -> None:
         self.id = id_
 
 
 class PropagationMask:
     def __init__(self,
-                 dim_block_map: Dict[DimensionBlock, int] = None):
-        self.dim_block_map = dim_block_map if dim_block_map is not None else {}
+                 dim_group_map: Dict[int, BlockGroup] = None):
+        self.dim_group_map = dim_group_map if dim_group_map is not None else {}
+
+    def invalidate_groups(self):
+        for group in self.dim_group_map.values():
+            group.invalidate()
+
+@dataclass
+class MinimalDimensionBlock:
+    size: int
+    offset: int
+    producer_id: int
+
+    @classmethod
+    def from_dimension_block(cls, dim_block: DimensionBlock):
+        return cls(dim_block.size, dim_block.offset, dim_block._producer.id)
+
+    def __str__(self):
+        return f'S{self.size}_O{self.offset}_PID{self.producer_id}'
+
+    def __hash__(self):
+        return hash(str(self))
+
+    def __eq__(self, other: 'MinimalDimensionBlock'):
+        return str(self) == str(other)
 
 
 class PruningNodeGroup:
-    def __init__(self) -> None:
-        self.producing_nodes = []
-        self.adjusted_nodes = []
-        self.closing_nodes = []
-        self.block = None
+    def __init__(self, dim_block: Set[MinimalDimensionBlock]):
+        # self.producing_nodes = []
+        # self.adjusted_nodes = []
+        # self.closing_nodes = []
+        self.dim_block: Set[MinimalDimensionBlock] = dim_block
+
+    def __eq__(self, other: 'PruningNodeGroup'):
+        return self.dim_block == other.dim_block
 
 
 def get_pruning_groups(graph: NNCFGraph,
@@ -131,7 +170,10 @@ def get_pruning_groups(graph: NNCFGraph,
         root_group = BlockGroup([DimensionBlock(MaskProducer(node.node_id))])
         roots[node.node_id] = root_group
         # TODO: make dimension map common here
-        mask = PropagationMask({1: root_group})
+        #  Usually it's module.target_weight_dim_for_compression [Torch] or get_filter_axis(layer, weight_attr) [TF]
+        #  Ideally, node should know this. Is it part of layer attributes??
+        assert isinstance(node.layer_attributes, (LinearLayerAttributes, ConvolutionLayerAttributes))
+        mask = PropagationMask({node.layer_attributes.get_target_dim_for_compression: root_group})
         node.data['output_mask'] = mask
 
     # 2. Propagate masks
@@ -142,4 +184,21 @@ def get_pruning_groups(graph: NNCFGraph,
     for id, group in roots.items():
         blocks_map[id] = group.get_actual_groups()
 
-    return blocks_map
+    # Filter non closing and duplicated groups
+    pruning_groups = []  # type: List[PruningNodeGroup]
+    finished_producers = []
+    for producer_id, groups in blocks_map.items():
+        # TODO: choose block based on other strategies (blocks that leads to the biggest sparsity rate or ???)
+        group = groups[0]
+        if not isinstance(group, list):
+            group = [group]
+        # TODO: should be _closed_branches != _opened_branches
+        if all(block._closed_branches == 1 for block in group):
+            min_group = set(map(MinimalDimensionBlock.from_dimension_block, group))
+            all_not_finished = all(g.producer_id not in finished_producers for g in min_group)
+            candidate_group = PruningNodeGroup(min_group)
+            if candidate_group not in pruning_groups and all_not_finished:
+                pruning_groups.append(candidate_group)
+                finished_producers.extend(g.producer_id for g in min_group)
+
+    return pruning_groups
