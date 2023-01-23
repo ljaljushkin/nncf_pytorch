@@ -31,6 +31,7 @@ from nncf.torch.sparsity.rb import algo as rb_sparsity_algo
 from nncf.experimental.torch.sparsity.movement import algo as movement_sparsity_algo
 from nncf.torch.pruning.filter_pruning import algo as filter_pruning_algo
 from nncf.torch.knowledge_distillation import algo as knowledge_distillation_algo
+from nncf.common.pruning.netron import save_for_netron
 
 # Functions most commonly used in integrating NNCF into training pipelines are
 # listed below for importing convenience
@@ -44,6 +45,7 @@ from nncf.torch.dynamic_graph.io_handling import nncf_model_input
 from nncf.torch.dynamic_graph.io_handling import nncf_model_output
 from nncf.torch.dynamic_graph.context import no_nncf_trace
 from nncf.torch.dynamic_graph.context import forward_nncf_trace
+
 
 # NNCF relies on tracing PyTorch operations. Each code that uses NNCF
 # should be executed with PyTorch operators wrapped via a call to "patch_torch_operators",

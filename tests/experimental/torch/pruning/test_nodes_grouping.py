@@ -5,8 +5,6 @@ from typing import List
 import numpy as np
 import pytest
 import torch
-import numpy as np
-
 from torch import nn
 from transformers import AutoModelForQuestionAnswering
 from transformers import BertConfig
@@ -58,11 +56,13 @@ TEST_DESCS = [
             input_sample_sizes=([384, 768])
         ),
         ref_groups=[
-            PruningNodeGroup({
-                MinimalDimensionBlock(64, 0, 1),
-                MinimalDimensionBlock(64, 0, 2),
-                MinimalDimensionBlock(64, 0, 3)
-            })
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(64, 0, 1, 0),
+                    MinimalDimensionBlock(64, 0, 2, 0),
+                    MinimalDimensionBlock(64, 0, 3, 0),
+                    MinimalDimensionBlock(64, 0, 17, 1)
+                })
         ]
     ),
     GroupTestDesc(
@@ -72,14 +72,18 @@ TEST_DESCS = [
             model_builder=partial(AutoModelForQuestionAnswering.from_config, BertConfig(num_hidden_layers=1))
         ),
         ref_groups=[
-            PruningNodeGroup({
-                MinimalDimensionBlock(64, 0, 11),
-                MinimalDimensionBlock(64, 0, 12),
-                MinimalDimensionBlock(64, 0, 15)
-            }),
-            PruningNodeGroup({
-                MinimalDimensionBlock(1, 0, 34)
-            })
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(64, 0, 11, 0),
+                    MinimalDimensionBlock(64, 0, 12, 0),
+                    MinimalDimensionBlock(64, 0, 15, 0),
+                    MinimalDimensionBlock(64, 0, 30, 1),
+                }),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(1, 0, 34, 0),
+                    MinimalDimensionBlock(1, 0, 36, 1)
+                })
         ]
     ),
 ]

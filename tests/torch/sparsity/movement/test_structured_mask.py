@@ -22,6 +22,7 @@ import torch
 from pkg_resources import parse_version
 
 from nncf.common.logging import nncf_logger
+from nncf.common.pruning.netron import save_for_netron
 from nncf.config import NNCFConfig
 from nncf.experimental.torch.search_building_blocks.search_blocks import BuildingBlockType
 from nncf.experimental.torch.sparsity.movement.layers import MovementSparsifier
@@ -354,9 +355,10 @@ class TestStructuredMaskHandler:
 
     def test_update_independent_structured_mask(self, mocker):
         run_recipe = STRUCTURED_MASK_SUPPORTED_RECIPES[0]
-        compression_ctrl, _ = create_compressed_model(run_recipe.model(),
+        compression_ctrl, model = create_compressed_model(run_recipe.model(),
                                                       run_recipe.nncf_config(),
                                                       dump_graphs=False)
+        save_for_netron(model.get_graph(), f'compressed.xml')
         handler, all_ctxes = self._get_handler_from_ctrl(compression_ctrl)
         mock_methods = [mocker.patch.object(ctx, 'update_independent_structured_mask_from_operand')
                         for ctx in all_ctxes]

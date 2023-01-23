@@ -20,9 +20,11 @@ class DimensionBlock:
     def __init__(self,
                  producer: MaskProducer,
                  size: int = 1, offset: int = 0,
+                 pruning_dimension: int = 0,
                  opened_branches: int = 0, closed_branches: int = 0) -> None:
         self.size = size
         self.offset = offset
+        self.pruning_dimension = pruning_dimension
         self._producer = producer
         self._opened_branches = opened_branches
         self._closed_branches = closed_branches
@@ -40,10 +42,12 @@ class DimensionBlock:
             raise NotImplementedError
 
         a = DimensionBlock(size=shape_map[1][-1], offset=0,
+                           pruning_dimension=self.pruning_dimension,
                            producer=self._producer,
                            opened_branches=self._opened_branches,
                            closed_branches=self._closed_branches)
         b = DimensionBlock(size=1, offset=shape_map[1][-1],
+                           pruning_dimension=self.pruning_dimension,
                            producer=self._producer,
                            opened_branches=self._opened_branches,
                            closed_branches=self._closed_branches)
@@ -80,7 +84,7 @@ class BlockGroup:
 
     def get_actual_groups(self):
         if not self._childs:
-            return self._blocks
+            return [self._blocks]
         retval = []
         for child in self._childs:
             groups = child.get_actual_groups()
@@ -92,6 +96,10 @@ class BlockGroup:
 
     def add_childs(self, childs):
         self._childs.extend(childs)
+
+    def add_block(self, block: DimensionBlock):
+        self._blocks.append(block)
+        block.set_group(self)
 
     def split_blocks_by_reshape(self, shape_map):
         if self._childs:
@@ -130,7 +138,7 @@ class BlockGroup:
 class PropagationMask:
     def __init__(self,
                  # TODO: shouldn't be duality: List or not List
-                 dim_group_map: Dict[int, Union[BlockGroup, List[BlockGroup]]]= None):
+                 dim_group_map: Dict[int, Union[BlockGroup, List[BlockGroup]]] = None):
         self.dim_group_map = dim_group_map if dim_group_map is not None else {}
 
     def invalidate_groups(self):
@@ -147,17 +155,18 @@ class PropagationMask:
             result[k] = v_state
         return result
 
+
 @dataclass
 class MinimalDimensionBlock:
     size: int
     offset: int
     producer_id: int
+    pruning_dimension: int
 
-    # TODO: dimension?
-
+    # TODO: output shape dimension? needed for propagation for only?
     @classmethod
     def from_dimension_block(cls, dim_block: DimensionBlock):
-        return cls(dim_block.size, dim_block.offset, dim_block._producer.id)
+        return cls(dim_block.size, dim_block.offset, dim_block._producer.id, dim_block.pruning_dimension)
 
     def __str__(self):
         return f'S{self.size}_O{self.offset}_PID{self.producer_id}'
@@ -169,15 +178,15 @@ class MinimalDimensionBlock:
         return str(self) == str(other)
 
 
+@dataclass
 class PruningNodeGroup:
-    def __init__(self, dim_block: Set[MinimalDimensionBlock]):
-        # self.producing_nodes = []
-        # self.adjusted_nodes = []
-        # self.closing_nodes = []
-        self.dim_block: Set[MinimalDimensionBlock] = dim_block
+    dim_blocks: Set[MinimalDimensionBlock]
+    # -producing_nodes: Set[MinimalDimensionBlock]
+    # adjusted_nodes: List[int] = []
+    # consumer_nodes_id: List[int] = None
 
     def __eq__(self, other: 'PruningNodeGroup'):
-        return self.dim_block == other.dim_block
+        return self.dim_blocks == other.dim_blocks
 
 
 def get_pruning_groups(graph: NNCFGraph,
@@ -188,11 +197,11 @@ def get_pruning_groups(graph: NNCFGraph,
     all_nodes_to_prune = graph.get_nodes_by_types(prune_operations_types)  # type: List[NNCFNode]
     roots = {}
     for node in all_nodes_to_prune:
-        root_group = BlockGroup([DimensionBlock(MaskProducer(node.node_id))])
+        assert isinstance(node.layer_attributes, (LinearLayerAttributes, ConvolutionLayerAttributes))
+        pruning_dim = node.layer_attributes.get_target_dim_for_compression()
+        root_group = BlockGroup([DimensionBlock(MaskProducer(node.node_id), pruning_dimension=pruning_dim)])
         roots[node.node_id] = root_group
 
-        # assert isinstance(node.layer_attributes, (LinearLayerAttributes, ConvolutionLayerAttributes))
-        # mask = PropagationMask({node.layer_attributes.get_target_dim_for_compression(): root_group})
         output_tensors_shapes = [x.tensor_shape for x in graph.get_output_edges(node)]
         assert len(output_tensors_shapes) == 1
         output_tensors_shape = output_tensors_shapes[0]
@@ -217,9 +226,8 @@ def get_pruning_groups(graph: NNCFGraph,
     finished_producers = []
     for producer_id, groups in blocks_map.items():
         # TODO: choose block based on other strategies (blocks that leads to the biggest sparsity rate or ???)
+        # TODO: iterate and choose first valid and not finished
         group = groups[0]
-        if not isinstance(group, list):
-            group = [group]
         # TODO: should be _closed_branches != _opened_branches
         if all(block._closed_branches == 1 for block in group):
             min_group = set(map(MinimalDimensionBlock.from_dimension_block, group))

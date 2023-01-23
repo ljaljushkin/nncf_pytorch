@@ -1,21 +1,24 @@
-from copy import deepcopy
-from typing import Type, List, Optional
 from collections import defaultdict
+from typing import List
+from typing import Optional
+from typing import Type
 
+from nncf.common.graph.graph import NNCFGraph
+from nncf.common.graph.graph import NNCFNode
 from nncf.common.graph.layer_attributes import GroupNormLayerAttributes
 from nncf.common.graph.layer_attributes import PermuteLayerAttributes
 from nncf.common.graph.layer_attributes import TransposeLayerAttributes
 from nncf.common.logging import nncf_logger
-from nncf.common.graph.graph import NNCFNode
-from nncf.common.graph.graph import NNCFGraph
-from nncf.common.tensor import NNCFTensor
 from nncf.common.pruning.tensor_processor import NNCFPruningBaseTensorProcessor
-from nncf.common.pruning.utils import is_grouped_conv
-from nncf.common.pruning.utils import is_prunable_depthwise_conv
 from nncf.common.pruning.utils import get_input_masks
 from nncf.common.pruning.utils import identity_mask_propagation
-from nncf.experimental.common.pruning.nodes_grouping import PropagationMask
+from nncf.common.pruning.utils import is_grouped_conv
+from nncf.common.pruning.utils import is_prunable_depthwise_conv
+from nncf.common.tensor import NNCFTensor
 from nncf.experimental.common.pruning.nodes_grouping import BlockGroup
+from nncf.experimental.common.pruning.nodes_grouping import DimensionBlock
+from nncf.experimental.common.pruning.nodes_grouping import MaskProducer
+from nncf.experimental.common.pruning.nodes_grouping import PropagationMask
 
 
 class BasePruningOp:
@@ -75,6 +78,7 @@ class IdentityMaskForwardPruningOp(BasePruningOp):
                          tensor_processor: Type[NNCFPruningBaseTensorProcessor]) -> None:
         identity_mask_propagation(node, graph)
 
+
 class ConvolutionPruningOp(BasePruningOp):
     @classmethod
     def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph,
@@ -112,6 +116,8 @@ class LinearPruningOp(BasePruningOp):
     @classmethod
     def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph,
                          tensor_processor: Type[NNCFPruningBaseTensorProcessor]) -> None:
+        # TODO: assumes specific location of input and output channels in the shapes. (input_shape_len - 2) and (input_shape_len - 1)
+        #  should be generalized
         input_masks = get_input_masks(node, graph)
         assert len(input_masks) in [1, 2]
         if len(input_masks) == 1 and input_masks[0] is not None:
@@ -119,13 +125,16 @@ class LinearPruningOp(BasePruningOp):
             # Propagating batch dims
             input_tensors_shapes = [x.tensor_shape for x in graph.get_input_edges(node)]
             input_shape_len = len(input_tensors_shapes[0])
-            for dim, block in input_masks[0].dim_group_map.items():
-                if dim ==  input_shape_len - 1:
-                    blocks = block if isinstance(block, list) else [block]
-                    for block in blocks:
-                        block.close_branch()
+            for dim, groups in input_masks[0].dim_group_map.items():
+                if dim == input_shape_len - 1:
+                    groups = groups if isinstance(groups, list) else [groups]
+                    for group in groups:
+                        group.close_branch()
+                        # TODO: distinguish between matmul with weights and matmul with 2 dynamic inputs
+                        #  linear module should have attr, matmul op - shouldn't. When matmul attrs appear, add attr
+                        cls.add_consumer_block(group, node)
                 else:
-                    output_mask.dim_group_map[dim] = block
+                    output_mask.dim_group_map[dim] = groups
 
         elif len(input_masks) == 2:
             input_tensors_shapes = [x.tensor_shape for x in graph.get_input_edges(node)]
@@ -134,11 +143,12 @@ class LinearPruningOp(BasePruningOp):
             # Join consumed masks
             # TODO: Consider that input tensors are in the right order
             left_dim_block, right_dim_block = [input_masks[i].dim_group_map for i in range(2)]
+
             def _both_dim_blocks_exist(left_idx, right_idx):
                 if left_idx in left_dim_block or \
-                    right_idx in right_dim_block:
+                        right_idx in right_dim_block:
                     assert left_idx in left_dim_block and \
-                        right_idx in right_dim_block
+                           right_idx in right_dim_block
                     return True
                 return False
 
@@ -146,8 +156,8 @@ class LinearPruningOp(BasePruningOp):
             # Propagating batch dims
             for dim in range(input_shape_len - 2):
                 if _both_dim_blocks_exist(dim, dim):
-                   output_mask.dim_group_map[dim] = BlockGroup.join_groups(left_dim_block[dim],
-                                                                           right_dim_block[dim])
+                    output_mask.dim_group_map[dim] = BlockGroup.join_groups(left_dim_block[dim],
+                                                                            right_dim_block[dim])
             # Propagating left rows / right cols
             for idx, dim in enumerate(range(input_shape_len - 2, input_shape_len)):
                 if dim in input_masks[idx].dim_group_map:
@@ -157,12 +167,32 @@ class LinearPruningOp(BasePruningOp):
             if _both_dim_blocks_exist(input_shape_len - 1, input_shape_len - 2):
                 left = left_dim_block[input_shape_len - 1]
                 right = right_dim_block[input_shape_len - 2]
-                BlockGroup.join_groups(left, right).close_branch()
-
+                # TODO: distinguish between matmul with weights and matmul with 2 dynamic inputs
+                #  linear module should have attr, matmul op - shouldn't. When matmul attrs appear, add attr
+                group = BlockGroup.join_groups(left, right)
+                group.close_branch()
+                cls.add_consumer_block(group, node)
         else:
             output_mask = node.data.get('output_mask', None)
 
         node.data['output_mask'] = output_mask
+
+    @classmethod
+    def add_consumer_block(cls, group, node):
+        # TODO: applies for weight module, not for matmul operator that doesn't have layer_attributes. But soon it will
+        if node.layer_attributes is not None:
+            first_block: DimensionBlock = group.get_blocks()[0]
+            consumer_block = DimensionBlock(
+                MaskProducer(node.node_id),
+                # TODO: assume the identical dimension block parameters
+                size=first_block.size,
+                offset=first_block.offset,
+                # TODO: implement per layer (in layer attributes?) - input channels
+                pruning_dimension=1,
+                closed_branches=1
+            )
+            group.add_block(consumer_block)
+
 
 
 class BatchNormPruningOp(BasePruningOp):
@@ -286,7 +316,7 @@ class ReshapePruningOp(BasePruningOp):
             return (True, idx)
 
         def _map_dims_(dims_from: List[int], dims_to: List[int],
-                      from_idx: int, to_idx: int, from_map, to_map):
+                       from_idx: int, to_idx: int, from_map, to_map):
             res, to_idx_next = _check_dim_splitted(dims_from[from_idx], dims_to, to_idx)
             if not res:
                 return (res, to_idx_next)
@@ -311,13 +341,13 @@ class ReshapePruningOp(BasePruningOp):
                 out_map[out_idx] = inp_idx
             elif input_shape[inp_idx] > output_shape[out_idx]:
                 res, out_idx = _map_dims_(input_shape, output_shape,
-                                         inp_idx, out_idx, inp_map, out_map)
+                                          inp_idx, out_idx, inp_map, out_map)
                 if not res or mode == 'shrink':
                     return None
                 mode = 'extend'
             else:
                 res, out_idx = _map_dims_(output_shape, input_shape,
-                                         out_idx, inp_idx, out_map, inp_map)
+                                          out_idx, inp_idx, out_map, inp_map)
                 if not res or mode == 'extend':
                     return None
                 mode = 'shrink'
@@ -364,7 +394,6 @@ class ReshapePruningOp(BasePruningOp):
             output_mask.dim_group_map = dict(grouping)
             return output_mask
 
-
     @classmethod
     def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph,
                          tensor_processor: Type[NNCFPruningBaseTensorProcessor]) -> None:
@@ -389,7 +418,8 @@ class TransposePruningOp(BasePruningOp):
         elif isinstance(node.layer_attributes, PermuteLayerAttributes):
             new_order = node.layer_attributes.permutation
 
-        idx_map = [(old_idx, new_idx) for new_idx, old_idx in enumerate(new_order) if old_idx in input_mask.dim_group_map]
+        idx_map = [(old_idx, new_idx) for new_idx, old_idx in enumerate(new_order) if
+                   old_idx in input_mask.dim_group_map]
         output_mask = PropagationMask({new_idx: input_mask.dim_group_map[old_idx] for old_idx, new_idx in idx_map})
 
         node.data['output_mask'] = output_mask
