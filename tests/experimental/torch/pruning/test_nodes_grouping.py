@@ -7,6 +7,7 @@ import pytest
 import torch
 from torch import nn
 from transformers import AutoModelForQuestionAnswering
+from transformers import AutoModelForSequenceClassification
 from transformers import BertConfig
 
 from nncf import NNCFConfig
@@ -14,6 +15,7 @@ from nncf.experimental.common.pruning.nodes_grouping import MinimalDimensionBloc
 from nncf.experimental.common.pruning.nodes_grouping import PruningNodeGroup
 from nncf.experimental.common.pruning.nodes_grouping import get_pruning_groups
 from nncf.experimental.torch.pruning.operations import PT_EXPERIMENTAL_PRUNING_OPERATOR_METATYPES
+from nncf.torch.dynamic_graph.graph_tracer import ModelInputInfo
 from nncf.torch.layers import NNCF_PRUNING_MODULES_DICT
 from nncf.torch.model_creation import create_nncf_network
 from tests.torch.test_compressed_graph import GeneralModelDesc
@@ -67,7 +69,7 @@ TEST_DESCS = [
     ),
     GroupTestDesc(
         model_desc=GeneralModelDesc(
-            model_name='BERT',
+            model_name='1_layer_BERT',
             input_info=[dict(sample_size=[1, 10], type='long')] * 3,
             model_builder=partial(AutoModelForQuestionAnswering.from_config, BertConfig(num_hidden_layers=1))
         ),
@@ -86,6 +88,46 @@ TEST_DESCS = [
                 })
         ]
     ),
+
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
+            model_name='larger_BERT',
+            input_info=[dict(sample_size=[1, 128], type='long')] * 4,
+            # input_info = [
+            #     ModelInputInfo(shape=[1, 128], type_str='long', keyword='input_ids'),
+            #     ModelInputInfo(shape=[1, 128], type_str='long', keyword='attention_mask'),
+            #     ModelInputInfo(shape=[1, 128], type_str='long', keyword='token_type_ids'),
+            #     ModelInputInfo(shape=[1, 128], type_str='long', keyword='position_ids'),
+            # ],
+            model_builder=partial(AutoModelForSequenceClassification.from_config,
+                                  BertConfig(
+                                      hidden_size=4,
+                                      intermediate_size=3,
+                                      max_position_embeddings=128,
+                                      num_attention_heads=2,
+                                      num_hidden_layers=1,
+                                      vocab_size=10,
+                                      num_labels=2,
+                                      mhsa_qkv_bias=True,
+                                      mhsa_o_bias=True,
+                                      ffn_bias=True
+                                  ))
+        ),
+        ref_groups=[
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=2, offset=0, producer_id=15, pruning_dimension=0),
+                    MinimalDimensionBlock(size=2, offset=0, producer_id=11, pruning_dimension=0),
+                    MinimalDimensionBlock(size=2, offset=0, producer_id=12, pruning_dimension=0),
+                    MinimalDimensionBlock(size=2, offset=0, producer_id=30, pruning_dimension=1),
+                }
+            ),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=34, pruning_dimension=0),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=36, pruning_dimension=1)})
+        ]
+    )
 ]
 
 

@@ -191,7 +191,7 @@ class PruningNodeGroup:
 
 def get_pruning_groups(graph: NNCFGraph,
                        pruning_operations_metatypes,
-                       prune_operations_types):
+                       prune_operations_types) -> List[PruningNodeGroup]:
     # 1. Initialize masks for producing nodes
     # TODO: clarify that all possibly pruned nodes will be collected here
     all_nodes_to_prune = graph.get_nodes_by_types(prune_operations_types)  # type: List[NNCFNode]

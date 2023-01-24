@@ -119,6 +119,7 @@ class LinearPruningOp(BasePruningOp):
         # TODO: assumes specific location of input and output channels in the shapes. (input_shape_len - 2) and (input_shape_len - 1)
         #  should be generalized
         input_masks = get_input_masks(node, graph)
+        # 3 in case of input, and apply_mask for weight and bias
         assert len(input_masks) in [1, 2]
         if len(input_masks) == 1 and input_masks[0] is not None:
             output_mask = node.data['output_mask']
@@ -136,13 +137,13 @@ class LinearPruningOp(BasePruningOp):
                 else:
                     output_mask.dim_group_map[dim] = groups
 
-        elif len(input_masks) == 2:
+        elif len(input_masks) == 2 or len(input_masks) == 3:
             input_tensors_shapes = [x.tensor_shape for x in graph.get_input_edges(node)]
             assert len(input_tensors_shapes[0]) == len(input_tensors_shapes[1])
             input_shape_len = len(input_tensors_shapes[0])
             # Join consumed masks
             # TODO: Consider that input tensors are in the right order
-            left_dim_block, right_dim_block = [input_masks[i].dim_group_map for i in range(2)]
+            left_dim_block, right_dim_block = [input_masks[i].dim_group_map for i in range(2)]  # ignore the third bias
 
             def _both_dim_blocks_exist(left_idx, right_idx):
                 if left_idx in left_dim_block or \

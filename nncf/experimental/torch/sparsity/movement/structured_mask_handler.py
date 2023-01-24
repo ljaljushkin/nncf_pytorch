@@ -12,7 +12,10 @@
 """
 from functools import reduce
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Tuple
 
 import pandas as pd
 import torch
@@ -22,6 +25,7 @@ from nncf.common.graph.graph import NNCFNodeName
 from nncf.common.graph.layer_attributes import LinearLayerAttributes
 from nncf.common.logging import nncf_logger
 from nncf.common.scopes import matches_any
+from nncf.experimental.common.pruning.nodes_grouping import get_pruning_groups
 from nncf.experimental.torch.search_building_blocks.search_blocks import BlockFilteringStrategy
 from nncf.experimental.torch.search_building_blocks.search_blocks import BuildingBlockType
 from nncf.experimental.torch.search_building_blocks.search_blocks import get_building_blocks
@@ -29,6 +33,7 @@ from nncf.experimental.torch.sparsity.movement.layers import MovementSparsifier
 from nncf.experimental.torch.sparsity.movement.structured_mask_strategy import BaseStructuredMaskStrategy
 from nncf.experimental.torch.sparsity.movement.structured_mask_strategy import StructuredMaskRule
 from nncf.torch.layers import NNCFLinear
+from nncf.torch.layers import NNCF_PRUNING_MODULES_DICT
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.sparsity.base_algo import SparseModuleInfo
 
@@ -98,9 +103,11 @@ class StructuredMaskContext:
         self.module_node_name = module_node_name
         operand_mask: torch.Tensor = sparsifier_operand.weight_ctx.binary_mask   # type: ignore
         self.operand_mask_shape = operand_mask.shape
+        # TODO: not general. what and how to prune should be defined by dimension_block
         self.grid_size = self._resolve_grid_size(grid_size)
         self.structured_mask_shape = torch.Size(dim // grid for dim, grid in
                                                 zip(self.operand_mask_shape, self.grid_size))
+        # TODO: not general. dimension_block has a pruning dimension
         self.prune_by_row = prune_by_row
         self._independent_structured_mask = None
         self._dependent_structured_mask = None
@@ -287,8 +294,10 @@ class StructuredMaskHandler:
         self.rules_by_group_type = strategy.rules_by_group_type
         self.compressed_model = compressed_model
         self.sparsified_module_info_list = sparsified_module_info_list
-        self._structured_mask_ctx_groups = self._create_structured_mask_context_groups(
-            compressed_model, sparsified_module_info_list, self.rules_by_group_type)
+        # self._structured_mask_ctx_groups = self._create_structured_mask_context_groups(
+        #     compressed_model, sparsified_module_info_list, self.rules_by_group_type)
+        self._structured_mask_ctx_groups = self._create_structured_mask_context_groups_2(
+            compressed_model, sparsified_module_info_list)
 
         nncf_logger.debug('Totally %d structured mask context groups.', len(self._structured_mask_ctx_groups))
         for structured_mask_ctx_group in self._structured_mask_ctx_groups:
@@ -399,5 +408,46 @@ class StructuredMaskHandler:
                     else:
                         raise ValueError('No structured mask rule found for '
                                          f'[{group_type}]{minfo.module_node_name}.')
+            groups.append(StructuredMaskContextGroup(group_id, group_type, ctxes))
+        return groups
+
+    @staticmethod
+    def _create_structured_mask_context_groups_2(
+            nncf_network: NNCFNetwork,
+            sparsified_module_info_list: List[SparseModuleInfo],
+    ) -> List[StructuredMaskContextGroup]:
+        # TODO: remove local import by resolving circular dependency
+        from nncf.experimental.torch.pruning.operations import PT_EXPERIMENTAL_PRUNING_OPERATOR_METATYPES
+
+        # TODO: make it framework agnostic (based on a common graph, not pytorch structures)
+        module_vs_sparse_module_info_map = {minfo.module: minfo for minfo in sparsified_module_info_list}
+
+        pruning_producing_types = [x.op_func_name for x in NNCF_PRUNING_MODULES_DICT]
+        nncf_graph = nncf_network.get_graph()
+        pruning_groups = get_pruning_groups(nncf_graph,
+                                            PT_EXPERIMENTAL_PRUNING_OPERATOR_METATYPES,
+                                            pruning_producing_types)
+        groups = []
+        for group_id, group in enumerate(pruning_groups):
+            ctxes = []
+            # TODO: is it needed for printing only?
+            group_type = BuildingBlockType.Unknown
+            for block in group.dim_blocks:
+                nncf_node = nncf_graph.get_node_by_id(block.producer_id)
+                module = nncf_network.get_containing_module(nncf_node.node_name)
+                # TODO: align sparsified (sparse_structure_by_scopes) and filter-pruned (pruning analysis) modules/nodes.
+                #  Common sparsity and pruning analysis?
+                if module in module_vs_sparse_module_info_map:
+                    # 0 dimension corresponds to row (output channels), 1st dimension - to column (input channels)
+                    prune_by_row = not bool(block.pruning_dimension)
+                    # TODO: module is not preferred way for the access
+                    minfo = module_vs_sparse_module_info_map[module]
+                    # TODO: current design with prune_grid is not general. Stub for reusing current API as is
+                    prune_grid = (block.size, -1) if prune_by_row else (-1, block.size)
+                    ctx = StructuredMaskContext(minfo.operand,
+                                                minfo.module_node_name,
+                                                prune_grid,
+                                                prune_by_row)
+                    ctxes.append(ctx)
             groups.append(StructuredMaskContextGroup(group_id, group_type, ctxes))
         return groups

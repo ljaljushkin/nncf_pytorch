@@ -357,7 +357,7 @@ class TestStructuredMaskHandler:
         run_recipe = STRUCTURED_MASK_SUPPORTED_RECIPES[0]
         compression_ctrl, model = create_compressed_model(run_recipe.model(),
                                                       run_recipe.nncf_config(),
-                                                      dump_graphs=False)
+                                                      dump_graphs=True)
         save_for_netron(model.get_graph(), f'compressed.xml')
         handler, all_ctxes = self._get_handler_from_ctrl(compression_ctrl)
         mock_methods = [mocker.patch.object(ctx, 'update_independent_structured_mask_from_operand')
@@ -372,7 +372,7 @@ class TestStructuredMaskHandler:
         run_recipe = STRUCTURED_MASK_SUPPORTED_RECIPES[0]
         compression_ctrl, compressed_model = create_compressed_model(run_recipe.model(),
                                                                      run_recipe.nncf_config(),
-                                                                     dump_graphs=False)
+                                                                     dump_graphs=True)
         handler, all_ctxes = self._get_handler_from_ctrl(compression_ctrl)
         module_dict = run_recipe.get_nncf_modules_in_transformer_block_order(compressed_model)[0]
         module_vs_node_name_map = {minfo.module: minfo.module_node_name
