@@ -317,9 +317,9 @@ class StructuredMaskHandler:
         resolves the structured masks based on dependency rules defined in `self.rules_by_group_type`.
         """
         for group in self._structured_mask_ctx_groups:
-            group_type = group.group_type
-            if group_type not in self.rules_by_group_type:
-                raise ValueError(f'No structured mask strategy for group_type="{group_type}"')
+            # group_type = group.group_type
+            # if group_type not in self.rules_by_group_type:
+            #     raise ValueError(f'No structured mask strategy for group_type="{group_type}"')
             ctxes = group.structured_mask_contexts
             row_prune_ctxes = list(filter(lambda ctx: ctx.prune_by_row, ctxes))
             col_prune_ctxes = list(filter(lambda ctx: not ctx.prune_by_row, ctxes))
@@ -449,5 +449,6 @@ class StructuredMaskHandler:
                                                 prune_grid,
                                                 prune_by_row)
                     ctxes.append(ctx)
-            groups.append(StructuredMaskContextGroup(group_id, group_type, ctxes))
+            if ctxes:
+                groups.append(StructuredMaskContextGroup(group_id, group_type, ctxes))
         return groups
