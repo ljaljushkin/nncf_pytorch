@@ -1,5 +1,5 @@
 """
- Copyright (c) 2022 Intel Corporation
+ Copyright (c) 2023 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -140,7 +140,7 @@ class FilterPruningController(BasePruningAlgoController):
 
         self._pruned_layers_num = len(self._pruned_layer_groups_info.get_all_nodes())
         self._prunable_layers_num = len(self._original_graph.get_nodes_by_types(self._prunable_types))
-        self._max_prunable_flops, self._max_prunable_params = \
+        self._min_possible_flops, self._min_possible_params = \
             self._calculate_flops_and_weights_in_uniformly_pruned_model(1.)
 
         self._weights_normalizer = tensor_l2_normalizer  # for all weights in common case
@@ -163,7 +163,7 @@ class FilterPruningController(BasePruningAlgoController):
 
     def compression_stage(self) -> CompressionStage:
         target_pruning_level = self.scheduler.target_level
-        actual_pruning_level = self.pruning_rate
+        actual_pruning_level = self.pruning_level
         if actual_pruning_level == 0:
             return CompressionStage.UNCOMPRESSED
         if isclose(actual_pruning_level, target_pruning_level, abs_tol=1e-5) or \
@@ -175,7 +175,7 @@ class FilterPruningController(BasePruningAlgoController):
     def compression_rate(self) -> float:
         if self.prune_flops:
             return 1 - self.current_flops / self.full_flops
-        return self.pruning_rate
+        return self.pruning_level
 
     @compression_rate.setter
     def compression_rate(self, compression_rate: float) -> None:
@@ -191,8 +191,8 @@ class FilterPruningController(BasePruningAlgoController):
     def statistics(self, quickly_collected_only: bool = False) -> NNCFStatistics:
         if not quickly_collected_only and is_debug():
             stats = PrunedModelTheoreticalBorderline(
-                self._pruned_layers_num, self._prunable_layers_num, self._max_prunable_flops,
-                self._max_prunable_params, self.full_flops, self.full_params_num)
+                self._pruned_layers_num, self._prunable_layers_num, self._min_possible_flops,
+                self._min_possible_params, self.full_flops, self.full_params_num)
 
             nncf_logger.debug(stats.to_str())
 
@@ -219,11 +219,11 @@ class FilterPruningController(BasePruningAlgoController):
                           run_batchnorm_adaptation: bool = False):
         """
         Setup pruning masks in accordance to provided pruning level
-        :param pruning_level: pruning ration
+        :param pruning_level: pruning ratio
         :return:
         """
-        # Pruning rate from scheduler can be percentage of params that should be pruned
-        self.pruning_rate = pruning_level
+        # Pruning level from scheduler can be percentage of params that should be pruned
+        self.pruning_level = pruning_level
         if not self.frozen:
             nncf_logger.info('Computing filter importance scores and binary masks...')
             if self.all_weights:
@@ -233,12 +233,18 @@ class FilterPruningController(BasePruningAlgoController):
                     self._set_binary_masks_for_pruned_layers_globally(pruning_level)
             else:
                 if self.prune_flops:
-                    # Looking for a layerwise pruning rate needed for the required flops pruning rate
+                    # Looking for a layerwise pruning level needed for the required flops pruning level
                     pruning_level = self._find_uniform_pruning_level_for_target_flops(pruning_level)
                 self._set_binary_masks_for_pruned_layers_groupwise(pruning_level)
 
         if run_batchnorm_adaptation:
             self._run_batchnorm_adaptation()
+
+    @property
+    def maximal_compression_rate(self) -> float:
+        if self.prune_flops:
+            return 1 - self._min_possible_flops / max(self.full_flops, 1)
+        return 1.0
 
     def _init_pruned_layers_params(self, output_channels):
         # 1. Collect nodes output shapes
@@ -438,7 +444,7 @@ class FilterPruningController(BasePruningAlgoController):
             else:
                 left = middle
         flops, params_num = self._calculate_flops_and_weights_in_uniformly_pruned_model(right)
-        if flops < target_flops:
+        if flops <= target_flops:
             self.current_flops = flops
             self.current_params_num = params_num
             return right

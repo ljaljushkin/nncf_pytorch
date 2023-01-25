@@ -1,5 +1,5 @@
 """
- Copyright (c) 2022 Intel Corporation
+ Copyright (c) 2023 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -14,7 +14,6 @@
 from copy import deepcopy
 
 import tensorflow as tf
-from addict import Dict
 
 from nncf import NNCFConfig
 from nncf.common.initialization.batchnorm_adaptation import BatchnormAdaptationAlgorithm
@@ -38,7 +37,7 @@ def get_dataset_for_test(batch_size=10, shape=None):
 
 def get_config_for_test(batch_size=10, num_bn_adaptation_samples=100):
     config = NNCFConfig()
-    config.update(Dict({
+    config.update({
         "compression":
             {
                 "algorithm": "quantization",
@@ -48,7 +47,7 @@ def get_config_for_test(batch_size=10, num_bn_adaptation_samples=100):
                     }
                 }
             }
-    }))
+    })
 
     dataset = get_dataset_for_test()
     config = register_default_init_args(config,

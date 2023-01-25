@@ -1,5 +1,5 @@
 """
- Copyright (c) 2019-2022 Intel Corporation
+ Copyright (c) 2019-2023 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -162,10 +162,10 @@ class MagnitudeSparsityController(BaseSparsityAlgoController):
         if self._mode == 'local':
             return CompressionStage.FULLY_COMPRESSED
 
-        if self.scheduler.current_sparsity_level == 0:
-            return CompressionStage.UNCOMPRESSED
         if self.scheduler.current_sparsity_level >= self.scheduler.target_level:
             return CompressionStage.FULLY_COMPRESSED
+        if self.scheduler.current_sparsity_level == 0:
+            return CompressionStage.UNCOMPRESSED
         return CompressionStage.PARTIALLY_COMPRESSED
 
     def _run_batchnorm_adaptation(self):

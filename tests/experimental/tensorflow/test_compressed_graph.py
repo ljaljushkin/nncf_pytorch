@@ -1,5 +1,5 @@
 """
- Copyright (c) 2022 Intel Corporation
+ Copyright (c) 2023 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -84,11 +84,11 @@ def check_model_graph_v2(compressed_model, ref_graph_filename, ref_graph_dir, re
 
 
 @pytest.mark.parametrize('desc', MODELS, ids=MODELS_IDS)
-def test_quantize_network_v2(desc: ModelDesc, _quantization_case_config_v2):
+def test_quantize_network_v2(desc: ModelDesc, _quantization_case_config_v2: QuantizeTestCaseConfiguration):
     model = desc.model_builder()
 
-    config = get_basic_quantization_config(_quantization_case_config_v2.qconfig,
-                                        input_sample_sizes=desc.input_sample_sizes)
+    config = get_basic_quantization_config(_quantization_case_config_v2,
+                                           input_sample_sizes=desc.input_sample_sizes)
     config['compression']['algorithm'] = 'experimental_quantization'
     if desc.ignored_scopes is not None:
         if 'activations' in config['compression']:

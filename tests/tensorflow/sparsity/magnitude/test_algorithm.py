@@ -1,5 +1,5 @@
 """
- Copyright (c) 2022 Intel Corporation
+ Copyright (c) 2023 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -14,7 +14,6 @@
 import numpy as np
 import pytest
 import tensorflow as tf
-from addict import Dict
 from pytest import approx
 
 from nncf.api.compression import CompressionStage
@@ -139,7 +138,7 @@ def test_magnitude_algo_binary_masks_are_applied():
     input_shape = (1, 5, 5, 1)
     model = get_basic_conv_test_model(input_shape=input_shape[1:])
     config = get_empty_config(input_sample_sizes=input_shape)
-    config.update(Dict({'compression': {'algorithm': "magnitude_sparsity"}}))
+    config.update({'compression': {'algorithm': "magnitude_sparsity"}})
     compressed_model, _ = create_compressed_model_and_algo_for_test(model, config)
     conv = compressed_model.layers[1]
     op_name = list(conv.ops_weights.keys())[0]

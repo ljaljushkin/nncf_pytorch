@@ -1,5 +1,5 @@
 """
- Copyright (c) 2022 Intel Corporation
+ Copyright (c) 2023 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -65,7 +65,7 @@ def test_context_independence():
     graph_dir = os.path.join('quantized', create_test_name(params))
     case = QuantizeTestCaseConfiguration(params, graph_dir)
     input_sample_sizes = ([1, 28, 28, 1], [1, 28, 28, 1])
-    config = get_basic_quantization_config(case.qconfig, input_sample_sizes)
+    config = get_basic_quantization_config(case, input_sample_sizes)
     config['compression']['algorithm'] = 'experimental_quantization'
     models = []
     for _ in range(2):

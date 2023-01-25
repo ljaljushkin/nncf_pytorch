@@ -1,5 +1,5 @@
 """
- Copyright (c) 2022 Intel Corporation
+ Copyright (c) 2023 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -194,7 +194,7 @@ class MagnitudeSparsityController(BaseSparsityController):
         if not all_weights:
             return 0.0
         all_weights_tensor = tf.sort(tf.concat(all_weights, 0))
-        index = int(tf.cast(tf.size(all_weights_tensor), all_weights_tensor.dtype) * sparsity_level)
+        index = int(tf.cast(tf.size(all_weights_tensor) - 1, all_weights_tensor.dtype) * sparsity_level)
         threshold = all_weights_tensor[index].numpy()
         return threshold
 
@@ -234,6 +234,7 @@ class MagnitudeSparsityController(BaseSparsityController):
 
     def disable_scheduler(self):
         self._scheduler = StubCompressionScheduler()
+        self._scheduler.target_level = 0.0
         self._scheduler.current_sparsity_level = 0.0
 
     def statistics(self, quickly_collected_only: bool = False) -> NNCFStatistics:
@@ -254,10 +255,10 @@ class MagnitudeSparsityController(BaseSparsityController):
         return nncf_stats
 
     def compression_stage(self) -> CompressionStage:
-        if self.scheduler.current_sparsity_level == 0:
-            return CompressionStage.UNCOMPRESSED
         if self.scheduler.current_sparsity_level >= self.scheduler.target_level:
             return CompressionStage.FULLY_COMPRESSED
+        if self.scheduler.current_sparsity_level == 0:
+            return CompressionStage.UNCOMPRESSED
         return CompressionStage.PARTIALLY_COMPRESSED
 
     def _run_batchnorm_adaptation(self):

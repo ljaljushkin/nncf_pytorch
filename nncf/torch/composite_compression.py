@@ -1,5 +1,5 @@
 """
- Copyright (c) 2019-2022 Intel Corporation
+ Copyright (c) 2019-2023 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -121,3 +121,14 @@ class PTCompositeCompressionAlgorithmController(
     def prepare_for_export(self):
         for child_ctrl in self.child_ctrls:
             child_ctrl.prepare_for_export()
+
+    @property
+    def compression_rate(self) -> float:
+        sum_compression_rate = 0
+        not_none_compression_rate_cnt = 0
+        for child_ctrl in self.child_ctrls:
+            compression_rate = child_ctrl.compression_rate
+            if compression_rate is not None:
+                sum_compression_rate += sum_compression_rate
+                not_none_compression_rate_cnt += 1
+        return sum_compression_rate / max(not_none_compression_rate_cnt, 1)

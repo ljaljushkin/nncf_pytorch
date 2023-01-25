@@ -1,5 +1,5 @@
 """
- Copyright (c) 2019-2022 Intel Corporation
+ Copyright (c) 2019-2023 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -283,6 +283,7 @@ def main_worker(current_gpu, config: SampleConfig):
                                                 configure_optimizers_fn=configure_optimizers_fn,
                                                 tensorboard_writer=config.tb,
                                                 log_dir=config.log_dir)
+            logger.info(f'Compressed model statistics:\n{acc_aware_training_loop.statistics.to_str()}')
         else:
             train(config, compression_ctrl, model, criterion, train_criterion_fn, lr_scheduler, model_name, optimizer,
                   train_loader, train_sampler, val_loader, best_acc1)

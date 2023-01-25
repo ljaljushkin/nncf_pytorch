@@ -1,5 +1,5 @@
 """
- Copyright (c) 2022 Intel Corporation
+ Copyright (c) 2023 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -92,7 +92,7 @@ def quantize_with_accuracy_control(model: ModelType,
                                    target_device: TargetDevice = TargetDevice.ANY,
                                    subset_size: int = 300,
                                    fast_bias_correction: bool = True,
-                                   model_type: Optional[str] = None,
+                                   model_type: Optional[ModelType] = None,
                                    ignored_scope: Optional[IgnoredScope] = None) -> ModelType:
     """
     Applies post-training quantization algorithm with accuracy control to provided model.

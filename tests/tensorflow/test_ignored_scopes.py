@@ -1,5 +1,5 @@
 """
- Copyright (c) 2022 Intel Corporation
+ Copyright (c) 2023 Intel Corporation
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
@@ -31,8 +31,8 @@ def test_ignored_scopes():
         'conv1',
         '{re}.*conv2.*'
     ]
-    config['compression']['weights']['ignored_scopes'] = ['{re}.*conv3/c[23]']
-    config['compression']['activations']['ignored_scopes'] = ['{re}.*c3$']
+    config['compression']['weights'] = {'ignored_scopes': ['{re}.*conv3/c[23]']}
+    config['compression']['activations'] = {'ignored_scopes': ['{re}.*c3$']}
 
     model = tf.keras.Sequential([
         layers.Conv2D(3, 3, name='conv1', input_shape=config['input_info']['sample_size'][1:]),
