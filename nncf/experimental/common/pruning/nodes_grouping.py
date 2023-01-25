@@ -143,7 +143,7 @@ class PropagationMask:
 
     def invalidate_groups(self):
         for group in self.dim_group_map.values():
-            group.invalidate()
+            group.invalidate() if not isinstance(group, list) else [g.get_state() for g in group]
 
     def is_invalid(self):
         return any(group.is_invalid for group in self.dim_group_map.values())
@@ -203,7 +203,8 @@ def get_pruning_groups(graph: NNCFGraph,
         roots[node.node_id] = root_group
 
         output_tensors_shapes = [x.tensor_shape for x in graph.get_output_edges(node)]
-        assert len(output_tensors_shapes) == 1
+        # TODO: SWIN has linear lauer with 2 identical outputs
+        assert len(output_tensors_shapes) == 1 or len(set(output_tensors_shapes)) <= 1, node.node_name
         output_tensors_shape = output_tensors_shapes[0]
         # TODO: make dimension map common here
         #  Usually it's module.target_weight_dim_for_compression [Torch] or get_filter_axis(layer, weight_attr) [TF]

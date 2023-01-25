@@ -142,7 +142,7 @@ class TestControllerCreation:
         recipe.algo_config.sparse_structure_by_scopes = sparse_structure_by_scopes
         compression_ctrl, compressed_model = create_compressed_model(recipe.model(),
                                                                      recipe.nncf_config(),
-                                                                     dump_graphs=False)
+                                                                     dump_graphs=True)
         assert isinstance(compression_ctrl, MovementSparsityController)
         assert isinstance(compression_ctrl.scheduler, MovementPolynomialThresholdScheduler)
 

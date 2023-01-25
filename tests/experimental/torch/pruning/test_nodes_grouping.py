@@ -127,7 +127,8 @@ TEST_DESCS = [
                     MinimalDimensionBlock(size=1, offset=0, producer_id=34, pruning_dimension=0),
                     MinimalDimensionBlock(size=1, offset=0, producer_id=36, pruning_dimension=1)})
         ]
-    )
+    ),
+    # TODO: add Swin and Wave2Vec
 ]
 
 
