@@ -179,6 +179,14 @@ class PTExporter(Exporter):
                 input_names=input_names,
                 output_names=output_names,
                 opset_version=opset_version,
+                do_constant_folding=True,
+                 dynamic_axes={
+                         'input_ids': {0: 'batch', 1: 'sequence'},
+                         'attention_mask': {0: 'batch', 1: 'sequence'},
+                         'token_type_ids': {0: 'batch', 1: 'sequence'},
+                         'start_logits': {0: 'batch', 1: 'sequence'},
+                         'end_logits': {0: 'batch', 1: 'sequence'}
+                 },
                 training=torch.onnx.TrainingMode.EVAL)
         try:
             fn()
