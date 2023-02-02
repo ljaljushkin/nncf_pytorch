@@ -180,6 +180,7 @@ class StructuredMaskContext:
         """
         Updates the actual binary masks in operand with `self.dependent_structured_mask`.
         """
+        # TODO: sparsity masks shouldn't be affected by structured pruning algorithm
         structured_mask_inflated = self._inflate_structured_mask(self.dependent_structured_mask, self.grid_size)
         self.sparsifier_operand.weight_ctx.binary_mask = structured_mask_inflated
         if self.sparsifier_operand.prune_bias:

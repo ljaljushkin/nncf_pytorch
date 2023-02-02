@@ -15,7 +15,6 @@ from nncf.experimental.common.pruning.nodes_grouping import MinimalDimensionBloc
 from nncf.experimental.common.pruning.nodes_grouping import PruningNodeGroup
 from nncf.experimental.common.pruning.nodes_grouping import get_pruning_groups
 from nncf.experimental.torch.pruning.operations import PT_EXPERIMENTAL_PRUNING_OPERATOR_METATYPES
-from nncf.torch.dynamic_graph.graph_tracer import ModelInputInfo
 from nncf.torch.layers import NNCF_PRUNING_MODULES_DICT
 from nncf.torch.model_creation import create_nncf_network
 from tests.torch.test_compressed_graph import GeneralModelDesc
@@ -116,16 +115,24 @@ TEST_DESCS = [
         ref_groups=[
             PruningNodeGroup(
                 dim_blocks={
-                    MinimalDimensionBlock(size=2, offset=0, producer_id=15, pruning_dimension=0),
-                    MinimalDimensionBlock(size=2, offset=0, producer_id=11, pruning_dimension=0),
+                    MinimalDimensionBlock(size=2, offset=0, producer_id=31, pruning_dimension=1),
+                    MinimalDimensionBlock(size=2, offset=0, producer_id=16, pruning_dimension=0),
                     MinimalDimensionBlock(size=2, offset=0, producer_id=12, pruning_dimension=0),
-                    MinimalDimensionBlock(size=2, offset=0, producer_id=30, pruning_dimension=1),
+                    MinimalDimensionBlock(size=2, offset=0, producer_id=13, pruning_dimension=0)
                 }
             ),
             PruningNodeGroup(
                 dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=34, pruning_dimension=0),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=36, pruning_dimension=1)})
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=35, pruning_dimension=0),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=37, pruning_dimension=1)
+                }
+            ),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=42, pruning_dimension=0),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=45, pruning_dimension=1)
+                }
+            )
         ]
     ),
     # TODO: add Swin and Wave2Vec
