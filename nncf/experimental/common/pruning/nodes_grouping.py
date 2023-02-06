@@ -220,6 +220,7 @@ def get_pruning_groups(graph: NNCFGraph,
     # 3. Collect groups from producers
     blocks_map = {}
     for id, group in roots.items():
+        # TODO: need to filter groups that didn't reach consumers
         blocks_map[id] = group.get_actual_groups()
 
     # Filter non closing and duplicated groups
@@ -229,7 +230,7 @@ def get_pruning_groups(graph: NNCFGraph,
         # TODO: choose block based on other strategies (blocks that leads to the biggest sparsity rate or ???)
         # TODO: iterate and choose first valid and not finished
         group = groups[0]
-        # TODO: should be _closed_branches != _opened_branches
+        # TODO: verify that all leaves are closed, did_reach_consumer: boolean
         if all(block._closed_branches == 1 for block in group):
             min_group = set(map(MinimalDimensionBlock.from_dimension_block, group))
             all_not_finished = all(g.producer_id not in finished_producers for g in min_group)
