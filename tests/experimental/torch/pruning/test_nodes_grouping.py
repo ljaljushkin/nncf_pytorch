@@ -12,6 +12,10 @@ from torch import nn
 from transformers import AutoModelForQuestionAnswering
 from transformers import AutoModelForSequenceClassification
 from transformers import BertConfig
+from transformers import CLIPVisionConfig
+from transformers import CLIPVisionModel
+from transformers import GPT2Config
+from transformers import MobileBertConfig
 
 from nncf import NNCFConfig
 from transformers import CLIPVisionModel
