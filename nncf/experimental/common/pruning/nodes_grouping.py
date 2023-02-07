@@ -61,6 +61,9 @@ class DimensionBlock:
     def set_group(self, group):
         self._group = group
 
+    def __repr__(self):
+        return self.get_state()
+
 
 class BlockGroup:
     def __init__(self, blocks: List[DimensionBlock]) -> None:
@@ -120,17 +123,16 @@ class BlockGroup:
         return self._blocks.copy()
 
     @staticmethod
-    def join_groups(*args) -> 'BlockGroup':
-        for groups in args:
-            assert isinstance(groups, BlockGroup) or isinstance(groups, list), \
+    def join_groups(*args: 'BlockGroup') -> 'BlockGroup':
+        for group in args:
+            assert isinstance(group, BlockGroup), \
                 f'Couldn\'t join args {args}, all elements should be BlockGroup instances'
 
         retval = BlockGroup([])
-        for groups in args:
-            for group in groups:
-                group.add_childs([retval])
-                for block in group.get_blocks():
-                    retval._blocks.append(block)
+        for group in args:
+            group.add_childs([retval])
+            for block in group.get_blocks():
+                retval._blocks.append(block)
         return retval
 
 

@@ -145,17 +145,13 @@ class LinearPruningOp(BasePruningOp):
             input_shape_len = len(input_tensors_shapes[0])
             # Join consumed masks
             # TODO: Consider that input tensors are in the right order
-            left_dim_groups, right_dim_groups = [input_masks[i].dim_groups_map for i in
-                                                 range(2)]  # ignore the third bias
-            assert len(left_dim_groups) == 1 and len(right_dim_groups) == 1, "multiple groups is not supported"
-            left_dim_block = left_dim_groups[0]
-            right_dim_block = right_dim_groups[0]
+            left_dim_groups, right_dim_groups = [input_masks[i].dim_groups_map for i in range(2)]  # ignore the 3rd bias
 
             def _both_dim_blocks_exist(left_idx, right_idx):
-                if left_idx in left_dim_block or \
-                        right_idx in right_dim_block:
-                    assert left_idx in left_dim_block and \
-                           right_idx in right_dim_block
+                if left_idx in left_dim_groups or \
+                        right_idx in right_dim_groups:
+                    assert left_idx in left_dim_groups and \
+                           right_idx in right_dim_groups
                     return True
                 return False
 
@@ -163,21 +159,23 @@ class LinearPruningOp(BasePruningOp):
             # Propagating batch dims
             for dim in range(input_shape_len - 2):
                 if _both_dim_blocks_exist(dim, dim):
-                    output_mask.dim_groups_map[dim] = [BlockGroup.join_groups(left_dim_block[dim],
-                                                                              right_dim_block[dim])]
+                    assert len(left_dim_groups[dim]) == 1 and len(right_dim_groups[dim]) == 1, "multiple groups is not supported"
+                    output_mask.dim_groups_map[dim] = [BlockGroup.join_groups(left_dim_groups[dim][0],
+                                                                              right_dim_groups[dim][0])]
             # Propagating left rows / right cols
             for idx, dim in enumerate(range(input_shape_len - 2, input_shape_len)):
                 if dim in input_masks[idx].dim_groups_map:
-                    # TODO: shouldn't be it added to the list?
-                    output_mask.dim_groups_map[dim] = [input_masks[idx].dim_groups_map[dim]]
+                    # TODO: shouldn't be it added to the list????
+                    output_mask.dim_groups_map[dim] = input_masks[idx].dim_groups_map[dim]
 
             # Close branch
             if _both_dim_blocks_exist(input_shape_len - 1, input_shape_len - 2):
-                left = left_dim_block[input_shape_len - 1]
-                right = right_dim_block[input_shape_len - 2]
+                left = left_dim_groups[input_shape_len - 1]
+                right = right_dim_groups[input_shape_len - 2]
+                assert len(left) == 1 and len(right) == 1, "multiple groups is not supported"
                 # TODO: distinguish between matmul with weights and matmul with 2 dynamic inputs
                 #  linear module should have attr, matmul op - shouldn't. When matmul attrs appear, add attr
-                group = BlockGroup.join_groups(left, right)
+                group = BlockGroup.join_groups(left[0], right[0])
                 group.close_branch()
                 cls.add_consumer_block(group, node)
         else:
