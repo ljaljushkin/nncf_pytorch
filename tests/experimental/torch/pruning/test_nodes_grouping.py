@@ -181,7 +181,8 @@ TEST_DESCS = [
                                                                pruning_dimension=0)})
         ]
     ),
-    # TODO: KeyError: 'output_mask'
+    # TODO: KeyError: 'output_mask'. Probably because of attention masks on before Softmax
+
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='DistilBERT',
