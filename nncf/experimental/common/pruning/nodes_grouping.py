@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Dict
 from typing import List
 from typing import Set
-from typing import Union
 
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNode
@@ -34,7 +33,7 @@ class DimensionBlock:
     def get_state(self):
         return f"S:{self.size}__O:{self.offset}__ID:{self._producer.id}",
 
-    def split_by_reshape(self, shape_map):
+    def split_by_reshape(self, shape_map) -> List['DimensionBlock']:
         # TODO: make it common !!!
         if len(shape_map[1]) == 1:
             raise RuntimeError
@@ -64,15 +63,14 @@ class DimensionBlock:
 
 
 class BlockGroup:
-    def __init__(self, blocks) -> None:
-        self._blocks = blocks  # type: List[DimensionBlock]
+    def __init__(self, blocks: List[DimensionBlock]) -> None:
+        self._blocks = blocks
         for block in blocks:
             block.set_group(self)  # TODO: circle dependency, bad smell
-        self._childs = []
+        self._childs: List['BlockGroup'] = []
         self.is_invalid = False
 
     def get_state(self):
-        # return {'block_group': 'dummy'}
         return list(map(lambda x: x.get_state(), self._blocks))
 
     def invalidate(self):
@@ -82,7 +80,7 @@ class BlockGroup:
         for child in self._childs:
             child.invalidate()
 
-    def get_actual_groups(self):
+    def get_actual_groups(self) -> List[List[DimensionBlock]]:
         if not self._childs:
             return [self._blocks]
         retval = []
@@ -94,7 +92,7 @@ class BlockGroup:
     def has_childs(self):
         return bool(self._childs)
 
-    def add_childs(self, childs):
+    def add_childs(self, childs: List['BlockGroup']):
         self._childs.extend(childs)
 
     def add_block(self, block: DimensionBlock):
@@ -105,12 +103,12 @@ class BlockGroup:
         if self._childs:
             raise NotImplementedError('Splitting BlockGroup with childs isn\'t implemented yet')
 
-        new_blocks = []
+        new_blocks: List[List[DimensionBlock]] = []
         for block in self._blocks:
             new_blocks.append(block.split_by_reshape(shape_map))
         self._childs = []
         for group in zip(*new_blocks):
-            self._childs.append(BlockGroup(list(group)))
+            self._childs.append(BlockGroup(blocks=list(group)))
         return self._childs.copy()
 
     # TODO: work on open branches
@@ -122,37 +120,39 @@ class BlockGroup:
         return self._blocks.copy()
 
     @staticmethod
-    def join_groups(*args):
-        for group in args:
-            assert isinstance(group, BlockGroup), \
+    def join_groups(*args) -> 'BlockGroup':
+        for groups in args:
+            assert isinstance(groups, BlockGroup) or isinstance(groups, list), \
                 f'Couldn\'t join args {args}, all elements should be BlockGroup instances'
 
         retval = BlockGroup([])
-        for group in args:
-            group.add_childs([retval])
-            for block in group.get_blocks():
-                retval._blocks.append(block)
+        for groups in args:
+            for group in groups:
+                group.add_childs([retval])
+                for block in group.get_blocks():
+                    retval._blocks.append(block)
         return retval
 
 
 class PropagationMask:
     def __init__(self,
-                 # TODO: shouldn't be duality: List or not List
-                 dim_group_map: Dict[int, Union[BlockGroup, List[BlockGroup]]] = None):
-        self.dim_group_map = dim_group_map if dim_group_map is not None else {}
+                 dim_groups_map: Dict[int, List[BlockGroup]] = None):
+        self.dim_groups_map = dim_groups_map if dim_groups_map is not None else {}
 
     def invalidate_groups(self):
-        for group in self.dim_group_map.values():
-            group.invalidate() if not isinstance(group, list) else [g.get_state() for g in group]
+        for groups in self.dim_groups_map.values():
+            for group in groups:
+                group.invalidate()
 
-    def is_invalid(self):
-        return any(group.is_invalid for group in self.dim_group_map.values())
+    # TODO: is propagation mask invalid if any internal group is invalid? is this method needed?
+    # def is_invalid(self):
+    #     return any(group.is_invalid for groups in self.dim_groups_map.values() for group in groups)
 
     def get_state(self):
         result = {}
-        for k, v in self.dim_group_map.items():
-            v_state = v.get_state() if not isinstance(v, list) else [vv.get_state() for vv in v]
-            result[k] = v_state
+        for dim, groups in self.dim_groups_map.items():
+            groups_state = [group.get_state() for group in groups]
+            result[dim] = groups_state
         return result
 
 
@@ -211,14 +211,14 @@ def get_pruning_groups(graph: NNCFGraph,
         #  Ideally, node should know this. Is it part of layer attributes??
         #  NO: it's not weight dim for compression, it's output shape dimension that is affected by pruning
         target_output_dim_for_compression = len(output_tensors_shape) - 1
-        mask = PropagationMask({target_output_dim_for_compression: root_group})
+        mask = PropagationMask({target_output_dim_for_compression: [root_group]})
         node.data['output_mask'] = mask
 
     # 2. Propagate masks
     MaskPropagationAlgorithm(graph, pruning_operations_metatypes).mask_propagation()
 
     # 3. Collect groups from producers
-    blocks_map = {}
+    blocks_map: Dict[int, List[List[DimensionBlock]]] = {}
     for id, group in roots.items():
         # TODO: need to filter groups that didn't reach consumers
         blocks_map[id] = group.get_actual_groups()
@@ -232,6 +232,8 @@ def get_pruning_groups(graph: NNCFGraph,
         group = groups[0]
         # TODO: verify that all leaves are closed, did_reach_consumer: boolean
         if all(block._closed_branches == 1 for block in group):
+            for block in group:
+                assert not block._is_invalid, 'invalid groups are not handled'
             min_group = set(map(MinimalDimensionBlock.from_dimension_block, group))
             all_not_finished = all(g.producer_id not in finished_producers for g in min_group)
             candidate_group = PruningNodeGroup(min_group)

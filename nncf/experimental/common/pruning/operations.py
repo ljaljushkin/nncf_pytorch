@@ -123,21 +123,21 @@ class LinearPruningOp(BasePruningOp):
         assert len(input_masks) in [1, 2, 3]
         input_masks = list(filter(lambda mask: mask is not None, input_masks))
         # single non-empty input
-        if (len(input_masks) == 1 and input_masks[0] is not None) or (len(input_masks) > 1 and not all(input_masks[1:])):
+        if (len(input_masks) == 1 and input_masks[0] is not None) or (
+                len(input_masks) > 1 and not all(input_masks[1:])):
             output_mask = node.data['output_mask']
             # Propagating batch dims
             input_tensors_shapes = [x.tensor_shape for x in graph.get_input_edges(node)]
             input_shape_len = len(input_tensors_shapes[0])
-            for dim, groups in input_masks[0].dim_group_map.items():
+            for dim, groups in input_masks[0].dim_groups_map.items():
                 if dim == input_shape_len - 1:
-                    groups = groups if isinstance(groups, list) else [groups]
                     for group in groups:
                         group.close_branch()
                         # TODO: distinguish between matmul with weights and matmul with 2 dynamic inputs
                         #  linear module should have attr, matmul op - shouldn't. When matmul attrs appear, add attr
                         cls.add_consumer_block(group, node)
                 else:
-                    output_mask.dim_group_map[dim] = groups
+                    output_mask.dim_groups_map[dim] = groups
 
         elif len(input_masks) == 2 and all(input_masks):
             input_tensors_shapes = [x.tensor_shape for x in graph.get_input_edges(node)]
@@ -145,7 +145,11 @@ class LinearPruningOp(BasePruningOp):
             input_shape_len = len(input_tensors_shapes[0])
             # Join consumed masks
             # TODO: Consider that input tensors are in the right order
-            left_dim_block, right_dim_block = [input_masks[i].dim_group_map for i in range(2)]  # ignore the third bias
+            left_dim_groups, right_dim_groups = [input_masks[i].dim_groups_map for i in
+                                                 range(2)]  # ignore the third bias
+            assert len(left_dim_groups) == 1 and len(right_dim_groups) == 1, "multiple groups is not supported"
+            left_dim_block = left_dim_groups[0]
+            right_dim_block = right_dim_groups[0]
 
             def _both_dim_blocks_exist(left_idx, right_idx):
                 if left_idx in left_dim_block or \
@@ -159,12 +163,13 @@ class LinearPruningOp(BasePruningOp):
             # Propagating batch dims
             for dim in range(input_shape_len - 2):
                 if _both_dim_blocks_exist(dim, dim):
-                    output_mask.dim_group_map[dim] = BlockGroup.join_groups(left_dim_block[dim],
-                                                                            right_dim_block[dim])
+                    output_mask.dim_groups_map[dim] = [BlockGroup.join_groups(left_dim_block[dim],
+                                                                              right_dim_block[dim])]
             # Propagating left rows / right cols
             for idx, dim in enumerate(range(input_shape_len - 2, input_shape_len)):
-                if dim in input_masks[idx].dim_group_map:
-                    output_mask.dim_group_map[dim] = input_masks[idx].dim_group_map[dim]
+                if dim in input_masks[idx].dim_groups_map:
+                    # TODO: shouldn't be it added to the list?
+                    output_mask.dim_groups_map[dim] = [input_masks[idx].dim_groups_map[dim]]
 
             # Close branch
             if _both_dim_blocks_exist(input_shape_len - 1, input_shape_len - 2):
@@ -181,7 +186,7 @@ class LinearPruningOp(BasePruningOp):
         node.data['output_mask'] = output_mask
 
     @classmethod
-    def add_consumer_block(cls, group, node):
+    def add_consumer_block(cls, group: BlockGroup, node):
         # TODO: applies for weight module, not for matmul operator that doesn't have layer_attributes. But soon it will
         if node.layer_attributes is not None:
             first_block: DimensionBlock = group.get_blocks()[0]
@@ -195,7 +200,6 @@ class LinearPruningOp(BasePruningOp):
                 closed_branches=1
             )
             group.add_block(consumer_block)
-
 
 
 class BatchNormPruningOp(BasePruningOp):
@@ -383,28 +387,28 @@ class ReshapePruningOp(BasePruningOp):
 
         output_mask = PropagationMask()
         if mode == 'extend':
-            map = mask.dim_group_map
-            for dim, group in mask.dim_group_map.items():
-                if isinstance(group, list):
+            for dim, groups in mask.dim_groups_map.items():
+                if len(groups) > 1:
                     raise NotImplementedError('Extend reshape for several groups is not supported yet')
                 if not isinstance(inp_map[dim], list):
                     # pruning dimension is not affected, change pruning dimension only
                     shifted_dim = inp_map[dim]
-                    output_mask.dim_group_map[shifted_dim] = group
+                    output_mask.dim_groups_map[shifted_dim].extend(groups)
                 else:
+                    assert len(groups) == 1
+                    group = groups[0]
                     shape_map = [input_shape[dim], [output_shape[x] for x in inp_map[dim]]]
                     new_groups = group.split_blocks_by_reshape(shape_map)
                     for new_group, in_dim in zip(new_groups, inp_map[dim]):
-                        output_mask.dim_group_map[in_dim] = new_group
+                        output_mask.dim_groups_map[in_dim] = [new_group]
             return output_mask
 
         if mode == 'shrink':
             # TODO: if pruning dim is not affected update pruning dim after shrink correspondingly
             grouping = defaultdict(list)
-            for inp_idx, groups in mask.dim_group_map.items():
-                groups = groups if isinstance(groups, list) else [groups]
+            for inp_idx, groups in mask.dim_groups_map.items():
                 grouping[inp_map[inp_idx]].extend(groups)
-            output_mask.dim_group_map = dict(grouping)
+            output_mask.dim_groups_map = dict(grouping)
             return output_mask
 
     @classmethod
@@ -435,8 +439,8 @@ class TransposePruningOp(BasePruningOp):
             new_order = node.layer_attributes.permutation
 
         idx_map = [(old_idx, new_idx) for new_idx, old_idx in enumerate(new_order) if
-                   old_idx in input_mask.dim_group_map]
-        output_mask = PropagationMask({new_idx: input_mask.dim_group_map[old_idx] for old_idx, new_idx in idx_map})
+                   old_idx in input_mask.dim_groups_map]
+        output_mask = PropagationMask({new_idx: input_mask.dim_groups_map[old_idx] for old_idx, new_idx in idx_map})
 
         node.data['output_mask'] = output_mask
 
