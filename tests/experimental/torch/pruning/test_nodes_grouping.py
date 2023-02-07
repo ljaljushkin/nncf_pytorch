@@ -5,10 +5,21 @@ from typing import List
 import numpy as np
 import pytest
 import torch
-# TODO: why "import nncf" is not enough for calling patch_torch_operators??
-import nncf.torch
+# import nncf.torch  # TODO: why "import nncf" is not enough for calling patch_torch_operators??
+from transformers import AutoModelForImageClassification
+from transformers import DistilBertConfig
+from transformers import RobertaConfig
+from transformers import SwinConfig
+from transformers import ViTConfig
+
+from nncf.torch import patch_torch_operators
+from tests.torch.test_models.swin import SwinTransformerBlock
+
+patch_torch_operators()  # more reliable, since it's not removed as unused
 
 from torch import nn
+# TODO: why "import nncf" is not enough for calling patch_torch_operators??
+from transformers import AutoModelForAudioClassification
 from transformers import AutoModelForQuestionAnswering
 from transformers import AutoModelForSequenceClassification
 from transformers import BertConfig
@@ -16,20 +27,9 @@ from transformers import CLIPVisionConfig
 from transformers import CLIPVisionModel
 from transformers import GPT2Config
 from transformers import MobileBertConfig
+from transformers import Wav2Vec2Config
 
 from nncf import NNCFConfig
-from transformers import CLIPVisionModel
-# TODO: why this import breaks BERT tests???
-#             assert len(output_tensors_shapes) == 1 or len(set(output_tensors_shapes)) <= 1, node.node_name
-#  >           output_tensors_shape = output_tensors_shapes[0]
-#  E           IndexError: list index out of range
-#  need to dump graph, seems like some operation is not wrapped because of order of imports?
-#  ANSWER: gelu is not patched, graph is disjointed and linear has no output shapes, which is not expected.
-
-from transformers import CLIPVisionConfig
-from transformers import GPT2Config
-from transformers import MobileBertConfig
-
 from nncf.experimental.common.pruning.nodes_grouping import MinimalDimensionBlock
 from nncf.experimental.common.pruning.nodes_grouping import PruningNodeGroup
 from nncf.experimental.common.pruning.nodes_grouping import get_pruning_groups
@@ -38,6 +38,14 @@ from nncf.torch.layers import NNCF_PRUNING_MODULES_DICT
 from nncf.torch.model_creation import create_nncf_network
 from tests.torch.test_compressed_graph import GeneralModelDesc
 from tests.torch.test_compressed_graph import IModelDesc
+
+
+# TODO: why this import breaks BERT tests???
+#             assert len(output_tensors_shapes) == 1 or len(set(output_tensors_shapes)) <= 1, node.node_name
+#  >           output_tensors_shape = output_tensors_shapes[0]
+#  E           IndexError: list index out of range
+#  need to dump graph, seems like some operation is not wrapped because of order of imports?
+#  ANSWER: gelu is not patched, graph is disjointed and linear has no output shapes, which is not expected.
 
 
 class SelfAttention(nn.Module):
@@ -156,6 +164,45 @@ TEST_DESCS = [
     ),
     GroupTestDesc(
         model_desc=GeneralModelDesc(
+            model_name='RoBERTa',
+            input_info=[dict(sample_size=[1, 10], type='long')] * 3,
+            model_builder=partial(AutoModelForQuestionAnswering.from_config, RobertaConfig(
+                num_hidden_layers=1
+            ))
+        ),
+        ref_groups=[
+            PruningNodeGroup(dim_blocks={MinimalDimensionBlock(size=64, offset=0, producer_id=38, pruning_dimension=1),
+                                         MinimalDimensionBlock(size=64, offset=0, producer_id=19, pruning_dimension=0),
+                                         MinimalDimensionBlock(size=64, offset=0, producer_id=20, pruning_dimension=0),
+                                         MinimalDimensionBlock(size=64, offset=0, producer_id=23,
+                                                               pruning_dimension=0)}),
+            PruningNodeGroup(dim_blocks={MinimalDimensionBlock(size=1, offset=0, producer_id=44, pruning_dimension=1),
+                                         MinimalDimensionBlock(size=1, offset=0, producer_id=42,
+                                                               pruning_dimension=0)})
+        ]
+    ),
+    # TODO: KeyError: 'output_mask'
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
+            model_name='DistilBERT',
+            input_info=[dict(sample_size=[1, 4], type='long')] * 2,
+            model_builder=partial(
+                AutoModelForQuestionAnswering.from_config,
+                DistilBertConfig(
+                    vocab_size=4,
+                    max_position_embeddings=4,
+                    n_layers=1,
+                    n_heads=1,
+                    dim=4,
+                    hidden_dim=4 * 4,
+                )
+            )
+        ),
+        ref_groups=[
+        ]
+    ),
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
             model_name='MobileBERT',
             input_info=[dict(sample_size=[1, 128], type='long')] * 4,
             model_builder=partial(AutoModelForSequenceClassification.from_config,
@@ -173,7 +220,7 @@ TEST_DESCS = [
                                   ))
         ),
         ref_groups=[
-            # Why was this group filtered out?
+            # TODO: Why was this group filtered out?
             # PruningNodeGroup(
             #     dim_blocks={
             #         MinimalDimensionBlock(size=1, offset=0, producer_id=22, pruning_dimension=0),
@@ -221,6 +268,8 @@ TEST_DESCS = [
             )
         ]
     ),
+    # TODO: need to handle model_output in the middle of each Transformer layer
+    # TODO: note, that Split before Reshape, but each branch has the same Reshape - should be fine
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='GPT2Text',
@@ -230,6 +279,8 @@ TEST_DESCS = [
         ),
         ref_groups=[]
     ),
+    # TODO: need to handle concat with constant
+    # TODO: pay attention to transpose that does not change shape: 1x2x2x1 -> 1x2x2x1
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='CLIP',
@@ -243,12 +294,87 @@ TEST_DESCS = [
                                       num_channels=3,
                                       image_size=3,
                                       patch_size=3,
-                                      # n_embd=4, n_layer=2, n_head=2, vocab_size=2
                                   ))
         ),
         ref_groups=[]
     ),
-    # TODO: add Swin and Wave2Vec
+    # TODO: Fail with "Couldn't join args"
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
+            model_name='Wave2Vec 2.0',
+            input_info=dict(sample_size=[1, 400]),
+            model_builder=partial(AutoModelForAudioClassification.from_config, Wav2Vec2Config(
+                vocab_size=2,
+                hidden_size=16,
+                num_hidden_layers=1,
+                num_attention_heads=2,
+                intermediate_size=4,
+                conv_dim=(2, 2, 2, 2, 2, 2, 2),
+            ))
+        ),
+        ref_groups=[]
+    ),
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
+            model_name='Swin',
+            input_info=dict(sample_size=[1, 3, 224, 224]),
+            model_builder=partial(AutoModelForImageClassification.from_config,
+                                  SwinConfig(
+                                      depths=[1],
+                                      num_heads=[2],
+                                      image_size=224,
+                                      patch_size=4,
+                                      num_channels=3,
+                                      embed_dim=2,
+                                  ))
+        ),
+        ref_groups=[
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=15, pruning_dimension=0),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=18, pruning_dimension=0),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=14, pruning_dimension=0),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=33, pruning_dimension=1)
+                }
+            ),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=45, pruning_dimension=1),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=43, pruning_dimension=0)
+                }
+            )
+        ]
+    ),
+    # TODO: not empty mask on concat is not supported
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
+            model_name='ViT',
+            input_info=dict(sample_size=[1, 1, 4, 4]),
+            model_builder=partial(AutoModelForImageClassification.from_config,
+                                  ViTConfig(
+                                      hidden_size=2,
+                                      num_hidden_layers=1,
+                                      num_attention_heads=2,
+                                      intermediate_size=2,
+                                      image_size=4,
+                                      patch_size=2,
+                                      num_channels=1
+                                  ))
+        ),
+        ref_groups=[
+
+        ]
+    ),
+    # TODO: reshape for more than 2 dims is not supported
+    # TODO: need a symbolic propagation
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
+            model_name='Swin_MS',
+            input_info=dict(sample_size=[1, 4 * 4, 3]),
+            model_builder=partial(SwinTransformerBlock, dim=3, input_resolution=[4, 4], num_heads=1)
+        ),
+        ref_groups=[]
+    )
 ]
 
 
