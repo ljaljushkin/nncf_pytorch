@@ -299,7 +299,6 @@ TEST_DESCS = [
         ),
         ref_groups=[]
     ),
-    # TODO: Fail with "Couldn't join args"
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='Wave2Vec 2.0',
@@ -313,7 +312,22 @@ TEST_DESCS = [
                 conv_dim=(2, 2, 2, 2, 2, 2, 2),
             ))
         ),
-        ref_groups=[]
+        ref_groups=[
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=8, offset=0, producer_id=31, pruning_dimension=0),
+                    MinimalDimensionBlock(size=8, offset=0, producer_id=53, pruning_dimension=1),
+                    MinimalDimensionBlock(size=8, offset=0, producer_id=29, pruning_dimension=0),
+                    MinimalDimensionBlock(size=8, offset=0, producer_id=35, pruning_dimension=0)
+                }
+            ),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=57, pruning_dimension=0),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=60, pruning_dimension=1)
+                }
+            )
+        ]
     ),
     GroupTestDesc(
         model_desc=GeneralModelDesc(

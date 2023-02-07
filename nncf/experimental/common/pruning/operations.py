@@ -351,10 +351,12 @@ class ReshapePruningOp(BasePruningOp):
                                           inp_idx, out_idx, inp_map, out_map)
                 if not res or mode == 'shrink':
                     return None
+                # TODO: unsqueeze shouldn't assign extend mode( E.g. [2,1,8] -> [1,2,1,8]) ???
                 mode = 'extend'
             else:
-                # TODO: second call breaks the logic in case of [1,4,4,4] -> [1,2,2,2,2,4]
+                # TODO: second call breaks the logic in case of [1,4,4,4] -> [1,2,2,2,2,4] Swin??
                 #  need to shift in_idx
+                #  Is it fixed already ?? _map_dims returns shifted inp_idx
                 res, inp_idx = _map_dims_(output_shape, input_shape,
                                           out_idx, inp_idx, out_map, inp_map)
                 if not res or mode == 'extend':
@@ -391,14 +393,22 @@ class ReshapePruningOp(BasePruningOp):
                 if not isinstance(inp_map[dim], list):
                     # pruning dimension is not affected, change pruning dimension only
                     shifted_dim = inp_map[dim]
-                    output_mask.dim_groups_map[shifted_dim].extend(groups)
+                    output_mask.dim_groups_map[shifted_dim] = groups
                 else:
-                    assert len(groups) == 1
-                    group = groups[0]
-                    shape_map = [input_shape[dim], [output_shape[x] for x in inp_map[dim]]]
-                    new_groups = group.split_blocks_by_reshape(shape_map)
-                    for new_group, in_dim in zip(new_groups, inp_map[dim]):
-                        output_mask.dim_groups_map[in_dim] = [new_group]
+                    mapped_input_shape = input_shape[dim]  # assume a single int by definition of extend
+                    mapped_output_shape = [output_shape[x] for x in inp_map[dim]]
+                    # check that it simply adds 1 to the shape (Unsqueeze)
+                    if mapped_input_shape in mapped_output_shape:
+                        index_in_mapped = mapped_output_shape.index(mapped_input_shape)
+                        shifted_dim = inp_map[dim][index_in_mapped]
+                        output_mask.dim_groups_map[shifted_dim] = groups
+                    else:
+                        shape_map = [mapped_input_shape, mapped_output_shape]
+                        assert len(groups) == 1
+                        group = groups[0]
+                        new_groups = group.split_blocks_by_reshape(shape_map)
+                        for new_group, in_dim in zip(new_groups, inp_map[dim]):
+                            output_mask.dim_groups_map[in_dim] = [new_group]
             return output_mask
 
         if mode == 'shrink':

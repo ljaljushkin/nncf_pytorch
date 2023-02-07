@@ -31,7 +31,7 @@ class DimensionBlock:
         self._is_invalid = False
 
     def get_state(self):
-        return f"S:{self.size}__O:{self.offset}__ID:{self._producer.id}",
+        return f"S:{self.size}__O:{self.offset}__ID:{self._producer.id}"
 
     def split_by_reshape(self, shape_map) -> List['DimensionBlock']:
         # TODO: make it common !!!
@@ -183,6 +183,7 @@ class MinimalDimensionBlock:
 @dataclass
 class PruningNodeGroup:
     dim_blocks: Set[MinimalDimensionBlock]
+
     # -producing_nodes: Set[MinimalDimensionBlock]
     # adjusted_nodes: List[int] = []
     # consumer_nodes_id: List[int] = None
