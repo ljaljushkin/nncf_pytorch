@@ -9,6 +9,10 @@ from torch import nn
 from transformers import AutoModelForQuestionAnswering
 from transformers import AutoModelForSequenceClassification
 from transformers import BertConfig
+from transformers import CLIPVisionConfig
+from transformers import CLIPVisionModel
+from transformers import GPT2Config
+from transformers import MobileBertConfig
 
 from nncf import NNCFConfig
 from nncf.experimental.common.pruning.nodes_grouping import MinimalDimensionBlock
@@ -135,6 +139,100 @@ TEST_DESCS = [
             )
         ]
     ),
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
+            model_name='MobileBERT',
+            input_info=[dict(sample_size=[1, 128], type='long')] * 4,
+            model_builder=partial(AutoModelForSequenceClassification.from_config,
+                                  MobileBertConfig(
+                                      hidden_size=4,
+                                      intermediate_size=3,
+                                      max_position_embeddings=128,
+                                      num_attention_heads=2,
+                                      num_hidden_layers=1,
+                                      vocab_size=10,
+                                      num_labels=2,
+                                      mhsa_qkv_bias=True,
+                                      mhsa_o_bias=True,
+                                      ffn_bias=True
+                                  ))
+        ),
+        ref_groups=[
+            # Why was this group filtered out?
+            # PruningNodeGroup(
+            #     dim_blocks={
+            #         MinimalDimensionBlock(size=1, offset=0, producer_id=22, pruning_dimension=0),
+            #         MinimalDimensionBlock(size=1, offset=0, producer_id=24, pruning_dimension=1),
+            #         MinimalDimensionBlock(size=1, offset=0, producer_id=25, pruning_dimension=1),
+            #     }
+            # ),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=64, offset=0, producer_id=26, pruning_dimension=0),
+                    MinimalDimensionBlock(size=64, offset=0, producer_id=27, pruning_dimension=0),
+                    MinimalDimensionBlock(size=64, offset=0, producer_id=25, pruning_dimension=0),
+                    MinimalDimensionBlock(size=64, offset=0, producer_id=44, pruning_dimension=1)
+                }
+            ),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=50, pruning_dimension=1),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=48, pruning_dimension=0)
+                }
+            ),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=56, pruning_dimension=1),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=54, pruning_dimension=0)
+                }
+            ),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=62, pruning_dimension=1),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=60, pruning_dimension=0)
+                }
+            ),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=68, pruning_dimension=1),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=66, pruning_dimension=0)
+                }
+            ),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=81, pruning_dimension=1),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=78, pruning_dimension=0)
+                }
+            )
+        ]
+    ),
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
+            model_name='GPT2Text',
+            input_info=[dict(sample_size=[1, 128], type='long')] * 1,
+            model_builder=partial(AutoModelForSequenceClassification.from_config,
+                                  GPT2Config(n_embd=4, n_layer=2, n_head=2, vocab_size=2))
+        ),
+        ref_groups=[]
+    ),
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
+            model_name='CLIP',
+            input_info=[dict(sample_size=[1, 3, 3, 3], type='float')] * 1,
+            model_builder=partial(CLIPVisionModel,
+                                  CLIPVisionConfig(
+                                      hidden_size=2,
+                                      intermediate_size=2,
+                                      num_hidden_layers=1,
+                                      num_attention_heads=2,
+                                      num_channels=3,
+                                      image_size=3,
+                                      patch_size=3,
+                                      # n_embd=4, n_layer=2, n_head=2, vocab_size=2
+                                  ))
+        ),
+        ref_groups=[]
+    ),
     # TODO: add Swin and Wave2Vec
 ]
 
@@ -147,6 +245,7 @@ def test_graph(desc: GroupTestDesc):
     model = model_desc.get_model()
     config = NNCFConfig({"input_info": model_desc.create_input_info()})
     nncf_network = create_nncf_network(model, config)
+    nncf_network.get_graph().visualize_graph("original_graph.dot")
 
     pruning_producing_types = [x.op_func_name for x in NNCF_PRUNING_MODULES_DICT]
     actual_groups = get_pruning_groups(nncf_network.get_graph(),

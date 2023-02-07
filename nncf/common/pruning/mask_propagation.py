@@ -86,12 +86,13 @@ class MaskPropagationAlgorithm:
             return result
         save_for_netron(self._graph, f'original.xml', get_attributes_fn=get_attributes_fn)
 
-        for node in self._graph.topological_sort():
-            cls = self.get_meta_operation_by_type_name(node.node_type)
-            cls.mask_propagation(node, self._graph, self._tensor_processor)
-            save_for_netron(self._graph, f'propagated_{node.node_id}_{node.node_type}.xml', get_attributes_fn=get_attributes_fn)
-
-        save_for_netron(self._graph, f'propagated_all.xml', get_attributes_fn=get_attributes_fn)
+        try:
+            for node in self._graph.topological_sort():
+                cls = self.get_meta_operation_by_type_name(node.node_type)
+                cls.mask_propagation(node, self._graph, self._tensor_processor)
+            # save_for_netron(self._graph, f'propagated_{node.node_id}_{node.node_type}.xml', get_attributes_fn=get_attributes_fn)
+        finally:
+            save_for_netron(self._graph, f'propagated_all.xml', get_attributes_fn=get_attributes_fn)
 
     def symbolic_mask_propagation(self, prunable_layers_types: List[str],
                                   can_prune_after_analysis: Dict[int, PruningAnalysisDecision]) \
