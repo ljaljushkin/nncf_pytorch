@@ -27,12 +27,14 @@ from nncf.experimental.torch.search_building_blocks.search_blocks import get_bui
 from nncf.torch import register_operator
 from nncf.torch.layers import NNCFConv2d
 from nncf.torch.utils import get_model_device
+# from tests.torch.experimental.search_building_blocks.test_search_building_blocks import Foo
 from tests.torch.helpers import create_compressed_model_and_algo_for_test
 from tests.torch.helpers import create_conv
 from tests.torch.helpers import get_empty_config
 from tests.torch.nas.creators import create_bootstrap_training_model_and_ctrl
 from tests.torch.nas.helpers import do_training_step
 from tests.torch.nas.helpers import move_model_to_cuda_if_available
+from tests.torch.test_models import VGG
 from tests.torch.test_models.resnet import ResNet18
 from tests.torch.test_models.resnet import ResNet50
 from tests.torch.test_models.resnet import ResNet50__elastic
@@ -566,3 +568,74 @@ def test_change_depth_indicator():
     ctrl.multi_elasticity_handler.depth_handler.depth_indicator = 1
     ctrl.multi_elasticity_handler.depth_handler.activate_subnet_for_config([0, 1])
     assert ctrl.multi_elasticity_handler.depth_handler.get_active_config() == [1]
+
+
+class TwoBranches(torch.nn.Module):
+    def __init__(self) -> None:
+        super(TwoBranches, self).__init__()
+        self.dummy = torch.nn.Parameter(torch.rand(1))
+        self.relu = nn.ReLU()
+        self.ht = nn.Hardtanh()
+
+    def forward(self, x) -> torch.Tensor:
+        return self.relu(x) + self.ht(x)
+
+
+def test_can_not_skip_second_branch(tmp_path):
+    model = TwoBranches()
+    nncf_config = get_empty_config(input_sample_sizes=[1])
+    skipped_blocks = [BuildingBlock('/nncf_model_input_0',
+                                    'TwoBranches/Hardtanh[ht]/hardtanh_0')]
+
+    orig_onnx_model_path = tmp_path / "TwoBranches.onnx"
+    onnx_model_without_block_path = tmp_path / "skipped_TwoBranches.onnx"
+
+    compressed_model, ctrl = create_compressed_model_and_algo_for_test(model, nncf_config)
+    # export model to onnx
+    ctrl.export_model(str(orig_onnx_model_path))
+
+    ctx = compressed_model.get_tracing_context()
+    compressed_model.get_tracing_context().set_elastic_blocks(skipped_blocks)
+    ctx.elastic_depth = True  # activate mode with elastic depth
+    ctx.set_active_skipped_block([0])
+    ctrl.export_model(str(onnx_model_without_block_path))
+
+
+def test_can_skip_first_branch(tmp_path):
+    model = TwoBranches()
+    nncf_config = get_empty_config(input_sample_sizes=[1])
+    skipped_blocks = [BuildingBlock('/nncf_model_input_0',
+                                    'TwoBranches/ReLU[relu]/relu_0')]
+
+    orig_onnx_model_path = tmp_path / "TwoBranches.onnx"
+    onnx_model_without_block_path = tmp_path / "skipped_TwoBranches.onnx"
+
+    compressed_model, ctrl = create_compressed_model_and_algo_for_test(model, nncf_config)
+    # export model to onnx
+    ctrl.export_model(str(orig_onnx_model_path))
+
+    ctx = compressed_model.get_tracing_context()
+    compressed_model.get_tracing_context().set_elastic_blocks(skipped_blocks)
+    ctx.elastic_depth = True  # activate mode with elastic depth
+    ctx.set_active_skipped_block([0])
+    ctrl.export_model(str(onnx_model_without_block_path))
+
+
+def test_can_skip_single_vgg_layer(tmp_path):
+    model = VGG("VGG11")
+    nncf_config = get_empty_config(input_sample_sizes=[1, 3, 32, 32])
+    skipped_blocks = [BuildingBlock('VGG/Sequential[features]/NNCFBatchNorm2d[1]/batch_norm_0',
+                                    'VGG/Sequential[features]/ReLU[2]/relu__0')]
+
+    orig_onnx_model_path = tmp_path / "vgg.onnx"
+    onnx_model_without_block_path = tmp_path / "skipped_vgg.onnx"
+
+    compressed_model, ctrl = create_compressed_model_and_algo_for_test(model, nncf_config)
+    # export model to onnx
+    ctrl.export_model(str(orig_onnx_model_path))
+
+    ctx = compressed_model.get_tracing_context()
+    compressed_model.get_tracing_context().set_elastic_blocks(skipped_blocks)
+    ctx.elastic_depth = True  # activate mode with elastic depth
+    ctx.set_active_skipped_block([0])
+    ctrl.export_model(str(onnx_model_without_block_path))

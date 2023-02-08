@@ -22,8 +22,10 @@ import pytest
 import torch
 from functools import partial
 
+from torch import nn
 
 from examples.torch.common.models import efficient_net
+from nncf.experimental.torch.search_building_blocks.search_blocks import BlockFilteringStrategy
 from nncf.experimental.torch.search_building_blocks.search_blocks import BuildingBlock
 from nncf.experimental.torch.search_building_blocks.search_blocks import BuildingBlocks
 from nncf.experimental.torch.search_building_blocks.search_blocks import GroupedBlockIDs
@@ -37,6 +39,7 @@ from tests.torch.nas.test_elastic_depth import RESNET50_INPUT_SIZE
 from tests.torch.test_models import PNASNetB
 from tests.torch.test_models import ResNeXt29_32x4d
 from tests.torch.test_models import ResNet18
+from tests.torch.test_models import VGG
 from tests.torch.test_models import squeezenet1_0
 from tests.torch.test_models import MobileNetV2
 from tests.torch.test_models import ssd_mobilenet
@@ -114,7 +117,8 @@ def test_building_block(desc: BuildingBlockParamsCase):
     ext_blocks, group_dependent = get_building_blocks(compressed_model,
                                                       max_block_size=desc.max_block_size,
                                                       min_block_size=desc.min_block_size,
-                                                      hw_fused_ops=desc.hw_fused_ops)
+                                                      hw_fused_ops=False,
+                                                      block_filter_strategy=BlockFilteringStrategy.KEEP_SMALL)
     skipped_blocks = [eb.basic_block for eb in ext_blocks]
     check_blocks_and_groups(desc.name, skipped_blocks, group_dependent)
 

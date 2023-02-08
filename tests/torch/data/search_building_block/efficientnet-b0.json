@@ -1,116 +1,248 @@
 {
     "blocks": [
         {
+            "start_node_name": "EfficientNet/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/MemoryEfficientSwish[_swish]/__mul___0"
+        },
+        {
             "start_node_name": "EfficientNet/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/MemoryEfficientSwish[_swish]/__mul___0",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[0]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[1]/adaptive_avg_pool2d_0",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[1]/sigmoid_0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[1]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[1]/MemoryEfficientSwish[_swish]/__mul___0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[1]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[1]/MemoryEfficientSwish[_swish]/__mul___1"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[1]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[1]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
             "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___1",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[2]/MemoryEfficientSwish[_swish]/__mul___2"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/adaptive_avg_pool2d_0",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/sigmoid_0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/MemoryEfficientSwish[_swish]/__mul___0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/MemoryEfficientSwish[_swish]/__mul___1"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[3]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
             "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___1",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[4]/MemoryEfficientSwish[_swish]/__mul___2"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/adaptive_avg_pool2d_0",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/sigmoid_0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/MemoryEfficientSwish[_swish]/__mul___0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/MemoryEfficientSwish[_swish]/__mul___1"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[5]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
             "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/MemoryEfficientSwish[_swish]/__mul___1",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[6]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
             "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/MemoryEfficientSwish[_swish]/__mul___1",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[7]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
             "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/MemoryEfficientSwish[_swish]/__mul___1",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[8]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
             "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___1",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[9]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
             "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___1",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[10]/MemoryEfficientSwish[_swish]/__mul___2"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/adaptive_avg_pool2d_0",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/sigmoid_0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/MemoryEfficientSwish[_swish]/__mul___0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/MemoryEfficientSwish[_swish]/__mul___1"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[11]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
             "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/MemoryEfficientSwish[_swish]/__mul___1",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[12]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
             "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/MemoryEfficientSwish[_swish]/__mul___1",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[13]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
             "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/MemoryEfficientSwish[_swish]/__mul___1",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[14]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/NNCFBatchNorm2d[_bn0]/batch_norm_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/MemoryEfficientSwish[_swish]/__mul___0"
         },
         {
             "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/MemoryEfficientSwish[_swish]/__mul___0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/NNCFUserConv2dStaticSamePadding[_depthwise_conv]/conv2d_0"
+        },
+        {
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/NNCFBatchNorm2d[_bn1]/batch_norm_0",
             "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/MemoryEfficientSwish[_swish]/__mul___1"
         },
         {
-            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/MemoryEfficientSwish[_swish]/__mul___1",
-            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/__mul___0"
+            "start_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/NNCFUserConv2dStaticSamePadding[_se_reduce]/conv2d_0",
+            "end_node_name": "EfficientNet/ModuleList[_blocks]/MBConvBlock[15]/MemoryEfficientSwish[_swish]/__mul___2"
+        },
+        {
+            "start_node_name": "EfficientNet/NNCFBatchNorm2d[_bn1]/batch_norm_0",
+            "end_node_name": "EfficientNet/MemoryEfficientSwish[_swish]/__mul___1"
         }
     ],
     "group_dependent": {
@@ -122,57 +254,156 @@
             2
         ],
         "2": [
-            3,
-            4
+            3
         ],
         "3": [
-            5
+            4
         ],
         "4": [
-            6,
-            7
+            5
         ],
         "5": [
-            8
+            6
         ],
         "6": [
-            9,
-            10
+            7,
+            8
         ],
         "7": [
-            11,
-            12
+            9
         ],
         "8": [
-            13,
-            14
+            10
         ],
         "9": [
-            15,
-            16
+            11
         ],
         "10": [
-            17,
-            18
+            12
         ],
         "11": [
-            19
+            13
         ],
         "12": [
-            20,
-            21
+            14,
+            15
         ],
         "13": [
-            22,
-            23
+            16
         ],
         "14": [
-            24,
-            25
+            17
         ],
         "15": [
-            26,
+            18
+        ],
+        "16": [
+            19
+        ],
+        "17": [
+            20
+        ],
+        "18": [
+            21,
+            22
+        ],
+        "19": [
+            23
+        ],
+        "20": [
+            24
+        ],
+        "21": [
+            25,
+            26
+        ],
+        "22": [
             27
+        ],
+        "23": [
+            28
+        ],
+        "24": [
+            29,
+            30
+        ],
+        "25": [
+            31
+        ],
+        "26": [
+            32
+        ],
+        "27": [
+            33,
+            34
+        ],
+        "28": [
+            35
+        ],
+        "29": [
+            36
+        ],
+        "30": [
+            37,
+            38
+        ],
+        "31": [
+            39
+        ],
+        "32": [
+            40
+        ],
+        "33": [
+            41
+        ],
+        "34": [
+            42
+        ],
+        "35": [
+            43
+        ],
+        "36": [
+            44,
+            45
+        ],
+        "37": [
+            46
+        ],
+        "38": [
+            47
+        ],
+        "39": [
+            48,
+            49
+        ],
+        "40": [
+            50
+        ],
+        "41": [
+            51
+        ],
+        "42": [
+            52,
+            53
+        ],
+        "43": [
+            54
+        ],
+        "44": [
+            55
+        ],
+        "45": [
+            56,
+            57
+        ],
+        "46": [
+            58
+        ],
+        "47": [
+            59
+        ],
+        "48": [
+            60
         ]
     }
 }

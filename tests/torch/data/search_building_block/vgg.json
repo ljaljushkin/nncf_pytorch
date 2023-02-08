@@ -1,0 +1,61 @@
+{
+    "blocks": [
+        {
+            "start_node_name": "VGG/Sequential[features]/NNCFConv2d[0]/conv2d_0",
+            "end_node_name": "VGG/Sequential[features]/ReLU[2]/relu__0"
+        },
+        {
+            "start_node_name": "VGG/Sequential[features]/NNCFConv2d[4]/conv2d_0",
+            "end_node_name": "VGG/Sequential[features]/ReLU[6]/relu__0"
+        },
+        {
+            "start_node_name": "VGG/Sequential[features]/NNCFConv2d[8]/conv2d_0",
+            "end_node_name": "VGG/Sequential[features]/ReLU[10]/relu__0"
+        },
+        {
+            "start_node_name": "VGG/Sequential[features]/ReLU[10]/relu__0",
+            "end_node_name": "VGG/Sequential[features]/NNCFBatchNorm2d[12]/batch_norm_0"
+        },
+        {
+            "start_node_name": "VGG/Sequential[features]/NNCFConv2d[15]/conv2d_0",
+            "end_node_name": "VGG/Sequential[features]/ReLU[17]/relu__0"
+        },
+        {
+            "start_node_name": "VGG/Sequential[features]/ReLU[17]/relu__0",
+            "end_node_name": "VGG/Sequential[features]/NNCFBatchNorm2d[19]/batch_norm_0"
+        },
+        {
+            "start_node_name": "VGG/Sequential[features]/MaxPool2d[21]/max_pool2d_0",
+            "end_node_name": "VGG/Sequential[features]/NNCFBatchNorm2d[23]/batch_norm_0"
+        },
+        {
+            "start_node_name": "VGG/Sequential[features]/NNCFBatchNorm2d[23]/batch_norm_0",
+            "end_node_name": "VGG/Sequential[features]/NNCFConv2d[25]/conv2d_0"
+        },
+        {
+            "start_node_name": "VGG/Sequential[features]/NNCFConv2d[25]/conv2d_0",
+            "end_node_name": "VGG/Sequential[features]/ReLU[27]/relu__0"
+        }
+    ],
+    "group_dependent": {
+        "0": [
+            0
+        ],
+        "1": [
+            1
+        ],
+        "2": [
+            2,
+            3
+        ],
+        "3": [
+            4,
+            5
+        ],
+        "4": [
+            6,
+            7,
+            8
+        ]
+    }
+}

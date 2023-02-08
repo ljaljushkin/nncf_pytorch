@@ -1,0 +1,13 @@
+{
+    "blocks": [
+        {
+            "start_node_name": "/nncf_model_input_0",
+            "end_node_name": "Foo/__add___0"
+        }
+    ],
+    "group_dependent": {
+        "0": [
+            0
+        ]
+    }
+}
