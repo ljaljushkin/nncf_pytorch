@@ -159,7 +159,8 @@ class LinearPruningOp(BasePruningOp):
             # Propagating batch dims
             for dim in range(input_shape_len - 2):
                 if _both_dim_blocks_exist(dim, dim):
-                    assert len(left_dim_groups[dim]) == 1 and len(right_dim_groups[dim]) == 1, "multiple groups is not supported"
+                    assert len(left_dim_groups[dim]) == 1 and len(
+                        right_dim_groups[dim]) == 1, "multiple groups is not supported"
                     output_mask.dim_groups_map[dim] = [BlockGroup.join_groups(left_dim_groups[dim][0],
                                                                               right_dim_groups[dim][0])]
             # Propagating left rows / right cols
@@ -245,12 +246,22 @@ class ConcatPruningOp(BasePruningOp):
             return None
 
         raise NotImplementedError
+        # TODO: re-implement the logic below
         first_non_empty_mask = not_empty_masks[0]
         device = first_non_empty_mask.device
         filled_input_masks = []
         for i, mask in enumerate(input_masks):
             if mask is None:
                 concat_axis = node.layer_attributes.axis
+                # TODO: there are 2 options:
+                #  1) pruning dim == concat axis
+                #   constraints on pruning dimension are combined:
+                #    they start to refer to the same dimension, but independently.
+                #   constraints on other dimensions just go through
+                #   symbolic concatenates masks
+                #  2) pruning dim != concat axis
+                #   remove constraints that are not the same, join common constraint to a single group
+                #   symbolic is doing nothing.
                 concat_dim = input_edges[i].tensor_shape[concat_axis]
                 mask = tensor_processor.ones(concat_dim, device)
             filled_input_masks.append(mask)
@@ -294,6 +305,52 @@ class ElementwisePruningOp(BasePruningOp):
         #     output_mask = input_masks[0]
         #     if output_mask is not None:
         #         output_mask = tensor_processor.elementwise_mask_propagation(input_masks)
+
+        node.data['output_mask'] = output_mask
+
+
+class GatherPruningOp(BasePruningOp):
+    @classmethod
+    def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph,
+                         tensor_processor: Type[NNCFPruningBaseTensorProcessor]) -> None:
+        input_masks = get_input_masks(node, graph)
+
+        def is_equivalent_to_split():
+            # TODO: *q, k, v = *qkv[0], qkv[1], qkv[2]
+            # пришли в газер - смотрим на всех консьюмеров его родителя:
+            # Это тоже газеры? Они сплитят по разным дименшенам?
+            # Это все дименшены, которые есть?
+            pass
+
+        if is_equivalent_to_split():
+            pass
+            # TODO: call split implementation to form shared output_mask that doesn't contain constraints/groups on split axis
+
+
+class SplitPruningOp(BasePruningOp):
+
+    @classmethod
+    def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph,
+                         tensor_processor: Type[NNCFPruningBaseTensorProcessor]) -> None:
+        input_masks = get_input_masks(node, graph)
+        if not input_masks:
+            input_masks = [None]
+
+        output_mask = input_masks[0]
+
+        chunk_axis = node.layer_attributes.axis
+        print(chunk_axis)
+
+        output_mask = PropagationMask()
+
+        for dim, groups in input_masks[0].dim_groups_map.items():
+            if dim != chunk_axis:
+                output_mask.dim_groups_map[dim] = groups
+                # other groups go further
+
+        # TODO: implement symbolic mask propagation
+        # tensor_processor.split(...)
+        # def split(cls, tensor: NNCFTensor, output_shapes: List[int]) -> List[NNCFTensor]:
 
         node.data['output_mask'] = output_mask
 

@@ -455,6 +455,7 @@ class PTConcatPruningOp(ConcatPruningOp, PTPruner):
 @PT_PRUNING_OPERATOR_METATYPES.register('chunk')
 class PTSplitPruningOp(SplitPruningOp, PTPruner):
     subtypes = [PTSplitMetatype]
+    additional_types = op_metatypes.TFSplitOpMetatype.get_all_aliases()
 
 class ModelPruner(MaskPropagationAlgorithm):
     def __init__(self, model: NNCFNetwork, graph: NNCFGraph,

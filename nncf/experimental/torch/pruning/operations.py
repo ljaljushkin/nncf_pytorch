@@ -18,6 +18,7 @@ from nncf.common.graph import NNCFNode
 from nncf.common.graph.operator_metatypes import UnknownMetatype
 from nncf.common.pruning.mask_propagation import MaskPropagationAlgorithm
 from nncf.common.pruning.utils import get_input_masks
+from nncf.experimental.common.pruning.operations import SplitPruningOp
 from nncf.torch.graph.operator_metatypes import (
     PTAddMetatype,
     PTAvgPool2dMetatype,
@@ -80,6 +81,7 @@ from nncf.experimental.common.pruning.operations import (
 from nncf.common.pruning.utils import PruningOperationsMetatypeRegistry
 from nncf.common.pruning.utils import is_prunable_depthwise_conv
 from nncf.common.utils.logger import logger as nncf_logger
+from nncf.torch.graph.operator_metatypes import PTSplitMetatype
 from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.pruning.tensor_processor import PTNNCFPruningTensorProcessor
@@ -426,6 +428,11 @@ class PTReshape(ReshapePruningOp, PTPruner):
 @PT_EXPERIMENTAL_PRUNING_OPERATOR_METATYPES.register('concat')
 class PTConcatPruningOp(ConcatPruningOp, PTPruner):
     subtypes = [PTCatMetatype]
+
+
+@PT_EXPERIMENTAL_PRUNING_OPERATOR_METATYPES.register('split')
+class PTSplit(SplitPruningOp, PTPruner):
+    subtypes = [PTSplitMetatype]
 
 
 class ModelPruner(MaskPropagationAlgorithm):
