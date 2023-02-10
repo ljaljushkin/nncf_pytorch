@@ -271,6 +271,7 @@ TEST_DESCS = [
     ),
     # TODO: need to handle model_output in the middle of each Transformer layer
     # TODO: note, that Split before Reshape, but each branch has the same Reshape - should be fine
+    # TODO: support Addmm properly, attributes?
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='GPT2Text',
@@ -360,7 +361,7 @@ TEST_DESCS = [
             )
         ]
     ),
-    # TODO: not empty mask on concat is not supported
+    # TODO: not empty mask on concat with Constant is not supported
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='ViT',
@@ -385,10 +386,17 @@ TEST_DESCS = [
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='Swin_MS',
-            input_info=dict(sample_size=[1, 4 * 4, 3]),
-            model_builder=partial(SwinTransformerBlock, dim=3, input_resolution=[4, 4], num_heads=1)
+            input_info=dict(sample_size=[1, 4 * 4, 8]),
+            model_builder=partial(SwinTransformerBlock, dim=8, input_resolution=[4, 4], num_heads=2)
         ),
-        ref_groups=[]
+        ref_groups=[
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=36, pruning_dimension=1),
+                    MinimalDimensionBlock(size=1, offset=0, producer_id=33, pruning_dimension=0)
+                }
+            )
+        ]
     )
 ]
 

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import reduce
 from typing import Dict
 from typing import List
 from typing import Set
@@ -33,25 +34,44 @@ class DimensionBlock:
     def get_state(self):
         return f"S:{self.size}__O:{self.offset}__ID:{self._producer.id}"
 
-    def split_by_reshape(self, shape_map) -> List['DimensionBlock']:
+    # TODO: probably need to move this to reshape op
+    # TODO: should take more information. original shape from producer??
+    def split_by_reshape(self, shape_map: Dict[int, List[int]]) -> List['DimensionBlock']:
+        """
+        Reshape constraints creation:
+            O -> [A, B, C, D] =>
+            constraints:
+            (size, offset):
+            (1,D %E)
+            (D, C*D % E),
+            (C*D, B*C*D % E)
+            (B*C*D, E % E = 0)
+            E=A*B*C*D
+        """
         # TODO: make it common !!!
         if len(shape_map[1]) == 1:
             raise RuntimeError
-        if len(shape_map[1]) > 2:
-            raise NotImplementedError
 
-        a = DimensionBlock(size=shape_map[1][-1], offset=0,
-                           pruning_dimension=self.pruning_dimension,
-                           producer=self._producer,
-                           opened_branches=self._opened_branches,
-                           closed_branches=self._closed_branches)
-        b = DimensionBlock(size=1, offset=shape_map[1][-1],
-                           pruning_dimension=self.pruning_dimension,
-                           producer=self._producer,
-                           opened_branches=self._opened_branches,
-                           closed_branches=self._closed_branches)
-        return [a, b]
+        dot_product = reduce((lambda x, y: x * y), shape_map[1])
+        assert dot_product == shape_map[0]
 
+        size = dot_product
+        blocks = []
+        divided_shapes = filter(lambda x: x != 1, shape_map[1])
+        for divided_shape in divided_shapes:
+            offset = size % dot_product
+            size /= divided_shape
+            block = DimensionBlock(
+                size=int(size), offset=offset,
+                pruning_dimension=self.pruning_dimension,
+                producer=self._producer,
+                opened_branches=self._opened_branches,
+                closed_branches=self._closed_branches
+            )
+            blocks.append(block)
+        return blocks
+
+    # TODO: use is_closed only when branch reaches consumer. All consumers should be closed in order to create a valid groupe
     def open_branch(self):
         self._opened_branches += 1
 
@@ -104,6 +124,11 @@ class BlockGroup:
 
     def split_blocks_by_reshape(self, shape_map):
         if self._childs:
+            # TODO: need to merge parent and child constraints
+            # TODO: if 2 reshapes: 120 -> 8,3,5 --> 2,4,3,5 shape_map {8: 2,4} is not enough. Need the whole map 120 -> 2,4,3,5
+            #  dim block for 8 is (size=15, offset=0)
+            #  dim block for 4 is (size=15, offset=4*3*5=60) need to know 3 and 5
+            #  dim block for 2 is the same (size=4*3*5=60, offset=0)
             raise NotImplementedError('Splitting BlockGroup with childs isn\'t implemented yet')
 
         new_blocks: List[List[DimensionBlock]] = []
