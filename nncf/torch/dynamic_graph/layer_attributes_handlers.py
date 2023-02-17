@@ -10,7 +10,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-
+import numpy as np
 from torch.nn import Conv1d
 from torch.nn import Conv2d
 from torch.nn import Conv3d
@@ -21,6 +21,8 @@ from torch.nn import Linear
 from torch.nn import Module as TorchModule
 
 from nncf.common.graph.graph import NNCFGraph
+from nncf.common.graph.layer_attributes import GatherLayerAttributes
+from nncf.common.graph.layer_attributes import GetItemLayerAttributes
 from nncf.common.graph.utils import get_concat_axis
 from nncf.common.graph.utils import get_split_axis
 from nncf.common.graph.layer_attributes import BaseLayerAttributes
@@ -33,6 +35,7 @@ from nncf.common.graph.layer_attributes import PermuteLayerAttributes
 from nncf.common.graph.layer_attributes import MultipleInputLayerAttributes
 from nncf.common.graph.layer_attributes import MultipleOutputLayerAttributes
 from nncf.common.graph.layer_attributes import ReshapeLayerAttributes
+from nncf.torch.graph.operator_metatypes import PTGatherMetatype
 from nncf.torch.graph.operator_metatypes import PTTransposeMetatype
 from nncf.torch.graph.operator_metatypes import PTGroupNormMetatype
 from nncf.torch.graph.operator_metatypes import PTCatMetatype
@@ -43,9 +46,10 @@ from nncf.torch.layers import NNCF_MODULES_DICT
 
 OP_NAMES_REQUIRING_MODULE_ATTRS = [
     v.op_func_name for v in NNCF_MODULES_DICT] + list(PTGroupNormMetatype.get_all_aliases())
-OP_NAMES_REQUIRING_ATTRS_FROM_ARGS_KWARGS = list(PTTransposeMetatype.get_all_aliases())
+OP_NAMES_REQUIRING_ATTRS_FROM_ARGS_KWARGS = list(PTTransposeMetatype.get_all_aliases() + PTGatherMetatype.get_all_aliases())
 TRANSPOSE_OP_NAMES = ['transpose', 'transpose_']
 PERMUTE_OP_NAMES = ['permute']
+GETITEM_OP_NAMES = ['__getitem__']
 
 
 def get_layer_attributes_from_module(module: TorchModule, operator_name: str) -> BaseLayerAttributes:
@@ -96,6 +100,8 @@ def get_layer_attributes_from_args_and_kwargs(op_name: str, args, kwargs) -> Bas
           layer_attrs = _get_transpose_attrs_from_args_kwargs(args, kwargs)
      elif op_name in PERMUTE_OP_NAMES:
           layer_attrs = _get_permute_attrs_from_args_kwargs(args, kwargs)
+     elif op_name in GETITEM_OP_NAMES:
+         layer_attrs = _get_getitem_attrs_from_args_kwargs(args, kwargs)
      return layer_attrs
 
 
@@ -138,6 +144,14 @@ def set_nodes_attributes_in_nncf_graph(graph: NNCFGraph) -> None:
 
 def _get_transpose_attrs_from_args_kwargs(args, kwargs) -> TransposeLayerAttributes:
     return TransposeLayerAttributes(**_get_kwargs_shifted(['dim0', 'dim1'], args, kwargs))
+
+
+def _get_getitem_attrs_from_args_kwargs(args, kwargs):
+    # input_tensor = args[0]
+    # input_shape = input_tensor.shape
+    return GetItemLayerAttributes(key=args[1])
+    # TODO: express in more general way? not convenient, but more general
+    # return GatherLayerAttributes(axis=0, index=np.array([]))
 
 
 def _get_permute_attrs_from_args_kwargs(args, kwargs) -> PermuteLayerAttributes:

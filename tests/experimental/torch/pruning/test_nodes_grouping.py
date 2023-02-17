@@ -381,7 +381,6 @@ TEST_DESCS = [
 
         ]
     ),
-    # TODO: reshape for more than 2 dims is not supported
     # TODO: need a symbolic propagation
     GroupTestDesc(
         model_desc=GeneralModelDesc(

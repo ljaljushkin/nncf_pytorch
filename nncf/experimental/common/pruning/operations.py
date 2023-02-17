@@ -5,7 +5,9 @@ from typing import Type
 
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNode
+from nncf.common.graph.layer_attributes import GetItemLayerAttributes
 from nncf.common.graph.layer_attributes import GroupNormLayerAttributes
+from nncf.common.graph.layer_attributes import MultipleOutputLayerAttributes
 from nncf.common.graph.layer_attributes import PermuteLayerAttributes
 from nncf.common.graph.layer_attributes import TransposeLayerAttributes
 from nncf.common.logging import nncf_logger
@@ -159,7 +161,8 @@ class LinearPruningOp(BasePruningOp):
             # Propagating batch dims
             for dim in range(input_shape_len - 2):
                 if _both_dim_blocks_exist(dim, dim):
-                    assert len(left_dim_groups[dim]) == 1 and len(right_dim_groups[dim]) == 1, "multiple groups is not supported"
+                    assert len(left_dim_groups[dim]) == 1 and len(
+                        right_dim_groups[dim]) == 1, "multiple groups is not supported"
                     output_mask.dim_groups_map[dim] = [BlockGroup.join_groups(left_dim_groups[dim][0],
                                                                               right_dim_groups[dim][0])]
             # Propagating left rows / right cols
@@ -245,12 +248,22 @@ class ConcatPruningOp(BasePruningOp):
             return None
 
         raise NotImplementedError
+        # TODO: re-implement the logic below
         first_non_empty_mask = not_empty_masks[0]
         device = first_non_empty_mask.device
         filled_input_masks = []
         for i, mask in enumerate(input_masks):
             if mask is None:
                 concat_axis = node.layer_attributes.axis
+                # TODO: there are 2 options:
+                #  1) pruning dim == concat axis
+                #   constraints on pruning dimension are combined:
+                #    they start to refer to the same dimension, but independently.
+                #   constraints on other dimensions just go through
+                #   symbolic concatenates masks
+                #  2) pruning dim != concat axis
+                #   remove constraints that are not the same, join common constraint to a single group
+                #   symbolic is doing nothing.
                 concat_dim = input_edges[i].tensor_shape[concat_axis]
                 mask = tensor_processor.ones(concat_dim, device)
             filled_input_masks.append(mask)
@@ -294,6 +307,93 @@ class ElementwisePruningOp(BasePruningOp):
         #     output_mask = input_masks[0]
         #     if output_mask is not None:
         #         output_mask = tensor_processor.elementwise_mask_propagation(input_masks)
+
+        node.data['output_mask'] = output_mask
+
+
+class GatherPruningOp(BasePruningOp):
+    @classmethod
+    def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph,
+                         tensor_processor: Type[NNCFPruningBaseTensorProcessor]) -> None:
+        input_masks = get_input_masks(node, graph)
+
+        def is_dim_removed_by_splitting() -> Optional[int]:
+            """
+            Determines whether the operations going from parent's op is equivalent to split
+            Currently, limited to the case of simple __getitem__ with axis=0 and integer key rather than more general
+            `gather` operation or __getitem__ with slice or tuple.
+            q, k, v = qkv[0], qkv[1], qkv[2] (like in official SwinTransformer implementation)
+
+            - look at all consumer of parent node
+            - all of them should
+                - be getitem
+                - slice along the same axis
+                - combine the whole input (the keys should contain all dimension along axis. size of first dim=3 => [0,1,2])
+            :return : axis that is removed by split, or None otherwise
+            """
+            split_axis = None
+            if isinstance(node.layer_attributes, GetItemLayerAttributes):
+                input_edge = graph.get_input_edges(node)[0]
+                input_shape = input_edge.tensor_shape
+                parent_node = input_edge.from_node
+                child_nodes = graph.get_next_nodes(parent_node)
+                child_attributes = [cnode.layer_attributes for cnode in child_nodes]
+                all_getitem = all(isinstance(ca, GetItemLayerAttributes) for ca in child_attributes)
+                assert all_getitem, "currently supported only case with all  __getitem__ on branches"
+                all_int_keys = all(isinstance(ca.key, int) for ca in child_attributes)
+                assert all_int_keys, "currently supported only case __getitem__ with single int, no slices"
+                all_keys = set(ca.key for ca in child_attributes)
+                split_dim = input_shape[0]
+                if all_keys == set(range(split_dim)):
+                    split_axis = 0
+            return split_axis
+
+        removed_axis = is_dim_removed_by_splitting()
+        if removed_axis is not None:
+            output_mask = PropagationMask()
+            for input_mask in input_masks:
+                for dim, groups in input_mask.dim_groups_map.items():
+                    if dim != removed_axis:
+                        shifted_dim = dim - 1
+                        output_mask.dim_groups_map[shifted_dim] = groups
+                        # other groups propagated further
+            node.data['output_mask'] = output_mask
+        else:
+            for m in input_masks:
+                if m:
+                    m.invalidate_groups()
+            node.data['output_mask'] = None
+
+
+class SplitPruningOp(BasePruningOp):
+    @classmethod
+    def mask_propagation(cls, node: NNCFNode, graph: NNCFGraph,
+                         tensor_processor: Type[NNCFPruningBaseTensorProcessor]) -> None:
+        input_masks = get_input_masks(node, graph)
+        if not input_masks:
+            input_masks = [None]
+
+        assert len(input_masks) == 1
+        output_mask = input_masks[0]
+
+        assert isinstance(node.layer_attributes, MultipleOutputLayerAttributes)
+        chunk_axis = node.layer_attributes.axis
+        chunks = node.layer_attributes.chunks
+        print(node.layer_attributes)
+
+        input_edge = graph.get_input_edges(node)[0]
+        input_shape = input_edge.tensor_shape
+        is_chunk_axis_removed = chunks == input_shape[chunk_axis]
+        if is_chunk_axis_removed:
+            output_mask = PropagationMask()
+            for dim, groups in input_masks[0].dim_groups_map.items():
+                if dim != chunk_axis:
+                    output_mask.dim_groups_map[dim] = groups
+                    # other groups propagated further
+        else:
+            raise NotImplementedError("symbolic mask propagation for split by prune dimension is not implemented")
+            # tensor_processor.split(...)
+            # def split(cls, tensor: NNCFTensor, output_shapes: List[int]) -> List[NNCFTensor]:
 
         node.data['output_mask'] = output_mask
 
@@ -443,6 +543,7 @@ class TransposePruningOp(BasePruningOp):
             dim0 = node.layer_attributes.dim0
             dim1 = node.layer_attributes.dim1
             new_order[dim1], new_order[dim0] = new_order[dim0], new_order[dim1]
+        # TODO: should it be covered in separate PermutePruningOp? Seems like no difference, just assign new dimensions for constraints
         elif isinstance(node.layer_attributes, PermuteLayerAttributes):
             new_order = node.layer_attributes.permutation
 

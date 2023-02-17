@@ -60,6 +60,8 @@ from nncf.torch.graph.operator_metatypes import (
     PTTanhMetatype,
     PTReshapeMetatype,
     PTTransposeMetatype,
+    PTSplitMetatype,
+    PTGatherMetatype
 )
 from nncf.experimental.common.pruning.operations import (
     InputPruningOp,
@@ -74,7 +76,9 @@ from nncf.experimental.common.pruning.operations import (
     ElementwisePruningOp,
     ReshapePruningOp,
     TransposePruningOp,
-    StopMaskForwardPruningOp
+    StopMaskForwardPruningOp,
+    SplitPruningOp,
+    GatherPruningOp
 )
 
 from nncf.common.pruning.utils import PruningOperationsMetatypeRegistry
@@ -310,6 +314,7 @@ class PTLinearPruningOp(LinearPruningOp, PTPruner):
             'Reordered output channels (first 10 reorder indexes {}) of Linear: {} '.format(reorder_indexes[:10],
                                                                                             node.data['key']))
 
+
 @PT_EXPERIMENTAL_PRUNING_OPERATOR_METATYPES.register('batch_norm')
 class PTBatchNormPruningOp(BatchNormPruningOp, PTPruner):
     subtypes = [PTBatchNormMetatype]
@@ -426,6 +431,16 @@ class PTReshape(ReshapePruningOp, PTPruner):
 @PT_EXPERIMENTAL_PRUNING_OPERATOR_METATYPES.register('concat')
 class PTConcatPruningOp(ConcatPruningOp, PTPruner):
     subtypes = [PTCatMetatype]
+
+
+@PT_EXPERIMENTAL_PRUNING_OPERATOR_METATYPES.register('split')
+class PTSplitPruningOp(SplitPruningOp, PTPruner):
+    subtypes = [PTSplitMetatype]
+
+
+@PT_EXPERIMENTAL_PRUNING_OPERATOR_METATYPES.register('gather')
+class PTGatherPruningOp(GatherPruningOp, PTPruner):
+    subtypes = [PTGatherMetatype]
 
 
 class ModelPruner(MaskPropagationAlgorithm):

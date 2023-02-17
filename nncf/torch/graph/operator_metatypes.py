@@ -74,7 +74,7 @@ class PTOperatorMetatype(OperatorMetatype):
             output = output.union(function_names)
         if cls.external_op_names is not None:
             output = output.union(cls.external_op_names)
-        return output
+        return list(output)
 
     @classmethod
     def determine_subtype(cls,
@@ -515,7 +515,7 @@ class PTErfMetatype(PTOperatorMetatype):
 class PTMatMulMetatype(PTOperatorMetatype):
     name = "MatMulOp"
     module_to_function_names = {
-        NamespaceTarget.TORCH_TENSOR: ["matmul"],
+        NamespaceTarget.TORCH_TENSOR: ["matmul", "__matmul__"],
         NamespaceTarget.TORCH: ["matmul", "bmm", "mm"],
     }
     hw_config_names = [HWConfigOpName.MATMUL]
