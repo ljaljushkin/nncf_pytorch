@@ -11,27 +11,64 @@
  limitations under the License.
 """
 import json
-from copy import deepcopy
+from pathlib import Path
 from typing import Any
-from typing import Dict, List, Type, Optional
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Type
 
-from nncf.common.graph import NNCFNode
-from nncf.common.pruning.netron import save_for_netron
-from nncf.common.utils.dot_file_rw import write_dot_graph
+import networkx as nx
 
 from nncf.common.graph import NNCFGraph
-from nncf.common.pruning.tensor_processor import NNCFPruningBaseTensorProcessor
-from nncf.common.pruning.utils import PruningOperationsMetatypeRegistry
-from nncf.common.pruning.utils import get_input_masks
-from nncf.common.pruning.utils import get_input_channels
-from nncf.common.pruning.utils import get_output_channels
-from nncf.common.pruning.utils import is_grouped_conv
-from nncf.common.pruning.utils import is_batched_linear
-from nncf.common.pruning.utils import PruningAnalysisDecision
-from nncf.common.pruning.utils import PruningAnalysisReason
+from nncf.common.graph import NNCFNode
+from nncf.common.pruning.netron import save_for_netron
+from nncf.common.pruning.operations import BasePruningOp
 from nncf.common.pruning.symbolic_mask import SymbolicMask
 from nncf.common.pruning.symbolic_mask import SymbolicMaskProcessor
-from nncf.common.pruning.operations import BasePruningOp
+from nncf.common.pruning.tensor_processor import NNCFPruningBaseTensorProcessor
+from nncf.common.pruning.utils import PruningAnalysisDecision
+from nncf.common.pruning.utils import PruningAnalysisReason
+from nncf.common.pruning.utils import PruningOperationsMetatypeRegistry
+from nncf.common.pruning.utils import get_input_channels
+from nncf.common.pruning.utils import get_input_masks
+from nncf.common.pruning.utils import get_output_channels
+from nncf.common.pruning.utils import is_batched_linear
+from nncf.common.pruning.utils import is_grouped_conv
+from nncf.common.utils.dot_file_rw import write_dot_graph
+
+
+def block_group_to_graph(graph, root_group: 'BlockGroup', visited_block_ids_map):
+    global counter
+    parent_graph_id = counter
+    graph.add_node(parent_graph_id, label=json.dumps(root_group.get_state(), separators=(',\n', ':')))
+    visited_block_ids_map[id(root_group)] = parent_graph_id
+    if root_group.has_childs():
+        for child_group in root_group._childs:
+            child_id = id(child_group)
+            if child_id not in visited_block_ids_map:
+                counter += 1
+                child_graph_id = counter
+                visited_block_ids_map[id(child_group)] = child_graph_id
+                graph.add_edge(parent_graph_id, child_graph_id)
+                block_group_to_graph(graph, child_group, visited_block_ids_map)
+            else:
+                child_graph_id = visited_block_ids_map[child_id]
+                graph.add_edge(parent_graph_id, child_graph_id)
+
+
+counter = 0
+
+
+def build_nx_graph_from_roots(roots: Dict[int, 'BlockGroup']):
+    graph = nx.DiGraph()
+    global counter
+    counter = 0
+    visited = dict()
+    for block_group in roots.values():
+        block_group_to_graph(graph, block_group, visited)
+        counter+=1
+    return graph
 
 
 class MaskPropagationAlgorithm:
@@ -68,11 +105,12 @@ class MaskPropagationAlgorithm:
             cls = self._pruning_operator_metatypes.registry_dict['stop_propagation_ops']
         return cls
 
-    def mask_propagation(self):
+    def mask_propagation(self, roots):
         """
         Mask propagation in graph:
         to propagate masks run method mask_propagation (of metaop of current node) on all nodes in topological order.
         """
+
         def get_attributes_fn(node: NNCFNode) -> Dict[str, Any]:
             # input_masks = get_input_masks(node, self._graph)
             from nncf.experimental.common.pruning.nodes_grouping import PropagationMask
@@ -84,6 +122,7 @@ class MaskPropagationAlgorithm:
                 if output_mask:
                     result['output_mask'] = json.dumps(output_mask.get_state(), indent=4)
             return result
+
         save_for_netron(self._graph, f'original.xml', get_attributes_fn=get_attributes_fn)
 
         try:
@@ -91,7 +130,9 @@ class MaskPropagationAlgorithm:
                 cls = self.get_meta_operation_by_type_name(node.node_type)
                 cls.mask_propagation(node, self._graph, self._tensor_processor)
         finally:
-            save_for_netron(self._graph, f'propagated_all.xml', get_attributes_fn=get_attributes_fn)
+            graph = build_nx_graph_from_roots(roots)
+            write_dot_graph(graph, Path(f'latest_block_group_hierarchy.dot'))
+            save_for_netron(self._graph, f'latest_propagated.xml', get_attributes_fn=get_attributes_fn)
 
     def symbolic_mask_propagation(self, prunable_layers_types: List[str],
                                   can_prune_after_analysis: Dict[int, PruningAnalysisDecision]) \
@@ -130,7 +171,7 @@ class MaskPropagationAlgorithm:
                 input_masks = get_input_masks(node, self._graph)
                 if any(input_masks):
                     assert len(input_masks) == 1
-                    input_mask = input_masks[0] # type: SymbolicMask
+                    input_mask = input_masks[0]  # type: SymbolicMask
 
                     for producer in input_mask.mask_producers:
                         previously_dims_equal = True if can_prune_by_dim[producer.id] is None \
@@ -147,7 +188,7 @@ class MaskPropagationAlgorithm:
                 if input_mask:
                     for producer in input_mask.mask_producers:
                         can_prune_by_dim[producer.id] = PruningAnalysisDecision(
-                                False, PruningAnalysisReason.LAST_CONV)
+                            False, PruningAnalysisReason.LAST_CONV)
         # Update decision for nodes which
         # have no closing convolution
         convs_without_closing_conv = {}
@@ -167,6 +208,6 @@ class MaskPropagationAlgorithm:
         retval = set()
         for node in self._graph.get_all_nodes():
             if node.node_type in prunable_layers_types and \
-                not (is_grouped_conv(node) or is_batched_linear(node, self._graph)):
+                    not (is_grouped_conv(node) or is_batched_linear(node, self._graph)):
                 retval.add(node.node_id)
         return retval

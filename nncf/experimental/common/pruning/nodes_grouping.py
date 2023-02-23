@@ -1,14 +1,20 @@
+import json
 from dataclasses import dataclass
 from functools import reduce
+from pathlib import Path
 from typing import Dict
 from typing import List
 from typing import Set
+
+import networkx as nx
+from nncf.common.utils.dot_file_rw import write_dot_graph
 
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNode
 from nncf.common.graph.layer_attributes import ConvolutionLayerAttributes
 from nncf.common.graph.layer_attributes import LinearLayerAttributes
 from nncf.common.pruning.mask_propagation import MaskPropagationAlgorithm
+from nncf.torch.nested_objects_traversal import objwalk
 
 
 class MaskProducer:
@@ -21,7 +27,7 @@ class DimensionBlock:
                  producer: MaskProducer,
                  size: int = 1, offset: int = 0,
                  pruning_dimension: int = 0,
-                 opened_branches: int = 0, closed_branches: int = 0) -> None:
+                 opened_branches: int = 1, closed_branches: int = 0) -> None:
         self.size = size
         self.offset = offset
         self.pruning_dimension = pruning_dimension
@@ -31,11 +37,18 @@ class DimensionBlock:
         self._group = None
         self._is_invalid = False
 
+    def __eq__(self, other):
+        return self.pruning_dimension == other.pruning_dimension and \
+               self.size == other.size and \
+               self.offset == other.offset and \
+               self._producer.id == other._producer.id
+
     def get_state(self):
         return f"S:{self.size}__O:{self.offset}__ID:{self._producer.id}"
 
     # TODO: probably need to move this to reshape op
     # TODO: should take more information. original shape from producer??
+    # TODO: introduce explicit interface/arguments for split: assume that one key has multiple values in shape_map.
     def split_by_reshape(self, shape_map: Dict[int, List[int]]) -> List['DimensionBlock']:
         """
         Reshape constraints creation:
@@ -47,8 +60,12 @@ class DimensionBlock:
             (C*D, B*C*D % E)
             (B*C*D, E % E = 0)
             E=A*B*C*D
+            TODO: doesn't work when reshape existing constraint. E.g. 120 -> 2,[4],15 -> 2,[2,2],15
+                120 -> 2,[4](s15 o60),15 -> 2, [2(s30 o60),2(s15 o30)], 15
+             it would calculate "local" constraints: 4 -> 2,2 (s2 o0 and s1 o2)
+             need to map to global 2,4,15
         """
-        # TODO: make it common !!!
+        # TODO: can it be properly handled? Is it expected situation?
         if len(shape_map[1]) == 1:
             raise RuntimeError
 
@@ -59,7 +76,7 @@ class DimensionBlock:
         blocks = []
         divided_shapes = filter(lambda x: x != 1, shape_map[1])
         for divided_shape in divided_shapes:
-            offset = size % dot_product
+            offset = int(size % dot_product)
             size /= divided_shape
             block = DimensionBlock(
                 size=int(size), offset=offset,
@@ -71,9 +88,9 @@ class DimensionBlock:
             blocks.append(block)
         return blocks
 
-    # TODO: use is_closed only when branch reaches consumer. All consumers should be closed in order to create a valid groupe
-    def open_branch(self):
-        self._opened_branches += 1
+    # TODO: use is_closed only when branch reaches consumer. All consumers should be closed in order to create a valid group
+    def add_open_branch(self, num_open_branches=1):
+        self._opened_branches += num_open_branches
 
     def close_branch(self):
         self._closed_branches += 1
@@ -144,20 +161,24 @@ class BlockGroup:
         for block in self._blocks:
             block.close_branch()
 
-    def get_blocks(self):
+    def get_blocks(self) -> List[DimensionBlock]:
         return self._blocks.copy()
 
     @staticmethod
     def join_groups(*args: 'BlockGroup') -> 'BlockGroup':
+        # TODO: take into account number of open from both. Choose the maximum?
         for group in args:
             assert isinstance(group, BlockGroup), \
                 f'Couldn\'t join args {args}, all elements should be BlockGroup instances'
 
         retval = BlockGroup([])
+        # TODO: combine the same groups/blocks
         for group in args:
             group.add_childs([retval])
             for block in group.get_blocks():
-                retval._blocks.append(block)
+                # TODO: why not group.add_block ?? no need to set group for the block?
+                if block not in retval._blocks:
+                    retval._blocks.append(block)
         return retval
 
 
@@ -243,7 +264,7 @@ def get_pruning_groups(graph: NNCFGraph,
         node.data['output_mask'] = mask
 
     # 2. Propagate masks
-    MaskPropagationAlgorithm(graph, pruning_operations_metatypes).mask_propagation()
+    MaskPropagationAlgorithm(graph, pruning_operations_metatypes).mask_propagation(roots)
 
     # 3. Collect groups from producers
     blocks_map: Dict[int, List[List[DimensionBlock]]] = {}
@@ -256,17 +277,25 @@ def get_pruning_groups(graph: NNCFGraph,
     finished_producers = []
     for producer_id, groups in blocks_map.items():
         # TODO: choose block based on other strategies (blocks that leads to the biggest sparsity rate or ???)
-        # TODO: iterate and choose first valid and not finished
-        group = groups[0]
-        # TODO: verify that all leaves are closed, did_reach_consumer: boolean
-        if all(block._closed_branches == 1 for block in group):
-            for block in group:
-                assert not block._is_invalid, 'invalid groups are not handled'
-            min_group = set(map(MinimalDimensionBlock.from_dimension_block, group))
-            all_not_finished = all(g.producer_id not in finished_producers for g in min_group)
-            candidate_group = PruningNodeGroup(min_group)
-            if candidate_group not in pruning_groups and all_not_finished:
-                pruning_groups.append(candidate_group)
-                finished_producers.extend(g.producer_id for g in min_group)
+        for group in groups:
+            blocks = []
+
+            def collect_block_fn(x: DimensionBlock) -> DimensionBlock:
+                blocks.append(x)
+                return x
+
+            objwalk(group, lambda x: isinstance(x, DimensionBlock), collect_block_fn)
+            # TODO: do merging. remove identical in a simple case (Swin MS)
+            if all(block._closed_branches == 1 for block in blocks):
+                for block in group:
+                    assert not block._is_invalid, 'invalid groups are not handled'
+                min_group = set(map(MinimalDimensionBlock.from_dimension_block, group))
+                all_not_finished = all(g.producer_id not in finished_producers for g in min_group)
+                candidate_group = PruningNodeGroup(min_group)
+                if candidate_group not in pruning_groups and all_not_finished:
+                    pruning_groups.append(candidate_group)
+                    finished_producers.extend(g.producer_id for g in min_group)
+                break  # iterate and choose first valid and not finished
 
     return pruning_groups
+

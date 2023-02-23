@@ -71,6 +71,41 @@ class SelfAttention(nn.Module):
         return self.o(x)
 
 
+class DiffNumBranchesOnJoining(nn.Module):
+    INPUT_SAMPLE_SIZES = ([1, 3])
+
+    def __init__(self):
+        super().__init__()
+        self.q = nn.Linear(1, 6)
+        self.k = nn.Linear(1, 6)
+        self.o = nn.Linear(2, 4)
+
+    def forward(self, x):
+        k = self.k(x)  # [6]
+        q = self.q(x)  # [6]
+        k = k.view(2, 3).permute(1, 0)  # [3, 2]
+        q = q.view(2, 3)  # [2, 3]
+        o1 = torch.matmul(k, q)
+        o2 = self.o(q)
+        return o1, o2
+
+
+class ReshapeReshape(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.base = nn.Linear(3, 60)
+        self.final_2 = nn.Linear(2, 5)
+        self.final_4 = nn.Linear(4, 3)
+
+    def forward(self, x):
+        base = self.base(x)
+        reshape4 = base.view(1, 4, 15)
+        reshape2 = reshape4.view(1, 2, 2, 15)
+        o4 = self.final_4(reshape4.permute(0, 2, 1))
+        o2 = self.final_2(reshape2.permute(0, 3, 2, 1))
+        return o2, o4
+
+
 @dataclass
 class GroupTestDesc:
     model_desc: IModelDesc
@@ -91,6 +126,23 @@ TEST_DESCS = [
                     MinimalDimensionBlock(64, 0, 3, 0),
                     MinimalDimensionBlock(64, 0, 17, 1)
                 })
+        ]
+    ),
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
+            model_builder=ReshapeReshape,
+            input_sample_sizes=([1, 3])
+        ),
+        ref_groups=[
+
+        ]
+    ),
+    GroupTestDesc(
+        model_desc=GeneralModelDesc(
+            model_builder=DiffNumBranchesOnJoining,
+            input_sample_sizes=DiffNumBranchesOnJoining.INPUT_SAMPLE_SIZES
+        ),
+        ref_groups=[
         ]
     ),
     GroupTestDesc(
