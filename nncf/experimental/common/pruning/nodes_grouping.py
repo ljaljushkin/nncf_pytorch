@@ -44,7 +44,7 @@ class DimensionBlock:
                self._producer.id == other._producer.id
 
     def get_state(self):
-        return f"S:{self.size}__O:{self.offset}__ID:{self._producer.id}"
+        return f"S:{self.size}__O:{self.offset}__ID:{self._producer.id}__O:{self._opened_branches}__C:{self._closed_branches}"
 
     # TODO: probably need to move this to reshape op
     # TODO: should take more information. original shape from producer??
