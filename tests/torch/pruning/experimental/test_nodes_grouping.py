@@ -128,6 +128,7 @@ TEST_DESCS = [
                 })
         ]
     ),
+    # TODO: issue with open/closed branches and filtering blocks
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_builder=ReshapeReshape,
@@ -137,6 +138,8 @@ TEST_DESCS = [
 
         ]
     ),
+    # TODO: E       RuntimeError: mat1 and mat2 shapes cannot be multiplied (1x3 and 1x6)
+    # test for open/closed branches??
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_builder=DiffNumBranchesOnJoining,
@@ -166,7 +169,6 @@ TEST_DESCS = [
                 })
         ]
     ),
-
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='larger_BERT',
@@ -233,8 +235,7 @@ TEST_DESCS = [
                                                                pruning_dimension=0)})
         ]
     ),
-    # TODO: KeyError: 'output_mask'. Probably because of attention masks on before Softmax
-
+    # TODO: KeyError: 'output_mask'. Probably because of attention masks (additional input inserted to the middle of the graph) on before Softmax
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='DistilBERT',
@@ -324,6 +325,7 @@ TEST_DESCS = [
     # TODO: need to handle model_output in the middle of each Transformer layer
     # TODO: note, that Split before Reshape, but each branch has the same Reshape - should be fine
     # TODO: support Addmm properly, attributes?
+    # TODO: need symbolic mask propagation
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='GPT2Text',
@@ -352,6 +354,9 @@ TEST_DESCS = [
         ),
         ref_groups=[]
     ),
+    # TODO: issue with get_item
+    #  >           assert all_int_keys, "currently supported only case __getitem__ with single int, no slices"
+    #  E           AssertionError: currently supported only case __getitem__ with single int, no slices
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='Wave2Vec 2.0',
@@ -413,7 +418,7 @@ TEST_DESCS = [
             )
         ]
     ),
-    # TODO: not empty mask on concat with Constant is not supported
+    # TODO: not empty mask on concat with Constant is not supported (failed on embedding)
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='ViT',
@@ -433,7 +438,7 @@ TEST_DESCS = [
 
         ]
     ),
-    # TODO: need a symbolic propagation
+    # TODO: need a symbolic propagation?? problem with filtering nested groups and open/closed branches
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='Swin_MS',
