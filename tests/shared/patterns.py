@@ -16,13 +16,16 @@ from nncf.common.utils.backend import BackendType
 from nncf.common.graph.patterns import PatternNames
 from nncf.common.graph.patterns.manager import PatternsManager
 
+
 def check_patterns(backend: BackendType, reasons: Dict[PatternNames, str]):
-    backend_patterns = PatternsManager().get_backend_patterns_map(backend)
+    backend_patterns = PatternsManager.get_backend_patterns_map(backend)
 
     all_base_apatterns = PatternNames
     for base_pattern in all_base_apatterns:
+        pattern_name = base_pattern.name
         if base_pattern in reasons:
+            assert base_pattern not in backend_patterns, f'Pattern {pattern_name} found in {backend.name}'
             ignore_reason = reasons[base_pattern]
-            print(f'{base_pattern.name} is ignored. Reason: {ignore_reason}')
+            print(f'{pattern_name} is ignored. Reason: {ignore_reason}')
             continue
-        assert base_pattern in backend_patterns, f'Pattern {base_pattern.name} not found in {backend.name}'
+        assert base_pattern in backend_patterns, f'Pattern {pattern_name} not found in {backend.name}'

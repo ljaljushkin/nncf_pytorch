@@ -35,7 +35,7 @@ HOME_PATH = Path.home()
 MODEL_INFO = download.DownloadInfo(
     name="stfpm_mvtec_capsule",
     url='https://huggingface.co/alexsu52/stfpm_mvtec_capsule/resolve/main/openvino_model.tar',
-    hash='b75ce461aa17b1b33673ebcea0f6b846')
+    hash='0d15817bc56af80793de38c8a0b3fd9e')
 MODEL_PATH = HOME_PATH / '.cache/nncf/models/stfpm_mvtec_capsule'
 
 DATASET_INFO = download.DownloadInfo(
@@ -44,7 +44,7 @@ DATASET_INFO = download.DownloadInfo(
     hash='380afc46701c99cb7b9a928edbe16eb5')
 DATASET_PATH = HOME_PATH / '.cache/nncf/datasets/mvtec_capsule'
 
-max_accuracy_drop = 0.005 if len(sys.argv) < 2 else sys.argv[1]
+max_accuracy_drop = 0.005 if len(sys.argv) < 2 else float(sys.argv[1])
 
 
 def download_and_extract(root: Path, info: download.DownloadInfo) -> None:
@@ -88,7 +88,7 @@ def run_benchmark(model_path: str, shape: Optional[List[int]] = None,
     command = f'benchmark_app -m {model_path} -d CPU -api async -t 15'
     if shape is not None:
         command += f' -shape [{",".join(str(x) for x in shape)}]'
-    cmd_output = subprocess.check_output(command, shell=True)
+    cmd_output = subprocess.check_output(command, shell=True) # nosec
     if verbose:
         print(*str(cmd_output).split('\\n')[-9:-1], sep='\n')
     match = re.search(r"Throughput\: (.+?) FPS", str(cmd_output))

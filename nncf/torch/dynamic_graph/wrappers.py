@@ -10,7 +10,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-
+import functools
 from copy import deepcopy
 from typing import Callable
 from typing import List
@@ -70,6 +70,7 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
         nncf_logger.debug(f"Operator: {_orig_op.__name__} is already wrapped")
         return operator
 
+    @functools.wraps(operator)
     def wrapped(*args, **kwargs):
         ctx = get_current_context()
         if not ctx or getattr(ctx, 'in_operator', False) or not ctx.is_tracing:
@@ -122,6 +123,7 @@ def wrap_module_call(module_call):
     from nncf.torch.dynamic_graph.patch_pytorch import ORIGINAL_OPERATORS #pylint: disable=cyclic-import
     NAMES_ORIGINAL_OPERATORS = [op.name for op in ORIGINAL_OPERATORS]
 
+    @functools.wraps(module_call)
     def wrapped(self, *args, **kwargs):
         ctx = get_current_context()
         if not ctx or self.__class__ in _IGNORED_SCOPES:
@@ -184,7 +186,7 @@ def _execute_op(op_address: 'OperationAddress',
         if is_debug() and node is not None:
             ctx.register_node_call(node)
 
-    result = trace_tensors(result, node)
+    result = trace_tensors(result, node, ctx)
     result = ctx.execute_post_hooks(op_address, result)
     return result
 
@@ -194,11 +196,12 @@ def _collect_module_attrs_and_ignored_algorithms(ctx: TracingContext,
                                                  args, kwargs) -> Tuple[BaseLayerAttributes, List[str]]:
     layer_attrs = None
     ignored_algos = []
-    if op_name in OP_NAMES_REQUIRING_MODULE_ATTRS:
+    from nncf.torch.graph.operator_metatypes import OP_NAMES_WITH_WEIGHTS  #pylint:disable=cyclic-import
+    if op_name in OP_NAMES_WITH_WEIGHTS:
         curr_module = ctx.get_current_module()
         if curr_module is None:
-            raise RuntimeError("Operation {} requires module attributes, "
-                               "but it was executed outside any module".format(op_name))
+            raise RuntimeError(f"Operation {op_name} requires module attributes, "
+                               f"but it was executed outside any module")
         layer_attrs = get_layer_attributes_from_module(curr_module, op_name)
         if isinstance(curr_module, _NNCFModuleMixin):
             ignored_algos = deepcopy(curr_module.ignored_algorithms)

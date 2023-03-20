@@ -12,10 +12,12 @@
 """
 
 from copy import deepcopy
-from typing import Dict, List, TypeVar, Optional, OrderedDict, Tuple
+from typing import Dict, TypeVar, Optional, OrderedDict
 import collections
 
 from nncf import Dataset
+from nncf.scopes import IgnoredScope
+from nncf.scopes import get_ignored_node_names_from_ignored_scope
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.transformations.commands import TargetPoint
@@ -45,6 +47,7 @@ from nncf.quantization.algorithms.algorithm import AlgorithmParameters
 from nncf.quantization.algorithms.min_max.backend import ALGO_BACKENDS
 from nncf.quantization.algorithms.definitions import RangeType
 from nncf.quantization.algorithms.definitions import Granularity
+from nncf.quantization.passes import transform_to_inference_graph
 from nncf.common.factory import NNCFGraphFactory
 from nncf.common.tensor_statistics.statistic_point import StatisticPoint
 from nncf.common.tensor_statistics.statistic_point import StatisticPointsContainer
@@ -76,7 +79,7 @@ class MinMaxQuantizationParameters(AlgorithmParameters):
                  target_device: TargetDevice = TargetDevice.ANY,
                  range_type: Optional[RangeType] = None,
                  quantize_outputs: bool = False,
-                 ignored_scopes: Optional[List[str]] = None,
+                 ignored_scopes: Optional[IgnoredScope] = None,
                  ):
         """
         :param number_samples: Number of samples for the statistics collection.
@@ -99,13 +102,13 @@ class MinMaxQuantizationParameters(AlgorithmParameters):
         :param target_device: Target device for the settings of the quantization pipeline.
         :param range_type: Type of statistics range calculation.
         :param quantize_outputs: Boolean value that says whether quantize outputs or not.
-        :param ignored_scopes: List of the layers which input must not be quantized.
+        :param ignored_scopes: Desrciptor of the layers which input must not be quantized.
         """
         self.number_samples = number_samples
         self.target_device = target_device
         self.range_type = range_type
         self.quantize_outputs = quantize_outputs
-        self.ignored_scopes = [] if ignored_scopes is None else ignored_scopes
+        self.ignored_scopes = IgnoredScope() if ignored_scopes is None else ignored_scopes
         self.global_quantizer_constraints = {}
         if weight_granularity is not None:
             weight_granularity = weight_granularity == Granularity.PERCHANNEL
@@ -181,48 +184,45 @@ class MinMaxQuantization(Algorithm):
             from nncf.experimental.openvino_native.quantization.algorithms.min_max.openvino_backend import \
                 OVMinMaxAlgoBackend
             self._backend_entity = OVMinMaxAlgoBackend()
+        elif model_backend == BackendType.TORCH:
+            from nncf.quantization.algorithms.min_max.torch_backend import \
+                PTMinMaxAlgoBackend
+            self._backend_entity = PTMinMaxAlgoBackend()
         else:
             raise RuntimeError('Cannot return backend-specific entity '
                                'because {} is not supported!'.format(model_backend))
 
-    def _get_default_statistics_collector(self, is_symmetric: bool,
-                                          axes: Optional[Tuple], per_channel: bool) -> TensorStatisticCollectorBase:
-        """
-        Returns the default StatisticCollector.
-
-        :param is_symmetric: True if the quantizer has symmetric mode. False if asymmetric.
-        :param axes: Axes to reduce in the statistic tensor.
-        :param per_channel: True if per-channel statistics. False if per-tensor.
-        :return: StatisticCollector.
-        """
-        if per_channel:
-            return self._backend_entity.minmax_statistic_collector(use_abs_max=is_symmetric,
-                                                                   reduction_shape=axes,
-                                                                   num_samples=self._parameters.number_samples)
-        return self._backend_entity.mean_minmax_statistic_collector(use_per_sample_stats=False,
-                                                                    use_abs_max=is_symmetric,
-                                                                    reduction_shape=axes,
-                                                                    num_samples=self._parameters.number_samples)
-
-    def _get_stat_collector(self, quantizer_config: QuantizerConfig) -> TensorStatisticCollectorBase:
+    def _get_stat_collector(self, nncf_graph: NNCFGraph,
+                            target_point: TargetPoint,
+                            quantizer_config: QuantizerConfig) -> TensorStatisticCollectorBase:
         """
         Creates and returns statistic collector instance based on the quantizer's configuration.
 
         :param quantizer_config: QuantizerConfig instance for the current layer.
         :return: One of the TensorStatisticCollectorBase instances
         """
-        is_symmetric = quantizer_config.mode == QuantizationMode.SYMMETRIC
-        axes = (0, 2, 3) if quantizer_config.per_channel else None
-        if self._parameters.range_type is None or quantizer_config.per_channel:
-            return self._get_default_statistics_collector(is_symmetric, axes, quantizer_config.per_channel)
-        if self._parameters.range_type == RangeType.MINMAX:
-            return self._backend_entity.minmax_statistic_collector(use_abs_max=is_symmetric,
-                                                                   reduction_shape=axes,
+        def is_default_parameters(range_type: RangeType,
+                                  quantizer_config: QuantizerConfig) -> bool:
+            return range_type is None or quantizer_config.per_channel
+
+        range_type = self._parameters.range_type
+        if is_default_parameters(range_type, quantizer_config):
+            if quantizer_config.per_channel:
+                range_type = RangeType.MINMAX
+            else:
+                range_type = RangeType.MEAN_MINMAX
+
+        # TODO: allow to use different range type estimators
+        # for weight quantizers
+        if target_point.is_weight_target_point():
+            range_type = RangeType.MINMAX
+
+        if range_type == RangeType.MINMAX:
+            return self._backend_entity.minmax_statistic_collector(nncf_graph, target_point, quantizer_config,
                                                                    num_samples=self._parameters.number_samples)
-        if self._parameters.range_type == RangeType.MEAN_MINMAX:
-            return self._backend_entity.mean_minmax_statistic_collector(use_per_sample_stats=False,
-                                                                        use_abs_max=is_symmetric,
-                                                                        reduction_shape=axes,
+        if range_type == RangeType.MEAN_MINMAX:
+            return self._backend_entity.mean_minmax_statistic_collector(nncf_graph, target_point, quantizer_config,
+                                                                        use_per_sample_stats=False,
                                                                         num_samples=self._parameters.number_samples)
         raise RuntimeError('This range type is not supported!')
 
@@ -249,6 +249,8 @@ class MinMaxQuantization(Algorithm):
         hw_config_path = self._backend_entity.hw_config.get_path_to_hw_config(hw_config_type)
         hw_config = self._backend_entity.hw_config.from_json(hw_config_path)
         weight_nodes = nncf_graph.get_nodes_by_metatypes(self._backend_entity.layers_with_weights_metatypes)
+        ignored_names = get_ignored_node_names_from_ignored_scope(self._parameters.ignored_scopes, nncf_graph)
+        weight_nodes = [node for node in weight_nodes if node.node_name not in ignored_names]
         default_weight_qconfig = self._get_default_qconfig(
             self._parameters.global_quantizer_constraints[QuantizerGroup.WEIGHTS])
         weighted_node_and_qconf_lists = assign_qconfig_lists_to_modules(nodes_with_weights=weight_nodes,
@@ -260,10 +262,12 @@ class MinMaxQuantization(Algorithm):
                                                                         hw_config=hw_config)
         quantizable_layer_nodes = [QuantizableWeightedLayerNode(node, qconf_list) for node, qconf_list
                                    in weighted_node_and_qconf_lists.items()]
-        ip_graph = InsertionPointGraph(nncf_graph)
+        inference_nncf_graph = transform_to_inference_graph(deepcopy(nncf_graph),
+                                                            shapeof_metatypes=self._backend_entity.shapeof_metatypes)
+        ip_graph = InsertionPointGraph(inference_nncf_graph)
         ip_graph = ip_graph.get_ip_graph_with_merged_hw_optimized_operations(pattern, quantizable_layer_nodes)
         post_processing_types = self._backend_entity.post_processing_metatypes
-        solver = QuantizerPropagationSolver(ignored_scopes=self._parameters.ignored_scopes,
+        solver = QuantizerPropagationSolver(ignored_scopes=ignored_names,
                                             target_scopes=None,
                                             hw_config=hw_config,
                                             default_trait_to_metatype_map=self._backend_entity.quant_trait_op_dict,
@@ -339,7 +343,7 @@ class MinMaxQuantization(Algorithm):
             return self._quantization_target_points_to_qconfig
         backend = get_backend(model)
         device = self._parameters.target_device
-        pattern = PatternsManager().get_full_pattern_graph(backend, device)
+        pattern = PatternsManager.get_full_pattern_graph(backend, device)
         quantizer_setup = self._get_quantizer_setup(nncf_graph, pattern)
         for quantization_point in quantizer_setup.quantization_points.values():
             if quantization_point.is_weight_quantization_point():
@@ -361,33 +365,32 @@ class MinMaxQuantization(Algorithm):
         model_transformer = ModelTransformerFactory.create(model)
 
         quantization_target_points = self._get_quantization_target_points(model)
-        weight_tensor_names = set()
+        weight_layer_names = set()
+        def filter_func(point: StatisticPoint) -> bool:
+            return MinMaxQuantization in point.algorithm_to_tensor_collectors and \
+                   point.target_point == quantization_target_point
 
         for quantization_target_point, qconfig in quantization_target_points.items():
             target_node_name = quantization_target_point.target_node_name
-            node = nncf_graph.get_node_by_name(target_node_name)
-            if quantization_target_point.type == TargetType.OPERATION_WITH_WEIGHTS:
-                weight_tensor_name, weight_tensor = self._backend_entity.get_weight_tensor(model,
-                                                                                           quantization_target_point)
-                # If the nodes share one weight tensor, we should have only one quantizer on that
-                if weight_tensor_name in weight_tensor_names:
-                    continue
-                weight_tensor_names.add(weight_tensor_name)
-                command = self._backend_entity.create_weight_quantizer_insertion_command(quantization_target_point,
-                                                                                         qconfig, weight_tensor, node)
-                transformation_commands.append(command)
-            elif quantization_target_point.type in [TargetType.PRE_LAYER_OPERATION, TargetType.POST_LAYER_OPERATION]:
-                def filter_func(point):
-                    return MinMaxQuantization in point.algorithm_to_tensor_collectors and \
-                           point.target_point.type == quantization_target_point.type
-
-                for tensor_collector in statistic_points.get_algo_statistics_for_node(target_node_name, filter_func,
-                                                                                      MinMaxQuantization):
+            for tensor_collector in statistic_points.get_algo_statistics_for_node(
+                    target_node_name,
+                    filter_func,
+                    MinMaxQuantization):
+                if quantization_target_point.is_weight_target_point():
+                    # If the nodes share one weight tensor, we should have only one quantizer on that
+                    layer_name = nncf_graph.get_node_by_name(target_node_name).layer_name
+                    if layer_name in weight_layer_names:
+                        continue
+                    weight_layer_names.add(layer_name)
+                    command = self._backend_entity.create_weight_quantizer_insertion_command(
+                        nncf_graph, quantization_target_point,
+                        qconfig, tensor_collector.get_statistics())
+                else:
                     command = self._backend_entity.create_activation_quantizer_insertion_command(
-                        quantization_target_point, qconfig, tensor_collector.get_statistics())
-                    transformation_commands.append(command)
-            else:
-                raise RuntimeError('Inccorrect type of Quantization Target Point!')
+                        nncf_graph, quantization_target_point,
+                        qconfig, tensor_collector.get_statistics())
+
+                transformation_commands.append(command)
 
         for transformation_command in transformation_commands:
             transformation_layout.register(transformation_command)
@@ -398,15 +401,14 @@ class MinMaxQuantization(Algorithm):
     def get_statistic_points(self, model: TModel) -> StatisticPointsContainer:
         self._set_backend_entity(model)
         quantization_target_points = self._get_quantization_target_points(model)
+        nncf_graph = NNCFGraphFactory.create(model) if self.nncf_graph is None else self.nncf_graph
         output = StatisticPointsContainer()
         for quantization_target_point, qconfig in quantization_target_points.items():
-            if quantization_target_point.type in [TargetType.PRE_LAYER_OPERATION, TargetType.POST_LAYER_OPERATION]:
-                nncf_logger.debug(f'Adding target point {quantization_target_point.target_node_name} '
-                                  f'for statistics collection')
-                stat_collector = self._get_stat_collector(qconfig)
-                output.add_statistic_point(StatisticPoint(target_point=quantization_target_point,
-                                                          tensor_collector=stat_collector,
-                                                          algorithm=MinMaxQuantization))
-            else:
-                nncf_logger.debug(f'Skipping collection at {quantization_target_point} - this is a weight quantizer')
+            nncf_logger.debug(f'Adding target point {quantization_target_point.target_node_name}'
+                              f' with type {quantization_target_point.type} for statistics collection')
+            stat_collector = self._get_stat_collector(nncf_graph, quantization_target_point,
+                                                      qconfig)
+            output.add_statistic_point(StatisticPoint(target_point=quantization_target_point,
+                                                      tensor_collector=stat_collector,
+                                                      algorithm=MinMaxQuantization))
         return output

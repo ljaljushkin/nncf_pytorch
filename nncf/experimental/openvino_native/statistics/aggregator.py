@@ -20,8 +20,10 @@ from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.transformations.layout import TransformationLayout
 from nncf.common.tensor_statistics.aggregator import StatisticPointsContainer
 from nncf.common.tensor_statistics.aggregator import StatisticsAggregator
+
 from nncf.experimental.openvino_native.graph.transformations.commands import OVOutputInsertionCommand
 from nncf.experimental.openvino_native.tensor import OVNNCFTensor
+from nncf.experimental.openvino_native.graph.node_utils import get_result_node_name
 
 
 class OVStatisticsAggregator(StatisticsAggregator):
@@ -37,20 +39,23 @@ class OVStatisticsAggregator(StatisticsAggregator):
                              statistic_points: StatisticPointsContainer) -> None:
         for node_name, _statistic_points in statistic_points.items():
             for statistic_point in _statistic_points:
-                port_id = statistic_point.target_point.port_id
-                if statistic_point.target_point.type == TargetType.POST_LAYER_OPERATION:
+                target_point = statistic_point.target_point
+                node_name = target_point.target_node_name
+                port_id = target_point.port_id
+                if target_point.type == TargetType.POST_LAYER_OPERATION:
                     stat_node_name = node_name
-                elif statistic_point.target_point.type == TargetType.PRE_LAYER_OPERATION:
+                elif target_point.type in [TargetType.PRE_LAYER_OPERATION,
+                                           TargetType.OPERATION_WITH_WEIGHTS]:
                     node = self._name_to_node_mapping[node_name]
                     stat_node_name = node.input_value(port_id).get_node().get_friendly_name()
                 else:
-                    RuntimeError('The statistics should be collected only from the inputs or outputs of the node.')
-
-                output_name = f'Result_{stat_node_name}.{port_id}'
+                    RuntimeError(f'Unsupported target point type for statistic aggregator:'
+                                 f' {target_point.type}')
+                output_name = get_result_node_name(stat_node_name, port_id)
                 statistic_point.register_tensor(outputs[output_name])
 
-    @staticmethod
-    def _get_transformation_layout_extra_outputs(statistic_points: StatisticPointsContainer) -> TransformationLayout:
+    def _get_transformation_layout_extra_outputs(self,
+                                                 statistic_points: StatisticPointsContainer) -> TransformationLayout:
         transformation_layout = TransformationLayout()
         transformation_commands = []
         for _statistic_points in statistic_points.values():
