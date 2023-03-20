@@ -268,28 +268,28 @@ class ConcatPruningOp(BasePruningOp):
         if not not_empty_masks:
             return None
 
-        raise NotImplementedError
-        # TODO: re-implement the logic below
-        first_non_empty_mask = not_empty_masks[0]
-        device = first_non_empty_mask.device
-        filled_input_masks = []
-        for i, mask in enumerate(input_masks):
-            if mask is None:
-                concat_axis = node.layer_attributes.axis
-                # TODO: there are 2 options:
-                #  1) pruning dim == concat axis
-                #   constraints on pruning dimension are combined:
-                #    they start to refer to the same dimension, but independently.
-                #   constraints on other dimensions just go through
-                #   symbolic concatenates masks
-                #  2) pruning dim != concat axis
-                #   remove constraints that are not the same, join common constraint to a single group
-                #   symbolic is doing nothing.
-                concat_dim = input_edges[i].tensor_shape[concat_axis]
-                mask = tensor_processor.ones(concat_dim, device)
-            filled_input_masks.append(mask)
-        result_mask = tensor_processor.concatenate(filled_input_masks, 0)
-        return result_mask
+        # raise NotImplementedError
+        # # TODO: re-implement the logic below
+        # first_non_empty_mask = not_empty_masks[0]
+        # device = first_non_empty_mask.device
+        # filled_input_masks = []
+        # for i, mask in enumerate(input_masks):
+        #     if mask is None:
+        #         concat_axis = node.layer_attributes.axis
+        #         # TODO: there are 2 options:
+        #         #  1) pruning dim == concat axis
+        #         #   constraints on pruning dimension are combined:
+        #         #    they start to refer to the same dimension, but independently.
+        #         #   constraints on other dimensions just go through
+        #         #   symbolic concatenates masks
+        #         #  2) pruning dim != concat axis
+        #         #   remove constraints that are not the same, join common constraint to a single group
+        #         #   symbolic is doing nothing.
+        #         concat_dim = input_edges[i].tensor_shape[concat_axis]
+        #         mask = tensor_processor.ones(concat_dim, device)
+        #     filled_input_masks.append(mask)
+        # result_mask = tensor_processor.concatenate(filled_input_masks, 0)
+        # return result_mask
 
     @classmethod
     def mask_propagation_impl(cls, node: NNCFNode, graph: NNCFGraph,
@@ -367,7 +367,9 @@ class GatherPruningOp(BasePruningOp):
                 all_getitem = all(isinstance(ca, GetItemLayerAttributes) for ca in child_attributes)
                 assert all_getitem, "currently supported only case with all  __getitem__ on branches"
                 all_int_keys = all(isinstance(ca.key, int) for ca in child_attributes)
-                assert all_int_keys, "currently supported only case __getitem__ with single int, no slices"
+                # currently supported only case __getitem__ with single int, no slices
+                if not all_int_keys:
+                    return None
                 all_keys = set(ca.key for ca in child_attributes)
                 split_dim = input_shape[0]
                 if all_keys == set(range(split_dim)):

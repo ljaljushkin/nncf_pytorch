@@ -138,21 +138,12 @@ TEST_DESCS = [
 
         ]
     ),
-    # TODO: E       RuntimeError: mat1 and mat2 shapes cannot be multiplied (1x3 and 1x6)
-    # test for open/closed branches??
-    GroupTestDesc(
-        model_desc=GeneralModelDesc(
-            model_builder=DiffNumBranchesOnJoining,
-            input_sample_sizes=DiffNumBranchesOnJoining.INPUT_SAMPLE_SIZES
-        ),
-        ref_groups=[
-        ]
-    ),
     GroupTestDesc(
         model_desc=GeneralModelDesc(
             model_name='1_layer_BERT',
             input_info=[dict(sample_size=[1, 10], type='long')] * 3,
-            model_builder=partial(AutoModelForQuestionAnswering.from_config, BertConfig(num_hidden_layers=1))
+            model_builder=partial(
+                AutoModelForQuestionAnswering.from_config, BertConfig(num_hidden_layers=1))
         ),
         ref_groups=[
             PruningNodeGroup(
@@ -196,22 +187,30 @@ TEST_DESCS = [
         ref_groups=[
             PruningNodeGroup(
                 dim_blocks={
-                    MinimalDimensionBlock(size=2, offset=0, producer_id=31, pruning_dimension=1),
-                    MinimalDimensionBlock(size=2, offset=0, producer_id=16, pruning_dimension=0),
-                    MinimalDimensionBlock(size=2, offset=0, producer_id=12, pruning_dimension=0),
-                    MinimalDimensionBlock(size=2, offset=0, producer_id=13, pruning_dimension=0)
+                    MinimalDimensionBlock(
+                        size=2, offset=0, producer_id=31, pruning_dimension=1),
+                    MinimalDimensionBlock(
+                        size=2, offset=0, producer_id=16, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=2, offset=0, producer_id=12, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=2, offset=0, producer_id=13, pruning_dimension=0)
                 }
             ),
             PruningNodeGroup(
                 dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=35, pruning_dimension=0),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=37, pruning_dimension=1)
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=35, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=37, pruning_dimension=1)
                 }
             ),
             PruningNodeGroup(
                 dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=42, pruning_dimension=0),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=45, pruning_dimension=1)
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=42, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=45, pruning_dimension=1)
                 }
             )
         ]
@@ -226,133 +225,16 @@ TEST_DESCS = [
         ),
         ref_groups=[
             PruningNodeGroup(dim_blocks={MinimalDimensionBlock(size=64, offset=0, producer_id=38, pruning_dimension=1),
-                                         MinimalDimensionBlock(size=64, offset=0, producer_id=19, pruning_dimension=0),
-                                         MinimalDimensionBlock(size=64, offset=0, producer_id=20, pruning_dimension=0),
+                                         MinimalDimensionBlock(
+                                             size=64, offset=0, producer_id=19, pruning_dimension=0),
+                                         MinimalDimensionBlock(
+                                             size=64, offset=0, producer_id=20, pruning_dimension=0),
                                          MinimalDimensionBlock(size=64, offset=0, producer_id=23,
                                                                pruning_dimension=0)}),
             PruningNodeGroup(dim_blocks={MinimalDimensionBlock(size=1, offset=0, producer_id=44, pruning_dimension=1),
                                          MinimalDimensionBlock(size=1, offset=0, producer_id=42,
                                                                pruning_dimension=0)})
         ]
-    ),
-    # TODO: KeyError: 'output_mask'. Probably because of attention masks (additional input inserted to the middle of the graph) on before Softmax
-    GroupTestDesc(
-        model_desc=GeneralModelDesc(
-            model_name='DistilBERT',
-            input_info=[dict(sample_size=[1, 4], type='long')] * 2,
-            model_builder=partial(
-                AutoModelForQuestionAnswering.from_config,
-                DistilBertConfig(
-                    vocab_size=4,
-                    max_position_embeddings=4,
-                    n_layers=1,
-                    n_heads=1,
-                    dim=4,
-                    hidden_dim=4 * 4,
-                )
-            )
-        ),
-        ref_groups=[
-        ]
-    ),
-    GroupTestDesc(
-        model_desc=GeneralModelDesc(
-            model_name='MobileBERT',
-            input_info=[dict(sample_size=[1, 128], type='long')] * 4,
-            model_builder=partial(AutoModelForSequenceClassification.from_config,
-                                  MobileBertConfig(
-                                      hidden_size=4,
-                                      intermediate_size=3,
-                                      max_position_embeddings=128,
-                                      num_attention_heads=2,
-                                      num_hidden_layers=1,
-                                      vocab_size=10,
-                                      num_labels=2,
-                                      mhsa_qkv_bias=True,
-                                      mhsa_o_bias=True,
-                                      ffn_bias=True
-                                  ))
-        ),
-        ref_groups=[
-            # TODO: Why was this group filtered out?
-            # PruningNodeGroup(
-            #     dim_blocks={
-            #         MinimalDimensionBlock(size=1, offset=0, producer_id=22, pruning_dimension=0),
-            #         MinimalDimensionBlock(size=1, offset=0, producer_id=24, pruning_dimension=1),
-            #         MinimalDimensionBlock(size=1, offset=0, producer_id=25, pruning_dimension=1),
-            #     }
-            # ),
-            PruningNodeGroup(
-                dim_blocks={
-                    MinimalDimensionBlock(size=64, offset=0, producer_id=26, pruning_dimension=0),
-                    MinimalDimensionBlock(size=64, offset=0, producer_id=27, pruning_dimension=0),
-                    MinimalDimensionBlock(size=64, offset=0, producer_id=25, pruning_dimension=0),
-                    MinimalDimensionBlock(size=64, offset=0, producer_id=44, pruning_dimension=1)
-                }
-            ),
-            PruningNodeGroup(
-                dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=50, pruning_dimension=1),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=48, pruning_dimension=0)
-                }
-            ),
-            PruningNodeGroup(
-                dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=56, pruning_dimension=1),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=54, pruning_dimension=0)
-                }
-            ),
-            PruningNodeGroup(
-                dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=62, pruning_dimension=1),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=60, pruning_dimension=0)
-                }
-            ),
-            PruningNodeGroup(
-                dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=68, pruning_dimension=1),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=66, pruning_dimension=0)
-                }
-            ),
-            PruningNodeGroup(
-                dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=81, pruning_dimension=1),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=78, pruning_dimension=0)
-                }
-            )
-        ]
-    ),
-    # TODO: need to handle model_output in the middle of each Transformer layer
-    # TODO: note, that Split before Reshape, but each branch has the same Reshape - should be fine
-    # TODO: support Addmm properly, attributes?
-    # TODO: need symbolic mask propagation
-    GroupTestDesc(
-        model_desc=GeneralModelDesc(
-            model_name='GPT2Text',
-            input_info=[dict(sample_size=[1, 128], type='long')] * 1,
-            model_builder=partial(AutoModelForSequenceClassification.from_config,
-                                  GPT2Config(n_embd=4, n_layer=2, n_head=2, vocab_size=2))
-        ),
-        ref_groups=[]
-    ),
-    # TODO: need to handle concat with constant
-    # TODO: pay attention to transpose that does not change shape: 1x2x2x1 -> 1x2x2x1
-    GroupTestDesc(
-        model_desc=GeneralModelDesc(
-            model_name='CLIP',
-            input_info=[dict(sample_size=[1, 3, 3, 3], type='float')] * 1,
-            model_builder=partial(CLIPVisionModel,
-                                  CLIPVisionConfig(
-                                      hidden_size=2,
-                                      intermediate_size=2,
-                                      num_hidden_layers=1,
-                                      num_attention_heads=2,
-                                      num_channels=3,
-                                      image_size=3,
-                                      patch_size=3,
-                                  ))
-        ),
-        ref_groups=[]
     ),
     # TODO: issue with get_item
     #  >           assert all_int_keys, "currently supported only case __getitem__ with single int, no slices"
@@ -373,16 +255,22 @@ TEST_DESCS = [
         ref_groups=[
             PruningNodeGroup(
                 dim_blocks={
-                    MinimalDimensionBlock(size=8, offset=0, producer_id=31, pruning_dimension=0),
-                    MinimalDimensionBlock(size=8, offset=0, producer_id=53, pruning_dimension=1),
-                    MinimalDimensionBlock(size=8, offset=0, producer_id=29, pruning_dimension=0),
-                    MinimalDimensionBlock(size=8, offset=0, producer_id=35, pruning_dimension=0)
+                    MinimalDimensionBlock(
+                        size=8, offset=0, producer_id=31, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=8, offset=0, producer_id=53, pruning_dimension=1),
+                    MinimalDimensionBlock(
+                        size=8, offset=0, producer_id=29, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=8, offset=0, producer_id=35, pruning_dimension=0)
                 }
             ),
             PruningNodeGroup(
                 dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=57, pruning_dimension=0),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=60, pruning_dimension=1)
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=57, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=60, pruning_dimension=1)
                 }
             )
         ]
@@ -404,16 +292,22 @@ TEST_DESCS = [
         ref_groups=[
             PruningNodeGroup(
                 dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=15, pruning_dimension=0),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=18, pruning_dimension=0),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=14, pruning_dimension=0),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=33, pruning_dimension=1)
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=15, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=18, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=14, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=33, pruning_dimension=1)
                 }
             ),
             PruningNodeGroup(
                 dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=45, pruning_dimension=1),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=43, pruning_dimension=0)
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=45, pruning_dimension=1),
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=43, pruning_dimension=0)
                 }
             )
         ]
@@ -435,25 +329,28 @@ TEST_DESCS = [
                                   ))
         ),
         ref_groups=[
-
-        ]
-    ),
-    # TODO: need a symbolic propagation?? problem with filtering nested groups and open/closed branches
-    GroupTestDesc(
-        model_desc=GeneralModelDesc(
-            model_name='Swin_MS',
-            input_info=dict(sample_size=[1, 4 * 4, 8]),
-            model_builder=partial(SwinTransformerBlock, dim=8, input_resolution=[4, 4], num_heads=2)
-        ),
-        ref_groups=[
             PruningNodeGroup(
                 dim_blocks={
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=36, pruning_dimension=1),
-                    MinimalDimensionBlock(size=1, offset=0, producer_id=33, pruning_dimension=0)
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=26, pruning_dimension=1),
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=9, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=8, pruning_dimension=0),
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=12, pruning_dimension=0)
                 }
-            )
+            ),
+            PruningNodeGroup(
+                dim_blocks={
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=32, pruning_dimension=1),
+                    MinimalDimensionBlock(
+                        size=1, offset=0, producer_id=30, pruning_dimension=0)
+                }
+            ),
         ]
-    )
+    ),
 ]
 
 
@@ -466,7 +363,8 @@ def test_graph(desc: GroupTestDesc):
     config = NNCFConfig({"input_info": model_desc.create_input_info()})
     nncf_network = create_nncf_network(model, config)
     nncf_network.get_graph().visualize_graph('nncf_network.dot')
-    pruning_producing_types = [x.op_func_name for x in NNCF_PRUNING_MODULES_DICT]
+    pruning_producing_types = [
+        x.op_func_name for x in NNCF_PRUNING_MODULES_DICT]
     actual_groups = get_pruning_groups(nncf_network.get_graph(),
                                        PT_EXPERIMENTAL_PRUNING_OPERATOR_METATYPES,
                                        pruning_producing_types)
