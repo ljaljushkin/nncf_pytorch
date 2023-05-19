@@ -241,6 +241,7 @@ class TestONNXExport:
         compression_rate = ctrl.statistics().movement_sparsity.model_statistics.sparsity_level
 
         onnx_model_path = str(tmp_path / "structured.onnx")
+        print(f'ONNX model: {onnx_model_path}')
         ctrl.export_model(onnx_model_path)
         core = Core()
         ov_model = core.read_model(onnx_model_path)
@@ -249,6 +250,7 @@ class TestONNXExport:
         apply_moc_transformations(ov_model)
         apply_fused_names_cleanup(ov_model)
         not_pruned_file = str(tmp_path / "ov_not_pruned.xml")
+        print(f'Unpruned IR: {not_pruned_file}')
         serialize(ov_model, not_pruned_file)
 
         # Convert to IR with pruning
@@ -256,6 +258,7 @@ class TestONNXExport:
         apply_user_transformations(ov_model, [("Pruning", {})])
         apply_fused_names_cleanup(ov_model)
         pruned_file = str(tmp_path / "ov_pruned.xml")
+        print(f'Pruned IR: {pruned_file}')
         serialize(ov_model, pruned_file)
 
         not_pruned_file = Path(not_pruned_file.replace(".xml", ".bin"))
