@@ -8,14 +8,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from nncf.config.definitions import KNOWLEDGE_DISTILLATION_ALGO_NAME_IN_CONFIG
-from nncf.config.definitions import ONLINE_DOCS_ROOT
-from nncf.config.schemata.basic import NUMBER
-from nncf.config.schemata.basic import STRING
-from nncf.config.schemata.basic import with_attributes
+from nncf.config.definitions import KNOWLEDGE_DISTILLATION_ALGO_NAME_IN_CONFIG, ONLINE_DOCS_ROOT
+from nncf.config.schemata.basic import NUMBER, STRING, make_string_or_array_of_strings_schema, with_attributes
 from nncf.config.schemata.common.compression import BASIC_COMPRESSION_ALGO_SCHEMA
-from nncf.config.schemata.defaults import KNOWLEDGE_DISTILLATION_SCALE
-from nncf.config.schemata.defaults import KNOWLEDGE_DISTILLATION_TEMPERATURE
+from nncf.config.schemata.common.targeting import IGNORED_SCOPES_DESCRIPTION, TARGET_SCOPES_DESCRIPTION
+from nncf.config.schemata.defaults import KNOWLEDGE_DISTILLATION_SCALE, KNOWLEDGE_DISTILLATION_TEMPERATURE
 
 KNOWLEDGE_DISTILLATION_TYPE_OPTIONS = ["mse", "softmax"]
 
@@ -41,6 +38,8 @@ KNOWLEDGE_DISTILLATION_SCHEMA = {
             description="`softmax` type only - Temperature for logits softening.",
             default=KNOWLEDGE_DISTILLATION_TEMPERATURE,
         ),
+        "a_scopes": with_attributes(make_string_or_array_of_strings_schema(), description=IGNORED_SCOPES_DESCRIPTION),
+        "h_scopes": with_attributes(make_string_or_array_of_strings_schema(), description=TARGET_SCOPES_DESCRIPTION),
     },
     "additionalProperties": False,
     "required": ["type"],

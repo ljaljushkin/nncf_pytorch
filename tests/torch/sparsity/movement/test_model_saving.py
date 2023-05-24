@@ -20,11 +20,12 @@ import torch
 from addict import Dict
 from datasets import Dataset  # pylint: disable=no-name-in-module
 from onnx import numpy_helper
-from openvino.runtime import Core
-from openvino.runtime import serialize
-from openvino.tools.mo.back.offline_transformations import apply_fused_names_cleanup
-from openvino.tools.mo.back.offline_transformations import apply_moc_transformations
-from openvino.tools.mo.back.offline_transformations import apply_user_transformations
+from openvino.runtime import Core, serialize
+from openvino.tools.mo.back.offline_transformations import (
+    apply_fused_names_cleanup,
+    apply_moc_transformations,
+    apply_user_transformations,
+)
 from pkg_resources import parse_version
 from scipy.special import softmax
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
@@ -32,18 +33,20 @@ from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 from nncf.torch import create_compressed_model
 from nncf.torch.checkpoint_loading import load_state
 from tests.torch.helpers import PTTensorListComparator
-from tests.torch.sparsity.movement.helpers import BaseMockRunRecipe
-from tests.torch.sparsity.movement.helpers import BertRunRecipe
-from tests.torch.sparsity.movement.helpers import ClipVisionRunRecipe
-from tests.torch.sparsity.movement.helpers import Conv2dPlusLinearRunRecipe
-from tests.torch.sparsity.movement.helpers import DistilBertRunRecipe
-from tests.torch.sparsity.movement.helpers import LinearRunRecipe
-from tests.torch.sparsity.movement.helpers import MobileBertRunRecipe
-from tests.torch.sparsity.movement.helpers import SwinRunRecipe
-from tests.torch.sparsity.movement.helpers import Wav2Vec2RunRecipe
-from tests.torch.sparsity.movement.helpers import build_compression_trainer
-from tests.torch.sparsity.movement.helpers import force_update_sparsifier_binary_masks_by_threshold
-from tests.torch.sparsity.movement.helpers import initialize_sparsifier_parameters_by_linspace
+from tests.torch.sparsity.movement.helpers import (
+    BaseMockRunRecipe,
+    BertRunRecipe,
+    ClipVisionRunRecipe,
+    Conv2dPlusLinearRunRecipe,
+    DistilBertRunRecipe,
+    LinearRunRecipe,
+    MobileBertRunRecipe,
+    SwinRunRecipe,
+    Wav2Vec2RunRecipe,
+    build_compression_trainer,
+    force_update_sparsifier_binary_masks_by_threshold,
+    initialize_sparsifier_parameters_by_linspace,
+)
 
 
 class TestONNXExport:
@@ -267,8 +270,8 @@ class TestONNXExport:
         assert (
             pytest.approx(file_size_ratio, abs=1e-2) == desc.ov_weight_ratio
         ), f"IR's size ratio: 1 - {pruned_file_bytes}/{not_pruned_file_bytes}"
-        if abs(desc.ov_weight_ratio - desc.nncf_weight_ratio) >= 0.15:
-            pytest.skip("Known issue in the ngraph transformation")
+        # if abs(desc.ov_weight_ratio - desc.nncf_weight_ratio) >= 0.15:
+        #     pytest.skip("Known issue in the ngraph transformation")
         assert abs(file_size_ratio - compression_rate) < 0.15
 
     def _get_onnx_model_inference_outputs(self, onnx_model_path: str, dataset: Dataset, recipe: BaseMockRunRecipe):

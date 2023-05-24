@@ -23,17 +23,20 @@ from torch.optim import SGD
 from nncf import NNCFConfig
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.utils import get_model_device
-from tests.torch.helpers import TwoConvTestModel
-from tests.torch.helpers import create_compressed_model_and_algo_for_test
-from tests.torch.helpers import create_ones_mock_dataloader
-from tests.torch.helpers import fill_params_of_model_by_normal
-from tests.torch.helpers import get_empty_config
-from tests.torch.quantization.quantization_helpers import create_rank_dataloader
-from tests.torch.quantization.quantization_helpers import distributed_init_test_default
-from tests.torch.quantization.quantization_helpers import post_compression_test_distr_init
+from tests.torch.helpers import (
+    TwoConvTestModel,
+    create_compressed_model_and_algo_for_test,
+    create_ones_mock_dataloader,
+    fill_params_of_model_by_normal,
+    get_empty_config,
+)
+from tests.torch.quantization.quantization_helpers import (
+    create_rank_dataloader,
+    distributed_init_test_default,
+    post_compression_test_distr_init,
+)
 from tests.torch.sparsity.magnitude.test_helpers import get_basic_magnitude_sparsity_config
-from tests.torch.test_models.synthetic import ContainersOutputsModel
-from tests.torch.test_models.synthetic import PartlyNonDifferentialOutputsModel
+from tests.torch.test_models.synthetic import ContainersOutputsModel, PartlyNonDifferentialOutputsModel
 
 KEY_TO_KD_PARAMETERS = "kd"
 
@@ -50,7 +53,13 @@ def get_device_str(inference_type: str, gpu_id: int):
 def get_kd_config(config: NNCFConfig, kd_type="mse", scale=1, temperature=None) -> NNCFConfig:
     if isinstance(config.get("compression", {}), dict):
         config["compression"] = [config["compression"]] if config.get("compression", None) is not None else []
-    kd_algo_dict = {"algorithm": "knowledge_distillation", "type": kd_type, "scale": scale}
+    kd_algo_dict = {
+        "algorithm": "knowledge_distillation",
+        "type": kd_type,
+        "scale": scale,
+        "a_scopes": "ContainersOutputsModel/NNCFConv2d[conv1]/conv2d_0",
+        "h_scopes": "ContainersOutputsModel/NNCFConv2d[conv1]/conv2d_0",
+    }
     if temperature is not None:
         kd_algo_dict["temperature"] = temperature
     config["compression"].append(kd_algo_dict)

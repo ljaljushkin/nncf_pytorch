@@ -9,17 +9,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
-from functools import reduce
-from typing import Any, Callable, Optional
+from functools import partial, reduce
+from typing import Any, Callable, Dict, Optional
 
 import torch
 from torch import nn
 
 from nncf.common.logging import nncf_logger
 from nncf.torch.compression_method_api import PTCompressionLoss
+
+# from nncf.torch.knowledge_distillation.algo import OutputCollector
 from nncf.torch.nested_objects_traversal import NestedObjectIndex
 from nncf.torch.nncf_network import NNCFNetwork
+
+
+def divergence_fn(teacher_output: torch.Tensor, student_output: torch.Tensor):
+    return (
+        (nn.functional.log_softmax(student_output, dim=-1) * nn.functional.softmax(teacher_output, dim=-1))
+        .sum(dim=-1)
+        .mean(dim=-1)
+    )
 
 
 class KnowledgeDistillationLoss(PTCompressionLoss):
@@ -31,44 +40,60 @@ class KnowledgeDistillationLoss(PTCompressionLoss):
     """
 
     def __init__(
-        self, target_model: NNCFNetwork, original_model: nn.Module, kd_type: str, scale: float, temperature: float
+        self,
+        target_model: NNCFNetwork,
+        original_model: nn.Module,
+        kd_type: str,
+        scale: float,
+        temperature: float,
+        a_student_collectors: Dict[str, "OutputCollector"],
+        a_teacher_collectors: Dict[str, "OutputCollector"],
+        h_student_collectors: Dict[str, "OutputCollector"],
+        h_teacher_collectors: Dict[str, "OutputCollector"],
     ):
         super().__init__()
         original_model.train()
-        if kd_type == "softmax":
 
-            def kd_loss_fn(teacher_output: torch.Tensor, student_output: torch.Tensor):
-                if len(student_output.shape) != 2 or len(teacher_output.shape) != 2:
-                    nncf_logger.debug(
-                        f"Incompatible number of dimensions of the model output tensor for softmax KD "
-                        f"(student - {student_output.shape}, "
-                        f"teacher - {teacher_output.shape}, "
-                        f"number of dims for both should be == 2) - ignoring!"
-                    )
-                    return torch.zeros([1]).to(student_output.device)
-                return (
-                    scale
-                    * -(
-                        nn.functional.log_softmax(student_output / temperature, dim=1)
-                        * nn.functional.softmax(teacher_output / temperature, dim=1)
-                    ).mean()
-                    * (student_output.shape[1] * temperature * temperature)
+        def softmax_fn(teacher_output: torch.Tensor, student_output: torch.Tensor):
+            if student_output.shape == teacher_output.shape:
+                nncf_logger.debug(
+                    f"Incompatible number of dimensions of the model output tensor for softmax KD "
+                    f"(student - {student_output.shape}, "
+                    f"teacher - {teacher_output.shape}, "
+                    f"shape should equal) - ignoring!"
                 )
+                return torch.zeros([1]).to(student_output.device)
+            return (
+                scale
+                * -(
+                    nn.functional.log_softmax(student_output / temperature, dim=-1)
+                    * nn.functional.softmax(teacher_output / temperature, dim=-1)
+                )
+                .sum(dim=-1)
+                .mean()
+                * (temperature * temperature)
+            )
 
-        else:
+        def mse_fn(teacher_output: torch.Tensor, student_output: torch.Tensor):
+            mse = torch.nn.MSELoss()
+            if len(teacher_output.shape) < 2:
+                nncf_logger.debug(
+                    f"Incompatible number of dimensions of the model output tensor for MSE KD "
+                    f"(student - {student_output.shape}, "
+                    f"teacher - {teacher_output.shape}, "
+                    f"number of dims {len(student_output.shape)} should be > 1) (most likely loss) - ignoring!"
+                )
+                return torch.zeros([1]).to(student_output.device)
+            return scale * mse(teacher_output, student_output)
 
-            def kd_loss_fn(teacher_output: torch.Tensor, student_output: torch.Tensor):
-                mse = torch.nn.MSELoss()
-                if len(teacher_output.shape) < 2:
-                    nncf_logger.debug(
-                        f"Incompatible number of dimensions of the model output tensor for MSE KD "
-                        f"(student - {student_output.shape}, "
-                        f"teacher - {teacher_output.shape}, "
-                        f"number of dims {len(student_output.shape)} should be > 1) (most likely loss) - ignoring!"
-                    )
-                    return torch.zeros([1]).to(student_output.device)
-                return scale * mse(teacher_output, student_output)
+        self.mse_fn = mse_fn
+        self.softmax_fn = softmax_fn
+        kd_loss_fn = softmax_fn if kd_type == "softmax" else mse_fn
 
+        self._a_student_collectors = a_student_collectors
+        self._a_teacher_collectors = a_teacher_collectors
+        self._h_student_collectors = h_student_collectors
+        self._h_teacher_collectors = h_teacher_collectors
         self._kd_loss_handler = target_model.nncf.create_knowledge_distillation_loss_handler(
             original_model, partial(KnowledgeDistillationLoss._calculate, kd_loss_fn=kd_loss_fn)
         )
@@ -154,6 +179,21 @@ class KnowledgeDistillationLoss(PTCompressionLoss):
         :return: Differentiable knowledge distillation loss value
         """
         loss = self._kd_loss_handler.get_kd_loss()
+
+        for (t_name, a_tol), (s_name, a_sol) in zip(
+            self._a_teacher_collectors.items(), self._a_student_collectors.items()
+        ):
+            kd_loss_a = self.softmax_fn(a_tol.output, a_sol.output)
+            print(f"loss between {t_name} and {s_name} = {kd_loss_a}\n t_o={a_tol.output} \n s_o={a_sol.output}")
+
+        for (t_name, h_tol), (s_name, h_sol) in zip(
+            self._h_teacher_collectors.items(), self._h_student_collectors.items()
+        ):
+            kd_loss_h = self.softmax_fn(h_tol.output, h_sol.output)
+            print(f"loss between {t_name} and {s_name} = {kd_loss_h}\n t_o={h_tol.output} \n s_o={h_sol.output}")
+
+        loss += kd_loss_h + kd_loss_a
+
         for idx, _ in enumerate(loss):
             loss[idx] = loss[idx].unsqueeze(0)
         output = torch.cat(loss).mean()

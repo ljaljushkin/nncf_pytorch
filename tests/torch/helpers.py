@@ -10,8 +10,7 @@
 # limitations under the License.
 import contextlib
 import numbers
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple, Union
@@ -23,8 +22,7 @@ from onnx import numpy_helper  # pylint: disable=no-name-in-module
 from torch import nn
 from torch.nn import Module
 from torch.nn import functional as F
-from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset
 
 from nncf.config import NNCFConfig
 from nncf.config.extractors import extract_algorithm_names
@@ -33,8 +31,7 @@ from nncf.torch.algo_selector import PT_COMPRESSION_ALGORITHMS
 from nncf.torch.compression_method_api import PTCompressionAlgorithmController
 from nncf.torch.dynamic_graph.graph_tracer import create_input_infos
 from nncf.torch.dynamic_graph.scope import Scope
-from nncf.torch.initialization import PTInitializingDataLoader
-from nncf.torch.initialization import register_default_init_args
+from nncf.torch.initialization import PTInitializingDataLoader, register_default_init_args
 from nncf.torch.layers import NNCF_MODULES_MAP
 from nncf.torch.model_creation import create_compressed_model
 from nncf.torch.nncf_module_replacement import get_original_module_scope_from_nncf_module_scope
@@ -274,7 +271,7 @@ def create_compressed_model_and_algo_for_test(
     algo, model = create_compressed_model(
         model,
         config,
-        dump_graphs=False,
+        dump_graphs=True,
         dummy_forward_fn=dummy_forward_fn,
         wrap_inputs_fn=wrap_inputs_fn,
         compression_state=compression_state,

@@ -13,24 +13,45 @@ Contains builder and controller class definitions for the knowledge distillation
 """
 
 from copy import deepcopy
+from typing import Dict
 
 from torch import nn
 
 from nncf import NNCFConfig
-from nncf.api.compression import CompressionLoss
-from nncf.api.compression import CompressionScheduler
-from nncf.api.compression import CompressionStage
+from nncf.api.compression import CompressionLoss, CompressionScheduler, CompressionStage
+from nncf.common.graph.transformations.commands import TargetType, TransformationPriority
 from nncf.common.schedulers import BaseCompressionScheduler
+from nncf.common.scopes import should_consider_scope
 from nncf.common.statistics import NNCFStatistics
 from nncf.common.utils.api_marker import api
-from nncf.config.schemata.defaults import KNOWLEDGE_DISTILLATION_SCALE
-from nncf.config.schemata.defaults import KNOWLEDGE_DISTILLATION_TEMPERATURE
+from nncf.config.schemata.defaults import KNOWLEDGE_DISTILLATION_SCALE, KNOWLEDGE_DISTILLATION_TEMPERATURE
 from nncf.torch.algo_selector import PT_COMPRESSION_ALGORITHMS
-from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder
-from nncf.torch.compression_method_api import PTCompressionAlgorithmController
+from nncf.torch.compression_method_api import PTCompressionAlgorithmBuilder, PTCompressionAlgorithmController
+from nncf.torch.dynamic_graph.patch_pytorch import register_operator
+from nncf.torch.graph.transformations.commands import PTInsertionCommand, PTTargetPoint
 from nncf.torch.graph.transformations.layout import PTTransformationLayout
 from nncf.torch.knowledge_distillation.knowledge_distillation_loss import KnowledgeDistillationLoss
-from nncf.torch.nncf_network import NNCFNetwork
+from nncf.torch.nncf_network import NNCFNetwork, PTModelTransformer
+
+
+@register_operator()
+def collect_dummy(output):
+    return output
+
+
+class OutputCollector(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # self.dummy_param = Parameter(torch.zeros(1))
+        self._output_storage = None
+
+    @property
+    def output(self):
+        return self._output_storage
+
+    def forward(self, output):
+        self._output_storage = output
+        return collect_dummy(output)
 
 
 @PT_COMPRESSION_ALGORITHMS.register("knowledge_distillation")
@@ -40,17 +61,61 @@ class KnowledgeDistillationBuilder(PTCompressionAlgorithmBuilder):
         self.kd_type = self._algo_config.get("type")
         self.scale = self._algo_config.get("scale", KNOWLEDGE_DISTILLATION_SCALE)
         self.temperature = self._algo_config.get("temperature", KNOWLEDGE_DISTILLATION_TEMPERATURE)
+        self.a_scopes = self._algo_config.get("a_scopes")
+        self.h_scopes = self._algo_config.get("h_scopes")
         if "temperature" in self._algo_config.keys() and self.kd_type == "mse":
             raise ValueError("Temperature shouldn't be stated for MSE Loss (softmax only feature)")
 
+        self.a_student_collectors = {}
+        self.a_teacher_collectors = {}
+        self.h_student_collectors = {}
+        self.h_teacher_collectors = {}
+
+    def _create_layout(self, graph, scopes, layout):
+        collectors = {}
+        for node in graph.get_all_nodes():
+            node_name = node.node_name
+            if should_consider_scope(node_name, None, scopes):
+                op = OutputCollector()
+                collectors[node_name] = op
+                command = PTInsertionCommand(
+                    PTTargetPoint(TargetType.OPERATOR_POST_HOOK, target_node_name=node_name),
+                    op,
+                    TransformationPriority.QUANTIZATION_PRIORITY,
+                )
+                layout.register(command)
+        return collectors
+
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
-        self.original_model = deepcopy(target_model).nncf.get_clean_shallow_copy()
+        graph = target_model.nncf.get_original_graph()
+        student_layout = PTTransformationLayout()
+        teacher_layout = PTTransformationLayout()
+        self.a_student_collectors = self._create_layout(graph, self.a_scopes, student_layout)
+        self.a_teacher_collectors = self._create_layout(graph, self.a_scopes, teacher_layout)
+
+        self.h_student_collectors = self._create_layout(graph, self.h_scopes, student_layout)
+        self.h_teacher_collectors = self._create_layout(graph, self.h_scopes, teacher_layout)
+
+        original_model = deepcopy(target_model).nncf.get_clean_shallow_copy()
+        transformer = PTModelTransformer(original_model)
+        self.original_model = transformer.transform(teacher_layout)
+
         for param in self.original_model.parameters():
             param.requires_grad = False
-        return PTTransformationLayout()
+        return student_layout
 
     def _build_controller(self, model):
-        return KnowledgeDistillationController(model, self.original_model, self.kd_type, self.scale, self.temperature)
+        return KnowledgeDistillationController(
+            model,
+            self.original_model,
+            self.kd_type,
+            self.scale,
+            self.temperature,
+            self.a_student_collectors,
+            self.a_teacher_collectors,
+            self.h_student_collectors,
+            self.h_teacher_collectors,
+        )
 
     def initialize(self, model: NNCFNetwork) -> None:
         pass
@@ -63,7 +128,16 @@ class KnowledgeDistillationController(PTCompressionAlgorithmController):
     """
 
     def __init__(
-        self, target_model: NNCFNetwork, original_model: nn.Module, kd_type: str, scale: float, temperature: float
+        self,
+        target_model: NNCFNetwork,
+        original_model: nn.Module,
+        kd_type: str,
+        scale: float,
+        temperature: float,
+        a_student_collectors: Dict[str, OutputCollector],
+        a_teacher_collectors: Dict[str, OutputCollector],
+        h_student_collectors: Dict[str, OutputCollector],
+        h_teacher_collectors: Dict[str, OutputCollector],
     ):
         super().__init__(target_model)
         original_model.train()
@@ -74,6 +148,10 @@ class KnowledgeDistillationController(PTCompressionAlgorithmController):
             kd_type=kd_type,
             scale=scale,
             temperature=temperature,
+            a_student_collectors=a_student_collectors,
+            a_teacher_collectors=a_teacher_collectors,
+            h_student_collectors=h_student_collectors,
+            h_teacher_collectors=h_teacher_collectors,
         )
 
     def compression_stage(self) -> CompressionStage:

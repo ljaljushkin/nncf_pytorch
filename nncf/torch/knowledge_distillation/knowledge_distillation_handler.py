@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
+from typing import Dict, List
 
 import torch
 from torch import nn
@@ -29,7 +29,11 @@ class KnowledgeDistillationLossHandler(nn.Module):
     KD_STORAGE_DEVICE = "kd_storage_device"
 
     def __init__(
-        self, context: TracingContext, kd_original_model: nn.Module, calculate_kd_loss_fn, storage_device: torch.device
+        self,
+        context: TracingContext,
+        kd_original_model: nn.Module,
+        calculate_kd_loss_fn,
+        storage_device: torch.device,
     ):
         super().__init__()
         self._compressed_context = context
@@ -61,6 +65,7 @@ class KnowledgeDistillationLossHandler(nn.Module):
         self.zero_kd_loss()
         with torch.no_grad():
             original_model_outputs = self._kd_original_model(*args, **kwargs)
+
         kd_loss = self._calculate_kd_loss_fn(compressed_model_outputs, original_model_outputs)
         if kd_loss is not None:
             self._compressed_context.global_buffer_store[self.KD_LOSS_STORAGE_NAME].append(
