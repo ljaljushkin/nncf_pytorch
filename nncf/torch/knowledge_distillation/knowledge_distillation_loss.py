@@ -17,7 +17,6 @@ from torch import nn
 
 from nncf.common.logging import nncf_logger
 from nncf.torch.compression_method_api import PTCompressionLoss
-
 # from nncf.torch.knowledge_distillation.algo import OutputCollector
 from nncf.torch.nested_objects_traversal import NestedObjectIndex
 from nncf.torch.nncf_network import NNCFNetwork
@@ -179,7 +178,8 @@ class KnowledgeDistillationLoss(PTCompressionLoss):
         :return: Differentiable knowledge distillation loss value
         """
         loss = self._kd_loss_handler.get_kd_loss()
-
+        kd_loss_a = None
+        kd_loss_h = None
         # TODO: handle DP mode properly!
         for (t_name, a_tol), (s_name, a_sol) in zip(
             self._a_teacher_collectors.items(), self._a_student_collectors.items()
@@ -195,7 +195,8 @@ class KnowledgeDistillationLoss(PTCompressionLoss):
 
         for idx, _ in enumerate(loss):
             loss[idx] = loss[idx].unsqueeze(0)
-            loss[idx] += kd_loss_h + kd_loss_a
+            if kd_loss_a and kd_loss_h:
+                loss[idx] += kd_loss_h + kd_loss_a
         output = torch.cat(loss).mean()
         return output
 

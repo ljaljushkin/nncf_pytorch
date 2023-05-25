@@ -88,17 +88,18 @@ class KnowledgeDistillationBuilder(PTCompressionAlgorithmBuilder):
 
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
         graph = target_model.nncf.get_original_graph()
-        student_layout = PTTransformationLayout()
-        teacher_layout = PTTransformationLayout()
-        self.a_student_collectors = self._create_layout(graph, self.a_scopes, student_layout)
-        self.a_teacher_collectors = self._create_layout(graph, self.a_scopes, teacher_layout)
+        self.original_model = deepcopy(target_model).nncf.get_clean_shallow_copy()
+        if self.a_scopes and self.h_scopes:
+            student_layout = PTTransformationLayout()
+            teacher_layout = PTTransformationLayout()
+            self.a_student_collectors = self._create_layout(graph, self.a_scopes, student_layout)
+            self.a_teacher_collectors = self._create_layout(graph, self.a_scopes, teacher_layout)
 
-        self.h_student_collectors = self._create_layout(graph, self.h_scopes, student_layout)
-        self.h_teacher_collectors = self._create_layout(graph, self.h_scopes, teacher_layout)
+            self.h_student_collectors = self._create_layout(graph, self.h_scopes, student_layout)
+            self.h_teacher_collectors = self._create_layout(graph, self.h_scopes, teacher_layout)
 
-        original_model = deepcopy(target_model).nncf.get_clean_shallow_copy()
-        transformer = PTModelTransformer(original_model)
-        self.original_model = transformer.transform(teacher_layout)
+            transformer = PTModelTransformer(self.original_model)
+            self.original_model = transformer.transform(teacher_layout)
 
         for param in self.original_model.parameters():
             param.requires_grad = False
