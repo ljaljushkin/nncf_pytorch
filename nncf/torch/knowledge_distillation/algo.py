@@ -17,7 +17,7 @@ from typing import Dict
 
 from torch import nn
 
-from nncf import NNCFConfig
+from nncf import NNCFConfig, nncf_logger
 from nncf.api.compression import CompressionLoss, CompressionScheduler, CompressionStage
 from nncf.common.graph.transformations.commands import TargetType, TransformationPriority
 from nncf.common.schedulers import BaseCompressionScheduler
@@ -76,6 +76,7 @@ class KnowledgeDistillationBuilder(PTCompressionAlgorithmBuilder):
         for node in graph.get_all_nodes():
             node_name = node.node_name
             if should_consider_scope(node_name, None, scopes):
+                nncf_logger.info(f"{node_name}")
                 op = OutputCollector()
                 collectors[node_name] = op
                 command = PTInsertionCommand(
@@ -89,8 +90,8 @@ class KnowledgeDistillationBuilder(PTCompressionAlgorithmBuilder):
     def _get_transformation_layout(self, target_model: NNCFNetwork) -> PTTransformationLayout:
         graph = target_model.nncf.get_original_graph()
         self.original_model = deepcopy(target_model).nncf.get_clean_shallow_copy()
+        student_layout = PTTransformationLayout()
         if self.a_scopes and self.h_scopes:
-            student_layout = PTTransformationLayout()
             teacher_layout = PTTransformationLayout()
             self.a_student_collectors = self._create_layout(graph, self.a_scopes, student_layout)
             self.a_teacher_collectors = self._create_layout(graph, self.a_scopes, teacher_layout)
