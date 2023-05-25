@@ -57,8 +57,8 @@ def get_kd_config(config: NNCFConfig, kd_type="mse", scale=1, temperature=None) 
         "algorithm": "knowledge_distillation",
         "type": kd_type,
         "scale": scale,
-        "a_scopes": "ContainersOutputsModel/NNCFConv2d[conv1]/conv2d_0",
-        "h_scopes": "ContainersOutputsModel/NNCFConv2d[conv1]/conv2d_0",
+        "a_scopes": "{re}.*NNCFConv2d\[conv1\]/conv2d_0",
+        "h_scopes": "{re}.*/conv2d_0",
     }
     if temperature is not None:
         kd_algo_dict["temperature"] = temperature

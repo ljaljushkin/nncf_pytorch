@@ -73,6 +73,7 @@ class KnowledgeDistillationBuilder(PTCompressionAlgorithmBuilder):
 
     def _create_layout(self, graph, scopes, layout):
         collectors = {}
+        nncf_logger.info(f"KD for intermediate layers:")
         for node in graph.get_all_nodes():
             node_name = node.node_name
             if should_consider_scope(node_name, None, scopes):

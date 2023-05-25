@@ -17,6 +17,7 @@ from torch import nn
 
 from nncf.common.logging import nncf_logger
 from nncf.torch.compression_method_api import PTCompressionLoss
+
 # from nncf.torch.knowledge_distillation.algo import OutputCollector
 from nncf.torch.nested_objects_traversal import NestedObjectIndex
 from nncf.torch.nncf_network import NNCFNetwork
@@ -185,17 +186,17 @@ class KnowledgeDistillationLoss(PTCompressionLoss):
             self._a_teacher_collectors.items(), self._a_student_collectors.items()
         ):
             kd_loss_a = self.softmax_fn(a_tol.output, a_sol.output)
-            print(f"loss between {t_name} and {s_name} = {kd_loss_a}\n t_o={a_tol.output} \n s_o={a_sol.output}")
+            # print(f"loss between {t_name} and {s_name} = {kd_loss_a}\n t_o={a_tol.output} \n s_o={a_sol.output}")
 
         for (t_name, h_tol), (s_name, h_sol) in zip(
             self._h_teacher_collectors.items(), self._h_student_collectors.items()
         ):
             kd_loss_h = self.mse_fn(h_tol.output, h_sol.output)
-            print(f"loss between {t_name} and {s_name} = {kd_loss_h}\n t_o={h_tol.output} \n s_o={h_sol.output}")
+            # print(f"loss between {t_name} and {s_name} = {kd_loss_h}\n t_o={h_tol.output} \n s_o={h_sol.output}")
 
         for idx, _ in enumerate(loss):
             loss[idx] = loss[idx].unsqueeze(0)
-            if kd_loss_a and kd_loss_h:
+            if kd_loss_a is not None and kd_loss_h is not None:
                 loss[idx] += kd_loss_h + kd_loss_a
         output = torch.cat(loss).mean()
         return output
