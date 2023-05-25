@@ -180,6 +180,7 @@ class KnowledgeDistillationLoss(PTCompressionLoss):
         """
         loss = self._kd_loss_handler.get_kd_loss()
 
+        # TODO: handle DP mode properly!
         for (t_name, a_tol), (s_name, a_sol) in zip(
             self._a_teacher_collectors.items(), self._a_student_collectors.items()
         ):
@@ -189,13 +190,12 @@ class KnowledgeDistillationLoss(PTCompressionLoss):
         for (t_name, h_tol), (s_name, h_sol) in zip(
             self._h_teacher_collectors.items(), self._h_student_collectors.items()
         ):
-            kd_loss_h = self.softmax_fn(h_tol.output, h_sol.output)
+            kd_loss_h = self.mse_fn(h_tol.output, h_sol.output)
             print(f"loss between {t_name} and {s_name} = {kd_loss_h}\n t_o={h_tol.output} \n s_o={h_sol.output}")
-
-        loss += kd_loss_h + kd_loss_a
 
         for idx, _ in enumerate(loss):
             loss[idx] = loss[idx].unsqueeze(0)
+            loss[idx] += kd_loss_h + kd_loss_a
         output = torch.cat(loss).mean()
         return output
 
