@@ -65,7 +65,8 @@ class KnowledgeDistillationBuilder(PTCompressionAlgorithmBuilder):
         self.h_scopes = self._algo_config.get("h_scopes")
         if "temperature" in self._algo_config.keys() and self.kd_type == "mse":
             raise ValueError("Temperature shouldn't be stated for MSE Loss (softmax only feature)")
-
+        if self.kd_type is None:
+            nncf_logger.info("NL: No distillation by output")
         self.a_student_collectors = {}
         self.a_teacher_collectors = {}
         self.h_student_collectors = {}

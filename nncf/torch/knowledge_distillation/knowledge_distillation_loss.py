@@ -88,7 +88,10 @@ class KnowledgeDistillationLoss(PTCompressionLoss):
 
         self.mse_fn = mse_fn
         self.softmax_fn = softmax_fn
-        kd_loss_fn = softmax_fn if kd_type == "softmax" else mse_fn
+        if kd_type is None:
+            kd_loss_fn = None
+        else:
+            kd_loss_fn = softmax_fn if kd_type == "softmax" else mse_fn
 
         self._a_student_collectors = a_student_collectors
         self._a_teacher_collectors = a_teacher_collectors

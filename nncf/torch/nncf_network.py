@@ -15,8 +15,7 @@ import types
 from collections import OrderedDict
 from contextlib import contextmanager
 from copy import deepcopy
-from enum import Enum
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import Callable, Dict, Iterator, List, Optional, Tuple, TypeVar
 
 import torch
@@ -24,38 +23,29 @@ from torch import nn
 
 from nncf import nncf_logger
 from nncf.common.deprecation import warning_deprecated
-from nncf.common.graph import NNCFNode
-from nncf.common.graph import NNCFNodeName
-from nncf.common.graph.definitions import MODEL_INPUT_OP_NAME
-from nncf.common.graph.definitions import MODEL_OUTPUT_OP_NAME
+from nncf.common.graph import NNCFNode, NNCFNodeName
+from nncf.common.graph.definitions import MODEL_INPUT_OP_NAME, MODEL_OUTPUT_OP_NAME
 from nncf.common.graph.model_transformer import ModelTransformer
-from nncf.common.graph.transformations.commands import TargetType
-from nncf.common.graph.transformations.commands import TransformationPriority
-from nncf.common.insertion_point_graph import InsertionPointGraph
-from nncf.common.insertion_point_graph import PostHookInsertionPoint
-from nncf.common.insertion_point_graph import PreHookInsertionPoint
+from nncf.common.graph.transformations.commands import TargetType, TransformationPriority
+from nncf.common.insertion_point_graph import InsertionPointGraph, PostHookInsertionPoint, PreHookInsertionPoint
 from nncf.common.utils.debug import is_debug
-from nncf.torch.debug import CombinedDebugInterface
-from nncf.torch.debug import debuggable_forward
+from nncf.torch.debug import CombinedDebugInterface, debuggable_forward
 from nncf.torch.dynamic_graph.context import TracingContext
-from nncf.torch.dynamic_graph.graph import DynamicGraph
-from nncf.torch.dynamic_graph.graph import ShapeIgnoringTensorMetaComparator
-from nncf.torch.dynamic_graph.graph_tracer import GraphTracer
-from nncf.torch.dynamic_graph.graph_tracer import ModelInputInfo
-from nncf.torch.dynamic_graph.graph_tracer import create_dummy_forward_fn
-from nncf.torch.dynamic_graph.io_handling import InputInfoWrapManager
-from nncf.torch.dynamic_graph.io_handling import replicate_same_tensors
-from nncf.torch.dynamic_graph.io_handling import wrap_nncf_model_outputs_with_objwalk
+from nncf.torch.dynamic_graph.graph import DynamicGraph, ShapeIgnoringTensorMetaComparator
+from nncf.torch.dynamic_graph.graph_tracer import GraphTracer, ModelInputInfo, create_dummy_forward_fn
+from nncf.torch.dynamic_graph.io_handling import (
+    InputInfoWrapManager,
+    replicate_same_tensors,
+    wrap_nncf_model_outputs_with_objwalk,
+)
 from nncf.torch.dynamic_graph.operation_address import OperationAddress
 from nncf.torch.dynamic_graph.scope import Scope
 from nncf.torch.dynamic_graph.scope_access import get_module_by_scope
 from nncf.torch.dynamic_graph.trace_tensor import TracedTensor
 from nncf.torch.dynamic_graph.wrappers import wrap_module_call
 from nncf.torch.graph.graph import PTNNCFGraph
-from nncf.torch.graph.graph_builder import GraphBuilder
-from nncf.torch.graph.graph_builder import GraphConverter
-from nncf.torch.graph.operator_metatypes import OPERATORS_WITH_WEIGHTS_METATYPES
-from nncf.torch.graph.operator_metatypes import PTSplitMetatype
+from nncf.torch.graph.graph_builder import GraphBuilder, GraphConverter
+from nncf.torch.graph.operator_metatypes import OPERATORS_WITH_WEIGHTS_METATYPES, PTSplitMetatype
 from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.graph.transformations.layout import PTTransformationLayout
 from nncf.torch.knowledge_distillation.knowledge_distillation_handler import KnowledgeDistillationLossHandler
@@ -63,10 +53,7 @@ from nncf.torch.layer_utils import _NNCFModuleMixin
 from nncf.torch.module_operations import UpdateWeight
 from nncf.torch.nested_objects_traversal import objwalk
 from nncf.torch.nncf_module_replacement import replace_modules_by_nncf_modules
-from nncf.torch.utils import compute_FLOPs_hook
-from nncf.torch.utils import get_all_modules_by_type
-from nncf.torch.utils import get_model_device
-from nncf.torch.utils import training_mode_switcher
+from nncf.torch.utils import compute_FLOPs_hook, get_all_modules_by_type, get_model_device, training_mode_switcher
 
 LEGACY_MODEL_WRAPPED_BY_NNCF_ATTR_NAME = "nncf_module"
 LEGACY_EXTERNAL_QUANTIZERS_STORAGE_PREFIX = "external_quantizers"
@@ -914,7 +901,7 @@ class NNCFNetwork(torch.nn.Module, metaclass=NNCFNetworkMeta):
             if not self.nncf._in_user_dummy_forward:
                 retval = self.nncf._wrap_outputs_fn(retval)
 
-        if self.nncf._kd_loss_handler is not None and self.training:
+        if self.nncf._kd_loss_handler is not None:
             self.nncf._kd_loss_handler(retval, *args, **kwargs)
         return retval
 
@@ -973,6 +960,7 @@ class NNCFNetwork(torch.nn.Module, metaclass=NNCFNetworkMeta):
             ".get_nncf_wrapped_model() may be simply omitted."
         )
         return self
+
 
 class NNCFSkippingIter:
     """

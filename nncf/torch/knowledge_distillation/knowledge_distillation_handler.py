@@ -66,8 +66,9 @@ class KnowledgeDistillationLossHandler(nn.Module):
         with torch.no_grad():
             original_model_outputs = self._kd_original_model(*args, **kwargs)
 
-        kd_loss = self._calculate_kd_loss_fn(compressed_model_outputs, original_model_outputs)
-        if kd_loss is not None:
-            self._compressed_context.global_buffer_store[self.KD_LOSS_STORAGE_NAME].append(
-                kd_loss.to(self._compressed_context.global_buffer_store[self.KD_STORAGE_DEVICE])
-            )
+        if self._calculate_kd_loss_fn is not None:
+            kd_loss = self._calculate_kd_loss_fn(compressed_model_outputs, original_model_outputs)
+            if kd_loss is not None:
+                self._compressed_context.global_buffer_store[self.KD_LOSS_STORAGE_NAME].append(
+                    kd_loss.to(self._compressed_context.global_buffer_store[self.KD_STORAGE_DEVICE])
+                )
