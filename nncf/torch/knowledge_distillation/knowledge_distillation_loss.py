@@ -88,17 +88,16 @@ class KnowledgeDistillationLoss(PTCompressionLoss):
 
         self.mse_fn = mse_fn
         self.softmax_fn = softmax_fn
-        if kd_type is None:
-            kd_loss_fn = None
-        else:
+        calculate_fn = None
+        if kd_type is not None:
             kd_loss_fn = softmax_fn if kd_type == "softmax" else mse_fn
-
+            calculate_fn = partial(KnowledgeDistillationLoss._calculate, kd_loss_fn=kd_loss_fn)
         self._a_student_collectors = a_student_collectors
         self._a_teacher_collectors = a_teacher_collectors
         self._h_student_collectors = h_student_collectors
         self._h_teacher_collectors = h_teacher_collectors
         self._kd_loss_handler = target_model.nncf.create_knowledge_distillation_loss_handler(
-            original_model, partial(KnowledgeDistillationLoss._calculate, kd_loss_fn=kd_loss_fn)
+            original_model, calculate_fn=calculate_fn
         )
 
     @staticmethod

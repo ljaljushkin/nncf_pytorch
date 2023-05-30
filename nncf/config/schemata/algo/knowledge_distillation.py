@@ -14,7 +14,7 @@ from nncf.config.schemata.common.compression import BASIC_COMPRESSION_ALGO_SCHEM
 from nncf.config.schemata.common.targeting import IGNORED_SCOPES_DESCRIPTION, TARGET_SCOPES_DESCRIPTION
 from nncf.config.schemata.defaults import KNOWLEDGE_DISTILLATION_SCALE, KNOWLEDGE_DISTILLATION_TEMPERATURE
 
-KNOWLEDGE_DISTILLATION_TYPE_OPTIONS = ["mse", "softmax"]
+KNOWLEDGE_DISTILLATION_TYPE_OPTIONS = ["mse", "softmax", "none"]
 
 KNOWLEDGE_DISTILLATION_SCHEMA = {
     **BASIC_COMPRESSION_ALGO_SCHEMA,
