@@ -198,8 +198,10 @@ class KnowledgeDistillationLoss(PTCompressionLoss):
 
         for idx, _ in enumerate(loss):
             loss[idx] = loss[idx].unsqueeze(0)
-            if kd_loss_a is not None and kd_loss_h is not None:
-                loss[idx] += kd_loss_h + kd_loss_a
+            if kd_loss_a is not None:
+                loss[idx] += kd_loss_a
+            if kd_loss_h is not None:
+                loss[idx] += kd_loss_h
         output = torch.cat(loss).mean()
         return output
 

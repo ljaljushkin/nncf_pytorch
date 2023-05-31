@@ -94,13 +94,14 @@ class KnowledgeDistillationBuilder(PTCompressionAlgorithmBuilder):
         graph = target_model.nncf.get_original_graph()
         self.original_model = deepcopy(target_model).nncf.get_clean_shallow_copy()
         student_layout = PTTransformationLayout()
-        if self.a_scopes and self.h_scopes:
+        if self.a_scopes or self.h_scopes:
             teacher_layout = PTTransformationLayout()
-            self.a_student_collectors = self._create_layout(graph, self.a_scopes, student_layout)
-            self.a_teacher_collectors = self._create_layout(graph, self.a_scopes, teacher_layout)
-
-            self.h_student_collectors = self._create_layout(graph, self.h_scopes, student_layout)
-            self.h_teacher_collectors = self._create_layout(graph, self.h_scopes, teacher_layout)
+            if self.a_scopes:
+                self.a_student_collectors = self._create_layout(graph, self.a_scopes, student_layout)
+                self.a_teacher_collectors = self._create_layout(graph, self.a_scopes, teacher_layout)
+            if self.h_scopes:
+                self.h_student_collectors = self._create_layout(graph, self.h_scopes, student_layout)
+                self.h_teacher_collectors = self._create_layout(graph, self.h_scopes, teacher_layout)
 
             transformer = PTModelTransformer(self.original_model)
             self.original_model = transformer.transform(teacher_layout)
