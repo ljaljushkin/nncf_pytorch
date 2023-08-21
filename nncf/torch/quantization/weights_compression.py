@@ -12,6 +12,7 @@
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+import statistics
 
 import numpy as np
 import torch
@@ -206,7 +207,7 @@ def get_total_num_weights(model, allowed_types, res=None):
             continue
         res.append(module.weight.data.numel())
 
-def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False, bits=4) -> Optional[nn.Module]:
+def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False, bits=4, alpha=10) -> Optional[nn.Module]:
     """
     Inserts weights compression with dequantization or quantization pre operation for Linear and Embedding layers.
 
@@ -218,6 +219,9 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
         uint8 with one element per 8 bit.
     :return: The module with inserted operations. The module is not trainable if use_fake_quantize is False.
     """
+    target_ratio_in_4_bit = 0.43
+    ratio_updated = target_ratio_in_4_bit / 2
+
     user_types = list(NNCF_WRAPPED_USER_MODULES_DICT.values())
     allowed_types = [NNCFEmbedding, NNCFLinear]
     # level_high = 2**bits - 1
@@ -238,8 +242,6 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
     # print(f'data={data_list}')
     n = len(data_list)
     errors = [data.error for data in data_list]
-    for data in data_list:
-        print(data.name)
     max_error = max(errors)
     layers=list(range(n))
     import matplotlib.pyplot as plt
@@ -251,6 +253,7 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
 
 
     errors = [e/max_error for e in errors]
+    mean = statistics.mean(errors)
     fig = plt.figure()
     plt.plot(layers, errors)
     plt.savefig('norm_errors.png')
@@ -258,30 +261,25 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
     # print(f'\nnorm_errors={errors}')
 
     assert (num_all_weights - 2) == n, f'{num_all_weights}_{n}'
-
-    ratio_updated = 0.25
-    alpha = 0.5
-    num_updated = n * ratio_updated
+    num_updated = int(n * ratio_updated) + 1
     # TODO: no linear rule??
-    position_weight = [ (1 - i / num_updated) * alpha if i < num_updated else 0 for i in range(n)]
+    position_weight = [ (mean - i * mean / num_updated) * alpha if i < num_updated else 0 for i in range(n)]
     print(f'\nposition_weight={position_weight}')
     # TODO: normalize position weights to be between min and max error
     # TODO: find mean std!
     updated_errors = [e + p for e,p in zip(errors, position_weight)]
+    # updated_errors = errors
     fig = plt.figure()
     plt.plot(layers, updated_errors)
     plt.plot(layers, position_weight)
-    # updated_errors = errors
     # print(f'\nupdated_errors={updated_errors}')
-    plt.savefig('updated_errors.png')
-    plt.close(fig)
+
     indexes_of_layers_in_ascending_order_of_errors = [
         i[0] for i in sorted(enumerate(updated_errors), reverse=False, key=lambda x: x[1])
     ]
     # print(f'\nindexes_of_layers_in_ascending_order_of_errors={indexes_of_layers_in_ascending_order_of_errors}')
     sorted_errors = [data_list[i].error for i in indexes_of_layers_in_ascending_order_of_errors]
     print(f'\nsorted errors: {sorted_errors}')
-    target_ratio_in_4_bit = 0.43
     current_num_weights = 0
 
     last_idx = None
@@ -312,12 +310,12 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
         precision = 4 if i <= last_idx else 8
         layer_id_vs_precision_map[data.module_id] = (precision, data.name)
         # print(f'{precision} bit for {data.name}')
+    boundary_error = updated_errors[indexes_of_layers_in_ascending_order_of_errors[last_idx]]
+    plt.axhline(y = boundary_error, color = 'r', linestyle = '-')
+    plt.savefig('updated_errors.png')
+    plt.close(fig)
 
-    bit_config = []
-    for data in data_list:
-        precision, _ = layer_id_vs_precision_map[data.module_id]
-        bit_config.append(precision)
-        print(f'{precision} bit for {data.name}')
+    bit_config = [layer_id_vs_precision_map[data.module_id][0] for data in data_list]
     print(bit_config)
 
     _insert_pre_compression_operations(module, use_fake_quantize, layer_id_vs_precision_map)
