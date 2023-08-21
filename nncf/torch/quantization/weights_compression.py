@@ -237,7 +237,7 @@ def _fake_fp_to_nf4(
         input_low  = input_low.unsqueeze(1)
         input_high = input_high.unsqueeze(1)
 
-        zp = 0.5 * (input_low + input_high)
+        delta = 0.5 * (input_low + input_high)
         #scale = (input_high - zp).abs()
 
         # zp = (zp / scale).numpy()
@@ -245,18 +245,19 @@ def _fake_fp_to_nf4(
         zp = 0.0
 
         scale = torch.max((input_high - zp).abs(), (input_low - zp).abs())
-
-        #scale, zp = get_scale_zp_from_input_low_input_high_nf4(0.0, 2.0, input_low, input_high)
-
-        tmp = (layer.weight / scale - zp).detach()
+        scale = input_high - delta
+        # scale, zp = get_scale_zp_from_input_low_input_high_nf4(0.0, 2.0, input_low, input_high)
+        # scale = scale.unsqueeze(stat_dim)
+        # zp = zp.unsqueeze(stat_dim)
+        tmp = ((layer.weight.data - delta) / scale).detach()
         tmp = tmp.numpy()
         tmp = nf4_convert(tmp)
         # TODO: nf4 quantize zp=0
         #print("Type before: ", layer.weight.type())
-        nf4_data = ((torch.from_numpy(tmp) + zp) * scale).type(torch.FloatTensor)
+        nf4_data = (torch.from_numpy(tmp) * scale + delta).type(torch.FloatTensor)
         diff = torch.mean((nf4_data - layer.weight.data)**2)
         print('\t'*iter, "diff: ", diff)
-        layer.weight.data = ((torch.from_numpy(tmp) + zp) * scale).type(torch.FloatTensor)
+        layer.weight.data = nf4_data
         #print("Type after: ", layer.weight.type())
 
 
