@@ -248,6 +248,7 @@ def _fake_fp_to_nf4(
         num_columns = w.shape[stat_dim]
         group_size = 256
         scale = []
+        # delta = []
         assert num_columns % group_size == 0
         for i1 in range(0, num_columns, group_size):
             i2 = i1 + group_size
@@ -257,8 +258,11 @@ def _fake_fp_to_nf4(
             input_high = torch.max(current_columns, dim=stat_dim)[0].detach()  # [c_out]
             input_high = input_high.unsqueeze(dim=stat_dim)  # [c_out, 1]
             scale.append(torch.max((input_high - zp).abs(), (input_low - zp).abs()))
+            # delta.append(0.5 * (input_low + input_high))
         scale = torch.cat(scale, dim=stat_dim)  # [c_out, c_in // group_size]
         scale = torch.repeat_interleave(scale, group_size, dim=stat_dim)  # [c_out, c_in]
+        # delta = torch.cat(delta, dim=stat_dim)  # [c_out, c_in // group_size]
+        # delta = torch.repeat_interleave(delta, group_size, dim=stat_dim)  # [c_out, c_in]
         # print(scale[:5, :5], scale.shape)
 
         # scale = torch.max((input_high - zp).abs(), (input_low - zp).abs())
