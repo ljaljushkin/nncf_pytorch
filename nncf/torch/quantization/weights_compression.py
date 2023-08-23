@@ -187,6 +187,147 @@ def ref_ASYM(level_low, level_high, input_low, input_high):
     y_zero_point = torch.squeeze(y_zero_point)
     return y_scale, y_zero_point
 
+class WeightsDecompressorPowerQuant(nn.Module):
+    """Applies decompression of compressed weights in forward pass
+
+    Attributes:
+        zero_point: zero point in quantization scheme
+        scale: scale in quantizatin scheme
+    """
+
+    def __init__(self, zero_point, scale, alpha):
+        super().__init__()
+        self.zero_point = zero_point
+        self.scale = scale
+        if alpha >= 0.9:
+            alpha = int(alpha)
+        self.alpha = alpha
+        # self.unpacker = Unpacker()
+
+    def forward(self, layer, op_arg):
+        # w = self.unpacker(layer.weight)
+        w = layer.weight
+        w = w.type(dtype=self.scale.dtype)
+        w = (w - self.zero_point) * self.scale
+        s = torch.sign(w)
+        # w = torch.pow(w, self.alpha)
+        # s_w = w * self.sign
+        if self.alpha == 2:
+            layer.weight = torch.square(w) * s
+        else:
+            layer.weight = torch.pow(w, self.alpha) * s
+
+    def dequantize(self, input):
+        w = input.type(dtype=self.scale.dtype)
+        w = (w - self.zero_point) * self.scale
+        s = torch.sign(w)
+        return torch.pow(w, self.alpha) * s
+
+def _insert_pre_compression_operations_power_quant(
+    module: nn.Module, allowed_types: Dict, use_fake_quantize=False, level_high=15, th=1000.0, iter=0
+) -> Optional[nn.Module]:
+    """
+    Inserts weights compression with dequantization or quantization pre operation for Linear and Embedding layers.
+
+    :param module: The module to insert the weights compression.
+    :param allowed_types: list of allowed types for weights compression.
+    :param use_fake_quantize: Disables real compression of weights in Linear and Embedding layers.
+        If True inserts pytorch torch.fake_quantize_per_channel_affine(),
+        else compress weights to int8 and inserts custom dequantization.
+    :param level_high: highest  possible value of compressed weights (lower is 0 in assymetric quantization).
+    :return: The module with inserted operations. The module is not trainable if use_fake_quantize is False.
+    """
+    for lname, layer in module.named_children():
+        # if 'emb' in lname:
+        #     print(f'Skip {lname}')
+        #     continue
+        # if type(layer) is NNCFEmbedding:
+        #     _insert_pre_compression_operations(layer, allowed_types, use_fake_quantize, 255)
+        #     continue
+        print("\t"*iter, lname)
+        alphas = [0.125/2, 0.125, 0.25, 0.5, 1.0]#[0.25, 0.5, 1.0, 2.0]
+        if not type(layer) in allowed_types:
+            _insert_pre_compression_operations_power_quant(layer, allowed_types, use_fake_quantize, level_high, th, iter+1)
+            continue
+
+        err = get_relative_error(layer) #get_power_quant_error(layer)
+        if 'emb' in lname or 'lm_head' in lname or err > th:
+            print("\t"*iter, "INT8")
+            # print("Skip embeddings ", lname)
+            # continue
+            target_dim = layer.target_weight_dim_for_compression
+            stat_dim = (target_dim + 1) % 2
+            input_low = torch.min(layer.weight, dim=stat_dim)[0].detach()
+            input_high = torch.max(layer.weight, dim=stat_dim)[0].detach()
+            scale, zero_point = get_scale_zp_from_input_low_input_high(0, 255, input_low, input_high)
+
+            scale = scale.unsqueeze(stat_dim)
+            zero_point = zero_point.unsqueeze(stat_dim)
+            layer.register_pre_forward_operation(WeightsDecompressor(zero_point, scale))
+
+            compressed_weight = layer.weight.data / scale + zero_point
+            compressed_weight = torch.clamp(torch.round(compressed_weight), 0, 255)
+
+            layer.weight.requires_grad = False
+            layer.weight.data = compressed_weight.type(dtype=torch.uint8)
+            continue
+
+        # best_alpha = -1
+        # min_err = layer.weight.numel()
+        w_sign = torch.sign(layer.weight)
+
+        # for alpha in alphas:
+        #     w_pow = torch.pow(torch.abs(layer.weight), alpha) * w_sign
+        #     target_dim = layer.target_weight_dim_for_compression
+        #     stat_dim = (target_dim + 1) % 2
+        #     input_low = torch.min(w_pow, dim=stat_dim)[0].detach()
+        #     input_high = torch.max(w_pow, dim=stat_dim)[0].detach()
+        #     scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+
+        #     scale = scale.unsqueeze(stat_dim)
+        #     zero_point = zero_point.unsqueeze(stat_dim)
+        #     op = WeightsDecompressorPowerQuant(zero_point, scale, 1/alpha)
+
+        #     compressed_weight = w_pow.data / scale + zero_point
+        #     compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
+
+        #     decompressed_weight = op.dequantize(compressed_weight)
+        #     diff = (decompressed_weight - layer.weight.data)**2
+        #     cur_err = torch.mean(diff)
+
+        #     layer_err = torch.mean(diff, dim=1)
+        #     top_k = torch.topk(layer_err, 10)[0]
+        #     #val = float(mean_err)#top_k[0])
+        #     cur_err = float(top_k[0])
+
+        #     if cur_err < min_err:
+        #         min_err = cur_err
+        #         best_alpha = alpha
+        # print(f"layer {lname}, alpha {best_alpha}, min_err {min_err}")
+        print("\t"*iter, "POWER QUANT INT4")
+        best_alpha = 0.5
+        w_pow = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
+        target_dim = layer.target_weight_dim_for_compression
+        stat_dim = (target_dim + 1) % 2
+        input_low = torch.min(w_pow, dim=stat_dim)[0].detach()
+        input_high = torch.max(w_pow, dim=stat_dim)[0].detach()
+        scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+
+        scale = scale.unsqueeze(stat_dim)
+        zero_point = zero_point.unsqueeze(stat_dim)
+
+        compressed_weight = w_pow.data / scale + zero_point
+        compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
+
+        layer.weight.requires_grad = False
+        compressed_weight = compressed_weight.type(dtype=torch.uint8)
+
+        # layer.weight.data = Packer.pack(compressed_weight)
+        layer.weight.data = compressed_weight
+
+        layer.register_pre_forward_operation(WeightsDecompressorPowerQuant(zero_point, scale, 1/best_alpha))
+
+
 def _fake_fp_to_nf4(
     module: nn.Module, allowed_types: Dict, iter
 ) -> Optional[nn.Module]:
@@ -284,6 +425,82 @@ def _fake_fp_to_nf4(
         #print("Type after: ", layer.weight.type())
 
 
+def get_int8_err(layer):
+    if not type(layer) is NNCFLinear:
+        return -1.0
+
+    target_dim = layer.target_weight_dim_for_compression
+    stat_dim = (target_dim + 1) % 2
+    input_low = torch.min(layer.weight, dim=stat_dim)[0].detach()
+    input_high = torch.max(layer.weight, dim=stat_dim)[0].detach()
+
+    level_high = 2**8-1
+
+    scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+
+    scale = scale.unsqueeze(stat_dim)
+    zero_point = zero_point.unsqueeze(stat_dim)
+
+    compressed_weight = layer.weight.data / scale + zero_point
+    compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
+
+    w = compressed_weight.type(dtype=scale.dtype)
+    w = (w - zero_point) * scale
+
+    diff = (w - layer.weight.data)**2
+    #mean_err = torch.mean(diff)
+    layer_err = torch.mean(diff, dim=1)
+    top_k = torch.topk(layer_err, 10)[0]
+    #val = float(mean_err)#top_k[0])
+    val = float(top_k[0])
+    return val
+
+
+def get_power_quant_error(layer):
+    if not type(layer) is NNCFLinear:
+        return -1.0
+    alpha = 0.5
+
+    level_high = 2**4 - 1
+    w_sign = torch.sign(layer.weight)
+    w_pow = torch.pow(torch.abs(layer.weight), alpha) * w_sign
+    target_dim = layer.target_weight_dim_for_compression
+    stat_dim = (target_dim + 1) % 2
+    input_low = torch.min(w_pow, dim=stat_dim)[0].detach()
+    input_high = torch.max(w_pow, dim=stat_dim)[0].detach()
+    scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+
+    scale = scale.unsqueeze(stat_dim)
+    zero_point = zero_point.unsqueeze(stat_dim)
+    op = WeightsDecompressorPowerQuant(zero_point, scale, 1/alpha)
+
+    compressed_weight = w_pow.data / scale + zero_point
+    compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
+
+    decompressed_weight = op.dequantize(compressed_weight)
+    diff = (decompressed_weight - layer.weight.data)**2
+
+    #mean_err = torch.mean(diff)
+    layer_err = torch.mean(diff, dim=1)
+    top_k = torch.topk(layer_err, 10)[0]
+    #val = float(mean_err)#top_k[0])
+    val = float(top_k[0])
+    return val
+
+def get_relative_error(layer):
+    return get_power_quant_error(layer) / (get_int8_err(layer) + 0.0000000001)
+    #return get_int8_err(layer) / (get_power_quant_error(layer) + 0.0000000001)
+
+
+def get_power_quant_errors(module, res):
+    for name, layer in module.named_children():
+        if not type(layer) is NNCFLinear:
+            get_power_quant_errors(layer, res)
+            continue
+
+        #res.append(get_power_quant_error(layer))
+        res.append(get_relative_error(layer))
+
 def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False, bits=8) -> Optional[nn.Module]:
     """
     Inserts weights compression with dequantization or quantization pre operation for Linear and Embedding layers.
@@ -304,9 +521,23 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
 
     for user_type in user_types:
         allowed_types.append(user_type)
+        errors = []
+    get_power_quant_errors(module, errors)
+
+    # %%
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    plt.plot(errors)
+    plt.show(block=False)
+
+
+    errors = sorted(errors)
+    th = errors[int(0.7 * len(errors))]
 
     # _insert_pre_compression_operations(module, allowed_types, use_fake_quantize, level_high)
-    _fake_fp_to_nf4(module, allowed_types, 0)
+    # _fake_fp_to_nf4(module, allowed_types, 0)
+    _insert_pre_compression_operations_power_quant(module, allowed_types, use_fake_quantize, level_high, th, 0)
 
 
 
