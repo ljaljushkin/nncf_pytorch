@@ -60,6 +60,43 @@ def insert_pre_compression_operations(model: ov.Model, bits: int = 8) -> None:
             if weight_node is None:
                 continue
 
+            weight_output = weight_node.output(0)
+            weight_name = weight_node.get_friendly_name()
+            original_weight_dtype = weight_output.get_element_type().to_dtype()
+            target_inputs = weight_output.get_target_inputs()
+
+            if original_weight_dtype not in [np.float32, np.float16]:
+                continue
+
+            weight = get_const_value(weight_node)
+            axes = _get_reduction_axes(metatype, node, const_port_id)
+            min_values = np.min(weight, axis=axes, keepdims=True)
+            max_values = np.max(weight, axis=axes, keepdims=True)
+            stats = OVMinMaxTensorStatistic(min_values, max_values)
+            fq_params = get_fq_params(stats)
+
+            input_low = fq_params.input_low
+            input_high = fq_params.input_high
+            assert np.allclose(fq_params.output_low, input_low)
+            assert np.allclose(fq_params.output_high, input_high)
+
+            levels = fq_params.levels
+            new_output_low = -levels // 2
+            new_output_high = levels - 1 + new_output_low
+            scale, zero_point = calculate_scale_zero_point(
+                input_low, input_high, new_output_low, new_output_high, narrow_range=False
+            )
+
+            int8_weight = np.round(weight / scale + zero_point).astype(np.int8)
+            quantized_weight = opset.constant(int8_weight, dtype=np.int8, name=weight_name)
+            convert = opset.convert(quantized_weight, original_weight_dtype)
+            sub = opset.subtract(convert, zero_point.astype(original_weight_dtype))
+            fq_name = f"{node.get_friendly_name()}/fq_weights_{const_port_id}"
+            mul = opset.multiply(sub, scale.astype(original_weight_dtype), name=fq_name)
+
+            for target_input in target_inputs:
+                target_input.replace_source_output(mul.output(0))
+
             # nncf_logger.info(node.get_friendly_name())
             # nncf_logger.info(weight_node.get_friendly_name())
             weight_output = weight_node.output(0)
