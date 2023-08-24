@@ -14,8 +14,8 @@ core = Core()
 # ov_model.save_pretrained('/home/nlyaly/projects/nncf/tests/openvino')
 # ie = ov.Core()
 
-SRC_PATH = '/home/devuser/nlyalyus/projects/lm-evaluation-harness/cache/Llama-2-7b-chat-hf/fp32/openvino_model.xml'
-DST_PATH = '/home/devuser/nlyalyus/projects/lm-evaluation-harness/cache/Llama-2-7b-chat-hf/power_quant_ov/openvino_model.xml'
+SRC_PATH = '/home/nlyaly/projects/lm-evaluation-harness/cache/opt-125m/fp32/openvino_model.xml'
+DST_PATH = '/home/nlyaly/projects/lm-evaluation-harness/cache/opt-125m/int8_1pw/openvino_model.xml'
 model = core.read_model(model=SRC_PATH)
 model = compress_weights(model)
 ov.save_model(model, DST_PATH, compress_to_fp16=False)
