@@ -224,7 +224,7 @@ class WeightsDecompressorPowerQuant(nn.Module):
         return torch.pow(w, self.alpha) * s
 
 def _insert_pre_compression_operations_power_quant(
-    module: nn.Module, allowed_types: Dict, use_fake_quantize=False, level_high=15, th=1000.0, iter=0
+    module: nn.Module, allowed_types: Dict, use_fake_quantize=False, level_high=15, th=1000.0, iter=0, precisions=None
 ) -> Optional[nn.Module]:
     """
     Inserts weights compression with dequantization or quantization pre operation for Linear and Embedding layers.
@@ -247,12 +247,13 @@ def _insert_pre_compression_operations_power_quant(
         print("\t"*iter, lname)
         alphas = [0.125/2, 0.125, 0.25, 0.5, 1.0]#[0.25, 0.5, 1.0, 2.0]
         if not type(layer) in allowed_types:
-            _insert_pre_compression_operations_power_quant(layer, allowed_types, use_fake_quantize, level_high, th, iter+1)
+            _insert_pre_compression_operations_power_quant(layer, allowed_types, use_fake_quantize, level_high, th, iter+1, precisions)
             continue
 
         err = get_relative_error(layer) #get_power_quant_error(layer)
         if 'emb' in lname or 'lm_head' in lname or err > th:
             print("\t"*iter, "INT8")
+            precisions.append(8)
             # print("Skip embeddings ", lname)
             # continue
             target_dim = layer.target_weight_dim_for_compression
@@ -305,6 +306,7 @@ def _insert_pre_compression_operations_power_quant(
         #         best_alpha = alpha
         # print(f"layer {lname}, alpha {best_alpha}, min_err {min_err}")
         print("\t"*iter, "POWER QUANT INT4")
+        precisions.append(4)
         best_alpha = 0.5
         w_pow = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
         target_dim = layer.target_weight_dim_for_compression
@@ -537,7 +539,9 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
 
     # _insert_pre_compression_operations(module, allowed_types, use_fake_quantize, level_high)
     # _fake_fp_to_nf4(module, allowed_types, 0)
-    _insert_pre_compression_operations_power_quant(module, allowed_types, use_fake_quantize, level_high, th, 0)
+    precisions = []
+    _insert_pre_compression_operations_power_quant(module, allowed_types, use_fake_quantize, level_high, th, 0, precisions)
+    print(precisions)
 
 
 
