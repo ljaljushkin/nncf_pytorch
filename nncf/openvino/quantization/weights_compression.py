@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import deque
 from functools import partial
 from typing import Tuple, Type, Union
 
@@ -17,6 +18,7 @@ import openvino.runtime as ov
 from openvino.runtime import opset9 as opset
 
 from nncf.common.graph.operator_metatypes import OperatorMetatype
+from nncf.common.logging.logger import nncf_logger
 from nncf.common.quantization.structs import QuantizationMode
 from nncf.common.quantization.structs import QuantizerConfig
 from nncf.common.quantization.structs import QuantizerGroup
@@ -40,22 +42,11 @@ def insert_pre_compression_operations(model: ov.Model, bits: int = 8) -> None:
     :param bits: Number of bits for quantization.
     """
     allowed_metatypes_to_const_port = {OVEmbeddingMetatype: [0], OVMatMulMetatype: [0, 1]}
-    quantizer_config = QuantizerConfig(
-        num_bits=bits,
-        mode=QuantizationMode.ASYMMETRIC,
-        signedness_to_force=None,
-        per_channel=True,
-    )
-
-    get_fq_params = partial(
-        calculate_quantizer_parameters,
-        quantizer_config=quantizer_config,
-        quant_group=QuantizerGroup.WEIGHTS,
-        narrow_range=False,
-        half_range=False,
-    )
-
-    for node in model.get_ops():
+    opt_125m_precisions = [8, 4, 4, 4, 4, 8, 4, 8, 4, 8, 4, 8, 4, 4, 4, 8, 4, 8, 4, 8, 4, 8, 4, 4, 4, 8, 4, 8, 4, 4, 4, 8, 8, 8, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 4, 8]
+    llama2_precisions = [8, 4, 4, 8, 4, 4, 4, 4, 8, 8, 8, 4, 8, 8, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 8, 8, 4, 4, 8, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 4, 8, 4, 4, 4, 8, 8, 4, 4, 8, 4, 4, 8, 8, 4, 4, 8, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 4, 8, 8, 8, 8, 4, 4, 8, 4, 8, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 8]
+    precisions = llama2_precisions
+    idx = 0
+    for node in model.get_ordered_ops():
         # pylint:disable=protected-access
         metatype = GraphConverter._get_node_metatype(node)
         if metatype not in allowed_metatypes_to_const_port:
@@ -66,6 +57,8 @@ def insert_pre_compression_operations(model: ov.Model, bits: int = 8) -> None:
             if weight_node is None:
                 continue
 
+            # nncf_logger.info(node.get_friendly_name())
+            # nncf_logger.info(weight_node.get_friendly_name())
             weight_output = weight_node.output(0)
             fq_count = 0
             for target_input in weight_output.get_target_inputs():
@@ -83,12 +76,28 @@ def insert_pre_compression_operations(model: ov.Model, bits: int = 8) -> None:
             input_low = np.min(weight, axis=axes, keepdims=True)
             input_high = np.max(weight, axis=axes, keepdims=True)
             stats = OVMinMaxTensorStatistic(input_low, input_high)
+            num_bits = precisions[idx]
+            quantizer_config = QuantizerConfig(
+                num_bits=num_bits,
+                mode=QuantizationMode.ASYMMETRIC,
+                signedness_to_force=None,
+                per_channel=True,
+            )
+            get_fq_params = partial(
+                calculate_quantizer_parameters,
+                quantizer_config=quantizer_config,
+                quant_group=QuantizerGroup.WEIGHTS,
+                narrow_range=False,
+                half_range=False,
+            )
             fq_params = get_fq_params(stats)
 
             node_name = node.get_friendly_name()
             fq_name = f"{node_name}/fq_weights_{const_port_id}"
-            _insert_fake_quantize(fq_params, weight_output, fq_name)
-
+            is_power = num_bits == 4
+            _insert_fake_quantize(fq_params, weight_output, fq_name, is_power, weight_node, const_port_id, weight, node)
+            idx += 1
+    nncf_logger.info(f'number of matmuls={idx}')
 
 def _get_reduction_axes(metatype: Type[OperatorMetatype], node: ov.Node, weight_port_id: int) -> Union[int, Tuple[int]]:
     """
@@ -112,7 +121,37 @@ def _get_reduction_axes(metatype: Type[OperatorMetatype], node: ov.Node, weight_
     return axes
 
 
-def _insert_fake_quantize(fq_params: FakeQuantizeParameters, weight_output: ov.Output, fq_name: str) -> None:
+def _set_const_value(node_with_const: ov.Node, const_port_id: int, const_value: np.ndarray) -> ov.Node:
+        port = node_with_const.input(const_port_id)
+        node = node_with_const.input_value(const_port_id).get_node()
+
+        const_port = None
+        const_node = None
+        queue = deque([(port, node)])
+        while len(queue) != 0:
+            curr_port, curr_node = queue.popleft()
+            if curr_node.get_type_name() == "Constant":
+                const_port = curr_port
+                const_node = curr_node
+                break
+            if len(curr_node.inputs()) == 0:
+                break
+            queue.append((curr_node.input(0), curr_node.input_value(0).get_node()))
+
+        queue = deque([node])
+
+        if const_node is None:
+            raise RuntimeError("Constant node was expected but could not find it.")
+
+        const_shape = const_node.get_data().shape
+        const_value = np.reshape(const_value, const_shape)
+        new_const_node = opset.constant(const_value, dtype=const_node.get_element_type())
+        new_const_node.set_friendly_name(const_node.get_friendly_name())
+        const_port.replace_source_output(new_const_node.output(0))
+        return new_const_node
+
+def _insert_fake_quantize(fq_params: FakeQuantizeParameters, weight_output: ov.Output, fq_name: str, is_power: bool,
+                          weight_node, const_port_id, const_value, node) -> None:
     """
     Inserts a FakeQuantize operation into the model based on the given parameters.
 
@@ -131,6 +170,26 @@ def _insert_fake_quantize(fq_params: FakeQuantizeParameters, weight_output: ov.O
         output_high = fq_params.output_high
     levels = fq_params.levels
 
-    fq = opset.fake_quantize(weight_output, input_low, input_high, output_low, output_high, levels, name=fq_name)
-    for target_input in target_inputs:
-        target_input.replace_source_output(fq.output(0))
+    if is_power:
+        const_value = np.sqrt(np.abs(const_value)) * np.sign(const_value)
+        weight_node = _set_const_value(node, const_port_id, const_value)
+
+        sign_node = opset.sign(weight_node)
+
+        fq_node = opset.fake_quantize(weight_output, input_low, input_high, output_low, output_high, levels, name=fq_name)
+        fq_output = fq_node.output(0)
+
+        weight_shape = weight_output.shape
+        pow_value = opset.constant(np.zeros(weight_shape) + 2, dtype=np.float32)
+        pow_node = opset.power(fq_output, pow_value)
+
+        mul_node = opset.multiply(pow_node, sign_node)
+        mul_output = mul_node.output(0)
+
+        for target_input in target_inputs:
+            target_input.replace_source_output(mul_output)
+    else:
+        fq_node = opset.fake_quantize(weight_output, input_low, input_high, output_low, output_high, levels, name=fq_name)
+        fq_output = fq_node.output(0)
+        for target_input in target_inputs:
+            target_input.replace_source_output(fq_output)

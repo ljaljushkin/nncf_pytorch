@@ -27,8 +27,10 @@ TEST_MODELS = {
 def test_compress_weights(model_creator_func):
     ref_compressed_weights = TEST_MODELS[model_creator_func]
     model = model_creator_func().ov_model
+    ov.save_model(model, 'model.xml', compress_to_fp16=False)
     compressed_model = compress_weights(model)
-
+    ie = ov.Core()
+    ov.save_model(compressed_model, 'compressed_model.xml', compress_to_fp16=False)
     n_compressed_weights = 0
     for op in compressed_model.get_ops():
         if op.get_type_name() == "Constant" and op.get_friendly_name() in ref_compressed_weights:
