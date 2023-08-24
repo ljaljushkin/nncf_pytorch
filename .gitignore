@@ -135,3 +135,5 @@ tests/**/runs/**
 tests/**/tmp*/**
 open_model_zoo/
 nncf-tests.xml
+tests/openvino/*.xml
+tests/openvino/*.bin
