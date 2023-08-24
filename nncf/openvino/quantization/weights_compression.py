@@ -35,6 +35,21 @@ from nncf.quantization.fake_quantize import calculate_quantizer_parameters
 from nncf.quantization.fake_quantize import calculate_scale_zero_point
 
 
+def get_scale_zp_from_input_low_input_high(level_low, level_high, input_low, input_high):
+    y_scale = (input_high - input_low) / (level_high - level_low)
+    y_zero_point = (level_low * input_high - level_high * input_low) / (input_high - input_low)
+
+    type_ = np.int8 if level_low < 0 else np.uint8
+    level_low *= np.ones_like(y_zero_point, dtype=type_)
+    level_high *= np.ones_like(y_zero_point, dtype=type_)
+
+    max_ = np.maximum(level_low, np.round(y_zero_point).astype(type_))
+    y_zero_point = np.minimum(max_, level_high)
+
+    # y_scale = torch.squeeze(y_scale)
+    # y_zero_point = torch.squeeze(y_zero_point)
+    return y_scale, y_zero_point
+
 def insert_pre_compression_operations(model: ov.Model, bits: int = 8) -> None:
     """
     Inserts in-place weights compression with FakeQuantize operation for Linear and Embedding layers.
@@ -45,8 +60,8 @@ def insert_pre_compression_operations(model: ov.Model, bits: int = 8) -> None:
     allowed_metatypes_to_const_port = {OVEmbeddingMetatype: [0], OVMatMulMetatype: [0, 1]}
     opt_125m_precisions = [8, 4, 4, 4, 4, 8, 4, 8, 4, 8, 4, 8, 4, 4, 4, 8, 4, 8, 4, 8, 4, 8, 4, 4, 4, 8, 4, 8, 4, 4, 4, 8, 8, 8, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 4, 8]
     # llama2_precisions = [8, 4, 4, 8, 4, 4, 4, 4, 8, 8, 8, 4, 8, 8, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 8, 8, 4, 4, 8, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 4, 8, 4, 4, 4, 8, 8, 4, 4, 8, 4, 4, 8, 8, 4, 4, 8, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 4, 8, 8, 8, 8, 4, 4, 8, 4, 8, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 8]
-    # precisions = opt_125m_precisions
-    precisions = [8] * len(opt_125m_precisions)
+    precisions = opt_125m_precisions
+    # precisions = [8] * len(opt_125m_precisions)
     # precisions = [4] * len(opt_125m_precisions)
     # precisions[1] = 4
     idx = 0
@@ -71,13 +86,18 @@ def insert_pre_compression_operations(model: ov.Model, bits: int = 8) -> None:
                 continue
 
             weight = get_const_value(weight_node)
+
+            num_bits = precisions[idx]
+            idx += 1
+            is_power = num_bits == 4
+            if is_power:
+                sign = np.sign(weight)
+                weight = np.sqrt(np.abs(weight)) * np.sign(weight)
+
             axes = _get_reduction_axes(metatype, node, const_port_id)
             min_values = np.min(weight, axis=axes, keepdims=True)
             max_values = np.max(weight, axis=axes, keepdims=True)
             stats = OVMinMaxTensorStatistic(min_values, max_values)
-            num_bits = precisions[idx]
-            idx += 1
-            is_power = False #num_bits == 4
             quantizer_config = QuantizerConfig(
                 num_bits=num_bits,
                 mode=QuantizationMode.ASYMMETRIC,
@@ -99,19 +119,31 @@ def insert_pre_compression_operations(model: ov.Model, bits: int = 8) -> None:
             assert np.allclose(fq_params.output_high, input_high)
 
             levels = fq_params.levels
-            new_level_low = -levels // 2
-            new_level_high = levels - 1 + new_level_low
+            # new_level_low = -levels // 2
+            # new_level_high = levels - 1 + new_level_low
+            new_level_low = 0 #-levels // 2
+            new_level_high = levels - 1 #+ new_level_low
             print(new_level_low, new_level_high)
             scale, zero_point = calculate_scale_zero_point(
                 input_low, input_high, new_level_low, new_level_high, narrow_range=False
             )
+            # scale, zero_point = get_scale_zp_from_input_low_input_high(new_level_low, new_level_high, input_low, input_high)
 
+
+            # int8_weight = np.round(weight / scale + zero_point).astype(np.int8)
+            # int8_weight = np.clip(int8_weight, new_level_low, new_level_high).astype(np.uint8)
+            # quantized_weight = opset.constant(int8_weight, dtype=np.uint8, name=weight_name)
+            # convert = opset.convert(quantized_weight, original_weight_dtype)
+            # zero_point = opset.constant(zero_point, dtype=np.uint8)
+            # zero_point = opset.convert(zero_point, original_weight_dtype)
+            # sub = opset.subtract(convert, zero_point)
+
+            int8_weight = np.round(weight / scale + zero_point).astype(np.uint8)
             if is_power:
-                sign = np.sign(weight)
-                weight = np.sqrt(np.abs(weight)) * np.sign(weight)
+                quantized_weight = opset.constant(int8_weight, dtype=ov.Type.u4, name=weight_name)
+            else:
+                quantized_weight = opset.constant(int8_weight, dtype=np.uint8, name=weight_name)
 
-            int8_weight = np.round(weight / scale + zero_point).astype(np.int8)
-            quantized_weight = opset.constant(int8_weight, dtype=np.int8, name=weight_name)
             convert = opset.convert(quantized_weight, original_weight_dtype)
             sub = opset.subtract(convert, zero_point.astype(original_weight_dtype))
             fq_name = f"{node.get_friendly_name()}/fq_weights_{const_port_id}"

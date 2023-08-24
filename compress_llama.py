@@ -14,7 +14,7 @@ core = Core()
 # ie = ov.Core()
 
 SRC_PATH = '/home/nlyaly/projects/lm-evaluation-harness/cache/opt-125m/fp32/openvino_model.xml'
-DST_PATH = '/home/nlyaly/projects/lm-evaluation-harness/cache/opt-125m/int8/openvino_model.xml'
+DST_PATH = '/home/nlyaly/projects/lm-evaluation-harness/cache/opt-125m/int8_pw/openvino_model.xml'
 model = core.read_model(model=SRC_PATH)
 model = compress_weights(model)
 ov.save_model(model, DST_PATH, compress_to_fp16=False)
