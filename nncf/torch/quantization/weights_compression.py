@@ -10,8 +10,8 @@
 # limitations under the License.
 
 from typing import Dict, Optional
-import numpy as np
 
+import numpy as np
 import torch
 from torch import nn
 
@@ -503,7 +503,7 @@ def get_power_quant_errors(module, res):
         #res.append(get_power_quant_error(layer))
         res.append(get_relative_error(layer))
 
-def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False, bits=8) -> Optional[nn.Module]:
+def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False, bits=4) -> Optional[nn.Module]:
     """
     Inserts weights compression with dequantization or quantization pre operation for Linear and Embedding layers.
 
