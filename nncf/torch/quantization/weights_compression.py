@@ -562,6 +562,7 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
 
     # errors = sorted(errors)
     # th = errors[int(0.7 * len(errors))]
+    th=0
 
     # _insert_pre_compression_operations(module, allowed_types, use_fake_quantize, level_high)
     # _fake_fp_to_nf4(module, allowed_types, 0)
