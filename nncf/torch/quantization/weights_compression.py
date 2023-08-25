@@ -250,8 +250,8 @@ def _insert_pre_compression_operations_power_quant(
             _insert_pre_compression_operations_power_quant(layer, allowed_types, use_fake_quantize, level_high, th, iter+1, precisions)
             continue
 
-        err = get_relative_error(layer) #get_power_quant_error(layer)
-        if 'emb' in lname or 'lm_head' in lname or err > th:
+        # err = get_relative_error(layer) #get_power_quant_error(layer)
+        if 'emb' in lname or 'lm_head' in lname:# or err > th:
             print("\t"*iter, "INT8")
             precisions.append(8)
             # print("Skip embeddings ", lname)
@@ -311,12 +311,38 @@ def _insert_pre_compression_operations_power_quant(
         w_pow = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
         target_dim = layer.target_weight_dim_for_compression
         stat_dim = (target_dim + 1) % 2
-        input_low = torch.min(w_pow, dim=stat_dim)[0].detach()
-        input_high = torch.max(w_pow, dim=stat_dim)[0].detach()
-        scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
 
-        scale = scale.unsqueeze(stat_dim)
-        zero_point = zero_point.unsqueeze(stat_dim)
+        group_size = 256
+        w = layer.weight
+        # print(w[:5,:5], w.shape)
+        num_columns = w.shape[stat_dim]
+        scale = []
+        zero_point = []
+        assert num_columns % group_size == 0
+        for i1 in range(0, num_columns, group_size):
+            i2 = i1 + group_size
+            current_columns = w[:, i1:i2]  # [c_out, c_in // group_size]
+            input_low = torch.min(current_columns, dim=stat_dim)[0].detach()  # [c_out]
+            input_low = input_low.unsqueeze(dim=stat_dim)  # [c_out, 1]
+            input_high = torch.max(current_columns, dim=stat_dim)[0].detach()  # [c_out]
+            input_high = input_high.unsqueeze(dim=stat_dim)  # [c_out, 1]
+
+            scale_g, zero_point_g = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+
+            scale.append(scale_g)
+            zero_point.append(zero_point_g)
+
+        scale = torch.cat(scale, dim=stat_dim)  # [c_out, c_in // group_size]
+        scale = torch.repeat_interleave(scale, group_size, dim=stat_dim)  # [c_out, c_in]
+
+        zero_point = torch.cat(zero_point, dim=stat_dim)  # [c_out, c_in // group_size]
+        zero_point = torch.repeat_interleave(zero_point, group_size, dim=stat_dim)  # [c_out, c_in]
+
+        # input_low = torch.min(w_pow, dim=stat_dim)[0].detach()
+        # input_high = torch.max(w_pow, dim=stat_dim)[0].detach()
+        # scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+        # scale = scale.unsqueeze(stat_dim)
+        # zero_point = zero_point.unsqueeze(stat_dim)
 
         compressed_weight = w_pow.data / scale + zero_point
         compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
@@ -523,19 +549,19 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
 
     for user_type in user_types:
         allowed_types.append(user_type)
-        errors = []
-    get_power_quant_errors(module, errors)
+    # errors = []
+    # get_power_quant_errors(module, errors)
 
     # %%
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    plt.plot(errors)
-    plt.show(block=False)
+    # import matplotlib
+    # matplotlib.use('Agg')
+    # import matplotlib.pyplot as plt
+    # plt.plot(errors)
+    # plt.show(block=False)
 
 
-    errors = sorted(errors)
-    th = errors[int(0.7 * len(errors))]
+    # errors = sorted(errors)
+    # th = errors[int(0.7 * len(errors))]
 
     # _insert_pre_compression_operations(module, allowed_types, use_fake_quantize, level_high)
     # _fake_fp_to_nf4(module, allowed_types, 0)
