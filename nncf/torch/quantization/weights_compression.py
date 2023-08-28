@@ -223,8 +223,17 @@ class WeightsDecompressorPowerQuant(nn.Module):
         s = torch.sign(w)
         return torch.pow(w, self.alpha) * s
 
+def get_total_num_weights(model, allowed_types, res=None):
+    for _, module in model.named_children():
+        if type(module) not in allowed_types:
+            get_total_num_weights(module, allowed_types, res)
+            continue
+        res.append(module.weight.data.numel())
+
+# total_num_weights = sum(a for a in all_num_weights)
+
 def _insert_pre_compression_operations_power_quant(
-    module: nn.Module, allowed_types: Dict, use_fake_quantize=False, level_high=15, th=1000.0, iter=0, precisions=None
+    module: nn.Module, allowed_types: Dict, use_fake_quantize=False, level_high=15, th=1000.0, iter=0, precisions=None, num_weights_per_precision=None
 ) -> Optional[nn.Module]:
     """
     Inserts weights compression with dequantization or quantization pre operation for Linear and Embedding layers.
@@ -247,11 +256,11 @@ def _insert_pre_compression_operations_power_quant(
         print("\t"*iter, lname)
         alphas = [0.125/2, 0.125, 0.25, 0.5, 1.0]#[0.25, 0.5, 1.0, 2.0]
         if not type(layer) in allowed_types:
-            _insert_pre_compression_operations_power_quant(layer, allowed_types, use_fake_quantize, level_high, th, iter+1, precisions)
+            _insert_pre_compression_operations_power_quant(layer, allowed_types, use_fake_quantize, level_high, th, iter+1, precisions, num_weights_per_precision)
             continue
 
-        # err = get_relative_error(layer) #get_power_quant_error(layer)
-        if 'emb' in lname or 'lm_head' in lname:# or err > th:
+        err = get_relative_error(layer) #get_power_quant_error(layer)
+        if 'emb' in lname or 'lm_head' in lname or err > th:
             print("\t"*iter, "INT8")
             precisions.append(8)
             # print("Skip embeddings ", lname)
@@ -271,6 +280,7 @@ def _insert_pre_compression_operations_power_quant(
 
             layer.weight.requires_grad = False
             layer.weight.data = compressed_weight.type(dtype=torch.uint8)
+            num_weights_per_precision[8] += layer.weight.data.numel()
             continue
 
         # best_alpha = -1
@@ -307,6 +317,8 @@ def _insert_pre_compression_operations_power_quant(
         # print(f"layer {lname}, alpha {best_alpha}, min_err {min_err}")
         print("\t"*iter, "POWER QUANT INT4")
         precisions.append(4)
+        num_weights_per_precision[4] += layer.weight.data.numel()
+
         best_alpha = 0.5
         w_pow = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
         target_dim = layer.target_weight_dim_for_compression
@@ -571,14 +583,25 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
     # plt.show(block=False)
 
 
-    # errors = sorted(errors)
-    # th = errors[int(0.7 * len(errors))]
-    th=0
+    errors = sorted(errors)
+    th = errors[int(0.7 * len(errors))]
+    # th=0
 
     # _insert_pre_compression_operations(module, allowed_types, use_fake_quantize, level_high)
     # _fake_fp_to_nf4(module, allowed_types, 0)
+    all_num_weights = []
+    get_total_num_weights(module, allowed_types, all_num_weights)
+    total_num_weights = sum(a for a in all_num_weights)
+
     precisions = []
-    _insert_pre_compression_operations_power_quant(module, allowed_types, use_fake_quantize, level_high, th, 0, precisions)
+    num_weights_per_precision = {4: 0, 8: 0, 32: 0}
+    _insert_pre_compression_operations_power_quant(module, allowed_types, use_fake_quantize, level_high, th, 0, precisions, num_weights_per_precision)
+
+    for num_bits, num_weights in num_weights_per_precision.items():
+        print(f'% weights in {num_bits} bit = {num_weights / total_num_weights * 100:.3f}')
+    occupied_bits = sum(num_weights * num_bits for num_bits, num_weights in num_weights_per_precision.items())
+    print(f'weight compression={total_num_weights * 32 / occupied_bits :.3f} (fp32 - 1x, int8 - 4x, int4 - 8x, 50% int4/int8 ~ 6x)')
+
     print(precisions)
 
 
