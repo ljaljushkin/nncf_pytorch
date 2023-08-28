@@ -313,7 +313,7 @@ def _insert_pre_compression_operations_power_quant(
         stat_dim = (target_dim + 1) % 2
 
         group_size = 256
-        w = layer.weight
+        w = w_pow
         # print(w[:5,:5], w.shape)
         num_columns = w.shape[stat_dim]
         scale = []
@@ -323,11 +323,12 @@ def _insert_pre_compression_operations_power_quant(
             i2 = i1 + group_size
             current_columns = w[:, i1:i2]  # [c_out, c_in // group_size]
             input_low = torch.min(current_columns, dim=stat_dim)[0].detach()  # [c_out]
-            input_low = input_low.unsqueeze(dim=stat_dim)  # [c_out, 1]
             input_high = torch.max(current_columns, dim=stat_dim)[0].detach()  # [c_out]
-            input_high = input_high.unsqueeze(dim=stat_dim)  # [c_out, 1]
 
             scale_g, zero_point_g = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+
+            scale_g = scale_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
+            zero_point_g = zero_point_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
 
             scale.append(scale_g)
             zero_point.append(zero_point_g)
@@ -350,6 +351,14 @@ def _insert_pre_compression_operations_power_quant(
         layer.weight.requires_grad = False
         compressed_weight = compressed_weight.type(dtype=torch.uint8)
 
+        # original_weights = layer.weight.data.clone()
+        # w = compressed_weight
+        # w = w.type(dtype=scale.dtype)
+        # w = (w - zero_point) * scale
+        # s = torch.sign(w)
+        # decompressed = torch.square(w) * s
+        # diff = torch.mean((original_weights - decompressed)**2)
+        # print(diff)
         # layer.weight.data = Packer.pack(compressed_weight)
         layer.weight.data = compressed_weight
 
