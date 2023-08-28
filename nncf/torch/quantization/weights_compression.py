@@ -572,8 +572,8 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
 
     for user_type in user_types:
         allowed_types.append(user_type)
-    # errors = []
-    # get_power_quant_errors(module, errors)
+    errors = []
+    get_power_quant_errors(module, errors)
 
     # %%
     # import matplotlib
