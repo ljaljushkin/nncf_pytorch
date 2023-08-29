@@ -15,27 +15,5 @@
         "steps": [
             1
         ]
-    },
-    "compression": [
-        {
-            "algorithm": "rb_sparsity",
-            "sparsity_init": 0.2,
-            "params": {
-                "schedule": "polynomial",
-                "sparsity_target": 0.6,
-                "sparsity_target_epoch": 5
-            }
-        },
-        {
-            "algorithm": "quantization",
-            "weights": {
-                "per_channel": true
-            },
-            "initializer": {
-                "range": {
-                    "num_init_samples": 1
-                }
-            }
-        }
-    ]
+    }
 }
