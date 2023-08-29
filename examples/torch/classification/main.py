@@ -67,22 +67,13 @@ from examples.torch.common.utils import is_staged_quantization
 from examples.torch.common.utils import make_additional_checkpoints
 from examples.torch.common.utils import print_args
 from examples.torch.common.utils import write_metrics
-from nncf.api.compression import CompressionStage
-from nncf.common.utils.tensorboard import prepare_for_tensorboard
-from nncf.config.utils import is_accuracy_aware_training
-from nncf.torch import create_compressed_model
-from nncf.torch.checkpoint_loading import load_state
-from nncf.torch.dynamic_graph.graph_tracer import create_input_infos
-from nncf.torch.initialization import default_criterion_fn
-from nncf.torch.initialization import register_default_init_args
-from nncf.torch.structures import ExecutionParameters
-from nncf.torch.utils import is_main_process
-from nncf.torch.utils import safe_thread_call
 
 model_names = sorted(name for name, val in models.__dict__.items()
                      if name.islower() and not name.startswith("__")
                      and callable(val))
 
+def default_criterion_fn(outputs: Any, target: Any, criterion: Any) -> torch.Tensor:
+    return criterion(outputs, target)
 
 def get_argument_parser():
     parser = get_common_argument_parser()
@@ -129,6 +120,25 @@ def main(argv):
 
     main_worker(current_gpu=None, config=config)
 
+from torch import distributed as dist
+
+
+def is_dist_avail_and_initialized():
+    if not dist.is_available():
+        return False
+    if not dist.is_initialized():
+        return False
+    return True
+
+
+def get_rank():
+    if not is_dist_avail_and_initialized():
+        return 0
+    return dist.get_rank()
+
+
+def is_main_process():
+    return get_rank() == 0
 
 # pylint:disable=too-many-branches,too-many-statements
 def main_worker(current_gpu, config: SampleConfig):
@@ -147,7 +157,7 @@ def main_worker(current_gpu, config: SampleConfig):
     criterion = criterion.to(config.device)
 
     model_name = config['model']
-    train_criterion_fn = default_criterion_fn#inception_criterion_fn if 'inception' in model_name else default_criterion_fn
+    train_criterion_fn = default_criterion_fn
 
     train_loader = train_sampler = val_loader = None
     resuming_checkpoint_path = config.resuming_checkpoint_path
@@ -164,11 +174,9 @@ def main_worker(current_gpu, config: SampleConfig):
                        weights_path=config.get('weights'))
 
     model.to(config.device)
-    compression_ctrl, model = create_compressed_model(model, nncf_config)
 
     model, _ = prepare_model_for_execution(model, config)
 
-    # define optimizer
     params_to_optimize = get_parameter_groups(model, config)
     optimizer, lr_scheduler = make_optimizer(params_to_optimize, config)
 
@@ -176,27 +184,17 @@ def main_worker(current_gpu, config: SampleConfig):
     cudnn.benchmark = True
 
 
-    train(config, compression_ctrl, model, criterion, train_criterion_fn, lr_scheduler, model_name, optimizer,
+    train(config, model, criterion, train_criterion_fn, lr_scheduler, model_name, optimizer,
                 train_loader, train_sampler, val_loader, best_acc1)
 
 
-def train(config, compression_ctrl, model, criterion, criterion_fn, lr_scheduler, model_name, optimizer,
+def train(config, model, criterion, criterion_fn, lr_scheduler, model_name, optimizer,
           train_loader, train_sampler, val_loader, best_acc1=0):
-    # best_compression_stage = CompressionStage.UNCOMPRESSED
     for epoch in range(config.start_epoch, config.epochs):
-        # update compression scheduler state at the begin of the epoch
-        compression_ctrl.scheduler.epoch_step()
-
-        # if config.distributed:
-        #     asseert -f
-        #     train_sampler.set_epoch(epoch)
-
-        # train for one epoch
-        train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compression_ctrl, epoch, config)
+        train_epoch(train_loader, model, criterion, criterion_fn, optimizer, epoch, config)
 
 
 def get_dataset(dataset_config, config, transform, is_train):
-    # # For testing purposes
     num_images = config.get('num_mock_images', 1000)
     return MockDataset(img_size=(32, 32), transform=transform, num_images=num_images)
 
@@ -204,14 +202,9 @@ def get_dataset(dataset_config, config, transform, is_train):
 def create_datasets(config):
     dataset_config = config.dataset if config.dataset is not None else 'imagenet'
     dataset_config = dataset_config.lower()
-    assert dataset_config in ['imagenet', 'cifar100', 'cifar10', 'cifar100_224x224', 'mock_32x32', 'mock_299x299'], \
-        "Unknown dataset option"
-
     normalize = transforms.Normalize(mean=(0.5, 0.5, 0.5),
                                          std=(0.5, 0.5, 0.5))
-
-    input_info_list = create_input_infos(config)
-    image_size = input_info_list[0].shape[-1]
+    image_size = 32
     size = int(image_size / 0.875)
     train_transforms = transforms.Compose([
         transforms.Resize(size),
@@ -226,28 +219,10 @@ def create_datasets(config):
 
 def create_data_loaders(config, train_dataset):
     pin_memory = config.execution_mode != ExecutionMode.CPU_ONLY
-
-    # When using a single GPU per process and per
-    # DistributedDataParallel, we need to divide the batch size
-    # ourselves based on the total number of GPUs we have
     batch_size = int(config.batch_size)
     workers = int(config.workers)
     batch_size_val = int(config.batch_size_val) if config.batch_size_val is not None else int(config.batch_size)
-    # if config.execution_mode == ExecutionMode.MULTIPROCESSING_DISTRIBUTED:
-    #     batch_size //= config.ngpus_per_node
-    #     batch_size_val //= config.ngpus_per_node
-    #     workers //= config.ngpus_per_node
-
-
     train_sampler = None
-    # if config.distributed:
-    #     assert 0
-    #     sampler_seed = 0 if config.seed is None else config.seed
-    #     dist_sampler_shuffle = config.seed is None
-    #     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset,
-    #                                                                     seed=sampler_seed,
-    #                                                                     shuffle=dist_sampler_shuffle)
-
     train_shuffle = train_sampler is None and config.seed is None
 
     def create_train_data_loader(batch_size_):
@@ -260,31 +235,21 @@ def create_data_loaders(config, train_dataset):
     return train_loader, train_sampler
 
 
-def train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compression_ctrl, epoch, config,
+def train_epoch(train_loader, model, criterion, criterion_fn, optimizer, epoch, config,
                 train_iters=None, log_training_info=True):
     if train_iters is None:
         train_iters = len(train_loader)
 
-    compression_scheduler = compression_ctrl.scheduler
-    print(config.mixed_precision)
-    casting = autocast if config.mixed_precision else NullContextManager
-
     model.train()
 
-    end = time.time()
     for i, (input_, target) in enumerate(train_loader):
-
         input_ = input_.to(config.device)
         target = target.to(config.device)
 
-        # compute output
-        with casting():
-            output = model(input_)
-            criterion_loss = criterion_fn(output, target, criterion)
+        output = model(input_)
+        criterion_loss = criterion_fn(output, target, criterion)
 
-            # compute compression loss
-            compression_loss = compression_ctrl.loss()
-            loss = criterion_loss + compression_loss
+        loss = criterion_loss# + compression_loss
 
         if isinstance(output, InceptionOutputs):
             output = output.logits
