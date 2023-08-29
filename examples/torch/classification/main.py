@@ -127,13 +127,7 @@ def main(argv):
     if config.metrics_dump is not None:
         write_metrics(0, config.metrics_dump)
 
-    if not is_staged_quantization(config):
-        start_worker(main_worker, config)
-    else:
-        from examples.torch.classification.staged_quantization_worker import (
-            staged_quantization_main_worker,  # pylint: disable=cyclic-import
-        )
-        start_worker(staged_quantization_main_worker, config)
+    main_worker(current_gpu=None, config=config)
 
 
 # pylint:disable=too-many-branches,too-many-statements
@@ -193,8 +187,9 @@ def train(config, compression_ctrl, model, criterion, criterion_fn, lr_scheduler
         # update compression scheduler state at the begin of the epoch
         compression_ctrl.scheduler.epoch_step()
 
-        if config.distributed:
-            train_sampler.set_epoch(epoch)
+        # if config.distributed:
+        #     asseert -f
+        #     train_sampler.set_epoch(epoch)
 
         # train for one epoch
         train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compression_ctrl, epoch, config)
@@ -238,19 +233,20 @@ def create_data_loaders(config, train_dataset):
     batch_size = int(config.batch_size)
     workers = int(config.workers)
     batch_size_val = int(config.batch_size_val) if config.batch_size_val is not None else int(config.batch_size)
-    if config.execution_mode == ExecutionMode.MULTIPROCESSING_DISTRIBUTED:
-        batch_size //= config.ngpus_per_node
-        batch_size_val //= config.ngpus_per_node
-        workers //= config.ngpus_per_node
+    # if config.execution_mode == ExecutionMode.MULTIPROCESSING_DISTRIBUTED:
+    #     batch_size //= config.ngpus_per_node
+    #     batch_size_val //= config.ngpus_per_node
+    #     workers //= config.ngpus_per_node
 
 
     train_sampler = None
-    if config.distributed:
-        sampler_seed = 0 if config.seed is None else config.seed
-        dist_sampler_shuffle = config.seed is None
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset,
-                                                                        seed=sampler_seed,
-                                                                        shuffle=dist_sampler_shuffle)
+    # if config.distributed:
+    #     assert 0
+    #     sampler_seed = 0 if config.seed is None else config.seed
+    #     dist_sampler_shuffle = config.seed is None
+    #     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset,
+    #                                                                     seed=sampler_seed,
+    #                                                                     shuffle=dist_sampler_shuffle)
 
     train_shuffle = train_sampler is None and config.seed is None
 
@@ -270,6 +266,7 @@ def train_epoch(train_loader, model, criterion, criterion_fn, optimizer, compres
         train_iters = len(train_loader)
 
     compression_scheduler = compression_ctrl.scheduler
+    print(config.mixed_precision)
     casting = autocast if config.mixed_precision else NullContextManager
 
     model.train()
