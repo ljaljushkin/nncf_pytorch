@@ -248,8 +248,12 @@ def test_pretrained_model_train(config, tmp_path, multiprocessing_distributed, c
             "to support even still."
         )
 
-    runner = Command(create_command_line(args, config["sample_type"]), env=ROOT_PYTHONPATH_ENV)
-    runner.run()
+    arg_list = arg_list_from_arg_dict(args)
+    import examples.torch.classification.main as sample
+    sample.main(arg_list)
+
+    # runner = Command(create_command_line(args, config["sample_type"]), env=ROOT_PYTHONPATH_ENV)
+    # runner.run()
     # last_checkpoint_path = os.path.join(checkpoint_save_dir, get_run_name(config_factory.config) + "_last.pth")
     # assert os.path.exists(last_checkpoint_path)
     # if "compression" in config["sample_config"]:
