@@ -9,7 +9,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 import numpy as np
 import torch
@@ -167,21 +168,6 @@ def get_scale_zp_from_input_low_input_high_nf4(level_low, level_high, input_low,
     y_zero_point = y_zero_point.numpy()
     y_zero_point = nf4_convert(y_zero_point)
     y_zero_point = torch.from_numpy(y_zero_point)
-
-    y_scale = torch.squeeze(y_scale)
-    y_zero_point = torch.squeeze(y_zero_point)
-    return y_scale, y_zero_point
-
-def ref_ASYM(level_low, level_high, input_low, input_high):
-    y_scale = (input_high - input_low) / (level_high - level_low)
-    y_zero_point = (level_low * input_high - level_high * input_low) / (input_high - input_low)
-
-    type_ = torch.int8 if level_low < 0 else torch.uint8
-    level_low *= torch.ones_like(y_zero_point).to(type_)
-    level_high *= torch.ones_like(y_zero_point).to(type_)
-    level_low = level_low.to(y_zero_point.device)
-    level_high = level_high.to(y_zero_point.device)
-    y_zero_point = torch.min(torch.max(level_low, torch.round(y_zero_point).to(type_)), level_high)
 
     y_scale = torch.squeeze(y_scale)
     y_zero_point = torch.squeeze(y_zero_point)
@@ -552,7 +538,114 @@ def get_power_quant_errors(module, res):
         #res.append(get_power_quant_error(layer))
         res.append(get_relative_error(layer))
 
-def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False, bits=4) -> Optional[nn.Module]:
+def get_node_name(module, module_name, prefix):
+    return "{prefix}/{cls}[{name}]".format(prefix=prefix, cls=module.__class__.__name__, name=module_name)
+
+@dataclass
+class LayerData:
+    name: str
+    error: float
+    num_weights: int
+    module: nn.Module # TODO: access module via name
+    is_skipped: bool
+    precision: int = None
+
+    def __str__(self):
+        return f'\n\tname={self.name}\n\terr={self.error}\n\tnum_weights={self.num_weights}\n'
+
+def _insert_pre_compression_operations_simple(
+    data_list: List[LayerData]=None
+) -> Optional[nn.Module]:
+    """
+    Inserts weights compression with dequantization or quantization pre operation for Linear and Embedding layers.
+
+    :param model: The module to insert the weights compression.
+    :param layer_id_vs_precision_map: TBD
+    :return: The module with inserted operations.
+    """
+    best_alpha = 0.5
+    group_mode = False
+
+    for data in data_list:
+        layer = data.module
+        bits = data.precision
+        level_high = 2**bits - 1
+        print(f'{data.precision} bits for {data.name}')
+
+        w_sign = torch.sign(layer.weight)
+        w_pow = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
+        target_dim = layer.target_weight_dim_for_compression
+        stat_dim = (target_dim + 1) % 2
+
+        if group_mode:
+          group_size = 256
+          w = w_pow
+          # print(w[:5,:5], w.shape)
+          num_columns = w.shape[stat_dim]
+          scale = []
+          zero_point = []
+          assert num_columns % group_size == 0
+          for i1 in range(0, num_columns, group_size):
+              i2 = i1 + group_size
+              current_columns = w[:, i1:i2]  # [c_out, c_in // group_size]
+              input_low = torch.min(current_columns, dim=stat_dim)[0].detach()  # [c_out]
+              input_high = torch.max(current_columns, dim=stat_dim)[0].detach()  # [c_out]
+
+              scale_g, zero_point_g = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+
+              scale_g = scale_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
+              zero_point_g = zero_point_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
+
+              scale.append(scale_g)
+              zero_point.append(zero_point_g)
+
+          scale = torch.cat(scale, dim=stat_dim)  # [c_out, c_in // group_size]
+          scale = torch.repeat_interleave(scale, group_size, dim=stat_dim)  # [c_out, c_in]
+
+          zero_point = torch.cat(zero_point, dim=stat_dim)  # [c_out, c_in // group_size]
+          zero_point = torch.repeat_interleave(zero_point, group_size, dim=stat_dim)  # [c_out, c_in]
+        else:
+          input_low = torch.min(w_pow, dim=stat_dim)[0].detach()
+          input_high = torch.max(w_pow, dim=stat_dim)[0].detach()
+          scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+          scale = scale.unsqueeze(stat_dim)
+          zero_point = zero_point.unsqueeze(stat_dim)
+
+        compressed_weight = w_pow.data / scale + zero_point
+        compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
+
+        layer.weight.requires_grad = False
+        compressed_weight = compressed_weight.type(dtype=torch.uint8)
+
+        # original_weights = layer.weight.data.clone()
+        # w = compressed_weight
+        # w = w.type(dtype=scale.dtype)
+        # w = (w - zero_point) * scale
+        # s = torch.sign(w)
+        # decompressed = torch.square(w) * s
+        # diff = torch.mean((original_weights - decompressed)**2)
+        # print(diff)
+        # layer.weight.data = Packer.pack(compressed_weight)
+        layer.weight.data = compressed_weight
+
+        layer.register_pre_forward_operation(WeightsDecompressorPowerQuant(zero_point, scale, 1/best_alpha))
+
+
+def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=None):
+    if prefix is None:
+        prefix = model.__class__.__name__
+    for name, module in model.named_children():
+        full_node_name = get_node_name(module, name, prefix)
+        if type(module) not in allowed_types:
+            get_all_layer_data(module, allowed_types, prefix=full_node_name, res=res)
+            continue
+        is_skipped = 'embed_in' == name or 'embed_out' == name
+        num_weights = module.weight.data.numel()
+        error = 0 if is_skipped else get_relative_error(module)
+        data = LayerData(full_node_name, error, num_weights, module, is_skipped)
+        res.append(data)
+
+def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
     """
     Inserts weights compression with dequantization or quantization pre operation for Linear and Embedding layers.
 
@@ -564,45 +657,86 @@ def insert_pre_compression_operations(module: nn.Module, use_fake_quantize=False
         uint8 with one element per 8 bit.
     :return: The module with inserted operations. The module is not trainable if use_fake_quantize is False.
     """
-    user_types = list(NNCF_WRAPPED_USER_MODULES_DICT.values())
+    # user_types = list(NNCF_WRAPPED_USER_MODULES_DICT.values())
+    # for user_type in user_types:
+    #     allowed_types.append(user_type)
     allowed_types = [NNCFEmbedding, NNCFLinear]
-    level_high = 2**bits - 1
+    target_ratio_in_4_bit = 0.64
 
-    assert level_high < 256
+    all_data_list = []
+    get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list)
+    total_num_weights = sum(d.num_weights for d in all_data_list)
+    # print(f'num all layers={len(all_data_list)}, num all weights={total_num_weights}')
 
-    for user_type in user_types:
-        allowed_types.append(user_type)
-    errors = []
-    get_power_quant_errors(module, errors)
-
-    # %%
-    # import matplotlib
-    # matplotlib.use('Agg')
+    data_list = list(filter(lambda x: not x.is_skipped, all_data_list))
+    errors = [data.error for data in data_list]
+    # layers=list(range(len(errors)))
     # import matplotlib.pyplot as plt
-    # plt.plot(errors)
-    # plt.show(block=False)
+    # fig = plt.figure()
+    # plt.plot(layers, errors)
 
+    indexes_of_layers_in_ascending_order_of_errors = [
+        i[0] for i in sorted(enumerate(errors), reverse=False, key=lambda x: x[1])
+    ]
+    # print(f'\nindexes_of_layers_in_ascending_order_of_errors={indexes_of_layers_in_ascending_order_of_errors}')
+    # sorted_errors = [data_list[i].error for i in indexes_of_layers_in_ascending_order_of_errors]
+    # print(f'\nsorted errors: {sorted_errors}')
 
-    errors = sorted(errors)
-    th = errors[int(0.7 * len(errors))]
-    # th=0
+    current_num_weights = 0
+    for i, index in enumerate(indexes_of_layers_in_ascending_order_of_errors):
+        data = data_list[index]
+        current_ratio = (current_num_weights + data.num_weights) / total_num_weights
+        if current_ratio >= target_ratio_in_4_bit:
+            for j in indexes_of_layers_in_ascending_order_of_errors[i:]:
+                data_list[j].precision = 8
+            # boundary_error = errors[indexes_of_layers_in_ascending_order_of_errors[i-1]]
+            # plt.axhline(y = boundary_error, color = 'r', linestyle = '-')
+            # plt.savefig('errors_with_boundary.png')
+            # plt.close(fig)
+            break
+        data.precision = 4
+        current_num_weights += data.num_weights
 
-    # _insert_pre_compression_operations(module, allowed_types, use_fake_quantize, level_high)
-    # _fake_fp_to_nf4(module, allowed_types, 0)
-    all_num_weights = []
-    get_total_num_weights(module, allowed_types, all_num_weights)
-    total_num_weights = sum(a for a in all_num_weights)
+    for data in all_data_list:
+        if data.is_skipped:
+            data.precision = 8
+    bit_config = [data.precision for data in all_data_list]
+    print(bit_config)
 
-    precisions = []
-    num_weights_per_precision = {4: 0, 8: 0, 32: 0}
-    _insert_pre_compression_operations_power_quant(module, allowed_types, use_fake_quantize, level_high, th, 0, precisions, num_weights_per_precision)
-
+    num_weights_per_precision = {}
+    for data in all_data_list:
+        precision = data.precision
+        num_weights_per_precision[precision] = num_weights_per_precision.get(precision, 0) + data.num_weights
     for num_bits, num_weights in num_weights_per_precision.items():
         print(f'% weights in {num_bits} bit = {num_weights / total_num_weights * 100:.3f}')
     occupied_bits = sum(num_weights * num_bits for num_bits, num_weights in num_weights_per_precision.items())
     print(f'weight compression={total_num_weights * 32 / occupied_bits :.3f} (fp32 - 1x, int8 - 4x, int4 - 8x, 50% int4/int8 ~ 6x)')
+    assert total_num_weights == sum(nw for nw in num_weights_per_precision.values())
 
-    print(precisions)
+    _insert_pre_compression_operations_simple(all_data_list)
+
+    # level_high = 2**bits - 1
+    # assert level_high < 256
+    # for user_type in user_types:
+    #     allowed_types.append(user_type)
+    # errors = sorted(errors)
+    # th = errors[int(0.7 * len(errors))]
+    # _insert_pre_compression_operations(module, allowed_types, use_fake_quantize, level_high)
+    # _fake_fp_to_nf4(module, allowed_types, 0)
+    # all_num_weights = []
+    # get_total_num_weights(module, allowed_types, all_num_weights)
+    # total_num_weights = sum(a for a in all_num_weights)
+
+    # precisions = []
+    # num_weights_per_precision = {4: 0, 8: 0, 32: 0}
+    # _insert_pre_compression_operations_power_quant(module, allowed_types, use_fake_quantize, level_high, th, 0, precisions, num_weights_per_precision)
+    # print(precisions)
+    # for num_bits, num_weights in num_weights_per_precision.items():
+    #     print(f'% weights in {num_bits} bit = {num_weights / total_num_weights * 100:.3f}')
+    # occupied_bits = sum(num_weights * num_bits for num_bits, num_weights in num_weights_per_precision.items())
+    # print(f'weight compression={total_num_weights * 32 / occupied_bits :.3f} (fp32 - 1x, int8 - 4x, int4 - 8x, 50% int4/int8 ~ 6x)')
+
+
 
 
 
