@@ -517,15 +517,16 @@ def get_power_quant_error(layer):
     decompressed_weight = op.dequantize(compressed_weight)
     diff = (decompressed_weight - layer.weight.data)**2
 
-    #mean_err = torch.mean(diff)
-    layer_err = torch.mean(diff, dim=1)
-    top_k = torch.topk(layer_err, 10)[0]
-    #val = float(mean_err)#top_k[0])
-    val = float(top_k[0])
-    return val
+    mean_err = torch.mean(diff)
+    return float(mean_err)
+    # layer_err = torch.mean(diff, dim=1)
+    # top_k = torch.topk(layer_err, 10)[0]
+    # #val = float(mean_err)#top_k[0])
+    # val = float(top_k[0])
+    # return val
 
 def get_relative_error(layer):
-    return get_power_quant_error(layer) / (get_int8_err(layer) + 0.0000000001)
+    return get_power_quant_error(layer)# / (get_int8_err(layer) + 0.0000000001)
     #return get_int8_err(layer) / (get_power_quant_error(layer) + 0.0000000001)
 
 
@@ -661,7 +662,7 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
     # for user_type in user_types:
     #     allowed_types.append(user_type)
     allowed_types = [NNCFEmbedding, NNCFLinear]
-    target_ratio_in_4_bit = 0.64
+    target_ratio_in_4_bit = 0.638
 
     all_data_list = []
     get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list)
