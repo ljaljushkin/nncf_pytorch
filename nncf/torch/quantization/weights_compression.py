@@ -640,7 +640,10 @@ def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=N
         if type(module) not in allowed_types:
             get_all_layer_data(module, allowed_types, prefix=full_node_name, res=res)
             continue
-        is_skipped = 'embed_in' == name or 'embed_out' == name
+        # TODO: GPTNeoXForCausalLM
+        # is_skipped = 'embed_in' == name or 'embed_out' == name
+        # TODO: LlamaForCausalLM
+        is_skipped = 'embed_tokens' == name or 'lm_head' == name
         num_weights = module.weight.data.numel()
         error = 0 if is_skipped else get_relative_error(module)
         data = LayerData(full_node_name, error, num_weights, module, is_skipped)
@@ -662,7 +665,7 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
     # for user_type in user_types:
     #     allowed_types.append(user_type)
     allowed_types = [NNCFEmbedding, NNCFLinear]
-    target_ratio_in_4_bit = 0.638
+    target_ratio_in_4_bit = 0.713
 
     all_data_list = []
     get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list)
