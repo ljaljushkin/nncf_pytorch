@@ -666,6 +666,8 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
     #     allowed_types.append(user_type)
     allowed_types = [NNCFEmbedding, NNCFLinear]
     target_ratio_in_4_bit = 0.713
+    ratio_updated = 0.25
+
 
     all_data_list = []
     get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list)
@@ -674,6 +676,10 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
 
     data_list = list(filter(lambda x: not x.is_skipped, all_data_list))
     errors = [data.error for data in data_list]
+    max_error = max(errors)
+    num_updated = int(target_ratio_in_4_bit * ratio_updated * len(errors))
+    for i in range(num_updated):
+       errors[i] = max_error * 2
     # layers=list(range(len(errors)))
     # import matplotlib.pyplot as plt
     # fig = plt.figure()
