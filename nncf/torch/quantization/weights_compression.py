@@ -198,16 +198,18 @@ class WeightsDecompressorPowerQuant(nn.Module):
         s = torch.sign(w)
         # w = torch.pow(w, self.alpha)
         # s_w = w * self.sign
-        if self.alpha == 2:
-            layer.weight = torch.square(w) * s
-        else:
-            layer.weight = torch.pow(w, self.alpha) * s
+        # if self.alpha == 2:
+        #     layer.weight = torch.square(w) * s
+        # else:
+            # layer.weight = torch.pow(w, self.alpha) * s
+        layer.weight = torch.exp(w) * s
 
     def dequantize(self, input):
         w = input.type(dtype=self.scale.dtype)
         w = (w - self.zero_point) * self.scale
         s = torch.sign(w)
-        return torch.pow(w, self.alpha) * s
+        # return torch.pow(w, self.alpha) * s
+        return torch.exp(w) * s
 
 def get_total_num_weights(model, allowed_types, res=None):
     for _, module in model.named_children():
@@ -500,7 +502,8 @@ def get_power_quant_error(layer):
 
     level_high = 2**4 - 1
     w_sign = torch.sign(layer.weight)
-    w_pow = torch.pow(torch.abs(layer.weight), alpha) * w_sign
+    # w_pow = torch.pow(torch.abs(layer.weight), alpha) * w_sign
+    w_pow = torch.log(torch.abs(layer.weight)) * w_sign
     target_dim = layer.target_weight_dim_for_compression
     stat_dim = (target_dim + 1) % 2
     input_low = torch.min(w_pow, dim=stat_dim)[0].detach()
@@ -517,16 +520,16 @@ def get_power_quant_error(layer):
     decompressed_weight = op.dequantize(compressed_weight)
     diff = (decompressed_weight - layer.weight.data)**2
 
-    mean_err = torch.mean(diff)
-    return float(mean_err)
-    # layer_err = torch.mean(diff, dim=1)
-    # top_k = torch.topk(layer_err, 10)[0]
-    # #val = float(mean_err)#top_k[0])
-    # val = float(top_k[0])
-    # return val
+    # mean_err = torch.mean(diff)
+    # return float(mean_err)
+    layer_err = torch.mean(diff, dim=1)
+    top_k = torch.topk(layer_err, 10)[0]
+    #val = float(mean_err)#top_k[0])
+    val = float(top_k[0])
+    return val
 
 def get_relative_error(layer):
-    return get_power_quant_error(layer)# / (get_int8_err(layer) + 0.0000000001)
+    return get_power_quant_error(layer) / (get_int8_err(layer) + 0.0000000001)
     #return get_int8_err(layer) / (get_power_quant_error(layer) + 0.0000000001)
 
 
@@ -574,7 +577,8 @@ def _insert_pre_compression_operations_simple(
         print(f'{data.precision} bits for {data.name}')
 
         w_sign = torch.sign(layer.weight)
-        w_pow = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
+        # w_pow = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
+        w_pow = torch.log(torch.abs(layer.weight)) * w_sign
         target_dim = layer.target_weight_dim_for_compression
         stat_dim = (target_dim + 1) % 2
 
@@ -618,14 +622,15 @@ def _insert_pre_compression_operations_simple(
         layer.weight.requires_grad = False
         compressed_weight = compressed_weight.type(dtype=torch.uint8)
 
-        # original_weights = layer.weight.data.clone()
-        # w = compressed_weight
-        # w = w.type(dtype=scale.dtype)
-        # w = (w - zero_point) * scale
-        # s = torch.sign(w)
+        original_weights = layer.weight.data.clone()
+        w = compressed_weight
+        w = w.type(dtype=scale.dtype)
+        w = (w - zero_point) * scale
+        s = torch.sign(w)
         # decompressed = torch.square(w) * s
-        # diff = torch.mean((original_weights - decompressed)**2)
-        # print(diff)
+        decompressed = torch.exp(w) * s
+        diff = torch.mean((original_weights - decompressed)**2)
+        print(diff)
         # layer.weight.data = Packer.pack(compressed_weight)
         layer.weight.data = compressed_weight
 
@@ -666,9 +671,9 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
     #     allowed_types.append(user_type)
     allowed_types = [NNCFEmbedding, NNCFLinear]
     # dolly-v2-3b
-    target_ratio_in_4_bit = 0.638
+    # target_ratio_in_4_bit = 0.638
     # # llama-3b
-    # target_ratio_in_4_bit = 0.713
+    target_ratio_in_4_bit = 0.713
     # # llama-13b
     # target_ratio_in_4_bit = 0.762
     # # bloom-7b1
