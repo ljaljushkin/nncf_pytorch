@@ -665,7 +665,19 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
     # for user_type in user_types:
     #     allowed_types.append(user_type)
     allowed_types = [NNCFEmbedding, NNCFLinear]
-    target_ratio_in_4_bit = 0.713
+    # dolly-v2-3b
+    target_ratio_in_4_bit = 0.638
+    # # llama-3b
+    # target_ratio_in_4_bit = 0.713
+    # # llama-13b
+    # target_ratio_in_4_bit = 0.762
+    # # bloom-7b1
+    # target_ratio_in_4_bit = 0.556
+    # # opt-6.7b
+    # target_ratio_in_4_bit = 0.62
+    # # pajama-7b
+    # target_ratio_in_4_bit = 0.744
+
     ratio_updated = 0.25
 
 
