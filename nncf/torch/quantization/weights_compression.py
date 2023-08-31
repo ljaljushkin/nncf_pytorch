@@ -198,18 +198,18 @@ class WeightsDecompressorPowerQuant(nn.Module):
         s = torch.sign(w)
         # w = torch.pow(w, self.alpha)
         # s_w = w * self.sign
-        if self.alpha == 2:
-            layer.weight = torch.square(w) * s
-        else:
-            layer.weight = torch.pow(w, self.alpha) * s
-        # layer.weight = torch.exp(w) * s
+        # if self.alpha == 2:
+        #     layer.weight = torch.square(w) * s
+        # else:
+        #     layer.weight = torch.pow(w, self.alpha) * s
+        layer.weight = torch.exp(w) * s
 
     def dequantize(self, input):
         w = input.type(dtype=self.scale.dtype)
         w = (w - self.zero_point) * self.scale
         s = torch.sign(w)
-        return torch.pow(w, self.alpha) * s
-        # return torch.exp(w) * s
+        # return torch.pow(w, self.alpha) * s
+        return torch.exp(w) * s
 
 def get_total_num_weights(model, allowed_types, res=None):
     for _, module in model.named_children():
@@ -583,7 +583,7 @@ def _insert_pre_compression_operations_simple(
         if is_power_quant:
             w_sign = torch.sign(layer.weight)
             # w = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
-            zeros = torch.isclose(layer.weight, torch.zeros([1]))
+            zeros = torch.isclose(layer.weight, torch.zeros([1]), rtol=1e-12)
             w.requires_grad = False
             w[zeros] = 1
             w = torch.log(torch.abs(layer.weight)) * w_sign
@@ -631,6 +631,7 @@ def _insert_pre_compression_operations_simple(
             s = torch.sign(decompressed)
             # decompressed = torch.square(decompressed) * s
             decompressed = torch.exp(decompressed) * s
+            decompressed[zeros] = 0
         diff = torch.mean((original_weights - decompressed)**2)
         print(diff)
         # layer.weight.data = Packer.pack(compressed_weight)
@@ -735,6 +736,10 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
         if data.is_skipped:
             data.precision = 8
     bit_config = [data.precision for data in all_data_list]
+    # llama-3b (71.27% in 4bit - 63.44)
+    bit_config = [8, 4, 4, 8, 4, 8, 8, 4, 8, 8, 8, 4, 8, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 8, 8, 8, 8, 4, 8, 4, 4, 8, 8, 4, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8]
+    for bits, data in zip(bit_config, all_data_list):
+        data.precision = bits
     print(bit_config)
 
     num_weights_per_precision = {}
