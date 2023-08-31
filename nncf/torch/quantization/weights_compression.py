@@ -579,11 +579,15 @@ def _insert_pre_compression_operations_simple(
         print(f'{data.precision} bits for {data.name}')
         is_power_quant = bits == 4
         w = layer.weight
+        original_weights = w.data.clone()
         if is_power_quant:
             w_sign = torch.sign(layer.weight)
-            w = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
-            # w = torch.log(torch.abs(layer.weight)) * w_sign
-
+            # w = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
+            zeros = torch.isclose(layer.weight, torch.zeros([1]))
+            w.requires_grad = False
+            w[zeros] = 1
+            w = torch.log(torch.abs(layer.weight)) * w_sign
+            assert not torch.any(torch.isnan(w)) or not torch.any(torch.isinf(w))
         if group_mode:
             group_size = 256
             # print(w[:5,:5], w.shape)
@@ -620,14 +624,13 @@ def _insert_pre_compression_operations_simple(
         compressed_weight = w.data / scale + zero_point
         compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
 
-        original_weights = layer.weight.data.clone()
         w = compressed_weight
         w = w.type(dtype=scale.dtype)
         decompressed = (w - zero_point) * scale
         if is_power_quant:
             s = torch.sign(decompressed)
-            decompressed = torch.square(w) * s
-            # decompressed = torch.exp(decompressed) * s
+            # decompressed = torch.square(decompressed) * s
+            decompressed = torch.exp(decompressed) * s
         diff = torch.mean((original_weights - decompressed)**2)
         print(diff)
         # layer.weight.data = Packer.pack(compressed_weight)
@@ -654,7 +657,7 @@ def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=N
         # TODO: LlamaForCausalLM
         is_skipped = 'embed_tokens' == name or 'lm_head' == name
         num_weights = module.weight.data.numel()
-        error = 0 if is_skipped else get_relative_error(module)
+        error = 0#0 if is_skipped else get_relative_error(module)
         data = LayerData(full_node_name, error, num_weights, module, is_skipped)
         res.append(data)
 
