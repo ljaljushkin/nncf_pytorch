@@ -571,52 +571,49 @@ def _insert_pre_compression_operations_simple(
         layer = data.module
         bits = data.precision
         level_high = 2**bits - 1
-        print(f'{data.precision} bits for {data.name}')
-
-        w_sign = torch.sign(layer.weight)
-        w_pow = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
         target_dim = layer.target_weight_dim_for_compression
         stat_dim = (target_dim + 1) % 2
+        print(f'{data.precision} bits for {data.name}')
+        is_power_quant = bits == 4
+        if is_power_quant:
+            w_sign = torch.sign(layer.weight)
+            w = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
 
         if group_mode:
-          group_size = 256
-          w = w_pow
-          # print(w[:5,:5], w.shape)
-          num_columns = w.shape[stat_dim]
-          scale = []
-          zero_point = []
-          assert num_columns % group_size == 0
-          for i1 in range(0, num_columns, group_size):
-              i2 = i1 + group_size
-              current_columns = w[:, i1:i2]  # [c_out, c_in // group_size]
-              input_low = torch.min(current_columns, dim=stat_dim)[0].detach()  # [c_out]
-              input_high = torch.max(current_columns, dim=stat_dim)[0].detach()  # [c_out]
+            group_size = 256
+            # print(w[:5,:5], w.shape)
+            num_columns = w.shape[stat_dim]
+            scale = []
+            zero_point = []
+            assert num_columns % group_size == 0
+            for i1 in range(0, num_columns, group_size):
+                i2 = i1 + group_size
+                current_columns = w[:, i1:i2]  # [c_out, c_in // group_size]
+                input_low = torch.min(current_columns, dim=stat_dim)[0].detach()  # [c_out]
+                input_high = torch.max(current_columns, dim=stat_dim)[0].detach()  # [c_out]
 
-              scale_g, zero_point_g = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+                scale_g, zero_point_g = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
 
-              scale_g = scale_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
-              zero_point_g = zero_point_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
+                scale_g = scale_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
+                zero_point_g = zero_point_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
 
-              scale.append(scale_g)
-              zero_point.append(zero_point_g)
+                scale.append(scale_g)
+                zero_point.append(zero_point_g)
 
-          scale = torch.cat(scale, dim=stat_dim)  # [c_out, c_in // group_size]
-          scale = torch.repeat_interleave(scale, group_size, dim=stat_dim)  # [c_out, c_in]
+            scale = torch.cat(scale, dim=stat_dim)  # [c_out, c_in // group_size]
+            scale = torch.repeat_interleave(scale, group_size, dim=stat_dim)  # [c_out, c_in]
 
-          zero_point = torch.cat(zero_point, dim=stat_dim)  # [c_out, c_in // group_size]
-          zero_point = torch.repeat_interleave(zero_point, group_size, dim=stat_dim)  # [c_out, c_in]
+            zero_point = torch.cat(zero_point, dim=stat_dim)  # [c_out, c_in // group_size]
+            zero_point = torch.repeat_interleave(zero_point, group_size, dim=stat_dim)  # [c_out, c_in]
         else:
-          input_low = torch.min(w_pow, dim=stat_dim)[0].detach()
-          input_high = torch.max(w_pow, dim=stat_dim)[0].detach()
-          scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
-          scale = scale.unsqueeze(stat_dim)
-          zero_point = zero_point.unsqueeze(stat_dim)
+            input_low = torch.min(w, dim=stat_dim)[0].detach()
+            input_high = torch.max(w, dim=stat_dim)[0].detach()
+            scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+            scale = scale.unsqueeze(stat_dim)
+            zero_point = zero_point.unsqueeze(stat_dim)
 
-        compressed_weight = w_pow.data / scale + zero_point
-        compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
-
-        layer.weight.requires_grad = False
-        compressed_weight = compressed_weight.type(dtype=torch.uint8)
+            compressed_weight = w.data / scale + zero_point
+            compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
 
         # original_weights = layer.weight.data.clone()
         # w = compressed_weight
@@ -627,9 +624,14 @@ def _insert_pre_compression_operations_simple(
         # diff = torch.mean((original_weights - decompressed)**2)
         # print(diff)
         # layer.weight.data = Packer.pack(compressed_weight)
+        compressed_weight = compressed_weight.type(dtype=torch.uint8)
+        layer.weight.requires_grad = False
         layer.weight.data = compressed_weight
-
-        layer.register_pre_forward_operation(WeightsDecompressorPowerQuant(zero_point, scale, 1/best_alpha))
+        if bits == 4:
+            pre_forward_operation = WeightsDecompressorPowerQuant(zero_point, scale, 1/best_alpha)
+        else:
+           pre_forward_operation = WeightsDecompressor(zero_point, scale)
+        layer.register_pre_forward_operation(pre_forward_operation)
 
 
 def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=None):
