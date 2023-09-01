@@ -196,20 +196,18 @@ class WeightsDecompressorPowerQuant(nn.Module):
         w = w.type(dtype=self.scale.dtype)
         w = (w - self.zero_point) * self.scale
         s = torch.sign(w)
-        # w = torch.pow(w, self.alpha)
-        # s_w = w * self.sign
-        # if self.alpha == 2:
-        #     layer.weight = torch.square(w) * s
-        # else:
-        #     layer.weight = torch.pow(w, self.alpha) * s
-        layer.weight = torch.exp(w) * s
+        if self.alpha == 2:
+            layer.weight = torch.square(w) * s
+        else:
+            layer.weight = torch.pow(w, self.alpha) * s
+        # layer.weight = torch.exp(w) * s
 
     def dequantize(self, input):
         w = input.type(dtype=self.scale.dtype)
         w = (w - self.zero_point) * self.scale
         s = torch.sign(w)
-        # return torch.pow(w, self.alpha) * s
-        return torch.exp(w) * s
+        return torch.pow(w, self.alpha) * s
+        # return torch.exp(w) * s
 
 def get_total_num_weights(model, allowed_types, res=None):
     for _, module in model.named_children():
@@ -582,11 +580,15 @@ def _insert_pre_compression_operations_simple(
         original_weights = w.data.clone()
         if is_power_quant:
             w_sign = torch.sign(layer.weight)
-            # w = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
-            zeros = torch.isclose(layer.weight, torch.zeros([1]), rtol=1e-12)
-            w.requires_grad = False
-            w[zeros] = 1
-            w = torch.log(torch.abs(layer.weight)) * w_sign
+            # NOTE: power
+            w = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
+            # NOTE: log/exp
+            # zeros = torch.isclose(layer.weight, torch.zeros([1]), rtol=1e-12)
+            # w.requires_grad = False
+            # w[zeros] = 1
+            # w = torch.log(torch.abs(layer.weight)) * w_sign
+            # NOTE: sigmoid/ln(x/(1-x))
+            # w = torch.sigmoid(layer.weight)
             assert not torch.any(torch.isnan(w)) or not torch.any(torch.isinf(w))
         if group_mode:
             group_size = 256
@@ -629,9 +631,14 @@ def _insert_pre_compression_operations_simple(
         decompressed = (w - zero_point) * scale
         if is_power_quant:
             s = torch.sign(decompressed)
-            # decompressed = torch.square(decompressed) * s
-            decompressed = torch.exp(decompressed) * s
-            decompressed[zeros] = 0
+            # NOTE: power
+            decompressed = torch.square(decompressed) * s
+            # NOTE: log/exp
+            # decompressed = torch.exp(decompressed) * s
+            # decompressed[zeros] = 0
+            # NOTE: sigmoid
+            # decompressed = torch.log(decompressed / (1 - decompressed))
+            assert not torch.any(torch.isnan(decompressed)) or not torch.any(torch.isinf(decompressed))
         diff = torch.mean((original_weights - decompressed)**2)
         print(diff)
         # layer.weight.data = Packer.pack(compressed_weight)
@@ -645,7 +652,7 @@ def _insert_pre_compression_operations_simple(
         layer.register_pre_forward_operation(pre_forward_operation)
 
 
-def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=None):
+def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=None, is_skipped_fn=None):
     if prefix is None:
         prefix = model.__class__.__name__
     for name, module in model.named_children():
@@ -653,12 +660,9 @@ def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=N
         if type(module) not in allowed_types:
             get_all_layer_data(module, allowed_types, prefix=full_node_name, res=res)
             continue
-        # TODO: GPTNeoXForCausalLM
-        # is_skipped = 'embed_in' == name or 'embed_out' == name
-        # TODO: LlamaForCausalLM
-        is_skipped = 'embed_tokens' == name or 'lm_head' == name
+
         num_weights = module.weight.data.numel()
-        error = 0#0 if is_skipped else get_relative_error(module)
+        error = 0 if is_skipped else get_relative_error(module)
         data = LayerData(full_node_name, error, num_weights, module, is_skipped)
         res.append(data)
 
@@ -678,37 +682,45 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
     # for user_type in user_types:
     #     allowed_types.append(user_type)
     allowed_types = [NNCFEmbedding, NNCFLinear]
-    # dolly-v2-3b
-    # target_ratio_in_4_bit = 0.638
-    # # llama-3b
-    target_ratio_in_4_bit = 0.713
-    # # llama-13b
-    # target_ratio_in_4_bit = 0.762
-    # # bloom-7b1
-    # target_ratio_in_4_bit = 0.556
-    # # opt-6.7b
-    # target_ratio_in_4_bit = 0.62
-    # # pajama-7b
-    # target_ratio_in_4_bit = 0.744
 
+    # NOTE: dolly-v2-3b
+    target_ratio_in_4_bit = 0.638
+    # NOTE: llama-3b
+    target_ratio_in_4_bit = 0.713
+    # NOTE: llama-13b
+    target_ratio_in_4_bit = 0.762
+    # NOTE: bloom-7b1
+    target_ratio_in_4_bit = 0.556
+    # NOTE: opt-6.7b
+    target_ratio_in_4_bit = 0.62
+    # NOTE: pajama-7b
+    target_ratio_in_4_bit = 0.744
+
+    target_ratio_in_4_bit = 0.5
     # ratio_updated = 0.25
 
-
     all_data_list = []
-    get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list)
+
+    # NOTE: GPTNeoXForCausalLM
+    is_skipped_neox = lambda name: 'embed_in' == name or 'embed_out' == name
+    # NOTE: LlamaForCausalLM
+    is_skipped_llama = lambda name: 'embed_tokens' == name or 'lm_head' == name
+    get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list, is_skipped=is_skipped_llama)
     total_num_weights = sum(d.num_weights for d in all_data_list)
     # print(f'num all layers={len(all_data_list)}, num all weights={total_num_weights}')
 
     data_list = list(filter(lambda x: not x.is_skipped, all_data_list))
     errors = [data.error for data in data_list]
+    # NOTE: force first 25% in int8
     # max_error = max(errors)
     # num_updated = int(target_ratio_in_4_bit * ratio_updated * len(errors))
     # for i in range(num_updated):
     #    errors[i] = max_error * 2
-    # layers=list(range(len(errors)))
-    # import matplotlib.pyplot as plt
-    # fig = plt.figure()
-    # plt.plot(layers, errors)
+    # NOTE: visualize
+    layers=list(range(len(errors)))
+    import matplotlib.pyplot as plt
+    fig = plt.figure()
+    plt.plot(layers, errors)
 
     indexes_of_layers_in_ascending_order_of_errors = [
         i[0] for i in sorted(enumerate(errors), reverse=False, key=lambda x: x[1])
@@ -724,10 +736,10 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
         if current_ratio >= target_ratio_in_4_bit:
             for j in indexes_of_layers_in_ascending_order_of_errors[i:]:
                 data_list[j].precision = 8
-            # boundary_error = errors[indexes_of_layers_in_ascending_order_of_errors[i-1]]
-            # plt.axhline(y = boundary_error, color = 'r', linestyle = '-')
-            # plt.savefig('errors_with_boundary.png')
-            # plt.close(fig)
+            boundary_error = errors[indexes_of_layers_in_ascending_order_of_errors[i-1]]
+            plt.axhline(y = boundary_error, color = 'r', linestyle = '-')
+            plt.savefig('errors_with_boundary.png')
+            plt.close(fig)
             break
         data.precision = 4
         current_num_weights += data.num_weights
@@ -736,10 +748,10 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
         if data.is_skipped:
             data.precision = 8
     bit_config = [data.precision for data in all_data_list]
-    # llama-3b (71.27% in 4bit - 63.44)
-    bit_config = [8, 4, 4, 8, 4, 8, 8, 4, 8, 8, 8, 4, 8, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 8, 8, 8, 8, 4, 8, 4, 4, 8, 8, 4, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8]
-    for bits, data in zip(bit_config, all_data_list):
-        data.precision = bits
+    # NOTE: llama-3b (71.27% in 4bit - 63.44)
+    # bit_config = [8, 4, 4, 8, 4, 8, 8, 4, 8, 8, 8, 4, 8, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 8, 8, 8, 8, 4, 8, 4, 4, 8, 8, 4, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8]
+    # for bits, data in zip(bit_config, all_data_list):
+    #     data.precision = bits
     print(bit_config)
 
     num_weights_per_precision = {}
