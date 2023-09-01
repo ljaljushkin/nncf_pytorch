@@ -566,7 +566,8 @@ def _insert_pre_compression_operations_simple(
     :return: The module with inserted operations.
     """
     best_alpha = 0.5
-    group_mode = False
+    group_mode = True
+    group_size = 64
 
     for data in data_list:
         layer = data.module
@@ -591,7 +592,6 @@ def _insert_pre_compression_operations_simple(
             # w = torch.sigmoid(layer.weight)
             assert not torch.any(torch.isnan(w)) or not torch.any(torch.isinf(w))
         if group_mode:
-            group_size = 256
             # print(w[:5,:5], w.shape)
             num_columns = w.shape[stat_dim]
             scale = []
@@ -663,7 +663,7 @@ def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=N
 
         num_weights = module.weight.data.numel()
         is_skipped = is_skipped_fn(module)
-        error = 0 if is_skipped else get_relative_error(module)
+        error = 0 # if is_skipped else get_relative_error(module)
         data = LayerData(full_node_name, error, num_weights, module, is_skipped)
         res.append(data)
 
@@ -748,11 +748,13 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
     for data in all_data_list:
         if data.is_skipped:
             data.precision = 8
-    bit_config = [data.precision for data in all_data_list]
+    # bit_config = [data.precision for data in all_data_list]
+    bit_config = [4] * len(all_data_list)
+    bit_config[0] = bit_config[-1] = 8
     # NOTE: llama-3b (71.27% in 4bit - 63.44)
     # bit_config = [8, 4, 4, 8, 4, 8, 8, 4, 8, 8, 8, 4, 8, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 8, 8, 8, 8, 4, 8, 4, 4, 8, 8, 4, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8]
-    # for bits, data in zip(bit_config, all_data_list):
-    #     data.precision = bits
+    for bits, data in zip(bit_config, all_data_list):
+        data.precision = bits
     print(bit_config)
 
     num_weights_per_precision = {}
