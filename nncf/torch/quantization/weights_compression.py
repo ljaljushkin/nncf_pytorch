@@ -568,12 +568,19 @@ def _insert_pre_compression_operations_simple(
     best_alpha = 0.5
     group_mode = True
     group_size = 64
-    is_power_quant_fn = lambda x: False #x == 4
+    is_power_quant_fn = lambda x: x == 4
+    is_zp = True
 
     for data in data_list:
         layer = data.module
         bits = data.precision
-        level_high = 2**bits - 1
+        if is_zp:
+            level_high = 2**bits - 1
+            level_low = 0
+        else:
+            level_high = 2**(bits-1) - 1
+            level_low = -2**(bits-1) + 1
+
         target_dim = layer.target_weight_dim_for_compression
         stat_dim = (target_dim + 1) % 2
         print(f'{data.precision} bits for {data.name}')
@@ -582,21 +589,15 @@ def _insert_pre_compression_operations_simple(
         original_weights = w.data.clone()
         if is_power_quant:
             w_sign = torch.sign(layer.weight)
-            # NOTE: power
             w = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
-            # NOTE: log/exp
-            # zeros = torch.isclose(layer.weight, torch.zeros([1]), rtol=1e-12)
-            # w.requires_grad = False
-            # w[zeros] = 1
-            # w = torch.log(torch.abs(layer.weight)) * w_sign
-            # NOTE: sigmoid/ln(x/(1-x))
-            # w = torch.sigmoid(layer.weight)
             assert not torch.any(torch.isnan(w)) or not torch.any(torch.isinf(w))
         if group_mode:
             # print(w[:5,:5], w.shape)
             num_columns = w.shape[stat_dim]
             scale = []
             zero_point = []
+            if not is_zp:
+                zero_point = 0
             assert num_columns % group_size == 0
             for i1 in range(0, num_columns, group_size):
                 i2 = i1 + group_size
@@ -604,49 +605,47 @@ def _insert_pre_compression_operations_simple(
                 input_low = torch.min(current_columns, dim=stat_dim)[0].detach()  # [c_out]
                 input_high = torch.max(current_columns, dim=stat_dim)[0].detach()  # [c_out]
 
-                scale_g, zero_point_g = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
-
-                scale_g = scale_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
-                zero_point_g = zero_point_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
-
-                scale.append(scale_g)
-                zero_point.append(zero_point_g)
+                if not is_zp:
+                    scale_g = torch.max(input_high.abs(), input_low.abs()) / level_high
+                    scale_g = scale_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
+                    scale.append(scale_g)
+                else:
+                    scale_g, zero_point_g = get_scale_zp_from_input_low_input_high(level_low, level_high, input_low, input_high)
+                    scale_g = scale_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
+                    zero_point_g = zero_point_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
+                    scale.append(scale_g)
+                    zero_point.append(zero_point_g)
 
             scale = torch.cat(scale, dim=stat_dim)  # [c_out, c_in // group_size]
             scale = torch.repeat_interleave(scale, group_size, dim=stat_dim)  # [c_out, c_in]
 
-            zero_point = torch.cat(zero_point, dim=stat_dim)  # [c_out, c_in // group_size]
-            zero_point = torch.repeat_interleave(zero_point, group_size, dim=stat_dim)  # [c_out, c_in]
+            if is_zp:
+                zero_point = torch.cat(zero_point, dim=stat_dim)  # [c_out, c_in // group_size]
+                zero_point = torch.repeat_interleave(zero_point, group_size, dim=stat_dim)  # [c_out, c_in]
         else:
+            # TODO: always with ZP!
             input_low = torch.min(w, dim=stat_dim)[0].detach()
             input_high = torch.max(w, dim=stat_dim)[0].detach()
-            scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+            scale, zero_point = get_scale_zp_from_input_low_input_high(level_low, level_high, input_low, input_high)
             scale = scale.unsqueeze(stat_dim)
             zero_point = zero_point.unsqueeze(stat_dim)
 
         compressed_weight = w.data / scale + zero_point
-        compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
+        compressed_weight = torch.clamp(torch.round(compressed_weight), level_low, level_high)
 
         w = compressed_weight
         w = w.type(dtype=scale.dtype)
         decompressed = (w - zero_point) * scale
         if is_power_quant:
             s = torch.sign(decompressed)
-            # NOTE: power
             decompressed = torch.square(decompressed) * s
-            # NOTE: log/exp
-            # decompressed = torch.exp(decompressed) * s
-            # decompressed[zeros] = 0
-            # NOTE: sigmoid
-            # decompressed = torch.log(decompressed / (1 - decompressed))
             assert not torch.any(torch.isnan(decompressed)) or not torch.any(torch.isinf(decompressed))
         diff = torch.mean((original_weights - decompressed)**2)
         print(diff)
-        # layer.weight.data = Packer.pack(compressed_weight)
         layer.weight.requires_grad = False
         compressed_weight = compressed_weight.type(dtype=torch.uint8)
         layer.weight.data = compressed_weight
-        if bits == 4:
+        if is_power_quant:
             pre_forward_operation = WeightsDecompressorPowerQuant(zero_point, scale, 1/best_alpha)
         else:
            pre_forward_operation = WeightsDecompressor(zero_point, scale)
