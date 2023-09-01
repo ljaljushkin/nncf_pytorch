@@ -658,10 +658,11 @@ def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=N
     for name, module in model.named_children():
         full_node_name = get_node_name(module, name, prefix)
         if type(module) not in allowed_types:
-            get_all_layer_data(module, allowed_types, prefix=full_node_name, res=res)
+            get_all_layer_data(module, allowed_types, prefix=full_node_name, res=res, is_skipped_fn=is_skipped_fn)
             continue
 
         num_weights = module.weight.data.numel()
+        is_skipped = is_skipped_fn(module)
         error = 0 if is_skipped else get_relative_error(module)
         data = LayerData(full_node_name, error, num_weights, module, is_skipped)
         res.append(data)
@@ -705,7 +706,7 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
     is_skipped_neox = lambda name: 'embed_in' == name or 'embed_out' == name
     # NOTE: LlamaForCausalLM
     is_skipped_llama = lambda name: 'embed_tokens' == name or 'lm_head' == name
-    get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list, is_skipped=is_skipped_llama)
+    get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list, is_skipped_fn=is_skipped_llama)
     total_num_weights = sum(d.num_weights for d in all_data_list)
     # print(f'num all layers={len(all_data_list)}, num all weights={total_num_weights}')
 
