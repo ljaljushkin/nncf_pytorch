@@ -568,6 +568,7 @@ def _insert_pre_compression_operations_simple(
     best_alpha = 0.5
     group_mode = True
     group_size = 64
+    is_power_quant_fn = lambda x: False #x == 4
 
     for data in data_list:
         layer = data.module
@@ -576,7 +577,7 @@ def _insert_pre_compression_operations_simple(
         target_dim = layer.target_weight_dim_for_compression
         stat_dim = (target_dim + 1) % 2
         print(f'{data.precision} bits for {data.name}')
-        is_power_quant = bits == 4
+        is_power_quant = is_power_quant_fn(bits)
         w = layer.weight
         original_weights = w.data.clone()
         if is_power_quant:
