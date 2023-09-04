@@ -566,32 +566,43 @@ def _insert_pre_compression_operations_simple(
     :return: The module with inserted operations.
     """
     best_alpha = 0.5
-    group_mode = True
+    nf4_convert = np.vectorize(quant_deguant)
+
+    # NOTE: do it when assign bitwidth
     group_size = 64
-    is_power_quant_fn = lambda x: x == 4
-    is_zp = True
+    is_power_quant_fn = lambda x: False#x == 4
+    is_group_fn = lambda x: x == 4
+    is_nf4_fn = lambda x: x == 4
+    is_zp_fn = lambda x: x != 4
 
     for data in data_list:
         layer = data.module
         bits = data.precision
+        target_dim = layer.target_weight_dim_for_compression
+        stat_dim = (target_dim + 1) % 2
+
+        is_power_quant = is_power_quant_fn(bits)
+        is_nf4 = is_nf4_fn(bits)
+        is_zp = is_zp_fn(bits)
+        is_group = is_group_fn(bits)
+        print(f'{data.precision} bits PQ={is_power_quant} NF4={is_nf4} ZP={is_zp} Group={is_group} for {data.name}')
+        assert (is_power_quant and not is_nf4) or (not is_power_quant and is_nf4), 'Power Quant is not compatible with NF4'
+        assert (is_zp and not is_nf4) or (not is_zp and is_nf4), 'NF4 is not compatible with ZP'
+        assert not is_group and (not is_nf4 or is_zp), 'not group mode is always with ZP and uniform (without ZP or NF4 are not supported)'
+        assert bits == 8 and not (is_group and is_nf4 and is_power_quant), 'Quantization to 8 bit is simple! (no nf4, no power quant, no group)'
         if is_zp:
             level_high = 2**bits - 1
             level_low = 0
         else:
             level_high = 2**(bits-1) - 1
             level_low = -2**(bits-1) + 1
-
-        target_dim = layer.target_weight_dim_for_compression
-        stat_dim = (target_dim + 1) % 2
-        print(f'{data.precision} bits for {data.name}')
-        is_power_quant = is_power_quant_fn(bits)
         w = layer.weight
         original_weights = w.data.clone()
         if is_power_quant:
             w_sign = torch.sign(layer.weight)
             w = torch.pow(torch.abs(layer.weight), best_alpha) * w_sign
             assert not torch.any(torch.isnan(w)) or not torch.any(torch.isinf(w))
-        if group_mode:
+        if is_group:
             # print(w[:5,:5], w.shape)
             num_columns = w.shape[stat_dim]
             scale = []
@@ -605,8 +616,10 @@ def _insert_pre_compression_operations_simple(
                 input_low = torch.min(current_columns, dim=stat_dim)[0].detach()  # [c_out]
                 input_high = torch.max(current_columns, dim=stat_dim)[0].detach()  # [c_out]
 
-                if not is_zp:
-                    scale_g = torch.max(input_high.abs(), input_low.abs()) / level_high
+                if not is_zp or is_nf4:
+                    scale_g = torch.max(input_high.abs(), input_low.abs()) # [c_out]
+                    if not is_zp:
+                       scale_g /= level_high # [c_out]
                     scale_g = scale_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
                     scale.append(scale_g)
                 else:
@@ -623,33 +636,45 @@ def _insert_pre_compression_operations_simple(
                 zero_point = torch.cat(zero_point, dim=stat_dim)  # [c_out, c_in // group_size]
                 zero_point = torch.repeat_interleave(zero_point, group_size, dim=stat_dim)  # [c_out, c_in]
         else:
-            # TODO: always with ZP!
             input_low = torch.min(w, dim=stat_dim)[0].detach()
             input_high = torch.max(w, dim=stat_dim)[0].detach()
             scale, zero_point = get_scale_zp_from_input_low_input_high(level_low, level_high, input_low, input_high)
             scale = scale.unsqueeze(stat_dim)
             zero_point = zero_point.unsqueeze(stat_dim)
 
-        compressed_weight = w.data / scale + zero_point
-        compressed_weight = torch.clamp(torch.round(compressed_weight), level_low, level_high)
-
-        w = compressed_weight
-        w = w.type(dtype=scale.dtype)
-        decompressed = (w - zero_point) * scale
-        if is_power_quant:
-            s = torch.sign(decompressed)
-            decompressed = torch.square(decompressed) * s
-            assert not torch.any(torch.isnan(decompressed)) or not torch.any(torch.isinf(decompressed))
-        diff = torch.mean((original_weights - decompressed)**2)
-        print(diff)
-        layer.weight.requires_grad = False
-        compressed_weight = compressed_weight.type(dtype=torch.uint8)
-        layer.weight.data = compressed_weight
-        if is_power_quant:
-            pre_forward_operation = WeightsDecompressorPowerQuant(zero_point, scale, 1/best_alpha)
+        if is_nf4:
+            tmp = (layer.weight.data / scale).detach()
+            # print(tmp[:5, :5], tmp.shape)
+            tmp = tmp.numpy()
+            tmp = nf4_convert(tmp)
+            print("Type before: ", layer.weight.type())
+            nf4_data = (torch.from_numpy(tmp) * scale).type(torch.FloatTensor)
+            diff = torch.mean((nf4_data - layer.weight.data)**2)
+            print(diff)
+            layer.weight.requires_grad = False
+            layer.weight.data = nf4_data
+            print("Type after: ", layer.weight.type())
         else:
-           pre_forward_operation = WeightsDecompressor(zero_point, scale)
-        layer.register_pre_forward_operation(pre_forward_operation)
+            compressed_weight = w.data / scale + zero_point
+            compressed_weight = torch.clamp(torch.round(compressed_weight), level_low, level_high)
+
+            w = compressed_weight
+            w = w.type(dtype=scale.dtype)
+            decompressed = (w - zero_point) * scale
+            if is_power_quant:
+                s = torch.sign(decompressed)
+                decompressed = torch.square(decompressed) * s
+                assert not torch.any(torch.isnan(decompressed)) or not torch.any(torch.isinf(decompressed))
+            diff = torch.mean((original_weights - decompressed)**2)
+            print(diff)
+            layer.weight.requires_grad = False
+            compressed_weight = compressed_weight.type(dtype=torch.uint8)
+            layer.weight.data = compressed_weight
+            if is_power_quant:
+                pre_forward_operation = WeightsDecompressorPowerQuant(zero_point, scale, 1/best_alpha)
+            else:
+                pre_forward_operation = WeightsDecompressor(zero_point, scale)
+            layer.register_pre_forward_operation(pre_forward_operation)
 
 
 def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=None, is_skipped_fn=None):
