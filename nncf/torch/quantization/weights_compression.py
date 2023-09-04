@@ -550,7 +550,12 @@ class LayerData:
     num_weights: int
     module: nn.Module # TODO: access module via name
     is_skipped: bool
+    # TODO: need a separate class for final config
     precision: int = None
+    group_size: int = -1
+    is_power_quant: bool = True
+    is_nf4: bool = False
+    is_zp: bool = True
 
     def __str__(self):
         return f'\n\tname={self.name}\n\terr={self.error}\n\tnum_weights={self.num_weights}\n'
@@ -568,24 +573,18 @@ def _insert_pre_compression_operations_simple(
     best_alpha = 0.5
     nf4_convert = np.vectorize(quant_deguant)
 
-    # NOTE: do it when assign bitwidth
-    group_size = 64
-    is_power_quant_fn = lambda x: False#x == 4
-    is_group_fn = lambda x: x == 4
-    is_nf4_fn = lambda x: x == 4
-    is_zp_fn = lambda x: x != 4
-
     for data in data_list:
         layer = data.module
         bits = data.precision
         target_dim = layer.target_weight_dim_for_compression
         stat_dim = (target_dim + 1) % 2
 
-        is_power_quant = is_power_quant_fn(bits)
-        is_nf4 = is_nf4_fn(bits)
-        is_zp = is_zp_fn(bits)
-        is_group = is_group_fn(bits)
-        print(f'{data.precision} bits PQ={is_power_quant} NF4={is_nf4} ZP={is_zp} Group={is_group} for {data.name}')
+        is_power_quant = data.is_power_quant
+        is_nf4 = data.is_nf4
+        is_zp = data.is_zp
+        is_group = data.group_size >= 2
+        group_size = data.group_size
+        print(f'{data.precision} bits PQ={is_power_quant} NF4={is_nf4} ZP={is_zp} Group={group_size} for {data.name}')
         assert (is_power_quant and not is_nf4) or (not is_power_quant and is_nf4), 'Power Quant is not compatible with NF4'
         assert (is_zp and not is_nf4) or (not is_zp and is_nf4), 'NF4 is not compatible with ZP'
         assert not is_group and (not is_nf4 or is_zp), 'not group mode is always with ZP and uniform (without ZP or NF4 are not supported)'
@@ -677,22 +676,23 @@ def _insert_pre_compression_operations_simple(
             layer.register_pre_forward_operation(pre_forward_operation)
 
 
-def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=None, is_skipped_fn=None):
+def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=None, no_error_calc_names=None):
     if prefix is None:
         prefix = model.__class__.__name__
     for name, module in model.named_children():
         full_node_name = get_node_name(module, name, prefix)
         if type(module) not in allowed_types:
-            get_all_layer_data(module, allowed_types, prefix=full_node_name, res=res, is_skipped_fn=is_skipped_fn)
+            get_all_layer_data(module, allowed_types, prefix=full_node_name, res=res, no_error_calc_names=no_error_calc_names)
             continue
 
         num_weights = module.weight.data.numel()
-        is_skipped = is_skipped_fn(module)
-        error = 0 # if is_skipped else get_relative_error(module)
-        data = LayerData(full_node_name, error, num_weights, module, is_skipped)
+        error = 0
+        if no_error_calc_names is not None and name not in no_error_calc_names:
+            error = get_relative_error(module)
+        data = LayerData(full_node_name, error, num_weights, module, no_error_calc_names)
         res.append(data)
 
-def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
+def insert_pre_compression_operations(module: nn.Module, group_size=64, mode='nf4', is_mixed=False) -> Optional[nn.Module]:
     """
     Inserts weights compression with dequantization or quantization pre operation for Linear and Embedding layers.
 
@@ -708,79 +708,106 @@ def insert_pre_compression_operations(module: nn.Module) -> Optional[nn.Module]:
     # for user_type in user_types:
     #     allowed_types.append(user_type)
     allowed_types = [NNCFEmbedding, NNCFLinear]
-
-    # NOTE: dolly-v2-3b
-    target_ratio_in_4_bit = 0.638
-    # NOTE: llama-3b
-    target_ratio_in_4_bit = 0.713
-    # NOTE: llama-13b
-    target_ratio_in_4_bit = 0.762
-    # NOTE: bloom-7b1
-    target_ratio_in_4_bit = 0.556
-    # NOTE: opt-6.7b
-    target_ratio_in_4_bit = 0.62
-    # NOTE: pajama-7b
-    target_ratio_in_4_bit = 0.744
-
-    target_ratio_in_4_bit = 0.5
-    # ratio_updated = 0.25
-
     all_data_list = []
 
-    # NOTE: GPTNeoXForCausalLM
-    is_skipped_neox = lambda name: 'embed_in' == name or 'embed_out' == name
-    # NOTE: LlamaForCausalLM
-    is_skipped_llama = lambda name: 'embed_tokens' == name or 'lm_head' == name
-    get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list, is_skipped_fn=is_skipped_llama)
-    total_num_weights = sum(d.num_weights for d in all_data_list)
-    # print(f'num all layers={len(all_data_list)}, num all weights={total_num_weights}')
+    no_error_calc_names = None
+    if is_mixed:
+        model_name = module.__class__.__name__
+        if model_name == 'GPTNeoXForCausalLM':
+            no_error_calc_names = ['embed_in', 'embed_out']
+        elif model_name == 'LlamaForCausalLM':
+            no_error_calc_names = ['embed_tokens', 'lm_head']
+        else:
+            raise RuntimeError('Unsupported model: need to specify which layers are skipped for mixed precision')
 
-    data_list = list(filter(lambda x: not x.is_skipped, all_data_list))
-    errors = [data.error for data in data_list]
-    # NOTE: force first 25% in int8
-    # max_error = max(errors)
-    # num_updated = int(target_ratio_in_4_bit * ratio_updated * len(errors))
-    # for i in range(num_updated):
-    #    errors[i] = max_error * 2
-    # NOTE: visualize
-    layers=list(range(len(errors)))
-    import matplotlib.pyplot as plt
-    fig = plt.figure()
-    plt.plot(layers, errors)
+    get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list, no_error_calc_names=no_error_calc_names)
 
-    indexes_of_layers_in_ascending_order_of_errors = [
-        i[0] for i in sorted(enumerate(errors), reverse=False, key=lambda x: x[1])
-    ]
-    # print(f'\nindexes_of_layers_in_ascending_order_of_errors={indexes_of_layers_in_ascending_order_of_errors}')
-    # sorted_errors = [data_list[i].error for i in indexes_of_layers_in_ascending_order_of_errors]
-    # print(f'\nsorted errors: {sorted_errors}')
+    if is_mixed:
+         # NOTE: dolly-v2-3b
+        target_ratio_in_4_bit = 0.638
+        # NOTE: llama-3b
+        target_ratio_in_4_bit = 0.713
+        # NOTE: llama-13b
+        target_ratio_in_4_bit = 0.762
+        # NOTE: bloom-7b1
+        target_ratio_in_4_bit = 0.556
+        # NOTE: opt-6.7b
+        target_ratio_in_4_bit = 0.62
+        # NOTE: pajama-7b
+        target_ratio_in_4_bit = 0.744
 
-    current_num_weights = 0
-    for i, index in enumerate(indexes_of_layers_in_ascending_order_of_errors):
-        data = data_list[index]
-        current_ratio = (current_num_weights + data.num_weights) / total_num_weights
-        if current_ratio >= target_ratio_in_4_bit:
-            for j in indexes_of_layers_in_ascending_order_of_errors[i:]:
-                data_list[j].precision = 8
-            boundary_error = errors[indexes_of_layers_in_ascending_order_of_errors[i-1]]
-            plt.axhline(y = boundary_error, color = 'r', linestyle = '-')
-            plt.savefig('errors_with_boundary.png')
-            plt.close(fig)
-            break
-        data.precision = 4
-        current_num_weights += data.num_weights
+        target_ratio_in_4_bit = 0.5
+        # ratio_updated = 0.25
+        total_num_weights = sum(d.num_weights for d in all_data_list)
+        # print(f'num all layers={len(all_data_list)}, num all weights={total_num_weights}')
 
-    for data in all_data_list:
-        if data.is_skipped:
+        data_list = list(filter(lambda x: not x.is_skipped, all_data_list))
+        errors = [data.error for data in data_list]
+        # NOTE: force first 25% in int8
+        # max_error = max(errors)
+        # num_updated = int(target_ratio_in_4_bit * ratio_updated * len(errors))
+        # for i in range(num_updated):
+        #    errors[i] = max_error * 2
+        # NOTE: visualize
+        layers=list(range(len(errors)))
+        import matplotlib.pyplot as plt
+        fig = plt.figure()
+        plt.plot(layers, errors)
+
+        indexes_of_layers_in_ascending_order_of_errors = [
+            i[0] for i in sorted(enumerate(errors), reverse=False, key=lambda x: x[1])
+        ]
+        # print(f'\nindexes_of_layers_in_ascending_order_of_errors={indexes_of_layers_in_ascending_order_of_errors}')
+        # sorted_errors = [data_list[i].error for i in indexes_of_layers_in_ascending_order_of_errors]
+        # print(f'\nsorted errors: {sorted_errors}')
+
+        current_num_weights = 0
+        for i, index in enumerate(indexes_of_layers_in_ascending_order_of_errors):
+            data = data_list[index]
+            current_ratio = (current_num_weights + data.num_weights) / total_num_weights
+            if current_ratio >= target_ratio_in_4_bit:
+                for j in indexes_of_layers_in_ascending_order_of_errors[i:]:
+                    data_list[j].precision = 8
+                boundary_error = errors[indexes_of_layers_in_ascending_order_of_errors[i-1]]
+                plt.axhline(y = boundary_error, color = 'r', linestyle = '-')
+                plt.savefig('errors_with_boundary.png')
+                plt.close(fig)
+                break
+            data.precision = 4
+            current_num_weights += data.num_weights
+
+        # TODO: support PQ, NF4, Group, ZP selection based on arguments
+        for data in all_data_list:
+            if data.is_skipped:
+                data.precision = 8
+        bit_config = [data.precision for data in all_data_list]
+    else:
+        bit_config = [4] * len(all_data_list)
+        bit_config[0] = bit_config[-1] = 8
+        # NOTE: llama-3b (71.27% in 4bit - 63.44)
+        # bit_config = [8, 4, 4, 8, 4, 8, 8, 4, 8, 8, 8, 4, 8, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 8, 8, 8, 8, 4, 8, 4, 4, 8, 8, 4, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8]
+        print(bit_config)
+
+        for data in all_data_list[1:-1]:
+            data.precision = 4
+            data.group_size=group_size
+            data.is_power_quant = False
+            data.is_nf4 = False
+            data.is_zp = True
+            if mode == 'nf4':
+                data.is_nf4 = True
+                data.is_zp = False
+            elif mode == 'pq':
+                data.is_power_quant = True
+            elif mode != 'uni':
+               raise RuntimeError(f'Unknown mode={mode}. List of supported=[uni,nf4,pq]')
+
+        for data in (all_data_list[0], all_data_list[-1]):
             data.precision = 8
-    # bit_config = [data.precision for data in all_data_list]
-    bit_config = [4] * len(all_data_list)
-    bit_config[0] = bit_config[-1] = 8
-    # NOTE: llama-3b (71.27% in 4bit - 63.44)
-    # bit_config = [8, 4, 4, 8, 4, 8, 8, 4, 8, 8, 8, 4, 8, 4, 4, 4, 4, 8, 4, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 8, 8, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 8, 8, 8, 8, 4, 8, 4, 4, 8, 8, 4, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 8, 4, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 8, 8, 4, 8, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8]
-    for bits, data in zip(bit_config, all_data_list):
-        data.precision = bits
-    print(bit_config)
+            data.is_power_quant = False
+            data.is_nf4 = False
+            data.is_zp = False
+
 
     num_weights_per_precision = {}
     for data in all_data_list:

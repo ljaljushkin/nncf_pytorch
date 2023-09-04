@@ -260,11 +260,15 @@ def quantize_impl(
     return compressed_model
 
 
-def compress_weights(model: torch.nn.Module, use_fake_quantize: bool = False) -> torch.nn.Module:
+def compress_weights(model: torch.nn.Module, **kwargs) -> torch.nn.Module:
     """
     Implementation of the `compress_weights()` method for the PyTorch backend.
     """
+    group_size = kwargs.get("group_size", 64)
+    mode = kwargs.get("mode", "nf4")
+    is_mixed = kwargs.get("is_mixed", False)
+
     compressed_model, _ = replace_modules_by_nncf_modules(model)
-    insert_pre_compression_operations(model)
+    insert_pre_compression_operations(model, group_size=group_size, mode=mode, is_mixed=is_mixed)
 
     return compressed_model
