@@ -722,7 +722,7 @@ def insert_pre_compression_operations(module: nn.Module, group_size=64, mode='nf
 
     get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list, no_error_calc_names=no_error_calc_names)
     total_num_weights = sum(d.num_weights for d in all_data_list)
-    # print(f'num all layers={len(all_data_list)}, num all weights={total_num_weights}')
+    print(f'num all layers={len(all_data_list)}, num all weights={total_num_weights}')
     if is_mixed:
          # NOTE: dolly-v2-3b
         target_ratio_in_4_bit = 0.638
@@ -803,6 +803,7 @@ def insert_pre_compression_operations(module: nn.Module, group_size=64, mode='nf
 
         for data in (all_data_list[0], all_data_list[-1]):
             data.precision = 8
+            data.group_size = -1
             data.is_power_quant = False
             data.is_nf4 = False
             data.is_zp = True
