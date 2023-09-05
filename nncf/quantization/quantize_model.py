@@ -220,14 +220,11 @@ def quantize_with_accuracy_control(
 
 
 @api(canonical_alias="nncf.compress_weights")
-def compress_weights(model: TModel, use_fake_quantize: bool = False) -> TModel:
+def compress_weights(model: TModel, **kwargs) -> TModel:
     """
     Compress model weights.
 
     :param model: A model to be compressed.
-    :param use_fake_quantize: Disables real compression of weights in Linear and Embedding layers.
-        If True inserts fake quantization operations,
-        else compress weights to int8 and inserts custom dequantization.
     :return: The model with compressed weight and dequantization or model with original weights and fake quantization.
         Not trainable.
     """
@@ -235,6 +232,6 @@ def compress_weights(model: TModel, use_fake_quantize: bool = False) -> TModel:
     if backend == BackendType.TORCH:
         import nncf.torch
 
-        return nncf.torch.compress_weights(model, use_fake_quantize)
+        return nncf.torch.compress_weights(model, **kwargs)
 
     raise RuntimeError(f"Unsupported type of backend: {backend}")

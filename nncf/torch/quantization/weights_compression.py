@@ -585,10 +585,10 @@ def _insert_pre_compression_operations_simple(
         is_group = data.group_size >= 2
         group_size = data.group_size
         print(f'{data.precision} bits PQ={is_power_quant} NF4={is_nf4} ZP={is_zp} Group={group_size} for {data.name}')
-        assert (is_power_quant and not is_nf4) or (not is_power_quant and is_nf4), 'Power Quant is not compatible with NF4'
-        assert (is_zp and not is_nf4) or (not is_zp and is_nf4), 'NF4 is not compatible with ZP'
-        assert not is_group and (not is_nf4 or is_zp), 'not group mode is always with ZP and uniform (without ZP or NF4 are not supported)'
-        assert bits == 8 and not (is_group and is_nf4 and is_power_quant), 'Quantization to 8 bit is simple! (no nf4, no power quant, no group)'
+        assert not (is_power_quant and is_nf4), 'Power Quant is not compatible with NF4'
+        assert not (is_zp and is_nf4), 'NF4 is not compatible with ZP'
+        assert not(not is_group and (is_nf4 or not is_zp)), 'not group mode is always with ZP and uniform (without ZP or NF4 are not supported)'
+        assert not(bits == 8 and (is_group or is_nf4 or is_power_quant)), 'Quantization to 8 bit is simple! (no nf4, no power quant, no group)'
         if is_zp:
             level_high = 2**bits - 1
             level_low = 0
@@ -617,7 +617,7 @@ def _insert_pre_compression_operations_simple(
 
                 if not is_zp or is_nf4:
                     scale_g = torch.max(input_high.abs(), input_low.abs()) # [c_out]
-                    if not is_zp:
+                    if not is_nf4:
                        scale_g /= level_high # [c_out]
                     scale_g = scale_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
                     scale.append(scale_g)
@@ -646,13 +646,13 @@ def _insert_pre_compression_operations_simple(
             # print(tmp[:5, :5], tmp.shape)
             tmp = tmp.numpy()
             tmp = nf4_convert(tmp)
-            print("Type before: ", layer.weight.type())
+            # print("Type before: ", layer.weight.type())
             nf4_data = (torch.from_numpy(tmp) * scale).type(torch.FloatTensor)
             diff = torch.mean((nf4_data - layer.weight.data)**2)
             print(diff)
             layer.weight.requires_grad = False
             layer.weight.data = nf4_data
-            print("Type after: ", layer.weight.type())
+            # print("Type after: ", layer.weight.type())
         else:
             compressed_weight = w.data / scale + zero_point
             compressed_weight = torch.clamp(torch.round(compressed_weight), level_low, level_high)
@@ -721,7 +721,8 @@ def insert_pre_compression_operations(module: nn.Module, group_size=64, mode='nf
             raise RuntimeError('Unsupported model: need to specify which layers are skipped for mixed precision')
 
     get_all_layer_data(module, allowed_types=allowed_types, prefix=None, res=all_data_list, no_error_calc_names=no_error_calc_names)
-
+    total_num_weights = sum(d.num_weights for d in all_data_list)
+    # print(f'num all layers={len(all_data_list)}, num all weights={total_num_weights}')
     if is_mixed:
          # NOTE: dolly-v2-3b
         target_ratio_in_4_bit = 0.638
@@ -738,8 +739,6 @@ def insert_pre_compression_operations(module: nn.Module, group_size=64, mode='nf
 
         target_ratio_in_4_bit = 0.5
         # ratio_updated = 0.25
-        total_num_weights = sum(d.num_weights for d in all_data_list)
-        # print(f'num all layers={len(all_data_list)}, num all weights={total_num_weights}')
 
         data_list = list(filter(lambda x: not x.is_skipped, all_data_list))
         errors = [data.error for data in data_list]
@@ -806,7 +805,7 @@ def insert_pre_compression_operations(module: nn.Module, group_size=64, mode='nf
             data.precision = 8
             data.is_power_quant = False
             data.is_nf4 = False
-            data.is_zp = False
+            data.is_zp = True
 
 
     num_weights_per_precision = {}
