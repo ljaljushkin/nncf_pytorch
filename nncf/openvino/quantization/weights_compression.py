@@ -50,6 +50,107 @@ def get_scale_zp_from_input_low_input_high(level_low, level_high, input_low, inp
     # y_zero_point = torch.squeeze(y_zero_point)
     return y_scale, y_zero_point
 
+
+def ref_group_mode(self):
+    if group_mode:
+          group_size = 256
+          w = w_pow
+          # print(w[:5,:5], w.shape)
+          num_columns = w.shape[stat_dim]
+          scale = []
+          zero_point = []
+          assert num_columns % group_size == 0
+          for i1 in range(0, num_columns, group_size):
+              i2 = i1 + group_size
+              current_columns = w[:, i1:i2]  # [c_out, c_in // group_size]
+              input_low = torch.min(current_columns, dim=stat_dim)[0].detach()  # [c_out]
+              input_high = torch.max(current_columns, dim=stat_dim)[0].detach()  # [c_out]
+
+              scale_g, zero_point_g = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+
+              scale_g = scale_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
+              zero_point_g = zero_point_g.unsqueeze(dim=stat_dim)  # [c_out, 1]
+
+              scale.append(scale_g)
+              zero_point.append(zero_point_g)
+
+          scale = torch.cat(scale, dim=stat_dim)  # [c_out, c_in // group_size]
+          scale = torch.repeat_interleave(scale, group_size, dim=stat_dim)  # [c_out, c_in]
+
+          zero_point = torch.cat(zero_point, dim=stat_dim)  # [c_out, c_in // group_size]
+          zero_point = torch.repeat_interleave(zero_point, group_size, dim=stat_dim)  # [c_out, c_in]
+
+def get_int8_err(layer):
+    if not type(layer) is NNCFLinear:
+        return -1.0
+
+    target_dim = layer.target_weight_dim_for_compression
+    stat_dim = (target_dim + 1) % 2
+    input_low = torch.min(layer.weight, dim=stat_dim)[0].detach()
+    input_high = torch.max(layer.weight, dim=stat_dim)[0].detach()
+
+    level_high = 2**8-1
+
+    scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+
+    scale = scale.unsqueeze(stat_dim)
+    zero_point = zero_point.unsqueeze(stat_dim)
+
+    compressed_weight = layer.weight.data / scale + zero_point
+    compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
+
+    w = compressed_weight.type(dtype=scale.dtype)
+    w = (w - zero_point) * scale
+
+    diff = (w - layer.weight.data)**2
+    #mean_err = torch.mean(diff)
+    layer_err = torch.mean(diff, dim=1)
+    top_k = torch.topk(layer_err, 10)[0]
+    #val = float(mean_err)#top_k[0])
+    val = float(top_k[0])
+    return val
+
+
+def get_power_quant_error(layer):
+    if not type(layer) is NNCFLinear:
+        return -1.0
+    alpha = 0.5
+
+    level_high = 2**4 - 1
+    w_sign = torch.sign(layer.weight)
+    w_pow = torch.pow(torch.abs(layer.weight), alpha) * w_sign
+    # w_pow = torch.log(torch.abs(layer.weight)) * w_sign
+    target_dim = layer.target_weight_dim_for_compression
+    stat_dim = (target_dim + 1) % 2
+    input_low = torch.min(w_pow, dim=stat_dim)[0].detach()
+    input_high = torch.max(w_pow, dim=stat_dim)[0].detach()
+    scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+
+    scale = scale.unsqueeze(stat_dim)
+    zero_point = zero_point.unsqueeze(stat_dim)
+    op = WeightsDecompressorPowerQuant(zero_point, scale, 1/alpha)
+
+    compressed_weight = w_pow.data / scale + zero_point
+    compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
+
+    decompressed_weight = op.dequantize(compressed_weight)
+    diff = (decompressed_weight - layer.weight.data)**2
+
+    # mean_err = torch.mean(diff)
+    # return float(mean_err)
+    layer_err = torch.mean(diff, dim=1)
+    top_k = torch.topk(layer_err, 10)[0]
+    #val = float(mean_err)#top_k[0])
+    val = float(top_k[0])
+    return val
+
+def get_relative_error(layer):
+    return get_power_quant_error(layer) / (get_int8_err(layer) + 0.0000000001)
+    #return get_int8_err(layer) / (get_power_quant_error(layer) + 0.0000000001)
+
+def select_precisions(self) -> List[BitConfig]:
+    pass
+
 def insert_pre_compression_operations(model: ov.Model, bits: int = 8) -> None:
     """
     Inserts in-place weights compression with FakeQuantize operation for Linear and Embedding layers.
