@@ -572,9 +572,15 @@ def _insert_pre_compression_operations_simple(
     """
     best_alpha = 0.5
     nf4_convert = np.vectorize(quant_deguant)
-
+    compression_hist = {}
     for data in data_list:
         layer = data.module
+
+        if layer.weight.dtype in [torch.uint8, torch.int8]:
+            if layer.weight in compression_hist:
+                layer.register_pre_forward_operation(compression_hist[layer.weight])
+            continue
+
         bits = data.precision
         target_dim = layer.target_weight_dim_for_compression
         stat_dim = (target_dim + 1) % 2
@@ -673,7 +679,8 @@ def _insert_pre_compression_operations_simple(
                 pre_forward_operation = WeightsDecompressorPowerQuant(zero_point, scale, 1/best_alpha)
             else:
                 pre_forward_operation = WeightsDecompressor(zero_point, scale)
-            layer.register_pre_forward_operation(pre_forward_operation)
+            key = layer.register_pre_forward_operation(pre_forward_operation)
+            compression_hist[layer.weight] = layer.get_pre_op(key)
 
 
 def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=None, no_error_calc_names=None):
