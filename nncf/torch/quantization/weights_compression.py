@@ -694,9 +694,10 @@ def get_all_layer_data(model, allowed_types, prefix=None, res: List[LayerData]=N
 
         num_weights = module.weight.data.numel()
         error = 0
-        if no_error_calc_names is not None and name not in no_error_calc_names:
+        is_skipped = not(no_error_calc_names is not None and name not in no_error_calc_names)
+        if not is_skipped:
             error = get_relative_error(module)
-        data = LayerData(full_node_name, error, num_weights, module, no_error_calc_names)
+        data = LayerData(full_node_name, error, num_weights, module, is_skipped)
         res.append(data)
 
 def insert_pre_compression_operations(module: nn.Module, group_size=64, mode='nf4', is_mixed=False) -> Optional[nn.Module]:
