@@ -594,7 +594,7 @@ def _insert_pre_compression_operations_simple(
         assert not (is_power_quant and is_nf4), 'Power Quant is not compatible with NF4'
         assert not (is_zp and is_nf4), 'NF4 is not compatible with ZP'
         # assert not(not is_group and (is_nf4 or not is_zp)), 'not group mode is always with ZP and uniform (without ZP or NF4 are not supported)'
-        assert not(bits == 8 and (is_group or is_nf4 or is_power_quant)), 'Quantization to 8 bit is simple! (no nf4, no power quant, no group)'
+        assert not(bits == 8 and data.is_skipped and (is_group or is_nf4 or is_power_quant)), 'Quantization to 8 bit is simple! (no nf4, no power quant, no group)'
         if is_zp:
             level_high = 2**bits - 1
             level_low = 0
@@ -787,6 +787,10 @@ def insert_pre_compression_operations(module: nn.Module, group_size=64, mode='nf
         for data in all_data_list:
             if data.is_skipped:
                 data.precision = 8
+                data.group_size = -1
+                data.is_power_quant = False
+                data.is_nf4 = False
+                data.is_zp = True
         bit_config = [data.precision for data in all_data_list]
     else:
         bit_config = [4] * len(all_data_list)
