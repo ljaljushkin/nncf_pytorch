@@ -593,7 +593,7 @@ def _insert_pre_compression_operations_simple(
         print(f'{data.precision} bits PQ={is_power_quant} NF4={is_nf4} ZP={is_zp} Group={group_size} for {data.name}')
         assert not (is_power_quant and is_nf4), 'Power Quant is not compatible with NF4'
         assert not (is_zp and is_nf4), 'NF4 is not compatible with ZP'
-        assert not(not is_group and (is_nf4 or not is_zp)), 'not group mode is always with ZP and uniform (without ZP or NF4 are not supported)'
+        # assert not(not is_group and (is_nf4 or not is_zp)), 'not group mode is always with ZP and uniform (without ZP or NF4 are not supported)'
         assert not(bits == 8 and (is_group or is_nf4 or is_power_quant)), 'Quantization to 8 bit is simple! (no nf4, no power quant, no group)'
         if is_zp:
             level_high = 2**bits - 1
