@@ -86,3 +86,7 @@ def test_compare_compressed_weights():
     ref_nodes = load_json(ref_stats_path)
     params = ["compressed_weight", "zero_point", "scale"]
     compare_stats(ref_nodes, nodes, params)
+
+
+# TODO: think of test for PowerQuant selection. Some weights with big outliers should go to int8, uniform - to int4
+# unit test error calculation by spying on some functions.

@@ -56,3 +56,16 @@ class DropType(Enum):
 
     ABSOLUTE = "absolute"
     RELATIVE = "relative"
+
+
+@api(canonical_alias="nncf.CompressWeightsMode")
+class CompressWeightsMode(Enum):
+    """
+    Describes the model type the specificity of which will be taken into account during compression.
+
+    :param MIXED_POWER:
+    :param INT8: # TODO: or uniform?
+    """
+
+    MIXED_POWER = "mixed_power"
+    INT8 = "int8"
