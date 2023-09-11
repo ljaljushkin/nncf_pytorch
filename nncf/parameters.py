@@ -67,5 +67,5 @@ class CompressWeightsMode(Enum):
     :param INT8: # TODO: or uniform?
     """
 
-    MIXED_POWER = "mixed_power"
-    INT8 = "int8"
+    COMPRESSED_NF4 = "compressed_nf4"
+    COMPRESSED_INT8 = "compressed_int8"

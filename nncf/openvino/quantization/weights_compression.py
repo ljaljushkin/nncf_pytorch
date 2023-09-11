@@ -127,17 +127,18 @@ TWeightType = TypeVar("TWeightType")
 class WeightCompressionConfig:
     num_bits: int = 8
     is_power_quant: bool = False
-    group_size: int = None
+    group_size: int = -1
 
 
 @dataclass
 # TODO: rename
 class WeightNodeParams:
     axes: Union[int, Tuple[int]]
+    num_weights: int
     fq_name: str
     weight_node: ov.Node
     original_weight_dtype: TWeightType
-    compression_config: WeightCompressionConfig = None
+    compression_config = WeightCompressionConfig()
 
 
 # TODO: combine with power quant and int8 errors and with actual weight compression
@@ -185,7 +186,7 @@ def get_power_quant_error(wp: WeightNodeParams):
 
     compressed_weights = np.round(w_pow / scale + zero_point)
     compressed_weights = np.clip(compressed_weights, level_low, level_high).astype(np.uint8)
-    compressed_weights[:10, :10]
+    print(compressed_weights[:5, :5])
 
     decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
     decompressed_weight = (compressed_weights - zero_point) * scale
@@ -203,7 +204,10 @@ def get_relative_error(weight_node):
 
 
 def insert_pre_compression_operations(
-    model: ov.Model, mode: CompressWeightsMode = CompressWeightsMode.MIXED_POWER, ratio: float = 0.5
+    model: ov.Model,
+    mode: CompressWeightsMode = CompressWeightsMode.COMPRESSED_NF4,
+    ratio: float = 0.5,
+    group_size: int = -1,
 ) -> None:
     """
     Compress weights of Linear and Embedding layers to uint8.
@@ -234,20 +238,59 @@ def insert_pre_compression_operations(
                 continue
             axes = _get_reduction_axes(metatype, node, const_port_id)
             fq_name = f"{node.get_friendly_name()}/fq_weights_{const_port_id}"
-            default_config = WeightCompressionConfig(num_bits=8, is_power_quant=False, group_size=-1)
-            weight_params = WeightNodeParams(axes, fq_name, weight_node, original_weight_dtype, default_config)
+            weight = get_const_value(weight_node)
+            num_weights = weight.size
+            weight_params = WeightNodeParams(axes, num_weights, fq_name, weight_node, original_weight_dtype)
             all_weight_params.append(weight_params)
 
-    if mode == CompressWeightsMode.MIXED_POWER:
-        # calculate error
+    if mode == CompressWeightsMode.COMPRESSED_NF4:
+        total_num_weights = sum(wp.num_weights for wp in all_weight_params)
+        # NOTE: first and last layer is always in 8 bit.
+        num_internal_weights = total_num_weights - all_weight_params[0].num_weights - all_weight_params[-1].num_weights
         errors = []
         for weight_param in all_weight_params[1:-1]:
             print(weight_param.weight_node.get_friendly_name())
-            get_relative_error(weight_param)
-            # ratio
+            error = get_relative_error(weight_param)
+            errors.append(error)
 
-    # TODO: how to filter first and last layer
-    # simple enumerate doesn't help, since there're many other ops
+        layers = list(range(len(errors)))
+        import matplotlib.pyplot as plt
+
+        fig = plt.figure()
+        plt.plot(layers, errors)
+
+        # NOTE: index is defined in the array of all weight params by taking into account that errors were not
+        # calculated for first and last layers.
+        indexes_of_layers_in_ascending_order_of_errors = [
+            i[0] + 1 for i in sorted(enumerate(errors), reverse=False, key=lambda x: x[1])
+        ]
+        print(f"\nindexes_of_layers_in_ascending_order_of_errors={indexes_of_layers_in_ascending_order_of_errors}")
+        sorted_errors = [errors[i - 1] for i in indexes_of_layers_in_ascending_order_of_errors]
+        print(f"\nsorted errors: {sorted_errors}")
+
+        num_weights_in_4bit = 0
+        for i, index in enumerate(indexes_of_layers_in_ascending_order_of_errors):
+            weight_param = all_weight_params[index]
+            current_ratio = (num_weights_in_4bit + weight_param.num_weights) / num_internal_weights
+            if current_ratio >= ratio:
+                # for j in indexes_of_layers_in_ascending_order_of_errors[i:]:
+                #     weight_param.compression_config = config_8bit
+                boundary_error = errors[indexes_of_layers_in_ascending_order_of_errors[i - 1] - 1]
+                plt.axhline(y=boundary_error, color="r", linestyle="-")
+                plt.savefig("errors_with_boundary.png")
+                plt.close(fig)
+                break
+            config_4bit = WeightCompressionConfig(num_bits=4, is_power_quant=True, group_size=group_size)
+            weight_param.compression_config = config_4bit
+            num_weights_in_4bit += weight_param.num_weights
+
+        bit_config = [data.compression_config.num_bits for data in all_weight_params]
+        print(bit_config)
+        for data in all_weight_params:
+            print(f"{data.num_weights / total_num_weights * 100:.3f}")
+
+        print(f"{num_weights_in_4bit / total_num_weights * 100:.0f}% all weights in 4 bit")
+        print(f"{num_weights_in_4bit / num_internal_weights * 100:.0f}% internal weights in 4 bit")
 
     for wp in all_weight_params:
         weight_node = wp.weight_node
