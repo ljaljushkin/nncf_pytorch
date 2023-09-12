@@ -87,39 +87,6 @@ from nncf.quantization.fake_quantize import calculate_scale_zero_point
 #     return val
 
 
-# def get_power_quant_error(layer):
-#     if not type(layer) is NNCFLinear:
-#         return -1.0
-#     alpha = 0.5
-
-#     level_high = 2**4 - 1
-#     w_sign = torch.sign(layer.weight)
-#     w_pow = torch.pow(torch.abs(layer.weight), alpha) * w_sign
-#     # w_pow = torch.log(torch.abs(layer.weight)) * w_sign
-#     target_dim = layer.target_weight_dim_for_compression
-#     stat_dim = (target_dim + 1) % 2
-#     input_low = torch.min(w_pow, dim=stat_dim)[0].detach()
-#     input_high = torch.max(w_pow, dim=stat_dim)[0].detach()
-#     scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
-
-#     scale = scale.unsqueeze(stat_dim)
-#     zero_point = zero_point.unsqueeze(stat_dim)
-#     op = WeightsDecompressorPowerQuant(zero_point, scale, 1 / alpha)
-
-#     compressed_weight = w_pow.data / scale + zero_point
-#     compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
-
-#     decompressed_weight = op.dequantize(compressed_weight)
-#     diff = (decompressed_weight - layer.weight.data) ** 2
-
-#     # mean_err = torch.mean(diff)
-#     # return float(mean_err)
-#     layer_err = torch.mean(diff, dim=1)
-#     top_k = torch.topk(layer_err, 10)[0]
-#     # val = float(mean_err)#top_k[0])
-#     val = float(top_k[0])
-#     return val
-
 TWeightType = TypeVar("TWeightType")
 
 
@@ -164,9 +131,43 @@ def get_int8_err(wp: WeightNodeParams):
     # TODO: optimize max mean
     diff = (decompressed_weight - weight) ** 2
     layer_err = np.mean(diff, axis=1)
-    print(layer_err.shape)
+    # print(layer_err.shape)
     val = np.max(layer_err)
     return val
+
+
+# def get_power_quant_error(layer):
+#     if not type(layer) is NNCFLinear:
+#         return -1.0
+#     alpha = 0.5
+
+#     level_high = 2**4 - 1
+#     w_sign = torch.sign(layer.weight)
+#     w_pow = torch.pow(torch.abs(layer.weight), alpha) * w_sign
+#     # w_pow = torch.log(torch.abs(layer.weight)) * w_sign
+#     target_dim = layer.target_weight_dim_for_compression
+#     stat_dim = (target_dim + 1) % 2
+#     input_low = torch.min(w_pow, dim=stat_dim)[0].detach()
+#     input_high = torch.max(w_pow, dim=stat_dim)[0].detach()
+#     scale, zero_point = get_scale_zp_from_input_low_input_high(0, level_high, input_low, input_high)
+
+#     scale = scale.unsqueeze(stat_dim)
+#     zero_point = zero_point.unsqueeze(stat_dim)
+#     op = WeightsDecompressorPowerQuant(zero_point, scale, 1 / alpha)
+
+#     compressed_weight = w_pow.data / scale + zero_point
+#     compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
+
+#     decompressed_weight = op.dequantize(compressed_weight)
+#     diff = (decompressed_weight - layer.weight.data) ** 2
+
+#     # mean_err = torch.mean(diff)
+#     # return float(mean_err)
+#     layer_err = torch.mean(diff, dim=1)
+#     top_k = torch.topk(layer_err, 10)[0]
+#     # val = float(mean_err)#top_k[0])
+#     val = float(top_k[0])
+#     return val
 
 
 def get_power_quant_error(wp: WeightNodeParams):
@@ -186,16 +187,17 @@ def get_power_quant_error(wp: WeightNodeParams):
 
     compressed_weights = np.round(w_pow / scale + zero_point)
     compressed_weights = np.clip(compressed_weights, level_low, level_high).astype(np.uint8)
-    print(compressed_weights[:5, :5])
+    # print(compressed_weights[:5, :5])
 
     decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
-    decompressed_weight = (compressed_weights - zero_point) * scale
-    decompressed_weight = np.power(weight, 1 / alpha) * w_sign
+    decompressed_weight = (decompressed_weight - zero_point) * scale
+    decompressed_weight = np.power(decompressed_weight, 1 / alpha) * w_sign
 
     # TODO: optimize
     diff = (decompressed_weight - weight) ** 2
     layer_err = np.mean(diff, axis=1)
     val = np.max(layer_err)
+    print(val)
     return val
 
 
@@ -252,6 +254,7 @@ def insert_pre_compression_operations(
             print(weight_param.weight_node.get_friendly_name())
             error = get_relative_error(weight_param)
             errors.append(error)
+        print(f"\errors: {errors}")
 
         layers = list(range(len(errors)))
         import matplotlib.pyplot as plt
@@ -271,7 +274,7 @@ def insert_pre_compression_operations(
         num_weights_in_4bit = 0
         for i, index in enumerate(indexes_of_layers_in_ascending_order_of_errors):
             weight_param = all_weight_params[index]
-            current_ratio = (num_weights_in_4bit + weight_param.num_weights) / num_internal_weights
+            current_ratio = (num_weights_in_4bit + weight_param.num_weights) / total_num_weights
             if current_ratio >= ratio:
                 # for j in indexes_of_layers_in_ascending_order_of_errors[i:]:
                 #     weight_param.compression_config = config_8bit
