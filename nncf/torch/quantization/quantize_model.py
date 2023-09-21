@@ -13,7 +13,7 @@ from copy import deepcopy
 from typing import Any, Dict, Optional, Tuple
 
 import torch
-
+import time
 from nncf.common.quantization.structs import QuantizationPreset
 from nncf.config import NNCFConfig
 from nncf.config.structures import BNAdaptationInitArgs
