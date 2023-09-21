@@ -268,7 +268,9 @@ def compress_weights(model: torch.nn.Module, **kwargs) -> torch.nn.Module:
     mode = kwargs.get("mode", "nf4")
     is_mixed = kwargs.get("is_mixed", False)
 
+    start = time.time()
     compressed_model, _ = replace_modules_by_nncf_modules(model)
     insert_pre_compression_operations(model, group_size=group_size, mode=mode, is_mixed=is_mixed)
+    print(f"compress_weights took {(time.time() - start):.1f} seconds")
 
     return compressed_model
