@@ -654,8 +654,8 @@ def _insert_pre_compression_operations_simple(
             tmp = nf4_convert(tmp)
             # print("Type before: ", layer.weight.type())
             nf4_data = (torch.from_numpy(tmp) * scale).type(torch.FloatTensor)
-            diff = torch.mean((nf4_data - layer.weight.data)**2)
-            print(diff)
+            # diff = torch.mean((nf4_data - layer.weight.data)**2)
+            # print(diff)
             layer.weight.requires_grad = False
             layer.weight.data = nf4_data
             # print("Type after: ", layer.weight.type())
@@ -670,8 +670,8 @@ def _insert_pre_compression_operations_simple(
                 s = torch.sign(decompressed)
                 decompressed = torch.square(decompressed) * s
                 assert not torch.any(torch.isnan(decompressed)) or not torch.any(torch.isinf(decompressed))
-            diff = torch.mean((original_weights - decompressed)**2)
-            print(diff)
+            # diff = torch.mean((original_weights - decompressed)**2)
+            # print(diff)
             layer.weight.requires_grad = False
             compressed_weight = compressed_weight.type(dtype=torch.uint8)
             layer.weight.data = compressed_weight
