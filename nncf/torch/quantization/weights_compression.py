@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import torch
+from bitsandbytes import functional as F
 from torch import nn
 
 from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT
@@ -174,13 +175,59 @@ def DequantizeNF4(x):
     return lookup[x]
 
 
-def quant_deguant(x):
-    return DequantizeNF4(QuantizeNF4(x))
+def create_emp_code(values):
+    device = values.device
+    values = values.cuda()
+    bits = 4
+    emp_code = F.create_quantile_map(values, bits)
+    n = len(emp_code)
+    zero_ids = [i for i in range(n) if i not in torch.nonzero(emp_code)]
+    non_zero_except_one = [i for i in range(n) if i not in zero_ids[:-1]]
+    emp_code = emp_code[non_zero_except_one]
+    assert len(emp_code) == 16
+    assert len(torch.nonzero(emp_code)) == 15
+    # print(emp_code)
+    return emp_code.to(device)
+
+
+NF4_QUANTILES = torch.Tensor(
+    [
+        -1.0,
+        -0.6961928009986877,
+        -0.5250730514526367,
+        -0.39491748809814453,
+        -0.28444138169288635,
+        -0.18477343022823334,
+        -0.09105003625154495,
+        0.0,
+        0.07958029955625534,
+        0.16093020141124725,
+        0.24611230194568634,
+        0.33791524171829224,
+        0.44070982933044434,
+        0.5626170039176941,
+        0.7229568362236023,
+        1.0,
+    ]
+)
+
+
+def nf4_convert(x: torch.Tensor):
+    return general_quant_deguant(x, lambda _: NF4_QUANTILES)
+
+
+def emp_convert(x: torch.Tensor):
+    return general_quant_deguant(x, create_emp_code)
+
+
+def general_quant_deguant(x: torch.Tensor, get_codes_fn):
+    codes = get_codes_fn(x)
+    center_of_codes = (codes[1:] + codes[:-1]) / 2
+    indexes_of_codes = torch.searchsorted(center_of_codes, x)
+    return codes[indexes_of_codes]
 
 
 def get_scale_zp_from_input_low_input_high_nf4(level_low, level_high, input_low, input_high):
-    nf4_convert = np.vectorize(quant_deguant)
-
     y_scale = (input_high - input_low) / (level_high - level_low)
     y_zero_point = (level_low * input_high - level_high * input_low) / (input_high - input_low)
 
@@ -401,7 +448,6 @@ def _fake_fp_to_nf4(module: nn.Module, allowed_types: Dict, iter) -> Optional[nn
     """
     Replace weights with nf4 for Linear and Embedding layers.
     """
-    nf4_convert = np.vectorize(quant_deguant)
     for lname, layer in module.named_children():
         print("\t" * iter, lname)
         if not type(layer) in allowed_types:
@@ -603,7 +649,7 @@ def _insert_pre_compression_operations_simple(data_list: List[LayerData] = None)
     :return: The module with inserted operations.
     """
     best_alpha = 0.5
-    nf4_convert = np.vectorize(quant_deguant)
+    # nf4_convert = np.vectorize(quant_deguant)
     compression_hist = {}
     for data in data_list:
         layer = data.module
@@ -686,10 +732,11 @@ def _insert_pre_compression_operations_simple(data_list: List[LayerData] = None)
         if is_nf4:
             tmp = (layer.weight.data / scale).detach()
             # print(tmp[:5, :5], tmp.shape)
-            tmp = tmp.numpy()
-            tmp = nf4_convert(tmp)
+            tmp = emp_convert(tmp)
+            # tmp = tmp.numpy()
+            # tmp = nf4_convert(tmp)
             # print("Type before: ", layer.weight.type())
-            nf4_data = (torch.from_numpy(tmp) * scale).type(torch.FloatTensor)
+            nf4_data = (tmp * scale).type(torch.FloatTensor)
             diff = torch.mean((nf4_data - layer.weight.data) ** 2)
             print(diff)
             layer.weight.requires_grad = False
