@@ -108,25 +108,32 @@ class WeightNodeParams:
     fq_name: str
     weight_node: ov.Node
     original_weight_dtype: TWeightType
-    compression_config = WeightCompressionConfig()
+    compression_config: WeightCompressionConfig = WeightCompressionConfig()
 
 
-def _int8_compress(
-    weight: np.ndarray, reduction_axes: Union[int, Tuple[int]]
+def _int_compress(
+    weight: np.ndarray, reduction_axes: Union[int, Tuple[int]], group_size: int = -1, num_bits: int = 8
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Do unsigned int8 asymmetric weight compression - quantization to [0, 255] range.
 
     :param weight: Weight array to compress
     :param reduction_axes: Axis or axes along which to reduce (collect) different statistics (e.g. min, max).
+    :param group_size: number of weights (e.g. 128) in the channel dimension that share quantization parameters (scale).
+        The value -1 means no grouping. Defaults to -1.
     :return: compressed weights in unsigned int8, scale and zero point that was used for its quantization.
     """
-    num_bits = 8
     level_low = 0
     level_high = 2**num_bits - 1
 
-    min_values = np.min(weight, axis=reduction_axes, keepdims=True)
-    max_values = np.max(weight, axis=reduction_axes, keepdims=True)
+    if group_size != -1:
+        # weights are reshaped from [a1, r, a2] to [a1, r//gs, gs, a2]
+        weight, reduction_axis = _get_params_for_grouped_quantization(weight, reduction_axes, group_size)
+        min_values = np.min(weight, axis=reduction_axis, keepdims=True)  # [a1, r//gs, 1, a2]
+        max_values = np.max(weight, axis=reduction_axis, keepdims=True)  # [a1, r//gs, 1, a2]
+    else:
+        min_values = np.min(weight, axis=reduction_axes, keepdims=True)  # [a1, r, a2] -> [a1, 1, a2]
+        max_values = np.max(weight, axis=reduction_axes, keepdims=True)  # [a1, r, a2] -> [a1, 1, a2]
 
     scale, zero_point = calculate_scale_zero_point(min_values, max_values, level_low, level_high, narrow_range=False)
 
@@ -144,7 +151,7 @@ def _get_int8_err(weight: np.ndarray, reduction_axes: Union[int, Tuple[int]]) ->
     :param reduction_axes: Axis or axes along which to reduce (collect) different statistics (e.g. min, max).
     :return: The quantity characterizing the int8 error.
     """
-    compressed_weights, scale, zero_point = _int8_compress(weight, reduction_axes)
+    compressed_weights, scale, zero_point = _int_compress(weight, reduction_axes)
 
     decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
     decompressed_weight = (compressed_weights - zero_point) * scale
@@ -155,10 +162,11 @@ def _get_int8_err(weight: np.ndarray, reduction_axes: Union[int, Tuple[int]]) ->
     return val
 
 
-def _calculate_scale_per_group(
+def _get_params_for_grouped_quantization(
     weight: np.ndarray, reduction_axes: Union[int, Tuple[int]], group_size: int
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
+    TODO: change the description accordingly TODO:
     Calculates scale and reshapes weights for group-wise quantization.
     Having weights with shapes [c_out, c_in] and group size = 128, the shape of scale is [c_out, c_in // 128, 1], and
     shape of weights is [c_out, c_in // 128, 128].
@@ -181,9 +189,9 @@ def _calculate_scale_per_group(
     num_groups_per_channel = channel_size // group_size
     shape = list(weight.shape)  # [a1, r, a2] - "r" refers to number of channels along reduction axis
     shape[reduction_axis : reduction_axis + 1] = (num_groups_per_channel, group_size)
-    reshaped_weight = weight.reshape(shape)  # [a1, r, a2] -> [a1, r//gs, gs, a2], when "gs" is group size
-    scale = np.max(np.abs(reshaped_weight), axis=reduction_axis + 1, keepdims=True)  # [a1, r//gs, 1, a2]
-    return scale, reshaped_weight
+    reshaped_weight = weight.reshape(shape)
+    reduction_axis += 1
+    return reshaped_weight, reduction_axis
 
 
 def _get_norm_weight_and_nf4_scale(
@@ -200,8 +208,9 @@ def _get_norm_weight_and_nf4_scale(
     :return: Normalized weights and nf4 scale.
     """
     if group_size != -1:
-        # shape of scale : [a1, r//gs, 1, a2], scale of weight: [a1, r//gs, r, a2]
-        scale, weight = _calculate_scale_per_group(weight, reduction_axes, group_size)
+        # weights are reshaped: [a1, r, a2] -> [a1, r//gs, gs, a2]
+        reshaped_weight, reduction_axis = _get_params_for_grouped_quantization(weight, reduction_axes, group_size)
+        scale = np.max(np.abs(reshaped_weight), axis=reduction_axis, keepdims=True)  # [a1, r//gs, 1, a2]
     else:
         scale = np.max(np.abs(weight), axis=reduction_axes, keepdims=True)  # [a1, 1, a2]
     eps = np.finfo(weight.dtype).eps
@@ -370,7 +379,16 @@ def insert_pre_compression_operations(
             fq_name = f"{node.get_friendly_name()}/fq_weights_{const_port_id}"
             weight = get_const_value(weight_node)
             num_weights = weight.size
-            weight_params = WeightNodeParams(axes, num_weights, fq_name, weight_node, original_weight_dtype)
+            num_bits = 8 if mode == CompressWeightsMode.INT8 else 4
+            compression_config = WeightCompressionConfig(num_bits=num_bits, is_nf4=False, group_size=group_size)
+            weight_params = WeightNodeParams(
+                reduction_axes=axes,
+                num_weights=num_weights,
+                fq_name=fq_name,
+                weight_node=weight_node,
+                original_weight_dtype=original_weight_dtype,
+                compression_config=compression_config,
+            )
             all_weight_params.append(weight_params)
             quantized_nodes_ids.add(id(weight_node))
 
@@ -398,11 +416,16 @@ def insert_pre_compression_operations(
                 mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
             last_output = mul.output(0)
         else:
-            compressed_weights, scale, zero_point = _int8_compress(weight, wp.reduction_axes)
+            original_shape = weight.shape
+            compressed_weights, scale, zero_point = _int_compress(
+                weight, wp.reduction_axes, group_size, config.num_bits
+            )
             compressed_const = opset.constant(compressed_weights, dtype=np.uint8, name=weight_name)
             convert = opset.convert(compressed_const, original_weight_dtype)
             sub = opset.subtract(convert, zero_point.astype(original_weight_dtype))
             mul = opset.multiply(sub, scale.astype(original_weight_dtype), name=wp.fq_name)
+            if config.group_size != -1:
+                mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
             last_output = mul.output(0)
 
         for target_input in target_inputs:

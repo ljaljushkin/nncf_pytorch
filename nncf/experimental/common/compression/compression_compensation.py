@@ -84,14 +84,14 @@ def compression_compensation(model, dataset, compression_algorithm, subset_size=
     target_node_output = last_matmul.input_value(port_id)
 
     sz = target_node_output.partial_shape.get_dimension(2).max_length
-    
+
     mul = opset.multiply(target_node_output, np.ones(sz, dtype=np.float32), name="NormalizerMul")
     add = opset.add(mul, np.zeros(sz, dtype=np.float32), name="NormalizerAdd")
     last_matmul.input(port_id).replace_source_output(add.output(0))
 
     graph = GraphConverter.create_nncf_graph(model)
     statistics_aggregator = OVStatisticsAggregator(dataset)
-    
+
     node_keys = graph.get_all_node_keys()
     target_name = [val for val in node_keys if 'NormalizerMul' in val][0]
     target_mul = graph.get_node_by_key(target_name)
@@ -99,24 +99,24 @@ def compression_compensation(model, dataset, compression_algorithm, subset_size=
     statistic_points = get_statistic_points(model, graph, [target_mul], subset_size)
     statistics_aggregator.register_statistic_points(statistic_points)
     statistics_aggregator.collect_statistics(model, graph)
-    
+
     x_fp = list(statistics_aggregator.statistic_points['NormalizerMul'][0].algorithm_to_tensor_collectors["compensation"][0].aggregators.values())[0]._container
-    
+
     # statistics_aggregator.statistic_points ???
 
     compressed_model = compression_algorithm(model)
-    
+
     graph = GraphConverter.create_nncf_graph(compressed_model)
     statistics_aggregator = OVStatisticsAggregator(dataset)
     statistic_points = get_statistic_points(model, graph, [target_mul], subset_size)
     statistics_aggregator.register_statistic_points(statistic_points)
     statistics_aggregator.collect_statistics(compressed_model, graph)
-    
+
     x_q = list(statistics_aggregator.statistic_points['NormalizerMul'][0].algorithm_to_tensor_collectors["compensation"][0].aggregators.values())[0]._container
-    
+
     x_fp = np.vstack(x_fp)
     x_q = np.vstack(x_q)
-    
+
     mul_data = np.ones(sz, dtype=np.float32)
     add_data = np.zeros(sz, dtype=np.float32)
     y_fp = x_fp
@@ -128,8 +128,8 @@ def compression_compensation(model, dataset, compression_algorithm, subset_size=
         gamma_beta = np.linalg.lstsq(A, B)[0]
         mul_data[i] = gamma_beta[0]
         add_data[i] = gamma_beta[1]
-    
+
     OVModelTransformer._set_const_value(mul, 1, mul_data)
     OVModelTransformer._set_const_value(add, 1, add_data)
-    
+
     return compressed_model
