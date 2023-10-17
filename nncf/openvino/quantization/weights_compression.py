@@ -452,7 +452,7 @@ def insert_pre_compression_operations(
             compression_type = dst_type[config.num_bits]
             compressed_const = opset.constant(compressed_weights, dtype=compression_type, name=weight_name)
             convert = opset.convert(compressed_const, original_weight_dtype)
-            sub = opset.subtract(convert, zero_point.astype(compression_type))
+            sub = opset.subtract(convert, zero_point.astype(original_weight_dtype))
             mul = opset.multiply(sub, scale.astype(original_weight_dtype), name=wp.fq_name)
             if config.group_size != -1:
                 mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
