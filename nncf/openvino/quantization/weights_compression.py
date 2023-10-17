@@ -133,17 +133,16 @@ def _int_compress(
         weight, reduction_axis = _get_params_for_grouped_quantization(weight, reduction_axes, group_size)
         if not is_zp:
             scale = np.max(np.abs(weight), axis=reduction_axis, keepdims=True)  # [a1, r//gs, 1, a2]
-            zero_point = np.zeros_like(scale)
-            level_low = -(2 ** (num_bits - 1))  # -8
-            level_high = 2 ** (num_bits - 1) - 1  # 7
+            level_low = -(2 ** (num_bits - 1))  # level_low = -8
+            level_high = 2 ** (num_bits - 1) - 1  # level_high = 7
             scale = scale / level_high
             eps = np.finfo(weight.dtype).eps
+            zero_point = np.ones_like(scale)
+            zero_point *= -level_low  # ZP = 8
             # NOTE: adding machine epsilon to avoid division by zero
             scale[np.abs(scale) < eps] = eps
-            compressed_weights = np.round(weight / scale)
+            compressed_weights = np.round(weight / scale + zero_point)
             compressed_weights = np.clip(compressed_weights, level_low, level_high).astype(np.uint8)
-            zero_point = np.ones_like(scale)
-            zero_point *= -level_low
             return compressed_weights, scale, zero_point
         else:
             min_values = np.min(weight, axis=reduction_axis, keepdims=True)  # [a1, r//gs, 1, a2]
@@ -336,7 +335,8 @@ def _assign_mixed_precision(
         for weight_param in all_weight_params[1:-1]:
             weight = get_const_value(weight_param.weight_node)
             axes = weight_param.reduction_axes
-            base_error = get_base_error_fn(weight, axes)
+            # base_error = get_base_error_fn(weight, axes)
+            base_error = 1
             int8_error = _get_int_err(weight, axes)
             eps = np.finfo(weight.dtype).eps
             error = base_error / (int8_error + eps)
@@ -447,7 +447,7 @@ def insert_pre_compression_operations(
             dst_type = {4: ov.Type.u4, 8: np.uint8}
             original_shape = weight.shape
             compressed_weights, scale, zero_point = _int_compress(
-                weight, wp.reduction_axes, config.group_size, config.num_bits
+                weight, wp.reduction_axes, config.group_size, config.num_bits, is_zp=False
             )
             compression_type = dst_type[config.num_bits]
             compressed_const = opset.constant(compressed_weights, dtype=compression_type, name=weight_name)
