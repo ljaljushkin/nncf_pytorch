@@ -256,15 +256,7 @@ def compress_weights(
                 "INT8 mode assumes per-channel quantization of all layers in 8 bit. "
                 "Default values of `ratio` (1) and `group_size` (-1) parameters can not be overridden"
             )
-    if mode == CompressWeightsMode.INT4:
-        if ratio is None:
-            ratio = 1
-        if ratio != 1:
-            raise AttributeError(
-                "INT4 mode assumes quantization of all layers in 4 bit. "
-                "Default values of `ratio` (1) parameters can not be overridden"
-            )
-    if mode == CompressWeightsMode.NF4:
+    if mode == CompressWeightsMode.NF4 or mode == CompressWeightsMode.INT4:
         if ratio is None:
             ratio = 1
         if group_size is None:
