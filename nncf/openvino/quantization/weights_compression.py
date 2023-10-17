@@ -16,6 +16,7 @@ import numpy as np
 import openvino.runtime as ov
 from openvino.runtime import opset9 as opset
 
+from functools import partial
 from nncf.common.graph.operator_metatypes import OperatorMetatype
 from nncf.common.logging import nncf_logger
 from nncf.common.quantization.statistics import _proportion_str
@@ -112,7 +113,7 @@ class WeightNodeParams:
 
 
 def _int_compress(
-    weight: np.ndarray, reduction_axes: Union[int, Tuple[int]], group_size: int = -1, num_bits: int = 8
+    weight: np.ndarray, reduction_axes: Union[int, Tuple[int]], group_size: int = -1, num_bits: int = 8, is_zp=True
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Do unsigned int8 asymmetric weight compression - quantization to [0, 255] range.
@@ -123,26 +124,47 @@ def _int_compress(
         The value -1 means no grouping. Defaults to -1.
     :return: compressed weights in unsigned int8, scale and zero point that was used for its quantization.
     """
+    # TODO: why is it not signed?? because [-8,7] is shifted by ZP=8 to [0, 15]
     level_low = 0
     level_high = 2**num_bits - 1
 
     if group_size != -1:
         # weights are reshaped from [a1, r, a2] to [a1, r//gs, gs, a2]
         weight, reduction_axis = _get_params_for_grouped_quantization(weight, reduction_axes, group_size)
-        min_values = np.min(weight, axis=reduction_axis, keepdims=True)  # [a1, r//gs, 1, a2]
-        max_values = np.max(weight, axis=reduction_axis, keepdims=True)  # [a1, r//gs, 1, a2]
+        if not is_zp:
+            scale = np.max(np.abs(weight), axis=reduction_axis, keepdims=True)  # [a1, r//gs, 1, a2]
+            zero_point = np.zeros_like(scale)
+            level_low = -(2 ** (num_bits - 1))  # -8
+            level_high = 2 ** (num_bits - 1) - 1  # 7
+            scale = scale / level_high
+            eps = np.finfo(weight.dtype).eps
+            # NOTE: adding machine epsilon to avoid division by zero
+            scale[np.abs(scale) < eps] = eps
+            compressed_weights = np.round(weight / scale)
+            compressed_weights = np.clip(compressed_weights, level_low, level_high).astype(np.uint8)
+            zero_point = np.ones_like(scale)
+            zero_point *= -level_low
+            return compressed_weights, scale, zero_point
+        else:
+            min_values = np.min(weight, axis=reduction_axis, keepdims=True)  # [a1, r//gs, 1, a2]
+            max_values = np.max(weight, axis=reduction_axis, keepdims=True)  # [a1, r//gs, 1, a2]
     else:
         min_values = np.min(weight, axis=reduction_axes, keepdims=True)  # [a1, r, a2] -> [a1, 1, a2]
         max_values = np.max(weight, axis=reduction_axes, keepdims=True)  # [a1, r, a2] -> [a1, 1, a2]
 
     scale, zero_point = calculate_scale_zero_point(min_values, max_values, level_low, level_high, narrow_range=False)
 
+    eps = np.finfo(weight.dtype).eps
+    # NOTE: adding machine epsilon to avoid division by zero
+    scale[np.abs(scale) < eps] = eps
     compressed_weights = np.round(weight / scale + zero_point)
     compressed_weights = np.clip(compressed_weights, level_low, level_high).astype(np.uint8)
     return compressed_weights, scale, zero_point
 
 
-def _get_int8_err(weight: np.ndarray, reduction_axes: Union[int, Tuple[int]]) -> float:
+def _get_int_err(
+    weight: np.ndarray, reduction_axes: Union[int, Tuple[int]], group_size: int = -1, num_bits: int = 8
+) -> float:
     """
     Calculates a quantity characterizing the difference between floating point weights and its int8 fake quantized
     (compressed and decompressed) version.
@@ -151,7 +173,7 @@ def _get_int8_err(weight: np.ndarray, reduction_axes: Union[int, Tuple[int]]) ->
     :param reduction_axes: Axis or axes along which to reduce (collect) different statistics (e.g. min, max).
     :return: The quantity characterizing the int8 error.
     """
-    compressed_weights, scale, zero_point = _int_compress(weight, reduction_axes)
+    compressed_weights, scale, zero_point = _int_compress(weight, reduction_axes, group_size, num_bits)
 
     decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
     decompressed_weight = (compressed_weights - zero_point) * scale
@@ -289,7 +311,9 @@ def _get_bitwidth_distribution_str(all_weight_params: List[WeightNodeParams]) ->
     return pretty_string
 
 
-def _assign_mixed_precision(all_weight_params: List[WeightNodeParams], ratio: float, group_size: int) -> None:
+def _assign_mixed_precision(
+    all_weight_params: List[WeightNodeParams], ratio: float, group_size: int, mode: CompressWeightsMode
+) -> None:
     """
     Assigns mixed quantization scheme (e.g. uniform int8 or non-uniform nf4) for weights based on some criteria.
 
@@ -299,7 +323,12 @@ def _assign_mixed_precision(all_weight_params: List[WeightNodeParams], ratio: fl
     :param group_size: number of weights (e.g. 128) in the channel dimension that share quantization parameters (scale).
         The value -1 means no grouping.
     """
-    nf4_config = WeightCompressionConfig(num_bits=4, is_nf4=True, group_size=group_size)
+    if mode == CompressWeightsMode.NF4:
+        base_config = WeightCompressionConfig(num_bits=4, is_nf4=True, group_size=group_size)
+        get_base_error_fn = partial(_get_nf4_error, group_size)
+    else:
+        base_config = WeightCompressionConfig(num_bits=4, is_nf4=False, group_size=group_size)
+        get_base_error_fn = partial(_get_int_err, num_bits=4, group_size=group_size)
     if ratio != 1:
         # NOTE: first and last layer is always in 8 bit.
         errors = []
@@ -307,10 +336,10 @@ def _assign_mixed_precision(all_weight_params: List[WeightNodeParams], ratio: fl
         for weight_param in all_weight_params[1:-1]:
             weight = get_const_value(weight_param.weight_node)
             axes = weight_param.reduction_axes
-            nf4_error = _get_nf4_error(weight, axes, group_size)
-            int8_error = _get_int8_err(weight, axes)
+            base_error = get_base_error_fn(weight, axes)
+            int8_error = _get_int_err(weight, axes)
             eps = np.finfo(weight.dtype).eps
-            error = nf4_error / (int8_error + eps)
+            error = base_error / (int8_error + eps)
             errors.append(error)
             num_internal_weights += weight_param.num_weights
         # NOTE: index is defined in the array of all weight params by taking into account that errors were not
@@ -324,13 +353,12 @@ def _assign_mixed_precision(all_weight_params: List[WeightNodeParams], ratio: fl
             current_ratio = (num_weights_in_4bit + weight_param.num_weights) / num_internal_weights
             if current_ratio >= ratio:
                 break
-            weight_param.compression_config = nf4_config
+            weight_param.compression_config = base_config
             num_weights_in_4bit += weight_param.num_weights
 
     else:
         for weight_param in all_weight_params[1:-1]:
-            weight_param.compression_config = nf4_config
-    nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params))
+            weight_param.compression_config = base_config
 
 
 def insert_pre_compression_operations(
@@ -379,21 +407,20 @@ def insert_pre_compression_operations(
             fq_name = f"{node.get_friendly_name()}/fq_weights_{const_port_id}"
             weight = get_const_value(weight_node)
             num_weights = weight.size
-            num_bits = 8 if mode == CompressWeightsMode.INT8 else 4
-            compression_config = WeightCompressionConfig(num_bits=num_bits, is_nf4=False, group_size=group_size)
             weight_params = WeightNodeParams(
                 reduction_axes=axes,
                 num_weights=num_weights,
                 fq_name=fq_name,
                 weight_node=weight_node,
                 original_weight_dtype=original_weight_dtype,
-                compression_config=compression_config,
             )
             all_weight_params.append(weight_params)
             quantized_nodes_ids.add(id(weight_node))
 
-    if mode == CompressWeightsMode.NF4:
-        _assign_mixed_precision(all_weight_params, ratio, group_size)
+    if mode == CompressWeightsMode.NF4 or mode == CompressWeightsMode.INT4:
+        _assign_mixed_precision(all_weight_params, ratio, group_size, mode)
+
+    nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params))
 
     for wp in all_weight_params:
         weight_node = wp.weight_node
@@ -416,13 +443,16 @@ def insert_pre_compression_operations(
                 mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
             last_output = mul.output(0)
         else:
+            print(f"{config.num_bits}-bit g{config.group_size} {weight_name}")
+            dst_type = {4: ov.Type.u4, 8: np.uint8}
             original_shape = weight.shape
             compressed_weights, scale, zero_point = _int_compress(
-                weight, wp.reduction_axes, group_size, config.num_bits
+                weight, wp.reduction_axes, config.group_size, config.num_bits
             )
-            compressed_const = opset.constant(compressed_weights, dtype=np.uint8, name=weight_name)
+            compression_type = dst_type[config.num_bits]
+            compressed_const = opset.constant(compressed_weights, dtype=compression_type, name=weight_name)
             convert = opset.convert(compressed_const, original_weight_dtype)
-            sub = opset.subtract(convert, zero_point.astype(original_weight_dtype))
+            sub = opset.subtract(convert, zero_point.astype(compression_type))
             mul = opset.multiply(sub, scale.astype(original_weight_dtype), name=wp.fq_name)
             if config.group_size != -1:
                 mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
