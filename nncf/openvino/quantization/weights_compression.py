@@ -142,6 +142,8 @@ def _int_compress(
             # NOTE: adding machine epsilon to avoid division by zero
             scale[np.abs(scale) < eps] = eps
             compressed_weights = np.round(weight / scale + zero_point)
+            level_low = 0  # level_low = 0
+            level_high = 2**num_bits - 1  # level_high = 15
             compressed_weights = np.clip(compressed_weights, level_low, level_high).astype(np.uint8)
             return compressed_weights, scale, zero_point
         else:
