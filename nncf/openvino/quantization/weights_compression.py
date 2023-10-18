@@ -10,13 +10,13 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from functools import partial
 from typing import List, Optional, Tuple, Type, TypeVar, Union
 
 import numpy as np
 import openvino.runtime as ov
 from openvino.runtime import opset9 as opset
 
-from functools import partial
 from nncf.common.graph.operator_metatypes import OperatorMetatype
 from nncf.common.logging import nncf_logger
 from nncf.common.quantization.statistics import _proportion_str
@@ -137,8 +137,7 @@ def _int_compress(
             level_high = 2 ** (num_bits - 1) - 1  # level_high = 7
             scale = scale / level_high
             eps = np.finfo(weight.dtype).eps
-            zero_point = np.ones_like(scale)
-            zero_point *= -level_low  # ZP = 8
+            zero_point = np.array([-level_low])  # ZP = 8
             # NOTE: adding machine epsilon to avoid division by zero
             scale[np.abs(scale) < eps] = eps
             compressed_weights = np.round(weight / scale + zero_point)
