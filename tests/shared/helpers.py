@@ -190,18 +190,15 @@ def dump_to_json(local_path: Path, data: Dict[str, np.ndarray]):
 
 
 def compare_stats(
-    expected: Dict[str, np.ndarray], actual: Dict[str, np.ndarray], param_names: List[str], strict: bool = True
+    expected: Dict[str, np.ndarray], actual: Dict[str, np.ndarray]
 ):
     assert len(expected) == len(actual)
     for ref_name in expected:
         ref_stats = expected[ref_name]
         stats = actual[ref_name]
-        for param in param_names:
-            if not strict and param not in ref_stats:
-                continue
-            ref_param, actual_param = ref_stats.get(param), stats.get(param)
-            assert np.array(ref_param).shape == np.array(actual_param).shape
-            assert np.allclose(ref_param, actual_param, atol=1e-5)
+        ref_param, actual_param = ref_stats.get(param), stats.get(param)
+        assert np.array(ref_param).shape == np.array(actual_param).shape
+        assert np.allclose(ref_param, actual_param, atol=1e-5)
 
 
 def get_python_executable_with_venv(venv_path: Path) -> str:
