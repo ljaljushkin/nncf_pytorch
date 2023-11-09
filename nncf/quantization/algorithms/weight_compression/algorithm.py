@@ -19,7 +19,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, TypeVar
+from collections import defaultdict
+from typing import List, Optional, Tuple, TypeVar
 
 import numpy as np
 
@@ -33,6 +34,7 @@ from nncf.common.utils.backend import BackendType
 from nncf.common.utils.backend import get_backend
 from nncf.experimental.common.tensor_statistics.collectors import NoopAggregator
 from nncf.experimental.common.tensor_statistics.collectors import ShapeAggregator
+from nncf.openvino.graph.metatypes.openvino_metatypes import OVMatMulMetatype
 from nncf.openvino.graph.model_transformer import OVModelTransformer
 from nncf.openvino.graph.nncf_graph_builder import GraphConverter
 from nncf.openvino.graph.transformations.commands import OVTargetPoint
@@ -49,67 +51,6 @@ from nncf.scopes import get_ignored_node_names_from_ignored_scope
 
 TModel = TypeVar("TModel")
 TTensor = TypeVar("TTensor")
-
-
-def get_noop_statistic_collector(
-    num_samples: int, channel_axis: int, window_size: Optional[int] = None, inplace: bool = True
-):
-    """
-    Mean statistic collector builder.
-
-    :param num_samples: Maximum number of samples to collect.
-    :param channel_axis: Channel axis to use during reduction phase.
-    :param window_size: Number of samples from the end of the list of collected samples to aggregate.
-        Aggregates all available collected statistics in case parameter is None.
-    :param inplace: Whether the mean reducer should be calculated inplace or out of place.
-    :return: Mean statistic collector.
-    """
-    # TODO(dlyakhov): use inplace OVBatchMeanReducer and OVMeanPerChanelReducer
-    # after migration on openvino-dev=2023.0
-    inplace = False
-    reducer = OVMeanPerChanelReducer(channel_axis=channel_axis, inplace=inplace)
-
-    aggregate_mean = NoopAggregator(num_samples)
-    aggregate_shape = ShapeAggregator()
-    noop_reducer = OVNoopReducer()
-
-    collector = TensorCollector(OVMeanTensorStatistic)
-    collector.register_statistic_branch(OVMeanTensorStatistic.MEAN_STAT, reducer, aggregate_mean)
-    collector.register_statistic_branch(OVMeanTensorStatistic.SHAPE_STAT, noop_reducer, aggregate_shape)
-    return collector
-
-
-def mean_statistic_collector(
-    channel_axis: int,
-    inplace: bool,
-    num_samples: Optional[int] = None,
-    window_size: Optional[int] = None,
-):
-    return get_noop_statistic_collector(num_samples, channel_axis, window_size, inplace)
-
-
-def get_statistic_points(model, nodes, subset_size) -> StatisticPointsContainer:
-    statistic_container = StatisticPointsContainer()
-    OUTPUT_PORT_OF_NODE = 0
-
-    # Collection of statistics after layers where biases will be corrected.
-    for node in nodes:
-        node_name = node.node_name
-        channel_axis = node.metatype.output_channel_axis
-        if channel_axis is None:
-            channel_axis = -1
-
-        # TODO: node_name is needed further to access registered ??
-        # For layers with weights, there is only one output port - 0.
-        statistic_point = OVTargetPoint(TargetType.POST_LAYER_OPERATION, node_name, port_id=OUTPUT_PORT_OF_NODE)
-        # TODO: consider
-        # stat_collector = get_mean_statistic_collector(channel_axis=channel_axis, num_samples=subset_size, inplace=False)
-        stat_collector = mean_statistic_collector(channel_axis=channel_axis, num_samples=subset_size, inplace=False)
-        statistic_container.add_statistic_point(
-            StatisticPoint(target_point=statistic_point, tensor_collector=stat_collector, algorithm="compensation")
-        )
-
-    return statistic_container
 
 
 class WeightCompression(Algorithm):
@@ -152,6 +93,7 @@ class WeightCompression(Algorithm):
         self._ignored_scope = IgnoredScope() if ignored_scope is None else ignored_scope
         self._backend_entity = None
         self._algorithm_key = f"CW_{hash(self)}"
+        self._fp_inputs = defaultdict(list)
 
     @property
     def available_backends(self) -> List[BackendType]:
@@ -205,6 +147,19 @@ class WeightCompression(Algorithm):
                 "Cannot return backend-specific entity because {} is not supported!".format(model_backend.value)
             )
 
+    def _get_activation_node_and_port(self, node: NNCFNode, nncf_graph: NNCFGraph) -> Tuple[NNCFNode, int]:
+        """
+        This method returns the activation layer and corresponding port id for the node.
+
+        :param node: NNCFGraph node for which the activation is sought.
+        :param nncf_graph: NNCFGraph instance with the node.
+        :return: Tuple with the activation node and port id.
+        """
+        activation_port = self._backend_entity.get_activation_port_id(node, nncf_graph)
+        activation_node = nncf_graph.get_input_edges(node)[activation_port].from_node
+        port_id = nncf_graph.get_edge(activation_node, node).output_port_id
+        return activation_node, port_id
+
     def apply(
         self,
         model: TModel,
@@ -218,7 +173,8 @@ class WeightCompression(Algorithm):
 
         _collected_stat_inputs_map = {}
         statistic_container = StatisticPointsContainer()
-        for node in nodes_to_compress:
+        matmul_nodes = [node for node in nodes_to_compress if node.metatype == OVMatMulMetatype]
+        for node in matmul_nodes:
             activation_node, output_port_id = self._get_activation_node_and_port(node, graph)
             activation_node_name = activation_node.node_name
             output_id = (activation_node_name, output_port_id)
@@ -240,6 +196,7 @@ class WeightCompression(Algorithm):
             )
 
         statistics_aggregator = OVStatisticsAggregator(dataset)
+        statistics_aggregator.register_statistic_points(statistic_container)
         statistics_aggregator.collect_statistics(model, graph)
 
         # target_mul_node = nodes_to_compress[-2]
@@ -256,10 +213,10 @@ class WeightCompression(Algorithm):
         #     .aggregators.values()
         # )[0]._container
 
-        for node_name, output_id in self._collected_stat_inputs_map.items():
+        for node_name, output_id in _collected_stat_inputs_map.items():
             activation_node_name, output_port_id = output_id
-            x_fp = self._get_fp_inputs(statistic_points, node_name=activation_node_name, port_id=output_port_id)
-            print(f'node={node_name} activation={activation_node_name} num stats={len(x_fp)} shape of single stat={input_fp[0]}')
+            x_fp = self._get_fp_inputs(statistic_container, node_name=activation_node_name, port_id=output_port_id)
+            print(f'\n\n    num stats={len(x_fp)} \n    shape of single stat={x_fp[0].shape}\nactivation={activation_node_name}\nnode={node_name}')
             # x_fp = np.vstack(x_fp)
             # statistics_per_input[input_tensor_name] = input_fp
             # statistics_size = min(statistics_size, len(input_fp))

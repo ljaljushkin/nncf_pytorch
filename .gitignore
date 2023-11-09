@@ -138,3 +138,5 @@ tests/**/runs/**
 tests/**/tmp*/**
 open_model_zoo/
 nncf-tests.xml
+
+cache

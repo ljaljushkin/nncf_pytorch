@@ -15,17 +15,34 @@ import numpy as np
 import openvino.runtime as ov
 from openvino.runtime import opset9 as opset
 
+from nncf.common.graph import NNCFGraph
 from nncf.common.graph import NNCFNode
 from nncf.common.graph.operator_metatypes import OperatorMetatype
+from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.logging import nncf_logger
 from nncf.common.logging.track_progress import track
 from nncf.common.utils.helpers import create_table
+from nncf.experimental.common.tensor_statistics.collectors import TensorCollector
+from nncf.openvino.graph.metatypes.groups import FAKE_QUANTIZE_OPERATIONS
 from nncf.openvino.graph.metatypes.openvino_metatypes import OVEmbeddingMetatype
 from nncf.openvino.graph.metatypes.openvino_metatypes import OVMatMulMetatype
+from nncf.openvino.graph.model_utils import remove_fq_from_inputs
+from nncf.openvino.graph.node_utils import get_bias_value
 from nncf.openvino.graph.node_utils import get_channel_agnostic_reduction_axes
 from nncf.openvino.graph.node_utils import get_const_value
 from nncf.openvino.graph.node_utils import get_weight_channel_axes
+from nncf.openvino.graph.node_utils import is_node_with_bias
+from nncf.openvino.graph.transformations.command_creation import OVCommandCreator
+from nncf.openvino.graph.transformations.commands import OVBiasCorrectionCommand
+from nncf.openvino.graph.transformations.commands import OVModelExtractionCommand
+from nncf.openvino.graph.transformations.commands import OVOutputInsertionCommand
+from nncf.openvino.graph.transformations.commands import OVTargetPoint
+from nncf.openvino.statistics.collectors import OVNNCFCollectorTensorProcessor
+from nncf.openvino.statistics.collectors import get_mean_statistic_collector
+from nncf.openvino.statistics.collectors import get_raw_stat_collector
+from nncf.openvino.tensor import OVNNCFTensor
 from nncf.parameters import CompressWeightsMode
+from nncf.quantization.algorithms.bias_correction.backend import BiasCorrectionAlgoBackend
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
 from nncf.quantization.fake_quantize import calculate_scale_zero_point
 from nncf.scopes import IgnoredScope
@@ -43,6 +60,23 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
     @staticmethod
     def validate_params(mode: CompressWeightsMode, ignored_scope: Optional[IgnoredScope] = None) -> None:
         pass
+
+    @staticmethod
+    def target_point(target_type: TargetType, target_node_name: str, port_id: int) -> OVTargetPoint:
+        return OVTargetPoint(target_type, target_node_name, port_id)
+
+    @staticmethod
+    def raw_statistic_collector(inplace: bool, num_samples: int = None) -> TensorCollector:
+        return get_raw_stat_collector(num_samples, inplace)
+
+    @staticmethod
+    def get_activation_port_id(node: NNCFNode, nncf_graph: NNCFGraph) -> int:
+        constant_ports = node.layer_attributes.get_const_port_ids()
+        activation_ports = [
+            e.input_port_id for e in nncf_graph.get_input_edges(node) if e.input_port_id not in constant_ports
+        ]
+        assert len(activation_ports) == 1
+        return activation_ports[0]
 
     @staticmethod
     def do_compression(
