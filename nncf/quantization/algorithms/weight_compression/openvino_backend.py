@@ -56,8 +56,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         quantized_nodes_ids = set()
 
         friendly_name_to_op_map = {op.get_friendly_name(): op for op in model.get_ops()}
-
-        for nncf_node in nodes_to_compress:
+        n = len(nodes_to_compress)
+        for i, nncf_node in enumerate(nodes_to_compress):
             weight_port_ids = nncf_node.layer_attributes.get_const_port_ids()
             for weight_port_id in weight_port_ids:
                 weight_op_friendly_name = nncf_node.layer_attributes.constant_attributes[weight_port_id]["name"]
@@ -73,8 +73,13 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     continue
                 const_shape = nncf_node.layer_attributes.constant_attributes[weight_port_id]["shape"]
                 channel_axes = get_weight_channel_axes(nncf_node, weight_port_id)
+                # TODO: always quantize with
+                # if i == n - 2: #nncf_node.metatype == OVMatMulMetatype:
+                #     axes = (0,)
+                # else:
                 axes = get_channel_agnostic_reduction_axes(channel_axes, const_shape)
                 fq_name = f"{weight_op_friendly_name}/fq_weights_{weight_port_id}"
+                print(axes, const_shape, fq_name)
                 num_weights = np.prod(const_shape)
                 weight_params = WeightNodeParams(axes, num_weights, fq_name, weight_node, original_weight_dtype)
                 all_weight_params.append(weight_params)
@@ -246,6 +251,20 @@ def _get_integer_quantization_error(
     layer_err = np.mean(diff, axis=reduction_axes)
     val = np.max(layer_err)
     return val
+
+def _transpose_for_matmul(t: np.ndarray):
+    a=list(range(len(t.shape)))
+    # transpose two right-most axes
+    a[-1], a[-2] = a[-2], a[-1]
+    np.transpose(t, axes=a)
+    return t
+
+def _do_matmul(x, w, transpose_x: bool = False, transpose_w: bool = False):
+    if transpose_x:
+        x = _transpose_for_matmul(x)
+    if transpose_w:
+        w = _transpose_for_matmul(w)
+    return np.matmul(x,w)
 
 
 def _reshape_weights_for_grouped_quantization(
