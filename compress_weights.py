@@ -85,9 +85,13 @@ def gen_pkv_bloom(num_heads, head_dim, num_layers=None):
 def transform_func(item, tokenizer, gen_pkv_fn):
     tokens = tokenizer(item['text'])
     #return tokens['input_ids'], tokens['attention_mask']
-
+    attention_mask = np.expand_dims(np.array(tokens['attention_mask']), 0)
+    position_ids = attention_mask.cumsum(-1) - 1
+    position_ids = np.ma.array(position_ids, mask=attention_mask == 0)
+    position_ids.filled(fill_value=1)
     res = {'input_ids': np.expand_dims(np.array(tokens['input_ids']), 0),
-           'attention_mask': np.expand_dims(np.array(tokens['attention_mask']), 0)}
+           'attention_mask': attention_mask,
+           'position_ids': position_ids}
     res.update(gen_pkv_fn())
     return res
 
@@ -105,8 +109,8 @@ MODEL_IDS_VS_GEN_FN = [
     ]
 
 MODEL_IDS = [
-    'facebook/opt-125m',
-    # 'databricks/dolly-v2-3b',
+    # 'facebook/opt-125m',
+    'databricks/dolly-v2-3b',
     # # 'openlm-research/open_llama_3b',
     # 'facebook/opt-6.7b',
     # 'bigscience/bloom-7b1',
@@ -183,7 +187,8 @@ EXP_DESCS= [
 #     # ExpDesc('open_llama_3b', nf4_g128_fn, 'nf4_ov_g128', is_bin_needed=True),
 #     # ExpDesc('open_llama_3b', nf4_fn, 'nf4_ov', is_bin_needed=True),
     # ExpDesc('HuggingFaceH4/zephyr-7b-beta', partial(compress_weights, mode=CompressWeightsMode.INT8, ratio=1, group_size=-1), 'int4_g128', gen_pkv_fn=partial(gen_pkv, 12, 64)),),
-    ExpDesc('facebook/opt-125m', partial(compress_weights, mode=CompressWeightsMode.INT4_SYM, ratio=1, group_size=128), 'int4_g128_nozp', gen_pkv_fn=partial(gen_pkv, 12, 64)),
+    # ExpDesc('facebook/opt-125m', partial(compress_weights, mode=CompressWeightsMode.INT4_SYM, ratio=1, group_size=128), 'int4_g128_nozp', gen_pkv_fn=partial(gen_pkv, 12, 64)),
+    ExpDesc('databricks/dolly-v2-3b', partial(compress_weights, mode=CompressWeightsMode.INT4_ASYM, ratio=1, group_size=128), 'int4_g128_nozp_anti_criteria', gen_pkv_fn=partial(gen_pkv, 32, 80)),
 ]
 
 # EXP_DESCS = [ExpDesc(model_id, fn, name) for model_id in MODEL_IDS for fn, name in MODES_AND_NAMES]
@@ -218,7 +223,7 @@ for desc in tqdm(EXP_DESCS):
     try:
         if not SRC_PATH.with_suffix('.bin').exists():
             use_pkv = True
-            ov_model = OVModelForCausalLM.from_pretrained(model_id, use_cache=use_pkv, trust_remote_code=True, export=True)
+            ov_model = OVModelForCausalLM.from_pretrained(model_id, use_cache=use_pkv, trust_remote_code=True, export=True, from_transformers=True)
             ov_model.save_pretrained(SRC_PATH.parent)
             ov_model._save_config(SRC_PATH.parent)
             fp32_model = ov_model.model

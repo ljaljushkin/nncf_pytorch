@@ -110,11 +110,13 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 channel_axes = get_weight_channel_axes(nncf_node, weight_port_id)
                 axes = get_channel_agnostic_reduction_axes(channel_axes, const_shape)
                 # TODO: always quantize with
-                if i != n-1 and nncf_node.metatype == OVMatMulMetatype:
+                select_oc_ic = True
+                if select_oc_ic and i != n-1 and nncf_node.metatype == OVMatMulMetatype:
+                    # axes = (0,)
                     primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
                     weight = get_const_value(weight_node)
                     orig_shape = weight.shape
-                    print(orig_shape, nncf_node.node_name)
+                    # print(orig_shape, nncf_node.node_name)
 
                     compressed_weights, scale, zero_point = _do_integer_quantization(weight, (1,), primary_config)
                     decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
@@ -125,7 +127,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     error1 = 0
                     weight = _transpose_for_matmul(weight)
                     decompressed_weight = _transpose_for_matmul(decompressed_weight)
-                    print(weight.shape, activations[nncf_node.node_name][0].shape)
+                    # print(weight.shape, activations[nncf_node.node_name][0].shape)
                     for x in activations[nncf_node.node_name]:
                         fp_output = _do_matmul(x, weight)
                         q_output = _do_matmul(x, decompressed_weight)
@@ -145,10 +147,14 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                         q_output = _do_matmul(x, decompressed_weight)
                         error2 += np.mean(fp_output - q_output) **2
 
-                    print(abs(error1 - error2) / max(error1, error2), error1, error2)
-                    axes = (1,) if error1 < error2 else (0,)
+                    if error1 < error2:
+                        axes = (1,)
+                        print("---{:2.1f}% ({:.02g} vs {:.02g}) old axes=1 {} for {}".format((error2 - error1) / error2 * 100, error1, error2, const_shape, nncf_node.node_name))
+                    else:
+                        axes = (0,)
+                        print("+++{:2.1f}% ({:.02g} vs {:.02g}) new axes=0 {} for {}".format((error1 - error2) / error1 * 100, error1, error2, const_shape, nncf_node.node_name))
+
                 fq_name = f"{weight_op_friendly_name}/fq_weights_{weight_port_id}"
-                print(axes, const_shape, fq_name)
                 num_weights = np.prod(const_shape)
                 weight_params = WeightNodeParams(axes, num_weights, fq_name, weight_node, original_weight_dtype)
                 all_weight_params.append(weight_params)

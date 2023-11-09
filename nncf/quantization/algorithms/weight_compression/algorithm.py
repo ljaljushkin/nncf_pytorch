@@ -171,40 +171,43 @@ class WeightCompression(Algorithm):
         self._backend_entity.validate_params(self._mode, self._ignored_scope)
         nodes_to_compress = self._get_nodes_to_compress(graph)
 
-        _collected_stat_inputs_map = {}
-        statistic_container = StatisticPointsContainer()
-        matmul_nodes = [node for node in nodes_to_compress if node.metatype == OVMatMulMetatype]
-        for node in matmul_nodes:
-            activation_node, output_port_id = self._get_activation_node_and_port(node, graph)
-            activation_node_name = activation_node.node_name
-            output_id = (activation_node_name, output_port_id)
-            _collected_stat_inputs_map[node.node_name] = output_id
-
-
-            statistic_point = self._backend_entity.target_point(
-                TargetType.POST_LAYER_OPERATION, activation_node_name, port_id=output_port_id
-            )
-            inplace_statistics = False
-            subset_size = 12  # 8
-            stat_collector = self._backend_entity.raw_statistic_collector(
-                num_samples=subset_size, inplace=inplace_statistics
-            )
-            statistic_container.add_statistic_point(
-                StatisticPoint(
-                    target_point=statistic_point, tensor_collector=stat_collector, algorithm=self._algorithm_key
-                )
-            )
-
-        statistics_aggregator = OVStatisticsAggregator(dataset)
-        statistics_aggregator.register_statistic_points(statistic_container)
-        statistics_aggregator.collect_statistics(model, graph)
-
         activations = {}
-        for node_name, output_id in _collected_stat_inputs_map.items():
-            activation_node_name, output_port_id = output_id
-            x_fp = self._get_fp_inputs(statistic_container, node_name=activation_node_name, port_id=output_port_id)
-            print(f'\n\nnum stats={len(x_fp)}\nshape of single stat={x_fp[0].shape}\nactivation={activation_node_name}\nnode={node_name}')
-            activations[node_name] = x_fp # np.vstack(x_fp) # TODO: activations have a different length
+        select_ic_oc = True
+        if select_ic_oc:
+            _collected_stat_inputs_map = {}
+            statistic_container = StatisticPointsContainer()
+            matmul_nodes = [node for node in nodes_to_compress if node.metatype == OVMatMulMetatype]
+            for node in matmul_nodes:
+                activation_node, output_port_id = self._get_activation_node_and_port(node, graph)
+                activation_node_name = activation_node.node_name
+                output_id = (activation_node_name, output_port_id)
+                _collected_stat_inputs_map[node.node_name] = output_id
+
+
+                statistic_point = self._backend_entity.target_point(
+                    TargetType.POST_LAYER_OPERATION, activation_node_name, port_id=output_port_id
+                )
+                inplace_statistics = False
+                subset_size = 12  # 8
+                stat_collector = self._backend_entity.raw_statistic_collector(
+                    num_samples=subset_size, inplace=inplace_statistics
+                )
+                statistic_container.add_statistic_point(
+                    StatisticPoint(
+                        target_point=statistic_point, tensor_collector=stat_collector, algorithm=self._algorithm_key
+                    )
+                )
+
+            statistics_aggregator = OVStatisticsAggregator(dataset)
+            statistics_aggregator.register_statistic_points(statistic_container)
+            statistics_aggregator.collect_statistics(model, graph)
+
+            for node_name, output_id in _collected_stat_inputs_map.items():
+                activation_node_name, output_port_id = output_id
+                x_fp = self._get_fp_inputs(statistic_container, node_name=activation_node_name, port_id=output_port_id)
+                # print(f'\n\nnum stats={len(x_fp)}\nshape of single stat={x_fp[0].shape}\nactivation={activation_node_name}\nnode={node_name}')
+                activations[node_name] = x_fp # np.vstack(x_fp) # TODO: activations have a different length
+
         transformed_model = self._backend_entity.do_compression(
             model, nodes_to_compress, self._mode, self._ratio, self._group_size, activations
         )
