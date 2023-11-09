@@ -140,3 +140,4 @@ open_model_zoo/
 nncf-tests.xml
 
 cache
+runs

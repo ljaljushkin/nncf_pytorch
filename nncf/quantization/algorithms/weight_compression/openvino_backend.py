@@ -85,6 +85,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         mode: CompressWeightsMode,
         ratio: float = None,
         group_size: int = None,
+        activations = None
     ) -> ov.Model:
         all_weight_params: List[WeightNodeParams] = []
         quantized_nodes_ids = set()
@@ -107,11 +108,45 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     continue
                 const_shape = nncf_node.layer_attributes.constant_attributes[weight_port_id]["shape"]
                 channel_axes = get_weight_channel_axes(nncf_node, weight_port_id)
-                # TODO: always quantize with
-                # if i == n - 2: #nncf_node.metatype == OVMatMulMetatype:
-                #     axes = (0,)
-                # else:
                 axes = get_channel_agnostic_reduction_axes(channel_axes, const_shape)
+                # TODO: always quantize with
+                if i != n-1 and nncf_node.metatype == OVMatMulMetatype:
+                    primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
+                    weight = get_const_value(weight_node)
+                    orig_shape = weight.shape
+                    print(orig_shape, nncf_node.node_name)
+
+                    compressed_weights, scale, zero_point = _do_integer_quantization(weight, (1,), primary_config)
+                    decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
+                    decompressed_weight = (compressed_weights - zero_point) * scale
+                    decompressed_weight = decompressed_weight.reshape(orig_shape)
+
+                    # TODO: calculate once using OV? collect outputs 3 times - fp32, q1, q2. compress 3 times!
+                    error1 = 0
+                    weight = _transpose_for_matmul(weight)
+                    decompressed_weight = _transpose_for_matmul(decompressed_weight)
+                    print(weight.shape, activations[nncf_node.node_name][0].shape)
+                    for x in activations[nncf_node.node_name]:
+                        fp_output = _do_matmul(x, weight)
+                        q_output = _do_matmul(x, decompressed_weight)
+                        error1 += np.mean(fp_output - q_output) **2
+
+                    weight = _transpose_for_matmul(weight)
+                    compressed_weights, scale, zero_point = _do_integer_quantization(weight, (0,), primary_config)
+                    decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
+                    decompressed_weight = (compressed_weights - zero_point) * scale
+                    decompressed_weight = decompressed_weight.reshape(orig_shape)
+
+                    weight = _transpose_for_matmul(weight)
+                    decompressed_weight = _transpose_for_matmul(decompressed_weight)
+                    error2 = 0
+                    for x in activations[nncf_node.node_name]:
+                        fp_output = _do_matmul(x, weight)
+                        q_output = _do_matmul(x, decompressed_weight)
+                        error2 += np.mean(fp_output - q_output) **2
+
+                    print(abs(error1 - error2) / max(error1, error2), error1, error2)
+                    axes = (1,) if error1 < error2 else (0,)
                 fq_name = f"{weight_op_friendly_name}/fq_weights_{weight_port_id}"
                 print(axes, const_shape, fq_name)
                 num_weights = np.prod(const_shape)
@@ -290,14 +325,13 @@ def _transpose_for_matmul(t: np.ndarray):
     a=list(range(len(t.shape)))
     # transpose two right-most axes
     a[-1], a[-2] = a[-2], a[-1]
-    np.transpose(t, axes=a)
-    return t
+    return np.transpose(t, axes=a)
 
 def _do_matmul(x, w, transpose_x: bool = False, transpose_w: bool = False):
-    if transpose_x:
-        x = _transpose_for_matmul(x)
-    if transpose_w:
-        w = _transpose_for_matmul(w)
+    # if transpose_x:
+    #     x = _transpose_for_matmul(x)
+    # if transpose_w:
+    #     w = _transpose_for_matmul(w)
     return np.matmul(x,w)
 
 

@@ -199,58 +199,15 @@ class WeightCompression(Algorithm):
         statistics_aggregator.register_statistic_points(statistic_container)
         statistics_aggregator.collect_statistics(model, graph)
 
-        # target_mul_node = nodes_to_compress[-2]
-        # node_name = target_mul_node.node_name
-        # statistics_aggregator = OVStatisticsAggregator(dataset)
-
-        # statistic_points = get_statistic_points(model, [target_mul_node], subset_size)
-        # statistics_aggregator.register_statistic_points(statistic_points)
-        # statistics_aggregator.collect_statistics(model, graph)
-
-        # x_fp = list(
-        #     statistics_aggregator.statistic_points[node_name][0]
-        #     .algorithm_to_tensor_collectors["compensation"][0]
-        #     .aggregators.values()
-        # )[0]._container
-
+        activations = {}
         for node_name, output_id in _collected_stat_inputs_map.items():
             activation_node_name, output_port_id = output_id
             x_fp = self._get_fp_inputs(statistic_container, node_name=activation_node_name, port_id=output_port_id)
-            print(f'\n\n    num stats={len(x_fp)} \n    shape of single stat={x_fp[0].shape}\nactivation={activation_node_name}\nnode={node_name}')
-            # x_fp = np.vstack(x_fp)
-            # statistics_per_input[input_tensor_name] = input_fp
-            # statistics_size = min(statistics_size, len(input_fp))
-        assert False, 'OK!'
+            print(f'\n\nnum stats={len(x_fp)}\nshape of single stat={x_fp[0].shape}\nactivation={activation_node_name}\nnode={node_name}')
+            activations[node_name] = x_fp # np.vstack(x_fp) # TODO: activations have a different length
         transformed_model = self._backend_entity.do_compression(
-            model, nodes_to_compress, self._mode, self._ratio, self._group_size
+            model, nodes_to_compress, self._mode, self._ratio, self._group_size, activations
         )
-
-        # graph = GraphConverter.create_nncf_graph(transformed_model)
-        # statistics_aggregator = OVStatisticsAggregator(dataset)
-        # # TODO: the same node? should it be re-registered??
-        # statistic_points = get_statistic_points(model, [target_mul_node], subset_size)
-        # statistics_aggregator.register_statistic_points(statistic_points)
-        # statistics_aggregator.collect_statistics(transformed_model, graph)
-
-        # tensor_collectors = list(statistic_points.get_algo_statistics_for_node(node_name, lambda _: True, algorithm_key))
-        # assert len(tensor_collectors) == 1
-        # x_q = tensor_collectors[0].get_statistics().mean_values
-        # x_q = list(
-        #     statistics_aggregator.statistic_points[node_name][0]
-        #     .algorithm_to_tensor_collectors["compensation"][0]
-        #     .aggregators.values()
-        # )[0]._container
-
-        # TODO: instead of np.vstack. call nncf_tensor.vstack()
-        #   tensor_processor = backend._get_tensor_proc = (OVNNCFCollectorTensorProcessor)
-        #   tensor_processor.vstack()
-
-        # x_fp = np.vstack(x_fp)
-        # x_q = np.vstack(x_q)
-
-        # mean_diff = np.mean((x_q - x_fp) ** 2)
-        # print(f"diff {mean_diff}")
-
         return transformed_model
 
     def _get_nodes_to_compress(self, nncf_graph: NNCFGraph) -> List[NNCFNode]:

@@ -1,26 +1,28 @@
-from dataclasses import dataclass
-from functools import partial
-import gc
-import shutil
-from typing import Callable
-import openvino.runtime as ov
-from openvino import Core
-import time
-import queue
-from datasets import load_dataset
 import atexit
 import datetime
-from nncf import compress_weights, Dataset
-from pathlib import Path
+import gc
+import queue
+import shutil
 import threading
-import matplotlib.pyplot as plt
-from nncf.parameters import CompressWeightsMode
-from tqdm import tqdm
+import time
 import traceback
-from optimum.intel import OVModelForCausalLM
-from transformers import AutoTokenizer
-import numpy as np
+from dataclasses import dataclass
+from functools import partial
+from pathlib import Path
+from typing import Callable
+
 import matplotlib.pyplot as plt
+import numpy as np
+import openvino.runtime as ov
+from datasets import load_dataset
+from openvino import Core
+from optimum.intel import OVModelForCausalLM
+from tqdm import tqdm
+from transformers import AutoTokenizer
+
+from nncf import Dataset
+from nncf import compress_weights
+from nncf.parameters import CompressWeightsMode
 
 core = Core()
 
@@ -120,12 +122,12 @@ MODES_AND_NAMES = [
     # (nf4_g64_fn, 'nf4_ov_g64'),
     # (nf4_g128_fn, 'nf4_ov_g128'),
     # (int4_g128_fn, 'int4_g128'),
-    # (int4_g128_nozp_fn, 'int4_g128_nozp'),
+    (int4_g128_nozp_fn, 'int4_g128_nozp'),
     # (int4_g64_nozp_fn, 'int4_g64_nozp'),
     # (int4_g128_nozp_r80_fn, 'int4_g128_nozp_r80'),
     # (nf4_g32_fn, 'nf4_ov_g32'),
     # (nf4_fn, 'nf4_ov'),
-    (int8_fn, 'int8')
+    # (int8_fn, 'int8')
 ]
 
 
@@ -181,7 +183,7 @@ EXP_DESCS= [
 #     # ExpDesc('open_llama_3b', nf4_g128_fn, 'nf4_ov_g128', is_bin_needed=True),
 #     # ExpDesc('open_llama_3b', nf4_fn, 'nf4_ov', is_bin_needed=True),
     # ExpDesc('HuggingFaceH4/zephyr-7b-beta', partial(compress_weights, mode=CompressWeightsMode.INT8, ratio=1, group_size=-1), 'int4_g128', gen_pkv_fn=partial(gen_pkv, 12, 64)),),
-    ExpDesc('facebook/opt-125m', partial(compress_weights, mode=CompressWeightsMode.INT8, ratio=1, group_size=-1), 'int8', gen_pkv_fn=partial(gen_pkv, 12, 64)),
+    ExpDesc('facebook/opt-125m', partial(compress_weights, mode=CompressWeightsMode.INT4_SYM, ratio=1, group_size=128), 'int4_g128_nozp', gen_pkv_fn=partial(gen_pkv, 12, 64)),
 ]
 
 # EXP_DESCS = [ExpDesc(model_id, fn, name) for model_id in MODEL_IDS for fn, name in MODES_AND_NAMES]
@@ -237,7 +239,8 @@ for desc in tqdm(EXP_DESCS):
         start = time.time()
         tokenizer = AutoTokenizer.from_pretrained(model_id)
         dataset = load_dataset('wikitext', 'wikitext-2-v1', split='train[:1000]')
-        dataset = dataset.filter(lambda example: len(example["text"]) > 128)
+        # TODO: hack
+        dataset = dataset.filter(lambda example: len(example["text"]) > 200)
         nncf_dataset = Dataset(dataset, partial(transform_func, tokenizer=tokenizer, gen_pkv_fn=gen_pkv_fn))
 
         model = compress_fn(fp32_model, dataset=nncf_dataset)
