@@ -166,14 +166,14 @@ class WeightCompression(Algorithm):
         graph: NNCFGraph,
         statistic_points: Optional[StatisticPointsContainer] = None,
         dataset: Optional[Dataset] = None,
+        is_revert: bool = False,
     ) -> TModel:
         self._set_backend_entity(model)
         self._backend_entity.validate_params(self._mode, self._ignored_scope)
         nodes_to_compress = self._get_nodes_to_compress(graph)
 
         activations = {}
-        select_ic_oc = True
-        if select_ic_oc:
+        if dataset is not None:
             _collected_stat_inputs_map = {}
             statistic_container = StatisticPointsContainer()
             matmul_nodes = [node for node in nodes_to_compress if node.metatype == OVMatMulMetatype]
@@ -188,7 +188,7 @@ class WeightCompression(Algorithm):
                     TargetType.POST_LAYER_OPERATION, activation_node_name, port_id=output_port_id
                 )
                 inplace_statistics = False
-                subset_size = 12  # 8
+                subset_size = 128
                 stat_collector = self._backend_entity.raw_statistic_collector(
                     num_samples=subset_size, inplace=inplace_statistics
                 )
@@ -209,7 +209,7 @@ class WeightCompression(Algorithm):
                 activations[node_name] = x_fp # np.vstack(x_fp) # TODO: activations have a different length
 
         transformed_model = self._backend_entity.do_compression(
-            model, nodes_to_compress, self._mode, self._ratio, self._group_size, activations
+            model, nodes_to_compress, self._mode, self._ratio, self._group_size, activations=activations, is_revert=is_revert
         )
         return transformed_model
 

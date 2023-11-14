@@ -1,0 +1,147 @@
+INFO:nncf:NNCF initialized successfully. Supported frameworks detected: torch, onnx, openvino
+  0%|          | 0/1 [00:00<?, ?it/s]cache/dolly-v2-3b/fp32/openvino_model.xml
+
+
+databricks/dolly-v2-3b___int4_g128_nozp_anti_criteria_2
+cache/dolly-v2-3b/int4_g128_nozp_anti_criteria_2/openvino_model.xml
+Statistics collection ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 12/12 • 0:00:18 • 0:00:00
+---1873.6x (1.4e-07 vs 2.6e-06) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.0.attention.query_key_value/aten::linear/MatMul_84
+---1613.2x (9.6e-08 vs 1.6e-06) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.0.attention.dense/aten::linear/MatMul_314
+---168.7x (1.2e-07 vs 1.9e-07) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.0.mlp.dense_h_to_4h/aten::linear/MatMul_315
++++669.4x (5.2e-06 vs 7.8e-07) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.0.mlp.dense_4h_to_h/aten::linear/MatMul_316
+---528.5x (7.1e-06 vs 3.8e-05) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.1.attention.query_key_value/aten::linear/MatMul_320
+---393.8x (3.7e-08 vs 1.5e-07) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.1.attention.dense/aten::linear/MatMul_550
+---245.4x (3e-07 vs 7.4e-07) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.1.mlp.dense_h_to_4h/aten::linear/MatMul_551
+---632.9x (1.2e-07 vs 7.7e-07) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.1.mlp.dense_4h_to_h/aten::linear/MatMul_552
+---711.0x (8.2e-07 vs 5.8e-06) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.2.attention.query_key_value/aten::linear/MatMul_556
++++281.2x (5e-07 vs 1.8e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.2.attention.dense/aten::linear/MatMul_786
++++1334.5x (2.5e-06 vs 1.9e-07) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.2.mlp.dense_h_to_4h/aten::linear/MatMul_787
+---204.1x (1.9e-06 vs 3.9e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.2.mlp.dense_4h_to_h/aten::linear/MatMul_788
+---111.6x (2.1e-06 vs 2.3e-06) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.3.attention.query_key_value/aten::linear/MatMul_792
++++185.5x (2.2e-07 vs 1.2e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.3.attention.dense/aten::linear/MatMul_1022
+---103.7x (1.3e-06 vs 1.3e-06) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.3.mlp.dense_h_to_4h/aten::linear/MatMul_1023
+---109.8x (3.8e-06 vs 4.2e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.3.mlp.dense_4h_to_h/aten::linear/MatMul_1024
++++348.4x (1.1e-05 vs 3.3e-06) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.4.attention.query_key_value/aten::linear/MatMul_1028
++++154.1x (2.2e-07 vs 1.4e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.4.attention.dense/aten::linear/MatMul_1258
++++249.1x (1.2e-07 vs 4.7e-08) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.4.mlp.dense_h_to_4h/aten::linear/MatMul_1259
++++121.1x (2.7e-06 vs 2.2e-06) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.4.mlp.dense_4h_to_h/aten::linear/MatMul_1260
+---138.8x (2.8e-06 vs 3.9e-06) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.5.attention.query_key_value/aten::linear/MatMul_1264
+---104.1x (3.8e-07 vs 4e-07) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.5.attention.dense/aten::linear/MatMul_1494
++++1490.6x (1.9e-05 vs 1.3e-06) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.5.mlp.dense_h_to_4h/aten::linear/MatMul_1495
+---313.9x (5.9e-07 vs 1.9e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.5.mlp.dense_4h_to_h/aten::linear/MatMul_1496
+---1265.9x (6.5e-07 vs 8.2e-06) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.6.attention.query_key_value/aten::linear/MatMul_1500
+---210.3x (4.8e-07 vs 1e-06) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.6.attention.dense/aten::linear/MatMul_1730
++++1588.6x (2e-06 vs 1.3e-07) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.6.mlp.dense_h_to_4h/aten::linear/MatMul_1731
+---138.5x (1.5e-07 vs 2.1e-07) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.6.mlp.dense_4h_to_h/aten::linear/MatMul_1732
+---1278.3x (2e-07 vs 2.5e-06) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.7.attention.query_key_value/aten::linear/MatMul_1736
++++342.1x (6.8e-07 vs 2e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.7.attention.dense/aten::linear/MatMul_1966
++++418.1x (9.8e-07 vs 2.3e-07) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.7.mlp.dense_h_to_4h/aten::linear/MatMul_1967
++++870.0x (6.3e-06 vs 7.3e-07) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.7.mlp.dense_4h_to_h/aten::linear/MatMul_1968
++++221.2x (2.5e-06 vs 1.1e-06) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.8.attention.query_key_value/aten::linear/MatMul_1972
+---220.5x (4.3e-07 vs 9.5e-07) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.8.attention.dense/aten::linear/MatMul_2202
++++280.5x (3.1e-06 vs 1.1e-06) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.8.mlp.dense_h_to_4h/aten::linear/MatMul_2203
+---136.8x (5e-07 vs 6.9e-07) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.8.mlp.dense_4h_to_h/aten::linear/MatMul_2204
+---435.3x (1.8e-06 vs 7.6e-06) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.9.attention.query_key_value/aten::linear/MatMul_2208
+---224.7x (2.2e-07 vs 5e-07) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.9.attention.dense/aten::linear/MatMul_2438
++++467.1x (8.4e-07 vs 1.8e-07) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.9.mlp.dense_h_to_4h/aten::linear/MatMul_2439
++++105.6x (3.1e-06 vs 3e-06) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.9.mlp.dense_4h_to_h/aten::linear/MatMul_2440
+---314.4x (3.1e-06 vs 9.8e-06) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.10.attention.query_key_value/aten::linear/MatMul_2444
+---206.7x (5.1e-07 vs 1.1e-06) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.10.attention.dense/aten::linear/MatMul_2674
+---131.7x (1e-06 vs 1.4e-06) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.10.mlp.dense_h_to_4h/aten::linear/MatMul_2675
+---297.6x (3.4e-06 vs 1e-05) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.10.mlp.dense_4h_to_h/aten::linear/MatMul_2676
+---515.4x (3.5e-07 vs 1.8e-06) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.11.attention.query_key_value/aten::linear/MatMul_2680
++++153.2x (9.3e-07 vs 6.1e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.11.attention.dense/aten::linear/MatMul_2910
+---3406.1x (1e-07 vs 3.5e-06) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.11.mlp.dense_h_to_4h/aten::linear/MatMul_2911
+---128.0x (6.4e-07 vs 8.2e-07) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.11.mlp.dense_4h_to_h/aten::linear/MatMul_2912
++++1329.8x (4e-06 vs 3e-07) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.12.attention.query_key_value/aten::linear/MatMul_2916
++++132.7x (1.1e-06 vs 8e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.12.attention.dense/aten::linear/MatMul_3146
++++172.7x (3e-06 vs 1.7e-06) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.12.mlp.dense_h_to_4h/aten::linear/MatMul_3147
+---351.3x (4.4e-07 vs 1.5e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.12.mlp.dense_4h_to_h/aten::linear/MatMul_3148
++++240.3x (1.3e-05 vs 5.2e-06) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.13.attention.query_key_value/aten::linear/MatMul_3152
++++104.0x (2.9e-07 vs 2.8e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.13.attention.dense/aten::linear/MatMul_3382
++++235.3x (1.4e-06 vs 6.2e-07) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.13.mlp.dense_h_to_4h/aten::linear/MatMul_3383
+---283.1x (1.2e-06 vs 3.5e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.13.mlp.dense_4h_to_h/aten::linear/MatMul_3384
+---132.3x (6.4e-06 vs 8.4e-06) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.14.attention.query_key_value/aten::linear/MatMul_3388
+---1158.0x (3.4e-07 vs 3.9e-06) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.14.attention.dense/aten::linear/MatMul_3618
+---188.3x (2.8e-07 vs 5.3e-07) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.14.mlp.dense_h_to_4h/aten::linear/MatMul_3619
+---103.8x (1.3e-06 vs 1.3e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.14.mlp.dense_4h_to_h/aten::linear/MatMul_3620
++++832.9x (9e-06 vs 1.1e-06) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.15.attention.query_key_value/aten::linear/MatMul_3624
++++357.9x (1.9e-06 vs 5.3e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.15.attention.dense/aten::linear/MatMul_3854
+---188.4x (4.4e-07 vs 8.3e-07) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.15.mlp.dense_h_to_4h/aten::linear/MatMul_3855
++++194.5x (4.9e-06 vs 2.5e-06) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.15.mlp.dense_4h_to_h/aten::linear/MatMul_3856
+---295.4x (1e-05 vs 3.1e-05) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.16.attention.query_key_value/aten::linear/MatMul_3860
+---234.9x (8.9e-07 vs 2.1e-06) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.16.attention.dense/aten::linear/MatMul_4090
+---128.5x (2.5e-07 vs 3.2e-07) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.16.mlp.dense_h_to_4h/aten::linear/MatMul_4091
++++171.8x (4.4e-07 vs 2.6e-07) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.16.mlp.dense_4h_to_h/aten::linear/MatMul_4092
+---130.0x (6.1e-05 vs 7.9e-05) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.17.attention.query_key_value/aten::linear/MatMul_4096
+---123.5x (3e-07 vs 3.7e-07) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.17.attention.dense/aten::linear/MatMul_4326
++++759.3x (8.4e-07 vs 1.1e-07) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.17.mlp.dense_h_to_4h/aten::linear/MatMul_4327
+---127.6x (1.6e-06 vs 2e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.17.mlp.dense_4h_to_h/aten::linear/MatMul_4328
+---828.1x (3.4e-06 vs 2.8e-05) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.18.attention.query_key_value/aten::linear/MatMul_4332
++++194.9x (2.4e-06 vs 1.2e-06) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.18.attention.dense/aten::linear/MatMul_4562
++++187.8x (7.1e-07 vs 3.8e-07) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.18.mlp.dense_h_to_4h/aten::linear/MatMul_4563
++++121.7x (2.1e-06 vs 1.7e-06) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.18.mlp.dense_4h_to_h/aten::linear/MatMul_4564
+---323.3x (5.4e-06 vs 1.8e-05) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.19.attention.query_key_value/aten::linear/MatMul_4568
++++126.7x (1.2e-06 vs 9.7e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.19.attention.dense/aten::linear/MatMul_4798
+---252.5x (8.5e-07 vs 2.2e-06) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.19.mlp.dense_h_to_4h/aten::linear/MatMul_4799
+---809.4x (2.4e-07 vs 2e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.19.mlp.dense_4h_to_h/aten::linear/MatMul_4800
+---796.9x (1.7e-05 vs 0.00014) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.20.attention.query_key_value/aten::linear/MatMul_4804
++++630.2x (2.8e-06 vs 4.5e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.20.attention.dense/aten::linear/MatMul_5034
++++244.0x (8e-07 vs 3.3e-07) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.20.mlp.dense_h_to_4h/aten::linear/MatMul_5035
+---121.4x (4.1e-07 vs 5e-07) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.20.mlp.dense_4h_to_h/aten::linear/MatMul_5036
++++445.2x (7.9e-05 vs 1.8e-05) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.21.attention.query_key_value/aten::linear/MatMul_5040
++++273.9x (1.8e-06 vs 6.5e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.21.attention.dense/aten::linear/MatMul_5270
++++172.2x (6.5e-06 vs 3.8e-06) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.21.mlp.dense_h_to_4h/aten::linear/MatMul_5271
+---215.4x (1.2e-06 vs 2.5e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.21.mlp.dense_4h_to_h/aten::linear/MatMul_5272
++++887.2x (0.00015 vs 1.7e-05) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.22.attention.query_key_value/aten::linear/MatMul_5276
+---239.4x (4.7e-07 vs 1.1e-06) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.22.attention.dense/aten::linear/MatMul_5506
+---2362.8x (2.1e-07 vs 5e-06) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.22.mlp.dense_h_to_4h/aten::linear/MatMul_5507
+---164.4x (4.5e-06 vs 7.3e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.22.mlp.dense_4h_to_h/aten::linear/MatMul_5508
++++7038.6x (0.00015 vs 2.1e-06) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.23.attention.query_key_value/aten::linear/MatMul_5512
+---219.9x (1.4e-06 vs 3.2e-06) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.23.attention.dense/aten::linear/MatMul_5742
++++1756.7x (8e-06 vs 4.6e-07) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.23.mlp.dense_h_to_4h/aten::linear/MatMul_5743
+---239.3x (8.7e-07 vs 2.1e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.23.mlp.dense_4h_to_h/aten::linear/MatMul_5744
+---436.1x (0.00022 vs 0.00094) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.24.attention.query_key_value/aten::linear/MatMul_5748
++++353.9x (5.2e-07 vs 1.5e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.24.attention.dense/aten::linear/MatMul_5978
+---878.2x (2.8e-07 vs 2.5e-06) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.24.mlp.dense_h_to_4h/aten::linear/MatMul_5979
++++325.8x (2.6e-06 vs 7.8e-07) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.24.mlp.dense_4h_to_h/aten::linear/MatMul_5980
++++461.5x (1.6e-05 vs 3.4e-06) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.25.attention.query_key_value/aten::linear/MatMul_5984
++++243.3x (7.3e-07 vs 3e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.25.attention.dense/aten::linear/MatMul_6214
++++303.9x (9.2e-06 vs 3e-06) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.25.mlp.dense_h_to_4h/aten::linear/MatMul_6215
++++102.2x (2e-06 vs 1.9e-06) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.25.mlp.dense_4h_to_h/aten::linear/MatMul_6216
++++736.8x (0.00012 vs 1.6e-05) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.26.attention.query_key_value/aten::linear/MatMul_6220
+---556.1x (1.8e-07 vs 1e-06) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.26.attention.dense/aten::linear/MatMul_6450
++++137.1x (2.7e-06 vs 2e-06) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.26.mlp.dense_h_to_4h/aten::linear/MatMul_6451
+---257.8x (4.1e-07 vs 1.1e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.26.mlp.dense_4h_to_h/aten::linear/MatMul_6452
++++108.2x (0.00017 vs 0.00016) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.27.attention.query_key_value/aten::linear/MatMul_6456
+---261.7x (1.7e-07 vs 4.5e-07) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.27.attention.dense/aten::linear/MatMul_6686
++++143.8x (3e-06 vs 2.1e-06) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.27.mlp.dense_h_to_4h/aten::linear/MatMul_6687
++++115.8x (1.2e-06 vs 1e-06) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.27.mlp.dense_4h_to_h/aten::linear/MatMul_6688
+---156.4x (0.00023 vs 0.00036) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.28.attention.query_key_value/aten::linear/MatMul_6692
+---175.5x (1.3e-07 vs 2.3e-07) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.28.attention.dense/aten::linear/MatMul_6922
++++244.6x (1.4e-06 vs 5.6e-07) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.28.mlp.dense_h_to_4h/aten::linear/MatMul_6923
++++251.9x (9.4e-07 vs 3.7e-07) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.28.mlp.dense_4h_to_h/aten::linear/MatMul_6924
+---4073.6x (5e-05 vs 0.002) choose axes=1 (7680, 2560) for __module.model.gpt_neox.layers.29.attention.query_key_value/aten::linear/MatMul_6928
++++219.1x (4.8e-07 vs 2.2e-07) choose axes=0 (2560, 2560) for __module.model.gpt_neox.layers.29.attention.dense/aten::linear/MatMul_7158
++++187.2x (1.9e-06 vs 1e-06) choose axes=0 (10240, 2560) for __module.model.gpt_neox.layers.29.mlp.dense_h_to_4h/aten::linear/MatMul_7159
+---210.0x (2e-06 vs 4.3e-06) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.29.mlp.dense_4h_to_h/aten::linear/MatMul_7160
++++407.5x (0.0006 vs 0.00015) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.30.attention.query_key_value/aten::linear/MatMul_7164
+---160.7x (1.2e-06 vs 2e-06) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.30.attention.dense/aten::linear/MatMul_7394
+---510.8x (1.7e-06 vs 8.5e-06) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.30.mlp.dense_h_to_4h/aten::linear/MatMul_7395
++++387.4x (8.2e-06 vs 2.1e-06) choose axes=0 (2560, 10240) for __module.model.gpt_neox.layers.30.mlp.dense_4h_to_h/aten::linear/MatMul_7396
++++1228.3x (0.00019 vs 1.5e-05) choose axes=0 (7680, 2560) for __module.model.gpt_neox.layers.31.attention.query_key_value/aten::linear/MatMul_7400
+---129.0x (1.1e-06 vs 1.4e-06) choose axes=1 (2560, 2560) for __module.model.gpt_neox.layers.31.attention.dense/aten::linear/MatMul_7630
+---130.8x (1.5e-05 vs 2e-05) choose axes=1 (10240, 2560) for __module.model.gpt_neox.layers.31.mlp.dense_h_to_4h/aten::linear/MatMul_7631
+---207.4x (1e-05 vs 2.1e-05) choose axes=1 (2560, 10240) for __module.model.gpt_neox.layers.31.mlp.dense_4h_to_h/aten::linear/MatMul_7632
+INFO:nncf:Statistics of the bitwidth distribution:
++--------------+-----------------+--------------------+
+| Num bits (N) |  % all weight   | % internal weights |
++==============+=================+====================+
+| 8            | 9% (2 / 130)    | 0% (0 / 128)       |
++--------------+-----------------+--------------------+
+| 4            | 91% (128 / 130) | 100% (128 / 128)   |
++--------------+-----------------+--------------------+
+Applying Weight Compression ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 130/130 • 0:01:42 • 0:00:00
+100%|██████████| 1/1 [09:32<00:00, 572.10s/it]100%|██████████| 1/1 [09:32<00:00, 572.10s/it]
+compressing weights took 569.0 seconds
+saving model cache/dolly-v2-3b/int4_g128_nozp_anti_criteria_2/openvino_model.xml took 2.5 seconds

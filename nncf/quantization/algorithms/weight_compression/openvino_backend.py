@@ -85,7 +85,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         mode: CompressWeightsMode,
         ratio: float = None,
         group_size: int = None,
-        activations = None
+        activations = None,
+        is_revert: bool = False,
     ) -> ov.Model:
         all_weight_params: List[WeightNodeParams] = []
         quantized_nodes_ids = set()
@@ -109,50 +110,51 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 const_shape = nncf_node.layer_attributes.constant_attributes[weight_port_id]["shape"]
                 channel_axes = get_weight_channel_axes(nncf_node, weight_port_id)
                 axes = get_channel_agnostic_reduction_axes(channel_axes, const_shape)
-                # TODO: always quantize with
-                select_oc_ic = True
-                if select_oc_ic and i != n-1 and nncf_node.metatype == OVMatMulMetatype:
-                    # axes = (0,)
-                    primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
-                    weight = get_const_value(weight_node)
-                    orig_shape = weight.shape
-                    # print(orig_shape, nncf_node.node_name)
+                if i != n-1 and nncf_node.metatype == OVMatMulMetatype:
+                    if not activations and is_revert:
+                        axes = 0
+                    elif activations:
+                        primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
+                        weight = get_const_value(weight_node)
+                        orig_shape = weight.shape
 
-                    compressed_weights, scale, zero_point = _do_integer_quantization(weight, (1,), primary_config)
-                    decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
-                    decompressed_weight = (compressed_weights - zero_point) * scale
-                    decompressed_weight = decompressed_weight.reshape(orig_shape)
+                        compressed_weights, scale, zero_point = _do_integer_quantization(weight, (1,), primary_config)
+                        decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
+                        decompressed_weight = (compressed_weights - zero_point) * scale
+                        decompressed_weight = decompressed_weight.reshape(orig_shape)
 
-                    # TODO: calculate once using OV? collect outputs 3 times - fp32, q1, q2. compress 3 times!
-                    error1 = 0
-                    weight = _transpose_for_matmul(weight)
-                    decompressed_weight = _transpose_for_matmul(decompressed_weight)
-                    # print(weight.shape, activations[nncf_node.node_name][0].shape)
-                    for x in activations[nncf_node.node_name]:
-                        fp_output = _do_matmul(x, weight)
-                        q_output = _do_matmul(x, decompressed_weight)
-                        error1 += np.mean(fp_output - q_output) **2
+                        # TODO: calculate once using OV? collect outputs 3 times - fp32, q1, q2. compress 3 times!
+                        error1 = 0
+                        weight = _transpose_for_matmul(weight)
+                        decompressed_weight = _transpose_for_matmul(decompressed_weight)
+                        for x in activations[nncf_node.node_name]:
+                            fp_output = _do_matmul(x, weight)
+                            q_output = _do_matmul(x, decompressed_weight)
+                            error1 += np.mean(fp_output - q_output) **2
 
-                    weight = _transpose_for_matmul(weight)
-                    compressed_weights, scale, zero_point = _do_integer_quantization(weight, (0,), primary_config)
-                    decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
-                    decompressed_weight = (compressed_weights - zero_point) * scale
-                    decompressed_weight = decompressed_weight.reshape(orig_shape)
+                        weight = _transpose_for_matmul(weight)
+                        compressed_weights, scale, zero_point = _do_integer_quantization(weight, (0,), primary_config)
+                        decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
+                        decompressed_weight = (compressed_weights - zero_point) * scale
+                        decompressed_weight = decompressed_weight.reshape(orig_shape)
 
-                    weight = _transpose_for_matmul(weight)
-                    decompressed_weight = _transpose_for_matmul(decompressed_weight)
-                    error2 = 0
-                    for x in activations[nncf_node.node_name]:
-                        fp_output = _do_matmul(x, weight)
-                        q_output = _do_matmul(x, decompressed_weight)
-                        error2 += np.mean(fp_output - q_output) **2
+                        weight = _transpose_for_matmul(weight)
+                        decompressed_weight = _transpose_for_matmul(decompressed_weight)
+                        error2 = 0
+                        for x in activations[nncf_node.node_name]:
+                            fp_output = _do_matmul(x, weight)
+                            q_output = _do_matmul(x, decompressed_weight)
+                            error2 += np.mean(fp_output - q_output) **2
 
-                    if error1 < error2:
-                        axes = (1,)
-                        print("---{:2.1f}% ({:.02g} vs {:.02g}) old axes=1 {} for {}".format((error2 - error1) / error2 * 100, error1, error2, const_shape, nncf_node.node_name))
-                    else:
-                        axes = (0,)
-                        print("+++{:2.1f}% ({:.02g} vs {:.02g}) new axes=0 {} for {}".format((error1 - error2) / error1 * 100, error1, error2, const_shape, nncf_node.node_name))
+                        prefix = '---'
+                        if error1 < error2:
+                            axes = 0 if is_revert else 1
+                            diff = error2 / error1
+                        else:
+                            prefix = '+++'
+                            axes = 1 if is_revert else 0
+                            diff = error1 / error2
+                        print(f"{prefix}{diff:2.1f}x ({error1:.02g} vs {error2:.02g}) choose axes={axes} shape={const_shape} for {nncf_node.node_name}")
 
                 fq_name = f"{weight_op_friendly_name}/fq_weights_{weight_port_id}"
                 num_weights = np.prod(const_shape)
@@ -165,6 +167,9 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             _assign_mixed_precision(all_weight_params, ratio, primary_config)
 
         nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params))
+
+        for wp in all_weight_params:
+            print(f"a{wp.reduction_axes} g{wp.compression_config.group_size} mode={wp.compression_config.mode} {wp.fq_name}")
 
         for wp in track(all_weight_params, description="Applying Weight Compression"):
             weight_node = wp.weight_node
