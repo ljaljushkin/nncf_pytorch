@@ -70,6 +70,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 if id(weight_node) in quantized_nodes_ids:
                     if i == n - 1:
                         is_last_layer_compressed = True
+                        print('last layer is already compressed: ', nncf_node.node_name)
                     continue
                 weight_output = weight_node.output(0)
 
@@ -96,14 +97,21 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 all_weight_params.append(weight_params)
                 quantized_nodes_ids.add(id(weight_node))
         if mode != CompressWeightsMode.INT8:
-            internal_weight_params = list(filter(lambda wp: wp.metatype != OVEmbeddingMetatype, all_weight_params))
+            indexes_of_not_internal = []
+            internal_weight_params = []
+            for i, wp in enumerate(all_weight_params):
+                if wp.metatype == OVEmbeddingMetatype:
+                    indexes_of_not_internal.append(i)
+                else:
+                    internal_weight_params.append(wp)
             if not is_last_layer_compressed:
+                indexes_of_not_internal.append(n-1)
                 internal_weight_params = internal_weight_params[:-1]
+
             primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
             _assign_mixed_precision(internal_weight_params, ratio, primary_config)
 
-        # TODO: fix indexes!
-        nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params, indexes_of_not_internal=[0, n-1]))
+        nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params, indexes_of_not_internal))
 
         for wp in all_weight_params:
             print(f'{wp.compression_config.mode.value} name={wp.node_name}')
@@ -339,12 +347,12 @@ def _get_bitwidth_distribution_str(all_weight_params: List[WeightNodeParams], in
     num_params = len(all_weight_params)
     num_internal_params = 0
     if num_params > 2:
-        num_internal_params = num_params - 2
+        num_internal_params = num_params - len(indexes_of_not_internal)
     num_bits_vs_num_weights_map = {}
     for i, data in enumerate(all_weight_params):
         num_bits = data.compression_config.num_bits
         n_total, n_internal = num_bits_vs_num_weights_map.get(num_bits, ([], []))
-        if i not in (0, num_params - 1):
+        if i not in indexes_of_not_internal:
             n_internal.append(data.num_weights)
             num_internal_weights += data.num_weights
         n_total.append(data.num_weights)
