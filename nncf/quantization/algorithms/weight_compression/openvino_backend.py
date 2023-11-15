@@ -86,13 +86,17 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 fq_name = f"{weight_op_friendly_name}/fq_weights_{weight_port_id}"
                 num_weights = np.prod(const_shape)
                 weight_params = WeightNodeParams(
-                    reduction_axis, num_weights, fq_name, weight_node, original_weight_dtype
+                    reduction_axis, num_weights, fq_name, weight_node, original_weight_dtype, is_matmul=(nncf_node.metatype== OVMatMulMetatype)
                 )
                 all_weight_params.append(weight_params)
                 quantized_nodes_ids.add(id(weight_node))
         if mode != CompressWeightsMode.INT8:
             primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
             _assign_mixed_precision(all_weight_params, ratio, primary_config)
+
+        for wp in all_weight_params:
+            if not wp.is_matmul:
+                config = WeightCompressionConfig()
 
         nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params))
 
@@ -177,6 +181,7 @@ class WeightNodeParams:
     weight_node: ov.Node
     original_weight_dtype: TWeightType
     compression_config = WeightCompressionConfig()
+    is_matmul: bool = True
 
 
 def _do_integer_quantization(
