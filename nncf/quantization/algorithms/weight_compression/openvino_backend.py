@@ -57,7 +57,10 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         friendly_name_to_op_map = {op.get_friendly_name(): op for op in model.get_ops()}
 
-        for nncf_node in nodes_to_compress:
+        is_last_layer_compressed = False
+        n  = len(nodes_to_compress)
+        for i, nncf_node in enumerate(nodes_to_compress):
+            # print('Consider ', nncf_node.node_name)
             weight_port_ids = nncf_node.layer_attributes.get_const_port_ids()
             for weight_port_id in weight_port_ids:
                 weight_op_friendly_name = nncf_node.layer_attributes.constant_attributes[weight_port_id]["name"]
@@ -65,6 +68,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 if weight_node is None:
                     continue
                 if id(weight_node) in quantized_nodes_ids:
+                    if i == n - 1:
+                        is_last_layer_compressed = True
                     continue
                 weight_output = weight_node.output(0)
 
@@ -86,51 +91,58 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 fq_name = f"{weight_op_friendly_name}/fq_weights_{weight_port_id}"
                 num_weights = np.prod(const_shape)
                 weight_params = WeightNodeParams(
-                    reduction_axis, num_weights, fq_name, weight_node, original_weight_dtype
+                    reduction_axis, num_weights, fq_name, weight_node, original_weight_dtype, metatype=nncf_node.metatype, node_name=nncf_node.node_name
                 )
                 all_weight_params.append(weight_params)
                 quantized_nodes_ids.add(id(weight_node))
         if mode != CompressWeightsMode.INT8:
+            internal_weight_params = list(filter(lambda wp: wp.metatype != OVEmbeddingMetatype, all_weight_params))
+            if not is_last_layer_compressed:
+                internal_weight_params = internal_weight_params[:-1]
             primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
-            _assign_mixed_precision(all_weight_params, ratio, primary_config)
+            _assign_mixed_precision(internal_weight_params, ratio, primary_config)
 
-        nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params))
+        # TODO: fix indexes!
+        nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params, indexes_of_not_internal=[0, n-1]))
 
-        for wp in track(all_weight_params, description="Applying Weight Compression"):
-            weight_node = wp.weight_node
-            original_weight_dtype = wp.original_weight_dtype
+        for wp in all_weight_params:
+            print(f'{wp.compression_config.mode.value} name={wp.node_name}')
 
-            weight_output = weight_node.output(0)
-            weight_name = weight_node.get_friendly_name()
-            target_inputs = weight_output.get_target_inputs()
+        # for wp in track(all_weight_params, description="Applying Weight Compression"):
+        #     weight_node = wp.weight_node
+        #     original_weight_dtype = wp.original_weight_dtype
 
-            weight = get_const_value(weight_node)
-            config = wp.compression_config
-            if config.mode == CompressWeightsMode.NF4:
-                original_shape = weight.shape
-                norm_weight, scale = _get_norm_weight_and_nf4_scale(weight, wp.reduction_axis, group_size)
-                compressed_const = opset.constant(norm_weight, dtype=ov.Type.nf4, name=weight_name)
-                convert = opset.convert(compressed_const, original_weight_dtype)
-                mul = opset.multiply(convert, scale.astype(original_weight_dtype), name=wp.fq_name)
-                if config.group_size != -1:
-                    mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
-                last_output = mul.output(0)
-            else:
-                original_shape = weight.shape
-                compressed_weights, scale, zero_point = _do_integer_quantization(weight, wp.reduction_axis, config)
-                compression_type = np.uint8 if config.num_bits == 8 else ov.Type.u4
-                compressed_weights_node = opset.constant(compressed_weights, dtype=compression_type, name=weight_name)
-                convert_weights_node = opset.convert(compressed_weights_node, original_weight_dtype)
-                zero_point_node = opset.constant(zero_point, dtype=compression_type, name=f"{weight_name}/ZP")
-                convert_zp_node = opset.convert(zero_point_node, original_weight_dtype)
-                sub = opset.subtract(convert_weights_node, convert_zp_node)
-                mul = opset.multiply(sub, scale.astype(original_weight_dtype), name=wp.fq_name)
-                if config.group_size != -1:
-                    mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
-                last_output = mul.output(0)
+        #     weight_output = weight_node.output(0)
+        #     weight_name = weight_node.get_friendly_name()
+        #     target_inputs = weight_output.get_target_inputs()
 
-            for target_input in target_inputs:
-                target_input.replace_source_output(last_output)
+        #     weight = get_const_value(weight_node)
+        #     config = wp.compression_config
+        #     if config.mode == CompressWeightsMode.NF4:
+        #         original_shape = weight.shape
+        #         norm_weight, scale = _get_norm_weight_and_nf4_scale(weight, wp.reduction_axis, group_size)
+        #         compressed_const = opset.constant(norm_weight, dtype=ov.Type.nf4, name=weight_name)
+        #         convert = opset.convert(compressed_const, original_weight_dtype)
+        #         mul = opset.multiply(convert, scale.astype(original_weight_dtype), name=wp.fq_name)
+        #         if config.group_size != -1:
+        #             mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
+        #         last_output = mul.output(0)
+        #     else:
+        #         original_shape = weight.shape
+        #         compressed_weights, scale, zero_point = _do_integer_quantization(weight, wp.reduction_axis, config)
+        #         compression_type = np.uint8 if config.num_bits == 8 else ov.Type.u4
+        #         compressed_weights_node = opset.constant(compressed_weights, dtype=compression_type, name=weight_name)
+        #         convert_weights_node = opset.convert(compressed_weights_node, original_weight_dtype)
+        #         zero_point_node = opset.constant(zero_point, dtype=compression_type, name=f"{weight_name}/ZP")
+        #         convert_zp_node = opset.convert(zero_point_node, original_weight_dtype)
+        #         sub = opset.subtract(convert_weights_node, convert_zp_node)
+        #         mul = opset.multiply(sub, scale.astype(original_weight_dtype), name=wp.fq_name)
+        #         if config.group_size != -1:
+        #             mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
+        #         last_output = mul.output(0)
+
+        #     for target_input in target_inputs:
+        #         target_input.replace_source_output(last_output)
         return model
 
 
@@ -177,7 +189,8 @@ class WeightNodeParams:
     weight_node: ov.Node
     original_weight_dtype: TWeightType
     compression_config = WeightCompressionConfig()
-
+    metatype: OperatorMetatype = None
+    node_name: str = ''
 
 def _do_integer_quantization(
     weight: np.ndarray, reduction_axis: int, config: WeightCompressionConfig
@@ -314,7 +327,7 @@ def _proportion_str(num_weights_list: List[int], total_num_weights: int, total_n
     return f"{percentage:.0f}% ({len(num_weights_list)} / {total_num_params})"
 
 
-def _get_bitwidth_distribution_str(all_weight_params: List[WeightNodeParams]) -> str:
+def _get_bitwidth_distribution_str(all_weight_params: List[WeightNodeParams], indexes_of_not_internal: List[int]) -> str:
     """
     Generates a table that shows the ratio of weights quantized to different number of bits.
 
@@ -355,25 +368,25 @@ def _get_bitwidth_distribution_str(all_weight_params: List[WeightNodeParams]) ->
 
 
 def _assign_mixed_precision(
-    all_weight_params: List[WeightNodeParams], ratio: float, primary_config: WeightCompressionConfig
+    internal_weight_params: List[WeightNodeParams], ratio: float, primary_config: WeightCompressionConfig
 ) -> None:
     """
     Assigns mixed quantization scheme (e.g. uniform int8 or non-uniform nf4) for weights based on some criteria.
-
-    :param all_weight_params: List of information about each weight node. The quantization scheme is added to this info.
+    # TODO: correct desc
+    :param internal_weight_params: List of information about each weight node. The quantization scheme is added to this info.
     :param ratio: The ratio between primary and backup precisions (e.g. 0.9 means 90% of layers quantized to NF4
         and the rest to INT8).
     :param primary_config: Information on how to compress (quantize) weights to primary precision.
     :return: None.
     """
     if ratio == 1:
-        for weight_param in all_weight_params[1:-1]:
+        for weight_param in internal_weight_params:
             weight_param.compression_config = primary_config
         return
     errors = []
     num_internal_weights = 0
     # NOTE: first and last layers are always in 8 bit: no need to calculate error for them
-    for weight_param in track(all_weight_params[1:-1], description="Searching for Mixed-Precision Configuration"):
+    for weight_param in track(internal_weight_params, description="Searching for Mixed-Precision Configuration"):
         weight = get_const_value(weight_param.weight_node)
         backup_config = weight_param.compression_config
         reduction_axis = weight_param.reduction_axis
@@ -382,14 +395,12 @@ def _assign_mixed_precision(
         error = 1 / (backup_error + eps)
         errors.append(error)
         num_internal_weights += weight_param.num_weights
-    # NOTE: index is defined in the array of all weight params by taking into account that errors were not
-    # calculated for first and last layers.
     indexes_of_layers_in_ascending_order_of_errors = [
-        i[0] + 1 for i in sorted(enumerate(errors), reverse=False, key=lambda x: x[1])
+        i[0] for i in sorted(enumerate(errors), reverse=False, key=lambda x: x[1])
     ]
     num_weights_in_4bit = 0
     for index in indexes_of_layers_in_ascending_order_of_errors:
-        weight_param = all_weight_params[index]
+        weight_param = internal_weight_params[index]
         current_ratio = (num_weights_in_4bit + weight_param.num_weights) / num_internal_weights
         if current_ratio >= ratio:
             break
