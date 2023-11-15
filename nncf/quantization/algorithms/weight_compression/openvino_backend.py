@@ -96,8 +96,9 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 )
                 all_weight_params.append(weight_params)
                 quantized_nodes_ids.add(id(weight_node))
+
+        indexes_of_not_internal = []
         if mode != CompressWeightsMode.INT8:
-            indexes_of_not_internal = []
             internal_weight_params = []
             for i, wp in enumerate(all_weight_params):
                 if wp.metatype == OVEmbeddingMetatype:
@@ -114,43 +115,44 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params, indexes_of_not_internal))
 
         for wp in all_weight_params:
-            print(f'{wp.compression_config.mode.value} name={wp.node_name}')
+            c = wp.compression_config
+            print(f'{c.mode.value} g{c.group_size}   {wp.node_name}')
 
-        # for wp in track(all_weight_params, description="Applying Weight Compression"):
-        #     weight_node = wp.weight_node
-        #     original_weight_dtype = wp.original_weight_dtype
+        for wp in track(all_weight_params, description="Applying Weight Compression"):
+            weight_node = wp.weight_node
+            original_weight_dtype = wp.original_weight_dtype
 
-        #     weight_output = weight_node.output(0)
-        #     weight_name = weight_node.get_friendly_name()
-        #     target_inputs = weight_output.get_target_inputs()
+            weight_output = weight_node.output(0)
+            weight_name = weight_node.get_friendly_name()
+            target_inputs = weight_output.get_target_inputs()
 
-        #     weight = get_const_value(weight_node)
-        #     config = wp.compression_config
-        #     if config.mode == CompressWeightsMode.NF4:
-        #         original_shape = weight.shape
-        #         norm_weight, scale = _get_norm_weight_and_nf4_scale(weight, wp.reduction_axis, group_size)
-        #         compressed_const = opset.constant(norm_weight, dtype=ov.Type.nf4, name=weight_name)
-        #         convert = opset.convert(compressed_const, original_weight_dtype)
-        #         mul = opset.multiply(convert, scale.astype(original_weight_dtype), name=wp.fq_name)
-        #         if config.group_size != -1:
-        #             mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
-        #         last_output = mul.output(0)
-        #     else:
-        #         original_shape = weight.shape
-        #         compressed_weights, scale, zero_point = _do_integer_quantization(weight, wp.reduction_axis, config)
-        #         compression_type = np.uint8 if config.num_bits == 8 else ov.Type.u4
-        #         compressed_weights_node = opset.constant(compressed_weights, dtype=compression_type, name=weight_name)
-        #         convert_weights_node = opset.convert(compressed_weights_node, original_weight_dtype)
-        #         zero_point_node = opset.constant(zero_point, dtype=compression_type, name=f"{weight_name}/ZP")
-        #         convert_zp_node = opset.convert(zero_point_node, original_weight_dtype)
-        #         sub = opset.subtract(convert_weights_node, convert_zp_node)
-        #         mul = opset.multiply(sub, scale.astype(original_weight_dtype), name=wp.fq_name)
-        #         if config.group_size != -1:
-        #             mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
-        #         last_output = mul.output(0)
+            weight = get_const_value(weight_node)
+            config = wp.compression_config
+            if config.mode == CompressWeightsMode.NF4:
+                original_shape = weight.shape
+                norm_weight, scale = _get_norm_weight_and_nf4_scale(weight, wp.reduction_axis, group_size)
+                compressed_const = opset.constant(norm_weight, dtype=ov.Type.nf4, name=weight_name)
+                convert = opset.convert(compressed_const, original_weight_dtype)
+                mul = opset.multiply(convert, scale.astype(original_weight_dtype), name=wp.fq_name)
+                if config.group_size != -1:
+                    mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
+                last_output = mul.output(0)
+            else:
+                original_shape = weight.shape
+                compressed_weights, scale, zero_point = _do_integer_quantization(weight, wp.reduction_axis, config)
+                compression_type = np.uint8 if config.num_bits == 8 else ov.Type.u4
+                compressed_weights_node = opset.constant(compressed_weights, dtype=compression_type, name=weight_name)
+                convert_weights_node = opset.convert(compressed_weights_node, original_weight_dtype)
+                zero_point_node = opset.constant(zero_point, dtype=compression_type, name=f"{weight_name}/ZP")
+                convert_zp_node = opset.convert(zero_point_node, original_weight_dtype)
+                sub = opset.subtract(convert_weights_node, convert_zp_node)
+                mul = opset.multiply(sub, scale.astype(original_weight_dtype), name=wp.fq_name)
+                if config.group_size != -1:
+                    mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
+                last_output = mul.output(0)
 
-        #     for target_input in target_inputs:
-        #         target_input.replace_source_output(last_output)
+            for target_input in target_inputs:
+                target_input.replace_source_output(last_output)
         return model
 
 
