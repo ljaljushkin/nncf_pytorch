@@ -1,0 +1,9 @@
+import numpy as np
+
+n2=np.random.randn(1,7,10)
+n1=np.random.randn(1,4,10)
+n3=np.random.randn(1,5,10)
+l=[n1,n2,n3]
+m=max(n.shape[1] for n in l)
+n1 = np.pad(n1, pad_width=((0,0),(7-4,0),(0,0)))
+sum(l) / len(l)

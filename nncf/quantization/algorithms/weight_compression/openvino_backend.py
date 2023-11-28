@@ -16,16 +16,21 @@ import numpy as np
 import openvino.runtime as ov
 from openvino.runtime import opset9 as opset
 
+from nncf.common.graph import NNCFGraph
 from nncf.common.graph import NNCFNode
 from nncf.common.graph.operator_metatypes import OperatorMetatype
+from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.logging import nncf_logger
 from nncf.common.logging.track_progress import track
 from nncf.common.utils.helpers import create_table
+from nncf.experimental.common.tensor_statistics.collectors import TensorCollector
 from nncf.openvino.graph.metatypes.openvino_metatypes import OVEmbeddingMetatype
 from nncf.openvino.graph.metatypes.openvino_metatypes import OVMatMulMetatype
 from nncf.openvino.graph.node_utils import get_channel_agnostic_reduction_axes
 from nncf.openvino.graph.node_utils import get_const_value
 from nncf.openvino.graph.node_utils import get_weight_channel_axes
+from nncf.openvino.graph.transformations.commands import OVTargetPoint
+from nncf.openvino.statistics.collectors import get_raw_stat_collector
 from nncf.openvino.rt_info import dump_parameters
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
@@ -47,12 +52,30 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         pass
 
     @staticmethod
+    def target_point(target_type: TargetType, target_node_name: str, port_id: int) -> OVTargetPoint:
+        return OVTargetPoint(target_type, target_node_name, port_id)
+
+    @staticmethod
+    def raw_statistic_collector(inplace: bool, num_samples: int = None) -> TensorCollector:
+        return get_raw_stat_collector(num_samples, inplace)
+
+    @staticmethod
+    def get_activation_port_id(node: NNCFNode, nncf_graph: NNCFGraph) -> int:
+        constant_ports = node.layer_attributes.get_const_port_ids()
+        activation_ports = [
+            e.input_port_id for e in nncf_graph.get_input_edges(node) if e.input_port_id not in constant_ports
+        ]
+        assert len(activation_ports) == 1
+        return activation_ports[0]
+
+    @staticmethod
     def do_compression(
         model: ov.Model,
         nodes_to_compress: List[NNCFNode],
         mode: CompressWeightsMode,
         ratio: float = None,
         group_size: int = None,
+        activations = None,
     ) -> ov.Model:
         all_weight_params: List[WeightNodeParams] = []
         quantized_nodes_ids = set()
@@ -89,6 +112,31 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     continue
                 reduction_axis = reduction_axes[0] if isinstance(reduction_axes, tuple) else reduction_axes
 
+                if i != n-1 and nncf_node.metatype == OVMatMulMetatype:
+                    if activations:
+                        primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
+                        weight = get_const_value(weight_node)
+                        orig_shape = weight.shape
+
+                        # self.columns = W.shape[1]
+                        # self.H = torch.zeros((self.columns, self.columns), device=self.dev)
+                        # self.nsamples = 0
+
+                        # def add_batch(self, inp, out):
+                        #     if len(inp.shape) == 2:
+                        #         inp = inp.unsqueeze(0)
+                        #     tmp = inp.shape[0]
+                        #     if isinstance(self.layer, nn.Linear) or isinstance(self.layer, transformers.Conv1D):
+                        #         if len(inp.shape) == 3:
+                        #             inp = inp.reshape((-1, inp.shape[-1]))
+                        #         inp = inp.t()
+                        #     self.H *= self.nsamples / (self.nsamples + tmp)
+                        #     self.nsamples += tmp
+                        #     inp = math.sqrt(2 / self.nsamples) * inp.float()
+                        #     self.H += inp.matmul(inp.t())
+
+                        # TODO: get trace from Hessian matrix
+
                 fq_name = f"{weight_op_friendly_name}/fq_weights_{weight_port_id}"
                 num_weights = np.prod(const_shape)
                 weight_params = WeightNodeParams(
@@ -98,6 +146,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     weight_node,
                     original_weight_dtype,
                     metatype=nncf_node.metatype,
+                    htrace
                 )
                 all_weight_params.append(weight_params)
                 quantized_nodes_ids.add(id(weight_node))
@@ -109,7 +158,13 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 internal_weight_params = internal_weight_params[:-1]
             primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
             _assign_mixed_precision(internal_weight_params, ratio, primary_config)
+            if activations:
+                # TODO:
+                _apply_hawq(all_weight_params, ratio, primary_config)
         nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params, internal_weight_params))
+
+        for wp in all_weight_params:
+            print(f"a{wp.reduction_axes} g{wp.compression_config.group_size} mode={wp.compression_config.mode} {wp.fq_name}")
 
         for wp in track(all_weight_params, description="Applying Weight Compression"):
             weight_node = wp.weight_node
@@ -203,6 +258,7 @@ class WeightNodeParams:
     weight_node: ov.Node
     original_weight_dtype: TWeightType
     compression_config = WeightCompressionConfig()
+    htrace: Optional[np.ndarray] = None
     metatype: OperatorMetatype = None
 
 
@@ -281,6 +337,19 @@ def _get_integer_quantization_error(weight: np.ndarray, reduction_axis: int, con
     layer_err = np.mean(diff, axis=reduction_axis)
     val = np.max(layer_err)
     return val
+
+def _transpose_for_matmul(t: np.ndarray):
+    a=list(range(len(t.shape)))
+    # transpose two right-most axes
+    a[-1], a[-2] = a[-2], a[-1]
+    return np.transpose(t, axes=a)
+
+def _do_matmul(x, w, transpose_x: bool = False, transpose_w: bool = False):
+    # if transpose_x:
+    #     x = _transpose_for_matmul(x)
+    # if transpose_w:
+    #     w = _transpose_for_matmul(w)
+    return np.matmul(x,w)
 
 
 def _reshape_weights_for_grouped_quantization(
