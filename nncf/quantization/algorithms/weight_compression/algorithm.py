@@ -19,6 +19,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import shutil
 from collections import defaultdict
 from pathlib import Path
@@ -174,87 +175,19 @@ class WeightCompression(Algorithm):
         self._backend_entity.validate_params(self._mode, self._ignored_scope)
         nodes_to_compress = self._get_nodes_to_compress(graph)
 
+        traces_per_node = {}
         activations = {}
         shared_nodes_mapping = {}
         if dataset is not None:
-            _collected_stat_inputs_map = {}
-            statistic_container = StatisticPointsContainer()
-            matmul_nodes = [node for node in nodes_to_compress if node.metatype == OVMatMulMetatype]
-            all_act_nodes = []
-            act_vs_shared_nodes_mapping = {}
-            for node in matmul_nodes:
-                activation_node, output_port_id = self._get_activation_node_and_port(node, graph)
-                activation_node_name = activation_node.node_name
-                if activation_node_name in all_act_nodes:
-                    shared_nodes = act_vs_shared_nodes_mapping.get(activation_node_name, [])
-                    shared_nodes.append(node.node_name)
-                    act_vs_shared_nodes_mapping[activation_node_name] = shared_nodes
-                    continue
-                all_act_nodes.append(activation_node_name)
-
-                output_id = (activation_node_name, output_port_id)
-                _collected_stat_inputs_map[node.node_name] = output_id
-
-
-                statistic_point = self._backend_entity.target_point(
-                    TargetType.POST_LAYER_OPERATION, activation_node_name, port_id=output_port_id
-                )
-                inplace_statistics = False
-                subset_size = 128
-                stat_collector = self._backend_entity.raw_statistic_collector(
-                    num_samples=subset_size, inplace=inplace_statistics
-                )
-                statistic_container.add_statistic_point(
-                    StatisticPoint(
-                        target_point=statistic_point, tensor_collector=stat_collector, algorithm=self._algorithm_key
-                    )
-                )
-
-            statistics_aggregator = OVStatisticsAggregator(dataset)
-            statistics_aggregator.register_statistic_points(statistic_container)
-            statistics_aggregator.collect_statistics(model, graph)
-
-            is_save = False
-            save_dir = Path('saved_activations')
-            if is_save and save_dir.exists():
-                shutil.rmtree(save_dir)
-            save_dir.mkdir(exist_ok=True)
-
-            seq_len_axis = 0
-            for node_name, output_id in _collected_stat_inputs_map.items():
-                activation_node_name, output_port_id = output_id
-                x_fp = self._get_fp_inputs(statistic_container, node_name=activation_node_name, port_id=output_port_id)
-                x_fp = [i.squeeze() for i in x_fp] # List[Array(seq_length, hidden_dim)]
-                if is_save:
-                    max_length=max(i.shape[seq_len_axis] for i in x_fp)
-                    x_fp2 = x_fp
-                    x_fp = []
-                    for arr in x_fp2:
-                        curr_length = arr.shape[seq_len_axis]
-                        npad = [(0, 0)] * arr.ndim
-                        npad[0] = (0, max_length - curr_length)
-                        # NOTE: activations have a different sequence length, pad by zeros
-                        arr = np.pad(arr, pad_width=npad)
-                        arr = np.expand_dims(arr, axis=0)
-                        x_fp.append(arr)
-
-                    print(f'\n\nnum stats={len(x_fp)}\nshape of single stat={x_fp[0].shape}\nactivation={activation_node_name}\nnode={node_name}')
-                    # x_fp = np.vstack(x_fp)
-                    x_fp = np.concatenate(x_fp, axis=seq_len_axis) # [batch_size, seq_length, hidden_dim]
-                    print('max=', max_length, ' shape after concat=', x_fp.shape)
-
-                    file_to_save = save_dir / (node_name.replace('/', '.').replace('::', '.') + '.npy')
-
-                    print('Saving to ', file_to_save.resolve())
-                    np.save(file_to_save, x_fp)
-
-                activations[node_name] = x_fp
-
-                for shared_node in act_vs_shared_nodes_mapping.get(activation_node_name, []):
-                    shared_nodes_mapping[shared_node] = node_name
+            cached_traces_path = Path('traces_per_node.json')
+            if cached_traces_path.exists():
+                with cached_traces_path.open() as f:
+                    traces_per_node = json.load(f)
+            else:
+                activations, shared_nodes_mapping = self.get_activations(dataset)
 
         transformed_model = self._backend_entity.do_compression(
-            model, nodes_to_compress, self._mode, self._ratio, self._group_size, activations=activations, shared_nodes_mapping=shared_nodes_mapping
+            model, nodes_to_compress, self._mode, self._ratio, self._group_size, activations, shared_nodes_mapping, traces_per_node
         )
         return transformed_model
 
@@ -287,3 +220,87 @@ class WeightCompression(Algorithm):
         :param graph: Model graph.
         :return: Statistic points, for which StatisticsCollector should collect statistics.
         """
+
+    def get_activations(self, dataset):
+        subset_size = 128
+        is_save = False
+        seq_len_axis = 0
+
+
+        activations = {}
+        shared_nodes_mapping = {}
+        _collected_stat_inputs_map = {}
+        statistic_container = StatisticPointsContainer()
+        matmul_nodes = [node for node in nodes_to_compress if node.metatype == OVMatMulMetatype]
+        all_act_nodes = []
+        act_vs_shared_nodes_mapping = {}
+        for node in matmul_nodes:
+            activation_node, output_port_id = self._get_activation_node_and_port(node, graph)
+            activation_node_name = activation_node.node_name
+            if activation_node_name in all_act_nodes:
+                shared_nodes = act_vs_shared_nodes_mapping.get(activation_node_name, [])
+                shared_nodes.append(node.node_name)
+                act_vs_shared_nodes_mapping[activation_node_name] = shared_nodes
+                continue
+            all_act_nodes.append(activation_node_name)
+
+            output_id = (activation_node_name, output_port_id)
+            _collected_stat_inputs_map[node.node_name] = output_id
+
+            statistic_point = self._backend_entity.target_point(
+                TargetType.POST_LAYER_OPERATION, activation_node_name, port_id=output_port_id
+            )
+            inplace_statistics = False
+
+            stat_collector = self._backend_entity.raw_statistic_collector(
+                num_samples=subset_size, inplace=inplace_statistics
+            )
+            statistic_container.add_statistic_point(
+                StatisticPoint(
+                    target_point=statistic_point, tensor_collector=stat_collector, algorithm=self._algorithm_key
+                )
+            )
+
+        statistics_aggregator = OVStatisticsAggregator(dataset)
+        statistics_aggregator.register_statistic_points(statistic_container)
+        statistics_aggregator.collect_statistics(model, graph)
+
+        save_dir = Path('saved_activations')
+        if is_save and save_dir.exists():
+            shutil.rmtree(save_dir)
+        save_dir.mkdir(exist_ok=True)
+
+        for node_name, output_id in _collected_stat_inputs_map.items():
+            activation_node_name, output_port_id = output_id
+            x_fp = self._get_fp_inputs(statistic_container, node_name=activation_node_name, port_id=output_port_id)
+            x_fp = [i.squeeze() for i in x_fp] # List[Array(seq_length, hidden_dim)]
+            if is_save:
+                max_length=max(i.shape[seq_len_axis] for i in x_fp)
+                x_fp2 = x_fp
+                x_fp = []
+                for arr in x_fp2:
+                    curr_length = arr.shape[seq_len_axis]
+                    npad = [(0, 0)] * arr.ndim
+                    npad[0] = (0, max_length - curr_length)
+                    # NOTE: activations have a different sequence length, pad by zeros
+                    arr = np.pad(arr, pad_width=npad)
+                    arr = np.expand_dims(arr, axis=0)
+                    x_fp.append(arr)
+
+                print(f'\n\nnum stats={len(x_fp)}\nshape of single stat={x_fp[0].shape}\nactivation={activation_node_name}\nnode={node_name}')
+                # x_fp = np.vstack(x_fp)
+                x_fp = np.concatenate(x_fp, axis=seq_len_axis) # [batch_size, seq_length, hidden_dim]
+                print('max=', max_length, ' shape after concat=', x_fp.shape)
+
+                file_to_save = save_dir / (node_name.replace('/', '.').replace('::', '.') + '.npy')
+
+                print('Saving to ', file_to_save.resolve())
+                np.save(file_to_save, x_fp)
+
+            activations[node_name] = x_fp
+
+            for shared_node in act_vs_shared_nodes_mapping.get(activation_node_name, []):
+                shared_nodes_mapping[shared_node] = node_name
+
+        return activations, shared_nodes_mapping
+
