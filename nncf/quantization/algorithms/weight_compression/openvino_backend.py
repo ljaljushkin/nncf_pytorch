@@ -138,7 +138,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     elif node_name in activations:
                         htrace = get_hessian_trace(activations, node_name, weight_node)
                         traces_per_node[node_name] = htrace
-                    else:
+                    elif nncf_node.metatype != OVEmbeddingMetatype:
                         assert False, 'no activation found for '  + node_name
 
                 fq_name = f"{weight_op_friendly_name}/fq_weights_{weight_port_id}"

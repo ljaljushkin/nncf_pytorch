@@ -184,7 +184,7 @@ class WeightCompression(Algorithm):
                 with cached_traces_path.open() as f:
                     traces_per_node = json.load(f)
             else:
-                activations, shared_nodes_mapping = self.get_activations(dataset)
+                activations, shared_nodes_mapping = self.get_activations(dataset, nodes_to_compress, graph, model)
 
         transformed_model = self._backend_entity.do_compression(
             model, nodes_to_compress, self._mode, self._ratio, self._group_size, activations, shared_nodes_mapping, traces_per_node
@@ -221,11 +221,10 @@ class WeightCompression(Algorithm):
         :return: Statistic points, for which StatisticsCollector should collect statistics.
         """
 
-    def get_activations(self, dataset):
+    def get_activations(self, dataset, nodes_to_compress, graph, model):
         subset_size = 128
         is_save = False
         seq_len_axis = 0
-
 
         activations = {}
         shared_nodes_mapping = {}
@@ -234,7 +233,8 @@ class WeightCompression(Algorithm):
         matmul_nodes = [node for node in nodes_to_compress if node.metatype == OVMatMulMetatype]
         all_act_nodes = []
         act_vs_shared_nodes_mapping = {}
-        for node in matmul_nodes:
+        # TODO: Except last layer???
+        for node in matmul_nodes[:-1]:
             activation_node, output_port_id = self._get_activation_node_and_port(node, graph)
             activation_node_name = activation_node.node_name
             if activation_node_name in all_act_nodes:
@@ -243,7 +243,7 @@ class WeightCompression(Algorithm):
                 act_vs_shared_nodes_mapping[activation_node_name] = shared_nodes
                 continue
             all_act_nodes.append(activation_node_name)
-
+            print(f'{activation_node_name} ----> {node.node_name}')
             output_id = (activation_node_name, output_port_id)
             _collected_stat_inputs_map[node.node_name] = output_id
 
@@ -260,7 +260,6 @@ class WeightCompression(Algorithm):
                     target_point=statistic_point, tensor_collector=stat_collector, algorithm=self._algorithm_key
                 )
             )
-
         statistics_aggregator = OVStatisticsAggregator(dataset)
         statistics_aggregator.register_statistic_points(statistic_container)
         statistics_aggregator.collect_statistics(model, graph)
