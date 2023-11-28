@@ -477,14 +477,16 @@ def _get_bitwidth_distribution_str(all_params: List[WeightNodeParams], internal_
 
 def get_hessian_trace(activations, node_name, weight_node):
     # TODO: handle last layer?? should be skipped early
+    # TODO: any way to accelerate?? need diagonal elements only!!! multiply 1st row with 1st column, 2nd row with 2nd column, etc ...
     list_acts = activations[node_name]
     weight = get_const_value(weight_node)
     orig_shape = weight.shape
     print('weight shape: ', orig_shape, ' activation shape: ', list_acts[0].shape, ' name: ', node_name)
 
     columns = orig_shape[1]
-    H = np.zeros((columns, columns))
-    print('hessian shape: ', H.shape)
+    # H = np.zeros((columns, columns))
+    # print('hessian shape: ', H.shape)
+    htrace = 0
     nsamples = 0
     for inp in list_acts:
         # if len(inp.shape) == 2:
@@ -492,15 +494,23 @@ def get_hessian_trace(activations, node_name, weight_node):
         tmp = inp.shape[0]
         if len(inp.shape) == 3:
             inp = inp.reshape((-1, inp.shape[-1]))
-        inp = np.transpose(inp) # [S, H] -> [H, S]
-        # TODO: is it properly normalized??? Hessian for FC2, FC1 in opt-125m has small values, because of dimensions??
-        H *= nsamples / (nsamples + tmp)
-        nsamples += tmp
-        inp = np.sqrt(2 / nsamples) * inp
-        # TODO: avoid double transpose: np.matmul(np.transpose(inp), inp)
-        H += np.matmul(inp, np.transpose(inp)) # [H, S] * [S, H] -> [H, H]
+        if False:
+            inp = np.transpose(inp) # [S, H] -> [H, S]
+            # TODO: is it properly normalized??? Hessian for FC2, FC1 in opt-125m has small values, because of dimensions??
+            H *= nsamples / (nsamples + tmp)
+            nsamples += tmp
+            inp = np.sqrt(2 / nsamples) * inp
+            # TODO: avoid double transpose: np.matmul(np.transpose(inp), inp)
+            H += np.matmul(inp, np.transpose(inp)) # [H, S] * [S, H] -> [H, H]
+        else:
+            htrace *= nsamples / (nsamples + tmp)
+            nsamples += tmp
+            inp = np.sqrt(2 / nsamples) * inp
+            # NOTE: need diagonal elements of Hessian only for trace, no need to do full matrix multiplication!
+            # TODO: check for batch_size != 1 with reshape !!! will it really sum diagonal elements?
+            htrace += np.sum(np.multiply(inp, inp))
     # TODO: consider the full estimation, not just trace: deltaW * Hessian * delta.t()
-    htrace = np.trace(H)
+    # htrace = np.trace(H)
     return htrace
 
 def _assign_mixed_precision(
