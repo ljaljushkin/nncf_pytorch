@@ -1,15 +1,16 @@
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 
-fig, ax = plt.subplots(figsize=(4, 4))
-
-# Fixing random state for reproducibility
-np.random.seed(19680801)
-
-
+save_dir = Path('/home/nlyaly/projects/lm-evaluation-harness/saved_activations')
+filename = '__module.model.lm_head.aten::linear.MatMul_1957.npy'
+all_data = np.load(save_dir / filename)
+all_data.shape
 # generate some random test data
 all_data = [np.random.normal(0, std, 100) for std in range(6, 10)]
 
+fig, ax = plt.subplots(figsize=(4, 4))
 # plot box plot
 ax.boxplot(all_data)
 ax.set_title('Box plot')

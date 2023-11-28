@@ -8,10 +8,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
+import shutil
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional, Tuple, TypeVar
 
+import matplotlib.pyplot as plt
 import numpy as np
 import openvino.runtime as ov
 from openvino.runtime import opset9 as opset
@@ -30,8 +34,8 @@ from nncf.openvino.graph.node_utils import get_channel_agnostic_reduction_axes
 from nncf.openvino.graph.node_utils import get_const_value
 from nncf.openvino.graph.node_utils import get_weight_channel_axes
 from nncf.openvino.graph.transformations.commands import OVTargetPoint
-from nncf.openvino.statistics.collectors import get_raw_stat_collector
 from nncf.openvino.rt_info import dump_parameters
+from nncf.openvino.statistics.collectors import get_raw_stat_collector
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
 from nncf.quantization.fake_quantize import calculate_scale_zero_point
@@ -76,6 +80,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         ratio: float = None,
         group_size: int = None,
         activations = None,
+        shared_nodes_mapping = None
     ) -> ov.Model:
         all_weight_params: List[WeightNodeParams] = []
         quantized_nodes_ids = set()
@@ -84,7 +89,21 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         is_last_layer_compressed = False
         n = len(nodes_to_compress)
+        save_dir = Path('saved_traces')
+        if save_dir.exists():
+            shutil.rmtree(save_dir)
+        save_dir.mkdir(exist_ok=True)
+
+        cached_traces_path = Path('traces_per_node.json')
+
+        traces_per_node = {}
+        if cached_traces_path.exists():
+            with cached_traces_path.open() as f:
+                traces_per_node = json.load(f)
+        is_loaded_from_cache = bool(traces_per_node)
+
         for i, nncf_node in enumerate(nodes_to_compress):
+            node_name = nncf_node.node_name
             weight_port_ids = nncf_node.layer_attributes.get_const_port_ids()
             for weight_port_id in weight_port_ids:
                 weight_op_friendly_name = nncf_node.layer_attributes.constant_attributes[weight_port_id]["name"]
@@ -107,35 +126,47 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     nncf_logger.warning(
                         f"Weight compression expects a single reduction axes, but given {len(reduction_axes)}. "
                         f"Weight shape: {const_shape}, reduction axes: {reduction_axes}, "
-                        f"node name: {nncf_node.node_name}. The node won't be quantized."
+                        f"node name: {node_name}. The node won't be quantized."
                     )
                     continue
                 reduction_axis = reduction_axes[0] if isinstance(reduction_axes, tuple) else reduction_axes
 
-                if i != n-1 and nncf_node.metatype == OVMatMulMetatype:
-                    if activations:
+                if not is_loaded_from_cache:
+                    if node_name not in activations and node_name in shared_nodes_mapping:
+                        print('Alles gut! shared node=', node_name)
+                        original_node = shared_nodes_mapping[node_name]
+                        htrace = traces_per_node[original_node]
+                        traces_per_node[node_name] = htrace
+                    elif node_name in activations:
+                        # TODO: handle last layer?? should be skipped early
+                        list_acts = activations[node_name]
                         primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
                         weight = get_const_value(weight_node)
                         orig_shape = weight.shape
+                        print('weight shape: ', orig_shape, ' activation shape: ', list_acts[0].shape, ' name: ', node_name)
 
-                        # self.columns = W.shape[1]
-                        # self.H = torch.zeros((self.columns, self.columns), device=self.dev)
-                        # self.nsamples = 0
-
-                        # def add_batch(self, inp, out):
-                        #     if len(inp.shape) == 2:
-                        #         inp = inp.unsqueeze(0)
-                        #     tmp = inp.shape[0]
-                        #     if isinstance(self.layer, nn.Linear) or isinstance(self.layer, transformers.Conv1D):
-                        #         if len(inp.shape) == 3:
-                        #             inp = inp.reshape((-1, inp.shape[-1]))
-                        #         inp = inp.t()
-                        #     self.H *= self.nsamples / (self.nsamples + tmp)
-                        #     self.nsamples += tmp
-                        #     inp = math.sqrt(2 / self.nsamples) * inp.float()
-                        #     self.H += inp.matmul(inp.t())
-
-                        # TODO: get trace from Hessian matrix
+                        columns = orig_shape[1]
+                        H = np.zeros((columns, columns))
+                        print('hessian shape: ', H.shape)
+                        nsamples = 0
+                        for inp in list_acts:
+                            # if len(inp.shape) == 2:
+                            #     inp = inp.unsqueeze(0)
+                            tmp = inp.shape[0]
+                            if len(inp.shape) == 3:
+                                inp = inp.reshape((-1, inp.shape[-1]))
+                            inp = np.transpose(inp) # [S, H] -> [H, S]
+                            # TODO: is it properly normalized??? Hessian for FC2, FC1 in opt-125m has small values, because of dimensions??
+                            H *= nsamples / (nsamples + tmp)
+                            nsamples += tmp
+                            inp = np.sqrt(2 / nsamples) * inp
+                            # TODO: avoid double transpose: np.matmul(np.transpose(inp), inp)
+                            H += np.matmul(inp, np.transpose(inp)) # [H, S] * [S, H] -> [H, H]
+                        # TODO: consider the full estimation, not just trace: deltaW * Hessian * delta.t()
+                        htrace = np.trace(H)
+                        traces_per_node[node_name] = htrace
+                    else:
+                        print('skip ', node_name)
 
                 fq_name = f"{weight_op_friendly_name}/fq_weights_{weight_port_id}"
                 num_weights = np.prod(const_shape)
@@ -146,11 +177,24 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     weight_node,
                     original_weight_dtype,
                     metatype=nncf_node.metatype,
-                    htrace
+                    htrace=traces_per_node.get(node_name)
                 )
                 all_weight_params.append(weight_params)
                 quantized_nodes_ids.add(id(weight_node))
 
+        if not is_loaded_from_cache:
+            with open(cached_traces_path, 'w') as f:
+                json.dump(traces_per_node, f)
+
+        traces = [wp.htrace for wp in all_weight_params]
+        fig, ax = plt.subplots()
+        ax.plot(traces)
+        ax.set_title('Hessian Trace per layers')
+        ax.set_xlabel('Layers')
+        ax.set_ylabel('Hessian Trace')
+        plt.savefig("traces.png")
+
+        assert False, 'OK!'
         internal_weight_params = all_weight_params
         if mode != CompressWeightsMode.INT8:
             internal_weight_params = list(filter(lambda wp: wp.metatype != OVEmbeddingMetatype, all_weight_params))
@@ -258,8 +302,9 @@ class WeightNodeParams:
     weight_node: ov.Node
     original_weight_dtype: TWeightType
     compression_config = WeightCompressionConfig()
-    htrace: Optional[np.ndarray] = None
     metatype: OperatorMetatype = None
+    htrace: Optional[np.ndarray] = None
+
 
 
 def _do_integer_quantization(
