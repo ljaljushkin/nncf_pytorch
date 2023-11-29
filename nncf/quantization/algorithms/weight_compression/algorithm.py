@@ -308,5 +308,8 @@ def get_hessian_trace(list_acts):
     for inp in list_acts:
         # NOTE: average trace?? divide by number of diagonal elements
         htrace += np.sum(np.multiply(inp, inp))
+        # normalize by sequence_length - the same for all activations
+        # normalize by hidden dimension
+        htrace /= inp.size
     htrace *= 2 / nsamples
     return htrace
