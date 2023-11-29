@@ -25,6 +25,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import List, Optional, Tuple, TypeVar
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 from nncf import Dataset
@@ -102,6 +103,7 @@ class WeightCompression(Algorithm):
     def available_backends(self) -> List[BackendType]:
         return [BackendType.OPENVINO]
 
+    # TODO: actually it collects outputs -> POST_LAYER_OPERATION
     def _get_fp_inputs(self, statistic_points: StatisticPointsContainer, node_name: str, port_id: int) -> np.ndarray:
         """
         Makes out pre-layer needed data from the floating-point collected statistics.
@@ -176,19 +178,22 @@ class WeightCompression(Algorithm):
         nodes_to_compress = self._get_nodes_to_compress(graph)
 
         traces_per_node = {}
-        activations = {}
-        shared_nodes_mapping = {}
         if dataset is not None:
             cached_traces_path = Path('traces_per_node.json')
             if cached_traces_path.exists():
                 with cached_traces_path.open() as f:
                     traces_per_node = json.load(f)
-            else:
-                activations, shared_nodes_mapping = self.get_activations(dataset, nodes_to_compress, graph, model)
+
+        calc_traces_mode = dataset is not None and not traces_per_node
+        print('calc_traces_mode=', calc_traces_mode)
 
         transformed_model = self._backend_entity.do_compression(
-            model, nodes_to_compress, self._mode, self._ratio, self._group_size, activations, shared_nodes_mapping, traces_per_node
+            model, nodes_to_compress, self._mode, self._ratio, self._group_size, traces_per_node
         )
+
+        if calc_traces_mode:
+            self.calculate_traces_on_outputs(dataset, nodes_to_compress, graph, model)
+
         return transformed_model
 
     def _get_nodes_to_compress(self, nncf_graph: NNCFGraph) -> List[NNCFNode]:
@@ -221,37 +226,24 @@ class WeightCompression(Algorithm):
         :return: Statistic points, for which StatisticsCollector should collect statistics.
         """
 
-    def get_activations(self, dataset, nodes_to_compress, graph, model):
+    def calculate_traces_on_outputs(self, dataset, nodes_to_compress, graph, model):
         subset_size = 128
         is_save = False
         seq_len_axis = 0
+        OUTPUT_PORT_OF_NODE = 0
 
-        activations = {}
-        shared_nodes_mapping = {}
         _collected_stat_inputs_map = {}
         statistic_container = StatisticPointsContainer()
-        matmul_nodes = [node for node in nodes_to_compress if node.metatype == OVMatMulMetatype]
-        all_act_nodes = []
-        act_vs_shared_nodes_mapping = {}
-        # TODO: Except last layer???
-        for node in matmul_nodes[:-1]:
-            activation_node, output_port_id = self._get_activation_node_and_port(node, graph)
-            activation_node_name = activation_node.node_name
-            if activation_node_name in all_act_nodes:
-                shared_nodes = act_vs_shared_nodes_mapping.get(activation_node_name, [])
-                shared_nodes.append(node.node_name)
-                act_vs_shared_nodes_mapping[activation_node_name] = shared_nodes
-                continue
-            all_act_nodes.append(activation_node_name)
-            print(f'{activation_node_name} ----> {node.node_name}')
-            output_id = (activation_node_name, output_port_id)
-            _collected_stat_inputs_map[node.node_name] = output_id
-
+        matmul_nodes = [node.node_name for node in nodes_to_compress if node.metatype == OVMatMulMetatype]
+        node_names = matmul_nodes[:-1]
+        # NOTE: Except last layer - shared with embedding is not covered???
+        for node_name in node_names:
+            print(f'Post OP for {node_name}')
             statistic_point = self._backend_entity.target_point(
-                TargetType.POST_LAYER_OPERATION, activation_node_name, port_id=output_port_id
+                TargetType.POST_LAYER_OPERATION, node_name, port_id=OUTPUT_PORT_OF_NODE
             )
+            _collected_stat_inputs_map[node_name] = OUTPUT_PORT_OF_NODE
             inplace_statistics = False
-
             stat_collector = self._backend_entity.raw_statistic_collector(
                 num_samples=subset_size, inplace=inplace_statistics
             )
@@ -269,9 +261,10 @@ class WeightCompression(Algorithm):
             shutil.rmtree(save_dir)
         save_dir.mkdir(exist_ok=True)
 
-        for node_name, output_id in _collected_stat_inputs_map.items():
-            activation_node_name, output_port_id = output_id
-            x_fp = self._get_fp_inputs(statistic_container, node_name=activation_node_name, port_id=output_port_id)
+        traces_per_node = {}
+        traces = []
+        for node_name in node_names:
+            x_fp = self._get_fp_inputs(statistic_container, node_name=node_name, port_id=OUTPUT_PORT_OF_NODE)
             x_fp = [i.squeeze() for i in x_fp] # List[Array(seq_length, hidden_dim)]
             if is_save:
                 max_length=max(i.shape[seq_len_axis] for i in x_fp)
@@ -286,7 +279,7 @@ class WeightCompression(Algorithm):
                     arr = np.expand_dims(arr, axis=0)
                     x_fp.append(arr)
 
-                print(f'\n\nnum stats={len(x_fp)}\nshape of single stat={x_fp[0].shape}\nactivation={activation_node_name}\nnode={node_name}')
+                print(f'\n\nnum stats={len(x_fp)}\nshape of single stat={x_fp[0].shape}\nactivation={node_name}')
                 # x_fp = np.vstack(x_fp)
                 x_fp = np.concatenate(x_fp, axis=seq_len_axis) # [batch_size, seq_length, hidden_dim]
                 print('max=', max_length, ' shape after concat=', x_fp.shape)
@@ -295,11 +288,25 @@ class WeightCompression(Algorithm):
 
                 print('Saving to ', file_to_save.resolve())
                 np.save(file_to_save, x_fp)
+            print('activation shape: ', x_fp[0].shape, ' name: ', node_name)
+            trace = get_hessian_trace(x_fp)
+            traces_per_node[node_name] = trace
+            traces.append(trace)
 
-            activations[node_name] = x_fp
+        fig, ax = plt.subplots()
+        ax.plot(traces, label='traces')
+        ax.set_title('Trace per layer')
+        ax.set_xlabel('Layers')
+        plt.savefig("traces.png")
 
-            for shared_node in act_vs_shared_nodes_mapping.get(activation_node_name, []):
-                shared_nodes_mapping[shared_node] = node_name
+        with Path('traces_per_node.json').open('w') as f:
+            json.dump(traces_per_node, f)
 
-        return activations, shared_nodes_mapping
-
+def get_hessian_trace(list_acts):
+    htrace = 0
+    nsamples = len(list_acts)
+    for inp in list_acts:
+        # NOTE: average trace?? divide by number of diagonal elements
+        htrace += np.sum(np.multiply(inp, inp))
+    htrace *= 2 / nsamples
+    return htrace

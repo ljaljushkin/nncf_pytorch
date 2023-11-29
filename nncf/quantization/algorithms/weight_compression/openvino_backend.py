@@ -82,8 +82,6 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         mode: CompressWeightsMode,
         ratio: float = None,
         group_size: int = None,
-        activations = None,
-        shared_nodes_mapping = None,
         traces_per_node = None,
     ) -> ov.Model:
         all_weight_params: List[WeightNodeParams] = []
@@ -93,13 +91,6 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         is_last_layer_compressed = False
         n = len(nodes_to_compress)
-        save_dir = Path('saved_traces')
-        if save_dir.exists():
-            shutil.rmtree(save_dir)
-        save_dir.mkdir(exist_ok=True)
-
-        is_loaded_from_cache = bool(traces_per_node)
-        is_hawq = traces_per_node or activations
 
         for i, nncf_node in enumerate(nodes_to_compress):
             node_name = nncf_node.node_name
@@ -129,18 +120,6 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     )
                     continue
                 reduction_axis = reduction_axes[0] if isinstance(reduction_axes, tuple) else reduction_axes
-                if is_hawq and not is_loaded_from_cache:
-                    if node_name not in activations and node_name in shared_nodes_mapping:
-                        print('Alles gut! shared node=', node_name)
-                        original_node = shared_nodes_mapping[node_name]
-                        htrace = traces_per_node[original_node]
-                        traces_per_node[node_name] = htrace
-                    elif node_name in activations:
-                        htrace = get_hessian_trace(activations, node_name, weight_node)
-                        traces_per_node[node_name] = htrace
-                    elif nncf_node.metatype != OVEmbeddingMetatype and i != n - 1:
-                        assert False, 'no activation found for '  + node_name
-
                 fq_name = f"{weight_op_friendly_name}/fq_weights_{weight_port_id}"
                 num_weights = np.prod(const_shape)
                 weight_params = WeightNodeParams(
@@ -155,25 +134,20 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 all_weight_params.append(weight_params)
                 quantized_nodes_ids.add(id(weight_node))
 
-        if is_hawq and not is_loaded_from_cache:
-            cached_traces_path = Path('traces_per_node.json')
-            with open(cached_traces_path, 'w') as f:
-                json.dump(traces_per_node, f)
-
         internal_weight_params = all_weight_params
         if mode != CompressWeightsMode.INT8:
             internal_weight_params = list(filter(lambda wp: wp.metatype != OVEmbeddingMetatype, all_weight_params))
             if not is_last_layer_compressed:
                 internal_weight_params = internal_weight_params[:-1]
             primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
-            if is_hawq:
+            if traces_per_node:
                 _apply_hawq(internal_weight_params, ratio, primary_config)
             else:
                 _assign_mixed_precision(internal_weight_params, ratio, primary_config)
         nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params, internal_weight_params))
 
         for wp in all_weight_params:
-            print(f"a{wp.reduction_axis} g{wp.compression_config.group_size} mode={wp.compression_config.mode.value} {wp.fq_name}")
+            print(f"mode={wp.compression_config.mode.value} g{wp.compression_config.group_size} {wp.fq_name}")
 
         for wp in track(all_weight_params, description="Applying Weight Compression"):
             weight_node = wp.weight_node
@@ -362,20 +336,6 @@ def _get_integer_quantization_error(weight: np.ndarray, reduction_axis: int, con
     val = np.max(layer_err)
     return val
 
-def _transpose_for_matmul(t: np.ndarray):
-    a=list(range(len(t.shape)))
-    # transpose two right-most axes
-    a[-1], a[-2] = a[-2], a[-1]
-    return np.transpose(t, axes=a)
-
-def _do_matmul(x, w, transpose_x: bool = False, transpose_w: bool = False):
-    # if transpose_x:
-    #     x = _transpose_for_matmul(x)
-    # if transpose_w:
-    #     w = _transpose_for_matmul(w)
-    return np.matmul(x,w)
-
-
 def _reshape_weights_for_grouped_quantization(
     weight: np.ndarray, reduction_axis: int, group_size: int
 ) -> Tuple[np.ndarray, int]:
@@ -475,43 +435,6 @@ def _get_bitwidth_distribution_str(all_params: List[WeightNodeParams], internal_
     pretty_string = f"Statistics of the bitwidth distribution:\n{table}"
     return pretty_string
 
-def get_hessian_trace(activations, node_name, weight_node):
-    # TODO: handle last layer?? should be skipped early
-    # TODO: any way to accelerate?? need diagonal elements only!!! multiply 1st row with 1st column, 2nd row with 2nd column, etc ...
-    list_acts = activations[node_name]
-    weight = get_const_value(weight_node)
-    orig_shape = weight.shape
-    print('weight shape: ', orig_shape, ' activation shape: ', list_acts[0].shape, ' name: ', node_name)
-
-    columns = orig_shape[1]
-    # H = np.zeros((columns, columns))
-    # print('hessian shape: ', H.shape)
-    htrace = 0
-    nsamples = 0
-    for inp in list_acts:
-        # if len(inp.shape) == 2:
-        #     inp = inp.unsqueeze(0)
-        tmp = inp.shape[0]
-        if len(inp.shape) == 3:
-            inp = inp.reshape((-1, inp.shape[-1]))
-        if False:
-            inp = np.transpose(inp) # [S, H] -> [H, S]
-            # TODO: is it properly normalized??? Hessian for FC2, FC1 in opt-125m has small values, because of dimensions??
-            H *= nsamples / (nsamples + tmp)
-            nsamples += tmp
-            inp = np.sqrt(2 / nsamples) * inp
-            # TODO: avoid double transpose: np.matmul(np.transpose(inp), inp)
-            H += np.matmul(inp, np.transpose(inp)) # [H, S] * [S, H] -> [H, H]
-        else:
-            htrace *= nsamples / (nsamples + tmp)
-            nsamples += tmp
-            inp = np.sqrt(2 / nsamples) * inp
-            # NOTE: need diagonal elements of Hessian only for trace, no need to do full matrix multiplication!
-            # TODO: check for batch_size != 1 with reshape !!! will it really sum diagonal elements?
-            htrace += np.sum(np.multiply(inp, inp))
-    # TODO: consider the full estimation, not just trace: deltaW * Hessian * delta.t()
-    # htrace = np.trace(H)
-    return htrace
 
 def _assign_mixed_precision(
     internal_weight_params: List[WeightNodeParams], ratio: float, primary_config: WeightCompressionConfig
@@ -560,44 +483,6 @@ def _assign_mixed_precision(
         weight_param.compression_config = primary_config
         num_weights_in_4bit += weight_param.num_weights
 
-# def get_all_non_decreasing_bitwidth_sequences(number_of_layers) -> List[List[int]]:
-#     start_time = time.time()
-#     sequences = []
-#     bitwidths_ = [4, 8]
-#     seq_len = number_of_layers
-#     if seq_len == 0:
-#         return sequences
-#     bitwidths = sorted(bitwidths_)
-#     m = len(bitwidths)
-#     L = seq_len
-#     for j in range(1, m + 1):
-#         for combo_bitwidths in itertools.combinations(bitwidths, j):
-#             for combo_partitions in itertools.combinations(list(range(1, L)), j - 1):
-#                 bit_config = []
-#                 prev_p = 0
-#                 for p, b in zip(combo_partitions + (L,), combo_bitwidths):
-#                     bit_config += [b] * (p - prev_p)
-#                     prev_p = p
-#                 sequences.append(bit_config)
-#     print('Collecting {} bitwidth sequences (out of {} layers) takes {:3.2f} minutes'.format(len(sequences),number_of_layers, (time.time() - start_time) / 60))
-#     return sequences
-
-# def calc_hawq_metric_per_bitwidth_sequence(_bitwidth_sequences, int4_errors, int8_errors, traces):
-#     start_time = time.time()
-#     # TODO: check and draw!!
-#     metric_per_bitwidth_sequence = []
-#     error_map = {4: int4_errors, 8: int8_errors}
-#     for bitwidth_sequence in _bitwidth_sequences:
-#         hawq_metric = np.zeros(1)
-#         # can be vectorized by getting list indexes
-#         for index, bitwidth in enumerate(bitwidth_sequence):
-#             quant_noise = error_map[bitwidth][index]
-#             trace = traces[index]
-#             hawq_metric += quant_noise * trace
-#         metric_per_bitwidth_sequence.append(hawq_metric)
-#     print('Calculate hawq metrics takes {:3.1f} minutes'.format((time.time() - start_time) / 60))
-#     return metric_per_bitwidth_sequence
-
 
 def _apply_hawq(
     internal_weight_params: List[WeightNodeParams], ratio: float, primary_config: WeightCompressionConfig
@@ -611,64 +496,21 @@ def _apply_hawq(
     :param primary_config: Information on how to compress (quantize) weights to primary precision.
     :return: None.
     """
-    start_time = time.time()
     if ratio == 1:
         for weight_param in internal_weight_params:
             weight_param.compression_config = primary_config
         return
 
-    # int4_errors = []
-    l2norm_noises = []
     num_internal_weights = 0
     traces = []
-    perturbations = []
-    # start_time = time.time()
-    # TODO: is cache really needed?? for llama-7b definitely!
     for weight_param in track(internal_weight_params, description="Collecting quantization noise"):
-        weight = get_const_value(weight_param.weight_node)
-        backup_config = weight_param.compression_config
-        reduction_axis = weight_param.reduction_axis
-        l2norm_noise = _get_l2norm_of_quant_noise(weight, reduction_axis, backup_config)
-        eps = np.finfo(weight.dtype).eps
-        # NOTE: calc real perturbation - no need to normalize?
-        # int8_error = 1 / (int8_error + eps)
-        l2norm_noises.append(l2norm_noise)
-        # int4_error = _get_integer_quantization_error(weight, reduction_axis, primary_config)
-        # eps = np.finfo(weight.dtype).eps
-        # error = 1 / (int4_error + eps)
-        # int4_errors.append(error)
-
         num_internal_weights += weight_param.num_weights
         trace = weight_param.htrace
         traces.append(trace)
-        perturbations.append(trace * l2norm_noise)
-    print('Collecting perturbation takes {:3.1f} minutes'.format((time.time() - start_time) / 60))
-
-    fig, ax = plt.subplots()
-    ax.plot(traces, label='traces')
-    ax.plot(perturbations, label='perturbations')
-    ax.set_title('Trace/Perturbation per layer')
-    ax.set_xlabel('Layers')
-    ax.set_ylabel('Metric value')
-    ax.legend(loc='upper right')
-    plt.savefig("perturbations.png")
-
-    fig, ax = plt.subplots()
-    ax.set_title('L2Norm of quantization noise per layer')
-    ax.set_xlabel('Layers')
-    ax.plot(l2norm_noises, label='l2norm_8bit_noise')
-    plt.savefig("l2norm_noise.png")
 
     indexes_of_layers_in_ascending_order_of_perturbations = [
-        i[0] for i in sorted(enumerate(perturbations), reverse=False, key=lambda x: x[1])
+        i[0] for i in sorted(enumerate(traces), reverse=False, key=lambda x: x[1])
     ]
-
-    # _bitwidth_sequences = get_all_non_decreasing_bitwidth_sequences(len(internal_weight_params))
-    # metric_per_bitwidth_sequence = calc_hawq_metric_per_bitwidth_sequence(_bitwidth_sequences, int4_errors, int8_errors, traces, indexes_of_layers_in_ascending_order_of_traces)
-    # assert False, 'OK!'
-    # indexes_of_layers_in_ascending_order_of_errors = [
-    #     i[0] for i in sorted(enumerate(errors), reverse=False, key=lambda x: x[1])
-    # ]
 
     num_weights_in_4bit = 0
     for index in indexes_of_layers_in_ascending_order_of_perturbations:
