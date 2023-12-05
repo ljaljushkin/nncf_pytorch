@@ -454,6 +454,7 @@ def _assign_mixed_precision(
         return
     errors = []
     num_internal_weights = 0
+    errors_per_node = {}
     # NOTE: first and last layers are always in 8 bit: no need to calculate error for them
     for weight_param in track(internal_weight_params, description="Searching for Mixed-Precision Configuration"):
         weight = get_const_value(weight_param.weight_node)
@@ -463,7 +464,11 @@ def _assign_mixed_precision(
         eps = np.finfo(weight.dtype).eps
         error = 1 / (backup_error + eps)
         errors.append(error)
+        errors_per_node[weight_param.fq_name] = error
         num_internal_weights += weight_param.num_weights
+
+    with Path('errors_per_node.json').open('w') as f:
+        json.dump(errors_per_node, f)
 
     fig, ax = plt.subplots()
     ax.set_title('int8 error per layer')

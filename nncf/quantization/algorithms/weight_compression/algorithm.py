@@ -192,7 +192,8 @@ class WeightCompression(Algorithm):
         )
 
         if calc_traces_mode:
-            self.calculate_traces_on_outputs(dataset, nodes_to_compress, graph, model)
+            # TODO: is it bug to use model instead of transformed_model?
+            self.calculate_traces_on_outputs(dataset, nodes_to_compress, graph, transformed_model)
 
         return transformed_model
 
@@ -313,3 +314,24 @@ def get_hessian_trace(list_acts):
         htrace /= inp.size
     htrace *= 2 / nsamples
     return htrace
+
+def get_top10_sum(list_acts):
+    htrace = 0
+    nsamples = len(list_acts)
+    for inp in list_acts:
+        s = np.sum(np.multiply(inp, inp), axis=1)
+        n_top10 = int(s.size * 0.1) + 1
+        htrace += np.sum(np.sort(s)[::-1][:n_top10])
+        # normalize by sequence_length - the same for all activations
+        # normalize by hidden dimension
+        htrace /= inp.size
+    htrace /= nsamples
+    return htrace
+
+def get_global_mean(list_acts):
+    mean = 0
+    nsamples = len(list_acts)
+    for inp in list_acts:
+        mean += np.mean(inp)
+    mean /= nsamples
+    return mean
