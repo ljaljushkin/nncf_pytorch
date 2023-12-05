@@ -146,8 +146,13 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 _assign_mixed_precision(internal_weight_params, ratio, primary_config)
         nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params, internal_weight_params))
 
+        compression_info_per_node = {}
         for wp in all_weight_params:
             print(f"mode={wp.compression_config.mode.value} g{wp.compression_config.group_size} {wp.fq_name}")
+            compression_info_per_node[wp.fq_name] = (
+                wp.compression_config.mode.value,
+                wp.compression_config.group_size,
+            )
 
         for wp in track(all_weight_params, description="Applying Weight Compression"):
             weight_node = wp.weight_node
@@ -191,6 +196,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 "mode": mode.value,
                 "group_size": group_size,
                 "ratio": ratio,
+                "traces_per_node": traces_per_node,
+                "compression_info_per_node": compression_info_per_node,
             },
             algo_name="weight_compression",
         )
