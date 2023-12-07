@@ -150,7 +150,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     weight_node,
                     original_weight_dtype,
                     metatype=nncf_node.metatype,
-                    htrace=traces_per_node.get(node_name)
+                    htrace=traces_per_node.get(node_name),
+                    node_name=node_name,
                 )
                 all_weight_params.append(weight_params)
                 quantized_nodes_ids.add(id(weight_node))
@@ -276,6 +277,7 @@ class WeightNodeParams:
     compression_config = WeightCompressionConfig()
     metatype: OperatorMetatype = None
     htrace: Optional[np.ndarray] = None
+    node_name: str = None
 
 
 
@@ -629,6 +631,7 @@ def _apply_hawq(
     num_internal_weights = 0
     traces = []
     perturbations = []
+    perturbations_per_node = {}
     # start_time = time.time()
     # TODO: is cache really needed?? for llama-7b definitely!
     for weight_param in track(internal_weight_params, description="Collecting quantization noise"):
@@ -649,6 +652,12 @@ def _apply_hawq(
         trace = weight_param.htrace
         traces.append(trace)
         perturbations.append(trace * l2norm_noise)
+        perturbations_per_node[weight_param.node_name] = trace * l2norm_noise
+
+        cached_perturb_path = Path('perturb_per_node.json')
+        with open(cached_perturb_path, 'w') as f:
+            json.dump(perturbations_per_node, f)
+
     print('Collecting perturbation takes {:3.1f} minutes'.format((time.time() - start_time) / 60))
 
     fig, ax = plt.subplots()
