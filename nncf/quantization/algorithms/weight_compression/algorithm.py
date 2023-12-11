@@ -174,19 +174,13 @@ class WeightCompression(Algorithm):
         self._backend_entity.validate_params(self._mode, self._ignored_scope)
         nodes_to_compress = self._get_nodes_to_compress(graph)
 
-        traces_per_node = {}
         activations = {}
         shared_nodes_mapping = {}
         if dataset is not None:
-            cached_traces_path = Path('traces_per_node.json')
-            if cached_traces_path.exists():
-                with cached_traces_path.open() as f:
-                    traces_per_node = json.load(f)
-            else:
-                activations, shared_nodes_mapping = self.get_activations(dataset, nodes_to_compress, graph, model)
+            activations, shared_nodes_mapping = self.get_activations(dataset, nodes_to_compress, graph, model)
 
         transformed_model = self._backend_entity.do_compression(
-            model, nodes_to_compress, self._mode, self._ratio, self._group_size, activations, shared_nodes_mapping, traces_per_node
+            model, nodes_to_compress, self._mode, self._ratio, self._group_size, activations, shared_nodes_mapping
         )
         return transformed_model
 

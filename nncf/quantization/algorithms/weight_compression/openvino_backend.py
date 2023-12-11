@@ -84,7 +84,6 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         group_size: int = None,
         activations = None,
         shared_nodes_mapping = None,
-        traces_per_node = None,
     ) -> ov.Model:
         all_weight_params: List[WeightNodeParams] = []
         quantized_nodes_ids = set()
@@ -93,9 +92,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         is_last_layer_compressed = False
         n = len(nodes_to_compress)
-        is_loaded_from_cache = bool(traces_per_node)
-        is_hawq = traces_per_node or activations
-
+        traces_per_node = {}
         for i, nncf_node in enumerate(nodes_to_compress):
             node_name = nncf_node.node_name
             weight_port_ids = nncf_node.layer_attributes.get_const_port_ids()
@@ -124,9 +121,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     )
                     continue
                 reduction_axis = reduction_axes[0] if isinstance(reduction_axes, tuple) else reduction_axes
-                if is_hawq and not is_loaded_from_cache:
+                if activations:
                     if node_name not in activations and node_name in shared_nodes_mapping:
-                        print('Alles gut! shared node=', node_name)
                         original_node = shared_nodes_mapping[node_name]
                         htrace = traces_per_node[original_node]
                         traces_per_node[node_name] = htrace
@@ -151,7 +147,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 all_weight_params.append(weight_params)
                 quantized_nodes_ids.add(id(weight_node))
 
-        if is_hawq and not is_loaded_from_cache:
+        if activations:
             cached_traces_path = Path('traces_per_node.json')
             with open(cached_traces_path, 'w') as f:
                 json.dump(traces_per_node, f)
@@ -162,7 +158,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             if not is_last_layer_compressed:
                 internal_weight_params = internal_weight_params[:-1]
             primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
-            if is_hawq:
+            if activations:
                 _apply_hawq(internal_weight_params, ratio, primary_config)
             else:
                 _assign_mixed_precision(internal_weight_params, ratio, primary_config)
