@@ -8,25 +8,37 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import itertools
+import json
+import shutil
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional, Tuple, TypeVar
 
+import matplotlib.pyplot as plt
 import numpy as np
 import openvino.runtime as ov
+from numpy import linalg
 from openvino.runtime import opset9 as opset
 
+from nncf.common.graph import NNCFGraph
 from nncf.common.graph import NNCFNode
 from nncf.common.graph.operator_metatypes import OperatorMetatype
+from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.logging import nncf_logger
 from nncf.common.logging.track_progress import track
 from nncf.common.utils.helpers import create_table
+from nncf.experimental.common.tensor_statistics.collectors import TensorCollector
 from nncf.openvino.graph.metatypes.openvino_metatypes import OVEmbeddingMetatype
 from nncf.openvino.graph.metatypes.openvino_metatypes import OVMatMulMetatype
 from nncf.openvino.graph.node_utils import get_channel_agnostic_reduction_axes
 from nncf.openvino.graph.node_utils import get_const_value
 from nncf.openvino.graph.node_utils import get_weight_channel_axes
+from nncf.openvino.graph.transformations.commands import OVTargetPoint
 from nncf.openvino.rt_info import dump_parameters
+from nncf.openvino.statistics.collectors import get_raw_stat_collector
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
 from nncf.quantization.fake_quantize import calculate_scale_zero_point
@@ -47,12 +59,32 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         pass
 
     @staticmethod
+    def target_point(target_type: TargetType, target_node_name: str, port_id: int) -> OVTargetPoint:
+        return OVTargetPoint(target_type, target_node_name, port_id)
+
+    @staticmethod
+    def raw_statistic_collector(inplace: bool, num_samples: int = None) -> TensorCollector:
+        return get_raw_stat_collector(num_samples, inplace)
+
+    @staticmethod
+    def get_activation_port_id(node: NNCFNode, nncf_graph: NNCFGraph) -> int:
+        constant_ports = node.layer_attributes.get_const_port_ids()
+        activation_ports = [
+            e.input_port_id for e in nncf_graph.get_input_edges(node) if e.input_port_id not in constant_ports
+        ]
+        assert len(activation_ports) == 1
+        return activation_ports[0]
+
+    @staticmethod
     def do_compression(
         model: ov.Model,
         nodes_to_compress: List[NNCFNode],
         mode: CompressWeightsMode,
         ratio: float = None,
         group_size: int = None,
+        activations = None,
+        shared_nodes_mapping = None,
+        traces_per_node = None,
     ) -> ov.Model:
         all_weight_params: List[WeightNodeParams] = []
         quantized_nodes_ids = set()
@@ -61,7 +93,11 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         is_last_layer_compressed = False
         n = len(nodes_to_compress)
+        is_loaded_from_cache = bool(traces_per_node)
+        is_hawq = traces_per_node or activations
+
         for i, nncf_node in enumerate(nodes_to_compress):
+            node_name = nncf_node.node_name
             weight_port_ids = nncf_node.layer_attributes.get_const_port_ids()
             for weight_port_id in weight_port_ids:
                 weight_op_friendly_name = nncf_node.layer_attributes.constant_attributes[weight_port_id]["name"]
@@ -84,10 +120,21 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     nncf_logger.warning(
                         f"Weight compression expects a single reduction axes, but given {len(reduction_axes)}. "
                         f"Weight shape: {const_shape}, reduction axes: {reduction_axes}, "
-                        f"node name: {nncf_node.node_name}. The node won't be quantized."
+                        f"node name: {node_name}. The node won't be quantized."
                     )
                     continue
                 reduction_axis = reduction_axes[0] if isinstance(reduction_axes, tuple) else reduction_axes
+                if is_hawq and not is_loaded_from_cache:
+                    if node_name not in activations and node_name in shared_nodes_mapping:
+                        print('Alles gut! shared node=', node_name)
+                        original_node = shared_nodes_mapping[node_name]
+                        htrace = traces_per_node[original_node]
+                        traces_per_node[node_name] = htrace
+                    elif node_name in activations:
+                        htrace = get_hessian_trace(activations, node_name, weight_node)
+                        traces_per_node[node_name] = htrace
+                    elif nncf_node.metatype != OVEmbeddingMetatype and i != n - 1:
+                        assert False, 'no activation found for '  + node_name
 
                 fq_name = f"{weight_op_friendly_name}/fq_weights_{weight_port_id}"
                 num_weights = np.prod(const_shape)
@@ -98,9 +145,16 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     weight_node,
                     original_weight_dtype,
                     metatype=nncf_node.metatype,
+                    htrace=traces_per_node.get(node_name),
+                    node_name=node_name,
                 )
                 all_weight_params.append(weight_params)
                 quantized_nodes_ids.add(id(weight_node))
+
+        if is_hawq and not is_loaded_from_cache:
+            cached_traces_path = Path('traces_per_node.json')
+            with open(cached_traces_path, 'w') as f:
+                json.dump(traces_per_node, f)
 
         internal_weight_params = all_weight_params
         if mode != CompressWeightsMode.INT8:
@@ -108,8 +162,19 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             if not is_last_layer_compressed:
                 internal_weight_params = internal_weight_params[:-1]
             primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
-            _assign_mixed_precision(internal_weight_params, ratio, primary_config)
+            if is_hawq:
+                _apply_hawq(internal_weight_params, ratio, primary_config)
+            else:
+                _assign_mixed_precision(internal_weight_params, ratio, primary_config)
         nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params, internal_weight_params))
+
+        compression_info_per_node = {}
+        for wp in all_weight_params:
+            print(f"mode={wp.compression_config.mode.value} g{wp.compression_config.group_size} {wp.fq_name}")
+            compression_info_per_node[wp.fq_name] = (
+                wp.compression_config.mode.value,
+                wp.compression_config.group_size,
+            )
 
         for wp in track(all_weight_params, description="Applying Weight Compression"):
             weight_node = wp.weight_node
@@ -153,6 +218,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 "mode": mode.value,
                 "group_size": group_size,
                 "ratio": ratio,
+                "traces_per_node": traces_per_node,
+                "compression_info_per_node": compression_info_per_node,
             },
             algo_name="weight_compression",
         )
@@ -204,6 +271,9 @@ class WeightNodeParams:
     original_weight_dtype: TWeightType
     compression_config = WeightCompressionConfig()
     metatype: OperatorMetatype = None
+    htrace: Optional[np.ndarray] = None
+    node_name: str = None
+
 
 
 def _do_integer_quantization(
@@ -259,6 +329,20 @@ def _do_integer_quantization(
     compressed_weights = np.clip(compressed_weights, level_low, level_high).astype(np.uint8)
     return compressed_weights, scale, zero_point
 
+def _get_l2norm_of_quant_noise(weight: np.ndarray, reduction_axis: int, config: WeightCompressionConfig) -> float:
+    """
+    :param weight: Weight array to compress.
+    :param reduction_axis: Axis, along which to reduce (collect) different statistics (e.g. min, max).
+    :param config: Information on how to compress (quantize) a specific weight.
+    """
+    orig_shape = weight.shape
+    compressed_weights, scale, zero_point = _do_integer_quantization(weight, reduction_axis, config)
+
+    decompressed_weight = compressed_weights.astype(dtype=scale.dtype)
+    decompressed_weight = (compressed_weights - zero_point) * scale
+
+    decompressed_weight = decompressed_weight.reshape(orig_shape)
+    return linalg.norm(decompressed_weight - weight, ord='fro')
 
 def _get_integer_quantization_error(weight: np.ndarray, reduction_axis: int, config: WeightCompressionConfig) -> float:
     """
@@ -382,6 +466,23 @@ def _get_bitwidth_distribution_str(all_params: List[WeightNodeParams], internal_
     pretty_string = f"Statistics of the bitwidth distribution:\n{table}"
     return pretty_string
 
+def get_hessian_trace(activations, node_name, weight_node):
+    list_acts = activations[node_name]
+    weight = get_const_value(weight_node)
+    orig_shape = weight.shape
+    print('weight shape: ', orig_shape, ' activation shape: ', list_acts[0].shape, ' name: ', node_name)
+
+    htrace = 0
+    nsamples = 0
+    for inp in list_acts:
+        tmp = inp.shape[0]
+        if len(inp.shape) == 3:
+            inp = inp.reshape((-1, inp.shape[-1]))
+        htrace *= nsamples / (nsamples + tmp)
+        nsamples += tmp
+        inp = np.sqrt(2 / nsamples) * inp
+        htrace += np.sum(np.multiply(inp, inp))
+    return htrace
 
 def _assign_mixed_precision(
     internal_weight_params: List[WeightNodeParams], ratio: float, primary_config: WeightCompressionConfig
@@ -411,11 +512,88 @@ def _assign_mixed_precision(
         error = 1 / (backup_error + eps)
         errors.append(error)
         num_internal_weights += weight_param.num_weights
+
+    _, ax = plt.subplots()
+    ax.set_title('int8 error per layer')
+    ax.set_xlabel('Layers')
+    ax.plot(errors)
+    plt.savefig("int8_error.png")
+
     indexes_of_layers_in_ascending_order_of_errors = [
         i[0] for i in sorted(enumerate(errors), reverse=False, key=lambda x: x[1])
     ]
     num_weights_in_4bit = 0
     for index in indexes_of_layers_in_ascending_order_of_errors:
+        weight_param = internal_weight_params[index]
+        current_ratio = (num_weights_in_4bit + weight_param.num_weights) / num_internal_weights
+        if current_ratio >= ratio:
+            break
+        weight_param.compression_config = primary_config
+        num_weights_in_4bit += weight_param.num_weights
+
+
+def _apply_hawq(
+    internal_weight_params: List[WeightNodeParams], ratio: float, primary_config: WeightCompressionConfig
+) -> None:
+    """
+    TODO:
+    :param internal_weight_params: List of information about internal weight nodes. Only internal nodes are considered
+        for mixed precision. The quantization scheme is added to this info.
+    :param ratio: The ratio between primary and backup precisions (e.g. 0.9 means 90% of layers quantized to NF4
+        and the rest to INT8).
+    :param primary_config: Information on how to compress (quantize) weights to primary precision.
+    :return: None.
+    """
+    start_time = time.time()
+    if ratio == 1:
+        for weight_param in internal_weight_params:
+            weight_param.compression_config = primary_config
+        return
+
+    l2norm_noises = []
+    num_internal_weights = 0
+    traces = []
+    perturbations = []
+    perturbations_per_node = {}
+    for weight_param in track(internal_weight_params, description="Collecting quantization noise"):
+        weight = get_const_value(weight_param.weight_node)
+        backup_config = weight_param.compression_config
+        reduction_axis = weight_param.reduction_axis
+        l2norm_noise = _get_l2norm_of_quant_noise(weight, reduction_axis, backup_config)
+        l2norm_noises.append(l2norm_noise)
+        num_internal_weights += weight_param.num_weights
+        trace = weight_param.htrace
+        traces.append(trace)
+        perturbations.append(trace * l2norm_noise)
+        perturbations_per_node[weight_param.node_name] = trace * l2norm_noise
+
+        cached_perturb_path = Path('perturb_per_node.json')
+        with open(cached_perturb_path, 'w') as f:
+            json.dump(perturbations_per_node, f)
+
+    print('Collecting perturbation takes {:3.1f} minutes'.format((time.time() - start_time) / 60))
+
+    fig, ax = plt.subplots()
+    ax.plot(traces, label='traces')
+    ax.plot(perturbations, label='perturbations')
+    ax.set_title('Trace/Perturbation per layer')
+    ax.set_xlabel('Layers')
+    ax.set_ylabel('Metric value')
+    ax.legend(loc='upper right')
+    plt.savefig("perturbations.png")
+
+    fig, ax = plt.subplots()
+    ax.set_title('L2Norm of quantization noise per layer')
+    ax.set_xlabel('Layers')
+    ax.plot(l2norm_noises, label='l2norm_8bit_noise')
+    plt.savefig("l2norm_noise.png")
+
+    indexes_of_layers_in_ascending_order_of_perturbations = [
+        i[0] for i in sorted(enumerate(perturbations), reverse=False, key=lambda x: x[1])
+    ]
+
+    num_weights_in_4bit = 0
+    for index in indexes_of_layers_in_ascending_order_of_perturbations:
         weight_param = internal_weight_params[index]
         current_ratio = (num_weights_in_4bit + weight_param.num_weights) / num_internal_weights
         if current_ratio >= ratio:
