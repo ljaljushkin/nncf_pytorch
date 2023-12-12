@@ -53,6 +53,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         mode: CompressWeightsMode,
         ratio: float = None,
         group_size: int = None,
+        force_int8_ids: List[int] = None
     ) -> ov.Model:
         all_weight_params: List[WeightNodeParams] = []
         quantized_nodes_ids = set()
@@ -432,7 +433,8 @@ def _assign_mixed_precision(
 
 
 def _set_weight_compression_config(
-    internal_weight_params: List[WeightNodeParams], mode: CompressWeightsMode, ratio: float, group_size: int
+    internal_weight_params: List[WeightNodeParams], mode: CompressWeightsMode, ratio: float, group_size: int,
+    force_int8_ids: List[int] = None
 ) -> None:
     """
     Set the appropriate compression configuration for weights based on some criteria.
@@ -445,7 +447,8 @@ def _set_weight_compression_config(
     """
     primary_config = WeightCompressionConfig(mode=mode, group_size=group_size)
     if ratio == 1:
-        for weight_param in internal_weight_params:
-            weight_param.compression_config = primary_config
+        for i, weight_param in enumerate(internal_weight_params):
+            if i not in force_int8_ids:
+                weight_param.compression_config = primary_config
     else:
         _assign_mixed_precision(internal_weight_params, ratio, primary_config)

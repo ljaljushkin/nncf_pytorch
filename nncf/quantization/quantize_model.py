@@ -246,6 +246,7 @@ def compress_weights(
     ratio: Optional[float] = None,
     group_size: Optional[int] = None,
     ignored_scope: Optional[IgnoredScope] = None,
+    force_int8_ids: List[int] = None,
 ) -> TModel:
     """
     Compress model weights.
@@ -301,7 +302,7 @@ def compress_weights(
 
     compression_algorithm = WeightCompression(mode, ratio, group_size, ignored_scope)
     graph = NNCFGraphFactory.create(model)
-    return compression_algorithm.apply(model, graph)
+    return compression_algorithm.apply(model, graph, force_int8_ids=force_int8_ids)
 
 
 def quantize_with_tune_hyperparams(
