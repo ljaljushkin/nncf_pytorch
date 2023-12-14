@@ -12,6 +12,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, TypeVar
 
+import json
 import numpy as np
 import openvino.runtime as ov
 from openvino.runtime import opset9 as opset
@@ -104,8 +105,11 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 quantized_nodes_ids.add(id(weight_node))
 
         internal_weight_params = _get_internal_weight_params(all_weight_params, mode, is_last_layer_compressed)
-        _set_weight_compression_config(internal_weight_params, mode, ratio, group_size)
+        _set_weight_compression_config(internal_weight_params, mode, ratio, group_size, force_int8_ids)
         nncf_logger.info(_get_bitwidth_distribution_str(all_weight_params, internal_weight_params))
+
+        for wp in all_weight_params:
+            print(f"g{wp.compression_config.group_size} mode={wp.compression_config.mode.value} {wp.fq_name}")
 
         for wp in track(all_weight_params, description="Applying Weight Compression"):
             weight_node = wp.weight_node
@@ -408,19 +412,23 @@ def _assign_mixed_precision(
     :param primary_config: Information on how to compress (quantize) weights to primary precision.
     :return: None.
     """
-    errors = []
+    s = '/home/devuser/nlyalyus/projects/lm-evaluation-harness/cache/stable-zephyr-3b-dpo/fp16/greedy_search_result copy.json'
+    with open(s) as f:
+        j = json.load(f)
+    similarity = j['scores_per_stage'][1]
+    # errors = []
     num_internal_weights = 0
     for weight_param in track(internal_weight_params, description="Searching for Mixed-Precision Configuration"):
-        weight = get_const_value(weight_param.weight_node)
-        backup_config = weight_param.compression_config
-        reduction_axis = weight_param.reduction_axis
-        backup_error = _get_integer_quantization_error(weight, reduction_axis, backup_config)
-        eps = np.finfo(weight.dtype).eps
-        error = 1 / (backup_error + eps)
-        errors.append(error)
+        # weight = get_const_value(weight_param.weight_node)
+        # backup_config = weight_param.compression_config
+        # reduction_axis = weight_param.reduction_axis
+        # backup_error = _get_integer_quantization_error(weight, reduction_axis, backup_config)
+        # eps = np.finfo(weight.dtype).eps
+        # error = 1 / (backup_error + eps)
+        # errors.append(error)
         num_internal_weights += weight_param.num_weights
     indexes_of_layers_in_ascending_order_of_errors = [
-        i[0] for i in sorted(enumerate(errors), reverse=False, key=lambda x: x[1])
+        i[0] for i in sorted(enumerate(similarity), reverse=False, key=lambda x: x[1])
     ]
     num_weights_in_4bit = 0
     for index in indexes_of_layers_in_ascending_order_of_errors:

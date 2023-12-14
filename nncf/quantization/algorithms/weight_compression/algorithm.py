@@ -107,7 +107,7 @@ class WeightCompression(Algorithm):
         graph: NNCFGraph,
         statistic_points: Optional[StatisticPointsContainer] = None,
         dataset: Optional[Dataset] = None,
-        force_int8_ids: List[int],
+        force_int8_ids: List[int] = None,
     ) -> TModel:
         self._set_backend_entity(model)
         self._backend_entity.validate_params(self._mode, self._ignored_scope)
