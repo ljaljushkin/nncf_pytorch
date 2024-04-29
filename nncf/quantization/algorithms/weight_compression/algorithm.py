@@ -380,6 +380,18 @@ class WeightCompression(Algorithm):
             )
             precomputed_scales = scale_algo.apply(model, graph)
 
+        from nncf.experimental.tensor import functions as fns
+        for wp in all_weight_params:
+            k = wp.node_with_weight.node_name 
+            if wp.node_with_weight.node_name in activations:
+                stats = activations[k]
+                vals = [fns.mean(stat, axis=0) for stat in stats]
+                X = fns.stack(vals)
+                X = fns.transpose(X)
+                s = fns.max(fns.abs(X), axis=1)
+                wp.stat = s
+                wp.X = X
+
         # Compress model using weight compression parameters
         transformed_model = self._backend_entity.transform_model(
             model, graph, track(all_weight_params, description="Applying Weight Compression"), precomputed_scales

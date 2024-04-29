@@ -31,7 +31,7 @@ from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.awq_patterns import get_awq_patterns
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
-from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight
+from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight, do_dequantization
 
 
 class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
@@ -120,6 +120,118 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             target_input.replace_source_output(new_output)
 
         del const_node
+
+    def insert_lora_residual(self, model: ov.Model, graph: NNCFGraph,
+                             wc_params: WeightCompressionParameters, weight,
+                             compressed_weight, rank=8):
+        import numpy.linalg as linalg
+        import scipy.linalg as slinalg
+        import numpy as np
+        import scipy.optimize as optimize
+        q_weights = do_dequantization(compressed_weight.tensor, compressed_weight.scale,
+                                      compressed_weight.zero_point, wc_params.reduction_axes[0])
+        # q_w + USV = w => USV = w - q_w
+        residual = (weight - q_weights).data.astype(np.float32)
+        w_residual = residual.copy()
+        
+        if wc_params.reduction_axes == 0:
+            residual = np.transpose(residual)
+        
+        if wc_params.stat is not None:# and False:
+            s = wc_params.stat.data
+            if wc_params.compression_config.group_size > 0:
+                gs = wc_params.compression_config.group_size
+                n_gs = s.shape[0] // gs
+                for i in range(n_gs):
+                    offset = i * gs
+                    denum = np.sum(s[offset:offset + gs])
+                    s[offset:offset + gs] = s[offset:offset + gs] / denum
+                    denum = np.max(s[offset:offset + gs])
+                    s[offset:offset + gs] = s[offset:offset + gs] / denum
+                s = np.expand_dims(s, 0)
+                residual = residual * s
+            
+            # low_k = max(int(2 * s.shape[0] // 3), 1)
+            # lowk_idxs = np.argsort(s.data)[:low_k]
+            # for idx in lowk_idxs:
+            #     residual[:, idx] = 0.0
+
+        svd = linalg.svd(residual, compute_uv=True, full_matrices=False)
+        U = svd[0]
+        S = svd[1]
+        V = svd[2]
+
+        Ur = U[:, :rank]
+        Sr = np.diag(S[:rank])
+        Vr = V[:rank, :]
+
+        #US = Ur @ Sr
+        Vr = Sr @ Vr
+        US = Ur
+
+        print(wc_params.node_with_weight.node_name)
+        n_iters = 3
+        if wc_params.X is not None: # rectification by data
+            X = wc_params.X.data
+            dY = w_residual @ X
+            
+            # US @ Vr = res
+            # US @ Vr @ X = dY
+            # US @ |VR VR @ X| = |res dY|
+    
+            for i in range(n_iters):
+                VX = Vr @ X
+                if False:
+                    sol = slinalg.lstsq(np.transpose(VX), np.transpose(dY))
+                else:
+                    VrVX = np.concatenate((Vr, VX), axis=1)
+                    dYR = np.concatenate((w_residual, dY), axis=1)
+                    sol = slinalg.lstsq(np.transpose(VrVX), np.transpose(dYR))
+                
+                diff_before = np.mean(np.abs(weight.data @ X - q_weights.data @ X))
+                diff_after_svd = np.mean(np.abs(weight.data @ X - q_weights.data @ X - (US @ Vr) @ X))
+                
+                US = np.transpose(sol[0])
+                
+                diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights.data @ X - (US @ Vr) @ X))
+                if n_iters - i < 3:
+                    print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+                
+                USI = linalg.pinv(US)
+                dYU = USI @ dY
+                
+                sol = slinalg.lstsq(np.transpose(X), np.transpose(dYU))
+                Vr = np.transpose(sol[0])
+                
+                diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights.data @ X - (US @ Vr) @ X))
+                if n_iters - i < 3:
+                    print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+
+        new_residual = US @ Vr
+        V = Vr
+        print("Before: ", np.mean(np.abs(residual)), " After: ", np.mean(np.abs(residual - new_residual)), rank)
+        
+        input_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name].input_value(0)
+        mm_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name]
+        
+        V_W = opset.constant(
+            V
+        )
+        V_MM = opset.matmul(input_node, V_W, transpose_a=False, transpose_b=True)
+        
+        US_W = opset.constant(
+            US
+        )
+        US_MM = opset.matmul(V_MM, US_W, transpose_a=False, transpose_b=True)
+
+        node_output_port = mm_node.output(0)
+        node_output_source_ports = node_output_port.get_target_inputs()
+        
+        add = opset.add(mm_node, US_MM)
+
+        for node_output_source_port in node_output_source_ports:
+            node_output_source_port.replace_source_output(add.output(0))
+
 
     def transform_model(
         self,
