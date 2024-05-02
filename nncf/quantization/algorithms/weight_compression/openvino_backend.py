@@ -181,7 +181,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
     
             for i in range(n_iters):
                 VX = Vr @ X
-                if False:
+                if True:
                     sol = slinalg.lstsq(np.transpose(VX), np.transpose(dY))
                 else:
                     VrVX = np.concatenate((Vr, VX), axis=1)
@@ -307,6 +307,9 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             mul_output = mul.output(0)
             for target_input in const_node.output(0).get_target_inputs():
                 target_input.replace_source_output(mul_output)
+
+            if wc_params.compression_config.num_bits == 4:
+                self.insert_lora_residual(model, graph, wc_params, weight, compressed_weight)
 
         # reset name_to_node_mapping
         self.name_to_node_mapping = None
