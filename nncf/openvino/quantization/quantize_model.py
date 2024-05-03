@@ -427,6 +427,7 @@ def compress_weights_impl(
         awq,
         subset_size,
         scale_estimation,
+        lora,
         advanced_parameters,
     )
     graph = NNCFGraphFactory.create(model)
