@@ -30,9 +30,10 @@ from nncf.openvino.statistics.collectors import get_raw_stat_collector
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.awq_patterns import get_awq_patterns
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
-from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
+from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters, WeightCompressionConfig
 from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight, do_dequantization
-
+from nncf.experimental.tensor.functions import numeric as fns
+from nncf.experimental.tensor import Tensor
 
 class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
     def __init__(self, model: ov.Model, name_to_node_mapping: Dict = None):
@@ -121,9 +122,42 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         del const_node
 
+    def _get_int_mul(self, compressed_weight, compression_dtype, const_node_name,
+                        wc_params, const_dtype):
+        compressed_const = opset.constant(
+            compressed_weight.tensor.data, dtype=compression_dtype, name=const_node_name
+        )
+        converted_const = opset.convert(compressed_const, ov.Type.f16)
+        if compressed_weight.zero_point is not None:
+            zero_point_const = opset.constant(
+                compressed_weight.zero_point.data,
+                dtype=compression_dtype,
+                name=f"{const_node_name}/zero_point",
+            )
+            converted_zero_point = opset.convert(zero_point_const, ov.Type.f16)
+            converted_const = opset.subtract(
+                converted_const, converted_zero_point, name=f"{const_node_name}/zero_point/subtract"
+            )
+
+        scale_const = opset.constant(
+            compressed_weight.scale.data, dtype=ov.Type.f16, name=f"{const_node_name}/scale"
+        )
+        mul = opset.multiply(
+            converted_const,
+            scale_const,
+            name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}",
+        )
+
+        mul = opset.convert(
+            mul, const_dtype, name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}/convert"
+        )
+
+        return mul
+
     def insert_lora_residual(self, model: ov.Model, graph: NNCFGraph,
                              wc_params: WeightCompressionParameters, weight,
-                             compressed_weight, rank=8):
+                             compressed_weight, rank=8,
+                             int8_lora=True):
         import numpy.linalg as linalg
         import scipy.linalg as slinalg
         import numpy as np
@@ -214,15 +248,43 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         input_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name].input_value(0)
         mm_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name]
         
-        V_W = opset.constant(
-            V
-        )
-        V_MM = opset.matmul(input_node, V_W, transpose_a=False, transpose_b=True)
+        const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[wc_params.weight_port_id]
+        const_node_name = const_attributes["name"]
+        const_node = self.name_to_node_mapping[const_node_name]
+        const_dtype = const_node.output(0).get_element_type()
         
-        US_W = opset.constant(
-            US
-        )
-        US_MM = opset.matmul(V_MM, US_W, transpose_a=False, transpose_b=True)
+        if int8_lora:
+            compression_config = WeightCompressionConfig()
+            V = Tensor(V)
+            compressed_V = compress_weight(
+                V,
+                wc_params.reduction_axes,
+                compression_config,
+            )
+
+            US = Tensor(US)
+            compressed_US = compress_weight(
+                US,
+                wc_params.reduction_axes,
+                compression_config,
+            )
+            V_W = self._get_int_mul(compressed_V, ov.Type.u8, wc_params.node_with_weight.node_name + "_V", wc_params, const_dtype)
+            
+            V_MM = opset.matmul(input_node, V_W, transpose_a=False, transpose_b=True)
+            
+            US_W = self._get_int_mul(compressed_US, ov.Type.u8, wc_params.node_with_weight.node_name + "_U", wc_params, const_dtype)
+
+            US_MM = opset.matmul(V_MM, US_W, transpose_a=False, transpose_b=True)
+        else:
+            V_W = opset.constant(
+                V
+            )
+            V_MM = opset.matmul(input_node, V_W, transpose_a=False, transpose_b=True)
+            
+            US_W = opset.constant(
+                US
+            )
+            US_MM = opset.matmul(V_MM, US_W, transpose_a=False, transpose_b=True)
 
         node_output_port = mm_node.output(0)
         node_output_source_ports = node_output_port.get_target_inputs()
