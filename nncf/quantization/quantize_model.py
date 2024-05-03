@@ -490,6 +490,7 @@ def compress_weights(
         awq,
         subset_size,
         scale_estimation,
+        lora,
         advanced_parameters,
     )
 
