@@ -63,6 +63,7 @@ class WeightCompression(Algorithm):
         awq: bool,
         subset_size: int,
         scale_estimation: bool,
+        lora: bool,
         advanced_parameters: Optional[AdvancedCompressionParameters] = None,
     ):
         """
@@ -108,6 +109,7 @@ class WeightCompression(Algorithm):
         self._awq = awq
         self._subset_size = subset_size
         self._scale_estimation = scale_estimation
+        self._lora = lora
         self._advanced_parameters = (
             advanced_parameters if advanced_parameters is not None else AdvancedCompressionParameters()
         )
@@ -394,7 +396,7 @@ class WeightCompression(Algorithm):
 
         # Compress model using weight compression parameters
         transformed_model = self._backend_entity.transform_model(
-            model, graph, track(all_weight_params, description="Applying Weight Compression"), precomputed_scales
+            model, graph, track(all_weight_params, description="Applying Weight Compression"), precomputed_scales, self._lora
         )
 
         self._backend_entity.dump_parameters(

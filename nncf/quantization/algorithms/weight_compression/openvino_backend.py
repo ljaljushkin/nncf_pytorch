@@ -239,6 +239,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         graph: NNCFGraph,
         weight_compression_parameters: Iterable[WeightCompressionParameters],
         precomputed_scales: Dict[str, Tensor] = None,
+        lora=False,
     ) -> ov.Model:
         for wc_params in weight_compression_parameters:
             compression_config = wc_params.compression_config
@@ -308,7 +309,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             for target_input in const_node.output(0).get_target_inputs():
                 target_input.replace_source_output(mul_output)
 
-            if wc_params.compression_config.num_bits == 4:
+            if wc_params.compression_config.num_bits == 4 and lora:
                 self.insert_lora_residual(model, graph, wc_params, weight, compressed_weight)
 
         # reset name_to_node_mapping

@@ -409,6 +409,7 @@ def compress_weights_impl(
     awq: bool,
     subset_size: int,
     scale_estimation: bool,
+    lora: bool,
     advanced_parameters: Optional[AdvancedCompressionParameters] = None,
 ) -> ov.Model:
     """

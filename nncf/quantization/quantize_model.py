@@ -339,6 +339,7 @@ def compress_weights(
     subset_size: Optional[int] = 128,
     awq: Optional[bool] = None,
     scale_estimation: Optional[bool] = None,
+    lora: Optional[bool] = None,
     advanced_parameters: Optional[AdvancedCompressionParameters] = None,
 ) -> TModel:
     """
@@ -418,7 +419,9 @@ def compress_weights(
     if backend == BackendType.OPENVINO:
         from nncf.openvino.quantization.quantize_model import compress_weights_impl as ov_compress_weights_impl
 
-        if any((awq, scale_estimation)) and (dataset is None or mode == CompressWeightsMode.NF4 or group_size == -1):
+        if any((awq, scale_estimation)) and (
+            dataset is None or mode == CompressWeightsMode.NF4
+        ):  # or group_size == -1):
             raise AttributeError(
                 "Scale estimation or AWQ algorithm defined, but dataset is None or mode is NF4 or group_size < 0."
             )
@@ -452,6 +455,8 @@ def compress_weights(
         awq = False
     if scale_estimation is None:
         scale_estimation = False
+    if lora is None:
+        lora = False
     if ignored_scope is None:
         ignored_scope = IgnoredScope()
     if sensitivity_metric is None:
