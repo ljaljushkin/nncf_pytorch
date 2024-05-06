@@ -19,6 +19,8 @@ from nncf.common.graph.operator_metatypes import OperatorMetatype
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.utils import get_reduction_axes
 from nncf.experimental.common.tensor_statistics.collectors import TensorCollector
+from nncf.experimental.tensor import Tensor
+from nncf.experimental.tensor.functions import numeric as fns
 from nncf.experimental.tensor.tensor import Tensor
 from nncf.openvino.graph.metatypes import openvino_metatypes as om
 from nncf.openvino.graph.model_transformer import OVModelTransformer
@@ -30,6 +32,7 @@ from nncf.openvino.statistics.collectors import get_raw_stat_collector
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.awq_patterns import get_awq_patterns
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
+from nncf.quantization.algorithms.weight_compression.config import WeightCompressionConfig
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_dequantization
@@ -122,9 +125,42 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         del const_node
 
+    def _get_int_mul(self, compressed_weight, compression_dtype, const_node_name,
+                        wc_params, const_dtype):
+        compressed_const = opset.constant(
+            compressed_weight.tensor.data, dtype=compression_dtype, name=const_node_name
+        )
+        converted_const = opset.convert(compressed_const, ov.Type.f16)
+        if compressed_weight.zero_point is not None:
+            zero_point_const = opset.constant(
+                compressed_weight.zero_point.data,
+                dtype=compression_dtype,
+                name=f"{const_node_name}/zero_point",
+            )
+            converted_zero_point = opset.convert(zero_point_const, ov.Type.f16)
+            converted_const = opset.subtract(
+                converted_const, converted_zero_point, name=f"{const_node_name}/zero_point/subtract"
+            )
+
+        scale_const = opset.constant(
+            compressed_weight.scale.data, dtype=ov.Type.f16, name=f"{const_node_name}/scale"
+        )
+        mul = opset.multiply(
+            converted_const,
+            scale_const,
+            name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}",
+        )
+
+        mul = opset.convert(
+            mul, const_dtype, name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}/convert"
+        )
+
+        return mul
+
     def insert_lora_residual(self, model: ov.Model, graph: NNCFGraph,
                              wc_params: WeightCompressionParameters, weight,
-                             compressed_weight, rank=8):
+                             compressed_weight, rank=8,
+                             int8_lora=True):
         import numpy as np
         import numpy.linalg as linalg
         import scipy.linalg as slinalg
@@ -214,7 +250,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         input_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name].input_value(0)
         mm_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name]
-        
+
         V_W = opset.constant(
             V
         )
