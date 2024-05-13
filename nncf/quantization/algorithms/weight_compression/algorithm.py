@@ -197,8 +197,8 @@ class WeightCompression(Algorithm):
             )
             ratio_defining_params.extend(embedding_params)
 
-        if not self._all_layers and not is_last_layer_shared:
-            ratio_defining_params = ratio_defining_params[:-1]
+        # if not self._all_layers and not is_last_layer_shared:
+        #     ratio_defining_params = ratio_defining_params[:-1]
         return ratio_defining_params
 
     def _set_weight_compression_config(
@@ -314,6 +314,9 @@ class WeightCompression(Algorithm):
         n = len(nodes_to_compress)
         for i, node in enumerate(nodes_to_compress):
             for weight_name, weight_port_id in self._backend_entity.get_weight_names_and_port_ids(node, graph):
+                # Force first embeddings to be in FP32
+                if node.metatype in self._backend_entity.embedding_metatypes:
+                    continue
                 if weight_name in weight_names:
                     if i == n - 1:
                         is_last_layer_shared = True
@@ -345,6 +348,9 @@ class WeightCompression(Algorithm):
                 )
                 all_weight_params.append(weight_params)
                 weight_names.add(weight_name)
+
+        # Force last matmul to be in FP32
+        all_weight_params = all_weight_params[:-1]
 
         ratio_defining_params = self._get_ratio_defining_params(all_weight_params, is_last_layer_shared)
         self._set_weight_compression_config(ratio_defining_params, model, graph, activations)

@@ -12,6 +12,8 @@
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+import numpy as np
+
 import nncf
 from nncf.experimental.tensor import Tensor
 from nncf.experimental.tensor.definitions import TensorDataType
@@ -213,6 +215,59 @@ def compress_weight(
 
     return CompressedWeight(compressed_weight, scale, zero_point)
 
+NF4_QUANTILES = np.array(
+    [
+        -1.0,
+        -0.6961928009986877,
+        -0.5250730514526367,
+        -0.39491748809814453,
+        -0.28444138169288635,
+        -0.18477343022823334,
+        -0.09105003625154495,
+        0.0,
+        0.07958029955625534,
+        0.16093020141124725,
+        0.24611230194568634,
+        0.33791524171829224,
+        0.44070982933044434,
+        0.5626170039176941,
+        0.7229568362236023,
+        1.0,
+    ]
+)
+
+CENTER_OF_NF4_QUANTILES = (NF4_QUANTILES[1:] + NF4_QUANTILES[:-1]) / 2
+
+def _get_nf4_error(norm_weight: np.ndarray, scale, reduction_axis: int, group_size: int = -1) -> float:
+    """
+    Calculates a quantity characterizing the difference between floating point weights and its nf4 fake quantized
+    (compressed and decompressed) version.
+
+    :param weight: Weight array to compress.
+    :param reduction_axes: Axis or axes along which to reduce (collect) different statistics (e.g. min, max).
+    :return: The quantity characterizing the nf4 error.
+    """
+    # original_shape = norm_weight.shape
+    # norm_weight, scale = calculate_normalized_weight_and_nf4_scale(weight, reduction_axes, group_size)
+
+    index_of_quantile = np.searchsorted(CENTER_OF_NF4_QUANTILES, norm_weight)
+    nf4_rounded = NF4_QUANTILES[index_of_quantile]
+
+    decompressed_weight = nf4_rounded * scale
+
+    if reduction_axis > -1:
+        shape = list(decompressed_weight.shape)  # [a1, r, a2] - "r" refers to number of channels along reduction axis
+        shape[reduction_axis] = shape[reduction_axis] * shape[reduction_axis + 1]
+        shape[reduction_axis + 1] = 1
+        reshaped_weight = decompressed_weight.reshape(shape)
+        reshaped_weight = np.squeeze(reshaped_weight)
+        decompressed_weight = reshaped_weight
+
+    return decompressed_weight
+    # diff = (decompressed_weight - weight) ** 2
+    # layer_err = np.mean(diff, axis=reduction_axes)
+    # val = np.max(layer_err)
+    # return val
 
 def do_dequantization(
     compressed_weights: Tensor, scale: Tensor, zero_point: Tensor, reduction_axis: int = -1
