@@ -8,9 +8,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import re
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import numpy as np
 import openvino as ov
+import pandas as pd
+import wandb
+from matplotlib import pyplot as plt
 from openvino.runtime import opset13 as opset
 
 from nncf.common.graph import NNCFGraph
@@ -36,6 +42,7 @@ from nncf.quantization.algorithms.weight_compression.config import WeightCompres
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_dequantization
+from nncf.quantization.algorithms.weight_compression.weight_lowering import do_integer_quantization
 
 
 class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
@@ -166,26 +173,32 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         import scipy.linalg as slinalg
         import scipy.optimize as optimize
 
+        print(wc_params.node_with_weight.node_name)
+        layer_name = wc_params.node_with_weight.node_name.split('/')[0].split('__module.model.layers.')[1]
+        print(compressed_weight.tensor.shape)
         q_weights = do_dequantization(compressed_weight.tensor, compressed_weight.scale,
                                       compressed_weight.zero_point, wc_params.reduction_axes[0])
+        X = wc_params.X.data
+        diff_before = np.mean(np.abs(weight.data @ X - q_weights @ X))
+
         # q_w + USV = w => USV = w - q_w
         residual = (weight - q_weights).data.astype(np.float32)
         w_residual = residual.copy()
         if wc_params.reduction_axes == 0:
             residual = np.transpose(residual)
-        # if wc_params.stat is not None:# and False:
-        #     s = wc_params.stat.data
-        #     if wc_params.compression_config.group_size > 0:
-        #         gs = wc_params.compression_config.group_size
-        #         n_gs = s.shape[0] // gs
-        #         for i in range(n_gs):
-        #             offset = i * gs
-        #             denum = np.sum(s[offset:offset + gs])
-        #             s[offset:offset + gs] = s[offset:offset + gs] / denum
-        #             denum = np.max(s[offset:offset + gs])
-        #             s[offset:offset + gs] = s[offset:offset + gs] / denum
-        #         s = np.expand_dims(s, 0)
-        #         residual = residual * s
+        if wc_params.stat is not None:# and False:
+            s = wc_params.stat.data
+            if wc_params.compression_config.group_size > 0:
+                gs = wc_params.compression_config.group_size
+                n_gs = s.shape[0] // gs
+                for i in range(n_gs):
+                    offset = i * gs
+                    denum = np.sum(s[offset:offset + gs])
+                    s[offset:offset + gs] = s[offset:offset + gs] / denum
+                    denum = np.max(s[offset:offset + gs])
+                    s[offset:offset + gs] = s[offset:offset + gs] / denum
+                s = np.expand_dims(s, 0)
+                residual = residual * s
 
             # low_k = max(int(2 * s.shape[0] // 3), 1)
             # lowk_idxs = np.argsort(s.data)[:low_k]
@@ -205,61 +218,110 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         Vr = Sr @ Vr
         US = Ur
 
-        print(wc_params.node_with_weight.node_name)
-
         n_iters = 3
-        # if wc_params.X is not None: # rectification by data
-        #     X = wc_params.X.data
-        #     dY = w_residual @ X
+        if wc_params.X is not None: # rectification by data
+            X = wc_params.X.data
+            dY = w_residual @ X
 
-        #     # US @ Vr = res
-        #     # US @ Vr @ X = dY
-        #     # US @ |VR VR @ X| = |res dY|
+            # US @ Vr = res
+            # US @ Vr @ X = dY
+            # US @ |VR VR @ X| = |res dY|
 
-        #     for i in range(n_iters):
-        #         VX = Vr @ X
-        #         if True:
-        #             sol = slinalg.lstsq(np.transpose(VX), np.transpose(dY))
-        #         else:
-        #             VrVX = np.concatenate((Vr, VX), axis=1)
-        #             dYR = np.concatenate((w_residual, dY), axis=1)
-        #             sol = slinalg.lstsq(np.transpose(VrVX), np.transpose(dYR))
+            """
+            1 Rectification 1:  0.010965054096178758 0.0007162072519819473 0.0006860411346467133
+            1 Rectification 2:  0.010965054096178758 0.0007162072519819473 0.0006725860367021748
+            2 Rectification 1:  0.010965054096178758 0.0006725860367021748 0.0006652183148589173
+            2 Rectification 2:  0.010965054096178758 0.0006725860367021748 0.0006605420416146037
+            Before:  0.0001609714  After:  0.00017714252 8
+            """
+            loss = []
+            for i in range(n_iters):
+                VX = Vr @ X
+                if True:
+                    sol = slinalg.lstsq(np.transpose(VX), np.transpose(dY))
+                else:
+                    VrVX = np.concatenate((Vr, VX), axis=1)
+                    dYR = np.concatenate((w_residual, dY), axis=1)
+                    sol = slinalg.lstsq(np.transpose(VrVX), np.transpose(dYR))
 
-        #         diff_before = np.mean(np.abs(weight.data @ X - q_weights.data @ X))
-        #         diff_after_svd = np.mean(np.abs(weight.data @ X - q_weights.data @ X - (US @ Vr) @ X))
+                diff_after_svd = np.mean(np.abs(weight.data @ X - q_weights @ X - (US @ Vr) @ X))
+                if i == 0:
+                    loss.extend([diff_before, diff_after_svd])
+                    wandb.log({layer_name: diff_before})
+                    wandb.log({layer_name: diff_after_svd})
 
-        #         US = np.transpose(sol[0])
+                US = np.transpose(sol[0])
 
-        #         diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights.data @ X - (US @ Vr) @ X))
-        #         if n_iters - i < 3:
-        #             print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+                diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights @ X - (US @ Vr) @ X))
+                loss.append(diff_after_svd_rectification)
+                wandb.log({layer_name: diff_after_svd_rectification})
+                if n_iters - i < 3:
+                    print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
 
-        #         USI = linalg.pinv(US)
-        #         dYU = USI @ dY
+                USI = linalg.pinv(US)
+                dYU = USI @ dY
 
-        #         sol = slinalg.lstsq(np.transpose(X), np.transpose(dYU))
-        #         Vr = np.transpose(sol[0])
+                sol = slinalg.lstsq(np.transpose(X), np.transpose(dYU))
+                Vr = np.transpose(sol[0])
 
-        #         diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights.data @ X - (US @ Vr) @ X))
-        #         if n_iters - i < 3:
-        #             print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+                diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights @ X - (US @ Vr) @ X))
+                loss.append(diff_after_svd_rectification)
+                wandb.log({layer_name: diff_after_svd_rectification})
+                if n_iters - i < 3:
+                    print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
 
         new_residual = US @ Vr
         V = Vr
         print("Before: ", np.mean(np.abs(residual)), " After: ", np.mean(np.abs(residual - new_residual)), rank)
+        weight_delta = np.mean(np.abs(residual)) - np.mean(np.abs(residual - new_residual))
+        original_l1_noise = diff_before
+        l1_noise_delta = diff_before - diff_after_svd_rectification
+        wandb.log({
+            'weight_delta': weight_delta,
+            'original_l1_noise': original_l1_noise,
+            'l1_noise_delta': l1_noise_delta,
+        })
 
         input_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name].input_value(0)
         mm_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name]
 
-        V_W = opset.constant(
-            V
-        )
-        V_MM = opset.matmul(input_node, V_W, transpose_a=False, transpose_b=True)
+        const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[wc_params.weight_port_id]
+        const_node_name = const_attributes["name"]
+        const_node = self.name_to_node_mapping[const_node_name]
+        const_dtype = const_node.output(0).get_element_type()
 
-        US_W = opset.constant(
-            US
-        )
-        US_MM = opset.matmul(V_MM, US_W, transpose_a=False, transpose_b=True)
+        if int8_lora:
+            compression_config = WeightCompressionConfig()
+            V = Tensor(V)
+            compressed_V = compress_weight(
+                V,
+                wc_params.reduction_axes,
+                compression_config,
+            )
+
+            US = Tensor(US)
+            compressed_US = compress_weight(
+                US,
+                wc_params.reduction_axes,
+                compression_config,
+            )
+            V_W = self._get_int_mul(compressed_V, ov.Type.u8, wc_params.node_with_weight.node_name + "_V", wc_params, const_dtype)
+
+            V_MM = opset.matmul(input_node, V_W, transpose_a=False, transpose_b=True)
+
+            US_W = self._get_int_mul(compressed_US, ov.Type.u8, wc_params.node_with_weight.node_name + "_U", wc_params, const_dtype)
+
+            US_MM = opset.matmul(V_MM, US_W, transpose_a=False, transpose_b=True)
+        else:
+            V_W = opset.constant(
+                V
+            )
+            V_MM = opset.matmul(input_node, V_W, transpose_a=False, transpose_b=True)
+
+            US_W = opset.constant(
+                US
+            )
+            US_MM = opset.matmul(V_MM, US_W, transpose_a=False, transpose_b=True)
 
         node_output_port = mm_node.output(0)
         node_output_source_ports = node_output_port.get_target_inputs()
@@ -269,6 +331,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         for node_output_source_port in node_output_source_ports:
             node_output_source_port.replace_source_output(add.output(0))
 
+        return {layer_name: loss}
 
     def transform_model(
         self,
@@ -279,101 +342,179 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         lora=False,
         num_params = None,
     ) -> ov.Model:
-        ids_50 = list(range(0, num_params, 2))
-        ids_25 = set(range(0, num_params, 4))
-        ids_75 = set(range(num_params)) - ids_25
-        ids = ids_25
+        # ids_50 = list(range(0, num_params, 2))
+        # ids_25 = set(range(0, num_params, 4))
+        # ids_75 = set(range(num_params)) - ids_25
+        # ids = ids_50
         ids = range(num_params)
-        # try:
-        #     exp_name = 'lora_fp32'
-        #     import wandb
-        #     wandb_run = wandb.init(
-        #         project="lora_rectify",
-        #         # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
-        #         name= exp_folder,
-        #         # Track hyperparameters and run metadata
-        #         config={
-        #             "num_params_to_rectify": num_params,
-        #             "rank": 8,
-        #         }
-        #     )
-        # finally:
-        #     wandb_run.finish()
+        data = []
+        try:
+            int4_params = filter(lambda x: x.compression_config.num_bits == 4, weight_compression_parameters)
 
-        for index, wc_params in enumerate(weight_compression_parameters):
-            compression_config = wc_params.compression_config
-            if compression_config.mode == CompressWeightsMode.NF4:
-                compression_dtype = ov.Type.nf4
-            elif compression_config.mode in [
-                CompressWeightsMode.INT8_ASYM,
-                CompressWeightsMode.INT8_SYM,
-                CompressWeightsMode.INT8,
-                CompressWeightsMode.INT4_ASYM,
-                CompressWeightsMode.INT4_SYM,
-            ]:
-                if compression_config.mode in [CompressWeightsMode.INT4_ASYM, CompressWeightsMode.INT4_SYM]:
-                    compression_dtype = ov.Type.u4
+            # NOISE_FILE = Path('noises.csv')
+            # NOISE_FILE = Path('max_var_scores.csv')
+            # if NOISE_FILE.exists():
+            #     df = pd.read_csv(NOISE_FILE)
+            #     list_diff_before = list(df[df.columns[1]])
+            # else:
+            #     raise RuntimeError('No noises.csv for criteria!')
+            #     import numpy as np
+            #     list_diff_before = []
+            #     for wc_params in int4_params:
+            #         const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[wc_params.weight_port_id]
+            #         const_node_name = const_attributes["name"]
+            #         const_node = self.name_to_node_mapping[const_node_name]
+            #         weight = Tensor(get_const_value(const_node))
+            #         shape = weight.shape
+            #         q_weights, _, _ = do_integer_quantization(weight, wc_params.reduction_axes[0], wc_params.compression_config)
+            #         q_weights = q_weights.reshape(shape)
+            #         X = wc_params.X.data
+            #         diff_before = np.mean(np.abs(weight.data @ X - q_weights.data @ X))
+            #         list_diff_before.append(diff_before)
+
+            #     names = []
+            #     for wc_params in int4_params:
+            #         pattern = r'layers\.(\d+\.\w+\.\w+)'
+            #         match = re.search(pattern, wc_params.node_with_weight.node_name)
+            #         if match:
+            #             layer_name = match.group(1)
+            #         else:
+            #             raise RuntimeError('Cant parse: ', wc_params.node_with_weight.node_name)
+            #         names.append(layer_name)
+
+            #     pd.DataFrame(list_diff_before).to_csv(NOISE_FILE)
+            #     print(len(names), len(list_diff_before))
+            #     print(names, sep='\n')
+            #     print(list_diff_before, sep='\n')
+            # TODO: why different sizes???
+            #     # pd.DataFrame.from_dict({'name': names, 'orig_noise': list_diff_before}).to_csv(NOISE_FILE)
+            #     plt.plot(list_diff_before, title='L1 quantization noise with criteria')
+            #     plt.savefig('noises.png')
+
+            # ratio = 0.5
+            # criteria = False
+            # n_select = int(num_params * ratio)
+            # indexes_of_layers_in_ascending_order_of_scores = [i[0] for i in sorted(enumerate(list_diff_before), reverse=criteria, key=lambda x: x[1])]
+            # ids = indexes_of_layers_in_ascending_order_of_scores[:n_select]
+
+            # TODO: work with pandas
+            num_per_type = {'qkv_proj': 0, 'o_proj': 0, 'gate_up_proj': 0, 'down_proj': 0}
+            for index, wc_params in enumerate(int4_params):
+                pattern = r'layers\.(\d+\.\w+\.\w+)'
+                layer_name = wc_params.node_with_weight.node_name
+                match = re.search(pattern, layer_name)
+                if match:
+                    layer_name = match.group(1)
+                is_selected = index in ids
+                if is_selected:
+                    for key in num_per_type:
+                        if key in layer_name:
+                            num_per_type[key] += 1
+                status = 'LORA' if is_selected else 'NORMAL'
+                # diff = list_diff_before[index]
+                # print(f'{layer_name} {status} {diff}')
+                print(f'{layer_name} {status}')
+
+            num_per_type = {key.replace('_proj', ''): value for key, value in num_per_type.items()}
+            print('Statistics for LoRA layers: ', num_per_type)
+
+            exp_name = 'lora'
+            wandb_run = wandb.init(
+                project="lora_rectify",
+                # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
+                name=exp_name,
+                # Track hyperparameters and run metadata
+                config={
+                    "model_name": 'stablelm_1.6b',
+                    "total_num_params": num_params,
+                    "num_params_to_rectify": len(ids),
+                    "rank": 8,
+                    # "ratio": ratio,
+                    # "criteria": criteria,
+                }
+            )
+
+            index = 0
+            for wc_params in weight_compression_parameters:
+                compression_config = wc_params.compression_config
+                if compression_config.mode == CompressWeightsMode.NF4:
+                    compression_dtype = ov.Type.nf4
+                elif compression_config.mode in [
+                    CompressWeightsMode.INT8_ASYM,
+                    CompressWeightsMode.INT8_SYM,
+                    CompressWeightsMode.INT8,
+                    CompressWeightsMode.INT4_ASYM,
+                    CompressWeightsMode.INT4_SYM,
+                ]:
+                    if compression_config.mode in [CompressWeightsMode.INT4_ASYM, CompressWeightsMode.INT4_SYM]:
+                        compression_dtype = ov.Type.u4
+                    else:
+                        compression_dtype = ov.Type.u8
                 else:
-                    compression_dtype = ov.Type.u8
-            else:
-                raise ValueError(f"{compression_config.mode.value} is not supported.")
+                    raise ValueError(f"{compression_config.mode.value} is not supported.")
 
-            const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[wc_params.weight_port_id]
-            const_node_name = const_attributes["name"]
-            const_node = self.name_to_node_mapping[const_node_name]
-            const_dtype = const_node.output(0).get_element_type()
+                const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[wc_params.weight_port_id]
+                const_node_name = const_attributes["name"]
+                const_node = self.name_to_node_mapping[const_node_name]
+                const_dtype = const_node.output(0).get_element_type()
 
-            weight = Tensor(get_const_value(const_node))
-            original_shape = weight.shape
-            compressed_weight = compress_weight(
-                weight,
-                wc_params.reduction_axes,
-                compression_config,
-                precomputed_scales[wc_params.node_with_weight.node_name],
-            )
-
-            compressed_const = opset.constant(
-                compressed_weight.tensor.data, dtype=compression_dtype, name=const_node_name
-            )
-            converted_const = opset.convert(compressed_const, ov.Type.f16)
-            if compressed_weight.zero_point is not None:
-                zero_point_const = opset.constant(
-                    compressed_weight.zero_point.data,
-                    dtype=compression_dtype,
-                    name=f"{const_node_name}/zero_point",
-                )
-                converted_zero_point = opset.convert(zero_point_const, ov.Type.f16)
-                converted_const = opset.subtract(
-                    converted_const, converted_zero_point, name=f"{const_node_name}/zero_point/subtract"
+                weight = Tensor(get_const_value(const_node))
+                original_shape = weight.shape
+                compressed_weight = compress_weight(
+                    weight,
+                    wc_params.reduction_axes,
+                    compression_config,
+                    precomputed_scales[wc_params.node_with_weight.node_name],
                 )
 
-            scale_const = opset.constant(
-                compressed_weight.scale.data, dtype=ov.Type.f16, name=f"{const_node_name}/scale"
-            )
-            mul = opset.multiply(
-                converted_const,
-                scale_const,
-                name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}",
-            )
+                compressed_const = opset.constant(
+                    compressed_weight.tensor.data, dtype=compression_dtype, name=const_node_name
+                )
+                converted_const = opset.convert(compressed_const, ov.Type.f16)
+                if compressed_weight.zero_point is not None:
+                    zero_point_const = opset.constant(
+                        compressed_weight.zero_point.data,
+                        dtype=compression_dtype,
+                        name=f"{const_node_name}/zero_point",
+                    )
+                    converted_zero_point = opset.convert(zero_point_const, ov.Type.f16)
+                    converted_const = opset.subtract(
+                        converted_const, converted_zero_point, name=f"{const_node_name}/zero_point/subtract"
+                    )
 
-            if compression_config.group_size != -1:
-                mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
-
-            if const_dtype != ov.Type.f16:
-                mul = opset.convert(
-                    mul, const_dtype, name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}/convert"
+                scale_const = opset.constant(
+                    compressed_weight.scale.data, dtype=ov.Type.f16, name=f"{const_node_name}/scale"
+                )
+                mul = opset.multiply(
+                    converted_const,
+                    scale_const,
+                    name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}",
                 )
 
-            mul_output = mul.output(0)
-            for target_input in const_node.output(0).get_target_inputs():
-                target_input.replace_source_output(mul_output)
+                if compression_config.group_size != -1:
+                    mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
 
-            if wc_params.compression_config.num_bits == 4 and lora and index in ids:
-                self.insert_lora_residual(model, graph, wc_params, weight, compressed_weight)
+                if const_dtype != ov.Type.f16:
+                    mul = opset.convert(
+                        mul, const_dtype, name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}/convert"
+                    )
+
+                mul_output = mul.output(0)
+                for target_input in const_node.output(0).get_target_inputs():
+                    target_input.replace_source_output(mul_output)
+
+                if wc_params.compression_config.num_bits == 4 and lora:
+                    index += 1
+                    if index - 1 in ids:
+                        data.append(self.insert_lora_residual(model, graph, wc_params, weight, compressed_weight))
+        finally:
+            # pass
+            wandb_run.finish()
+            df = pd.DataFrame(data)
+            df.transpose().to_csv('losses.csv')
 
         # reset name_to_node_mapping
         self.name_to_node_mapping = None
-
         return model
 
     @staticmethod
