@@ -9,8 +9,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from abc import abstractmethod
 from typing import Dict, List, Optional, TypeVar
+
+import pandas as pd
 
 from nncf.common.graph import NNCFGraph
 from nncf.common.logging.track_progress import track
@@ -76,20 +79,46 @@ class MixedPrecisionCriterion:
         Assigns quantization precision based on computed layers' sensitivities, ratio of parameters.
         """
         scores = self._calc_sensitivity()
+        pd.DataFrame(scores).to_csv('max_var_scores.csv')
+        assert False
+        from matplotlib import pyplot as plt
+        plt.plot(scores)
+        plt.title('mixed precision sensitivity')
+        plt.savefig('scores.png')
         num_all_weights = sum(wp.num_weights for wp in self._weight_params)
 
         indexes_of_layers_in_ascending_order_of_scores = [
             i[0] for i in sorted(enumerate(scores), reverse=False, key=lambda x: x[1])
         ]
         num_weights_in_4bit = 0
+        ids = []
         for index in indexes_of_layers_in_ascending_order_of_scores:
             weight_param = self._weight_params[index]
             current_ratio = (num_weights_in_4bit + weight_param.num_weights) / num_all_weights
+            ids.append(index)
             if current_ratio >= self._ratio:
                 break
             weight_param.compression_config = self._primary_config
             num_weights_in_4bit += weight_param.num_weights
 
+        num_per_type = {'qkv_proj': 0, 'o_proj': 0, 'gate_up_proj': 0, 'down_proj': 0}
+        for index, wc_params in enumerate(self._weight_params):
+            pattern = r'layers\.(\d+\.\w+\.\w+)'
+            layer_name = wc_params.node_with_weight.node_name
+            match = re.search(pattern, layer_name)
+            if match:
+                layer_name = match.group(1)
+            is_selected = index in ids
+            if is_selected:
+                for key in num_per_type:
+                    if key in layer_name:
+                        num_per_type[key] += 1
+            status = 'LORA' if is_selected else 'NORMAL'
+            diff = list_diff_before[index]
+            print(f'{layer_name} {status} {diff}')
+        for key in num_per_type:
+            num_per_type[key.replace('_proj', '')] = num_per_type.pop(key)
+        print('Statistics for LoRA layers: ', num_per_type)
 
 @MIXED_PRECISION_CRITERIA.register(SensitivityMetric.WEIGHT_QUANTIZATION_ERROR)
 class DataFreeCriterion(MixedPrecisionCriterion):
