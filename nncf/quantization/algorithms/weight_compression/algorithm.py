@@ -314,7 +314,7 @@ class WeightCompression(Algorithm):
         n = len(nodes_to_compress)
         for i, node in enumerate(nodes_to_compress):
             for weight_name, weight_port_id in self._backend_entity.get_weight_names_and_port_ids(node, graph):
-                # Force first embeddings to be in FP32
+                # NOTE: Force first embeddings to be in FP32
                 if node.metatype in self._backend_entity.embedding_metatypes:
                     continue
                 if weight_name in weight_names:
@@ -349,7 +349,7 @@ class WeightCompression(Algorithm):
                 all_weight_params.append(weight_params)
                 weight_names.add(weight_name)
 
-        # Force last matmul to be in FP32
+        # NOTE: Force last matmul to be in FP32
         all_weight_params = all_weight_params[:-1]
 
         ratio_defining_params = self._get_ratio_defining_params(all_weight_params, is_last_layer_shared)
@@ -393,6 +393,7 @@ class WeightCompression(Algorithm):
             k = wp.node_with_weight.node_name
             if wp.node_with_weight.node_name in activations:
                 stats = activations[k]
+                # TODO: batch size, sequence length, hidden size for each layer ??
                 vals = [fns.mean(stat, axis=0) for stat in stats]
                 X = fns.stack(vals)
                 X = fns.transpose(X)

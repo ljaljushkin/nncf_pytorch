@@ -8,6 +8,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import math
 import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -168,7 +169,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
     def insert_lora_residual(self, model: ov.Model, graph: NNCFGraph,
                              wc_params: WeightCompressionParameters, weight,
                              compressed_weight, rank=8,
-                             int8_lora=False, ):
+                             int8_lora=False):
         import numpy as np
         import numpy.linalg as linalg
         import scipy.linalg as slinalg
@@ -192,17 +193,21 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         if wc_params.stat is not None:# and False:
             s = wc_params.stat.data
             if wc_params.compression_config.group_size > 0:
-                gs = wc_params.compression_config.group_size
-                n_gs = s.shape[0] // gs
-                for i in range(n_gs):
-                    offset = i * gs
-                    denum = np.sum(s[offset:offset + gs])
-                    s[offset:offset + gs] = s[offset:offset + gs] / denum
-                    denum = np.max(s[offset:offset + gs])
-                    s[offset:offset + gs] = s[offset:offset + gs] / denum
-                s = np.expand_dims(s, 0)
-                residual = residual * s
-
+                # gs = wc_params.compression_config.group_size
+                # n_gs = s.shape[0] // gs
+                # for i in range(n_gs):
+                #     offset = i * gs
+                #     denum = np.sum(s[offset:offset + gs])
+                #     s[offset:offset + gs] = s[offset:offset + gs] / denum
+                #     denum = np.max(s[offset:offset + gs])
+                #     s[offset:offset + gs] = s[offset:offset + gs] / denum
+                # s = np.expand_dims(s, 0)
+                s = s / math.sqrt(fns.min(s) * fns.max(s))
+                print('Scaled S stats: min={:.2f} max={:.2f}'.format(fns.min(s), fns.max(s)))
+                s = np.diagflat(s)
+                s_inv = np.linalg.inv(s)
+                print(f'Shapes before mul: residual={residual.shape} s={s.shape}')
+                residual = residual @ s
             # low_k = max(int(2 * s.shape[0] // 3), 1)
             # lowk_idxs = np.argsort(s.data)[:low_k]
             # for idx in lowk_idxs:
@@ -217,9 +222,12 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         Sr = np.diag(S[:rank])
         Vr = V[:rank, :]
 
-        #US = Ur @ Sr
-        Vr = Sr @ Vr
-        US = Ur
+        # Vr = Sr @ Vr
+        US = Ur @ Sr
+        print(f'Shapes: residual={residual.shape} s={s.shape} s_inv={s_inv.shape} Vr={Vr.shape}')
+        print(f'Shapes: Ur={Ur.shape} X={X.shape}')
+        Vr = Vr @ s_inv
+        print(f'Shapes: US={US.shape}')
 
         n_iters = 3
         if wc_params.X is not None: # rectification by data
@@ -258,8 +266,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights @ X - (US @ Vr) @ X))
                 loss.append(diff_after_svd_rectification)
                 wandb.log({layer_name: diff_after_svd_rectification})
-                if n_iters - i < 3:
-                    print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+                # if n_iters - i < 3:
+                print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
 
                 USI = linalg.pinv(US)
                 dYU = USI @ dY
@@ -270,8 +278,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights @ X - (US @ Vr) @ X))
                 loss.append(diff_after_svd_rectification)
                 wandb.log({layer_name: diff_after_svd_rectification})
-                if n_iters - i < 3:
-                    print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+                # if n_iters - i < 3:
+                print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
 
         new_residual = US @ Vr
         V = Vr
@@ -342,7 +350,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         graph: NNCFGraph,
         weight_compression_parameters: Iterable[WeightCompressionParameters],
         precomputed_scales: Dict[str, Tensor] = None,
-        lora=False,
+        lora=True,
         num_params = None,
     ) -> ov.Model:
         # ids_50 = list(range(0, num_params, 2))
@@ -352,7 +360,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         ids = range(num_params)
         data = []
         try:
-            exp_name = 'lora_nf4'
+            exp_name = 'lora_nf4_lqer'
             wandb_run = wandb.init(
                 project="lora_rectify",
                 # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
@@ -369,10 +377,10 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             int4_params = filter(lambda x: x.compression_config.num_bits == 4, weight_compression_parameters)
 
             # NOISE_FILE = Path('noises.csv')
-            # NOISE_FILE = Path('max_var_scores.csv')
-            # if NOISE_FILE.exists():
-            #     df = pd.read_csv(NOISE_FILE)
-            #     list_diff_before = list(df[df.columns[1]])
+            NOISE_FILE = Path('max_var_scores.csv')
+            if NOISE_FILE.exists():
+                df = pd.read_csv(NOISE_FILE)
+                list_diff_before = list(df[df.columns[1]])
             # else:
             #     raise RuntimeError('No noises.csv for criteria!')
             #     import numpy as np
@@ -399,23 +407,25 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             #             raise RuntimeError('Cant parse: ', wc_params.node_with_weight.node_name)
             #         names.append(layer_name)
 
-            #     pd.DataFrame(list_diff_before).to_csv(NOISE_FILE)
-            #     print(len(names), len(list_diff_before))
-            #     print(names, sep='\n')
-            #     print(list_diff_before, sep='\n')
+                # pd.DataFrame(list_diff_before).to_csv(NOISE_FILE)
+                # print(len(names), len(list_diff_before))
+                # print(names, sep='\n')
+                # print(list_diff_before, sep='\n')
             # TODO: why different sizes???
             #     # pd.DataFrame.from_dict({'name': names, 'orig_noise': list_diff_before}).to_csv(NOISE_FILE)
             #     plt.plot(list_diff_before, title='L1 quantization noise with criteria')
             #     plt.savefig('noises.png')
 
-            # ratio = 0.5
-            # criteria = False
-            # n_select = int(num_params * ratio)
-            # indexes_of_layers_in_ascending_order_of_scores = [i[0] for i in sorted(enumerate(list_diff_before), reverse=criteria, key=lambda x: x[1])]
-            # ids = indexes_of_layers_in_ascending_order_of_scores[:n_select]
+            ratio = 0.8
+            criteria = True
+            n_select = int(num_params * ratio)
+            indexes_of_layers_in_ascending_order_of_scores = [i[0] for i in sorted(enumerate(list_diff_before), reverse=criteria, key=lambda x: x[1])]
+            ids = indexes_of_layers_in_ascending_order_of_scores[:n_select]
 
             # TODO: work with pandas
-            num_per_type = {'qkv_proj': 0, 'o_proj': 0, 'gate_up_proj': 0, 'down_proj': 0}
+            # num_per_type_phi = {'qkv_proj': 0, 'o_proj': 0, 'gate_up_proj': 0, 'down_proj': 0}
+            num_per_type_lm = {'down_proj': 0, 'up_proj': 0, 'gate_proj': 0, 'q_proj': 0, 'k_proj': 0, 'v_proj': 0, 'o_proj': 0}
+            num_per_type = num_per_type_lm
             for index, wc_params in enumerate(int4_params):
                 pattern = r'layers\.(\d+\.\w+\.\w+)'
                 layer_name = wc_params.node_with_weight.node_name
@@ -427,13 +437,13 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     for key in num_per_type:
                         if key in layer_name:
                             num_per_type[key] += 1
-                status = 'LORA' if is_selected else 'NORMAL'
+                status = 'LORA_8' if is_selected else 'NOT SELECTED'
                 # diff = list_diff_before[index]
                 # print(f'{layer_name} {status} {diff}')
                 print(f'{layer_name} {status}')
 
             num_per_type = {key.replace('_proj', ''): value for key, value in num_per_type.items()}
-            print('Statistics for LoRA layers: ', num_per_type)
+            print('Statistics for LoRA r8 layers: ', num_per_type)
 
             index = 0
             for wc_params in weight_compression_parameters:
@@ -506,13 +516,13 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
                 if wc_params.compression_config.num_bits == 4 and lora:
                     index += 1
-                    if index - 1 in ids:
-                        data.append(self.insert_lora_residual(model, graph, wc_params, weight, compressed_weight))
+                    rank = 8 if index - 1 in ids else 64
+                    data.append(self.insert_lora_residual(model, graph, wc_params, weight, compressed_weight, rank=rank))
         finally:
             # pass
             wandb_run.finish()
             df = pd.DataFrame(data)
-            df.transpose().to_csv('losses.csv')
+            df.to_csv('losses.csv')
 
         # reset name_to_node_mapping
         self.name_to_node_mapping = None

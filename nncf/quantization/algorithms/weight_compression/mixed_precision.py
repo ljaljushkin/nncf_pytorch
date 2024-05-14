@@ -12,6 +12,8 @@
 from abc import abstractmethod
 from typing import Dict, List, Optional, TypeVar
 
+import pandas as pd
+
 from nncf.common.graph import NNCFGraph
 from nncf.common.logging.track_progress import track
 from nncf.common.utils.registry import Registry
@@ -76,6 +78,9 @@ class MixedPrecisionCriterion:
         Assigns quantization precision based on computed layers' sensitivities, ratio of parameters.
         """
         scores = self._calc_sensitivity()
+        df = pd.DataFrame(scores)
+        df.to_csv('scores.csv')
+        # assert False
         num_all_weights = sum(wp.num_weights for wp in self._weight_params)
 
         indexes_of_layers_in_ascending_order_of_scores = [
