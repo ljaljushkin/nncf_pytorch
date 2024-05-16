@@ -10,12 +10,19 @@
 # limitations under the License.
 
 import numpy as np
+import openvino
 import openvino.runtime as ov
 import pytest
+from openvino.runtime import Core
 
 import nncf
+from nncf import CompressWeightsMode
+from nncf import ModelType
+from tests.openvino.native.models import AWQMatmulModel
 from tests.openvino.native.models import ConvModel as ModelWithMultipleInputs
 from tests.openvino.native.models import LinearModel as ModelWithSingleInput
+
+core = Core()
 
 dataset = [
     {
@@ -39,25 +46,29 @@ def multiple_inputs_as_dict_transform_fn(data_item):
         "Input_2": data_item["input_1"],
     }
 
+def test_quantize_compressed_weight_simple(tmp_path):
+    model = ModelWithSingleInput().ov_model
+    calibration_dataset = nncf.Dataset(dataset, single_input_transform_fn)
 
-@pytest.mark.parametrize(
-    "model,transform_fn",
-    [
-        [ModelWithSingleInput(), single_input_transform_fn],
-        [ModelWithMultipleInputs(), multiple_inputs_transform_fn],
-        [ModelWithMultipleInputs(), multiple_inputs_as_dict_transform_fn],
-    ],
-    ids=[
-        "single_input_native",
-        "multiple_inputs_native",
-        "multiple_inputs_as_dict_native",
-    ],
-)
-def test_transform_fn(model, transform_fn):
-    # Check the transformation function
-    compiled_model = ov.compile_model(model.ov_model)
-    _ = compiled_model(transform_fn(next(iter(dataset))))
+    openvino.save_model(model, tmp_path / 'model.xml', compress_to_fp16=False)
 
-    # Start quantization
-    calibration_dataset = nncf.Dataset(dataset, transform_fn)
-    _ = nncf.quantize(model.ov_model, calibration_dataset)
+    compressed_model = nncf.compress_weights(model, mode=CompressWeightsMode.INT8_SYM)#, group_size=2)
+    openvino.save_model(compressed_model, tmp_path / 'compressed_model.xml', compress_to_fp16=False)
+
+    # compressed_model = core.read_model(tmp_path / 'compressed_model.xml')
+    quantized_model = nncf.quantize(compressed_model, calibration_dataset, model_type=ModelType.TRANSFORMER)
+    openvino.save_model(quantized_model, tmp_path / 'quantized_model.xml', compress_to_fp16=False)
+
+def test_quantize_compressed_weight_awq_model(tmp_path):
+    model = AWQMatmulModel().ov_model
+    calibration_dataset = nncf.Dataset([np.ones([8, 8])])
+
+    openvino.save_model(model, tmp_path / 'model.xml', compress_to_fp16=False)
+
+    compressed_model = nncf.compress_weights(model, mode=CompressWeightsMode.INT8_SYM)#, group_size=2)
+    openvino.save_model(compressed_model, tmp_path / 'compressed_model.xml', compress_to_fp16=False)
+
+    # compressed_model = core.read_model(tmp_path / 'compressed_model.xml')
+    quantized_model = nncf.quantize(compressed_model, calibration_dataset, model_type=ModelType.TRANSFORMER)
+    openvino.save_model(quantized_model, tmp_path / 'quantized_model.xml', compress_to_fp16=False)
+
