@@ -168,8 +168,14 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
     def insert_lora_residual(self, model: ov.Model, graph: NNCFGraph,
                              wc_params: WeightCompressionParameters, weight,
-                             compressed_weight, rank=8,
-                             int8_lora=False):
+                             compressed_weight,
+                             rank=8,
+                             int8_lora=True,
+                             L2QER=False,
+                             w_regulation=False,
+                             n_iters = 3,
+                             cached_adapter_weights: Dict[str, np.ndarray] = None,
+                             ):
         import numpy as np
         import numpy.linalg as linalg
         import scipy.linalg as slinalg
@@ -177,122 +183,164 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         print(wc_params.node_with_weight.node_name)
         layer_name = wc_params.node_with_weight.node_name.split('/')[0].split('__module.model.layers.')[1]
+
         print(compressed_weight.tensor.shape)
-        # q_weights = do_dequantization(compressed_weight.tensor, compressed_weight.scale,
-        #                               compressed_weight.zero_point, wc_params.reduction_axes[0])
-        q_weights = _get_nf4_error(compressed_weight.tensor.data, compressed_weight.scale.data, wc_params.reduction_axes[0], wc_params.compression_config.group_size)
+        loss = []
 
-        X = wc_params.X.data
-        diff_before = np.mean(np.abs(weight.data @ X - q_weights @ X))
+        # if layer_name == '23.mlp.down_proj':
+        #     wc_params.compression_config = WeightCompressionConfig(mode=CompressWeightsMode.INT4_ASYM)
+        #     return {layer_name: []}
+        if layer_name + '__Vr' in cached_adapter_weights \
+            and layer_name + '__US' in cached_adapter_weights \
+            and layer_name not in ['23.mlp.down_proj']:#, '5.mlp.down_proj', '16.mlp.down_proj', '22.mlp.down_proj']: # NOTE: tune specified layer
+                Vr = cached_adapter_weights[layer_name + '__Vr']
+                US = cached_adapter_weights[layer_name + '__US']
+        else:
+            # rank = 256
+            print(f'Tune {layer_name} with rank={rank}')
 
-        # q_w + USV = w => USV = w - q_w
-        residual = (weight.data - q_weights.data).astype(np.float32)
-        w_residual = residual.copy()
-        if wc_params.reduction_axes == 0:
-            residual = np.transpose(residual)
-        if wc_params.stat is not None:# and False:
-            s = wc_params.stat.data
-            if wc_params.compression_config.group_size > 0:
-                # gs = wc_params.compression_config.group_size
-                # n_gs = s.shape[0] // gs
-                # for i in range(n_gs):
-                #     offset = i * gs
-                #     denum = np.sum(s[offset:offset + gs])
-                #     s[offset:offset + gs] = s[offset:offset + gs] / denum
-                #     denum = np.max(s[offset:offset + gs])
-                #     s[offset:offset + gs] = s[offset:offset + gs] / denum
-                # s = np.expand_dims(s, 0)
-                s = s / math.sqrt(fns.min(s) * fns.max(s))
-                print('Scaled S stats: min={:.2f} max={:.2f}'.format(fns.min(s), fns.max(s)))
-                s = np.diagflat(s)
-                s_inv = np.linalg.inv(s)
-                print(f'Shapes before mul: residual={residual.shape} s={s.shape}')
-                residual = residual @ s
-            # low_k = max(int(2 * s.shape[0] // 3), 1)
-            # lowk_idxs = np.argsort(s.data)[:low_k]
-            # for idx in lowk_idxs:
-            #     residual[:, idx] = 0.0
+            # q_weights = do_dequantization(compressed_weight.tensor, compressed_weight.scale,
+            #                               compressed_weight.zero_point, wc_params.reduction_axes[0])
+            # q_weights_data = q_weights.data
+            q_weights_data = _get_nf4_error(compressed_weight.tensor.data, compressed_weight.scale.data, wc_params.reduction_axes[0], wc_params.compression_config.group_size)
 
-        svd = linalg.svd(residual, compute_uv=True, full_matrices=False)
-        U = svd[0]
-        S = svd[1]
-        V = svd[2]
-
-        Ur = U[:, :rank]
-        Sr = np.diag(S[:rank])
-        Vr = V[:rank, :]
-
-        # Vr = Sr @ Vr
-        US = Ur @ Sr
-        print(f'Shapes: residual={residual.shape} s={s.shape} s_inv={s_inv.shape} Vr={Vr.shape}')
-        print(f'Shapes: Ur={Ur.shape} X={X.shape}')
-        Vr = Vr @ s_inv
-        print(f'Shapes: US={US.shape}')
-
-        n_iters = 3
-        if wc_params.X is not None: # rectification by data
             X = wc_params.X.data
-            dY = w_residual @ X
+            diff_before = np.mean(np.abs(weight.data @ X - q_weights_data @ X))
 
-            # US @ Vr = res
-            # US @ Vr @ X = dY
-            # US @ |VR VR @ X| = |res dY|
+            # q_w + USV = w => USV = w - q_w
+            residual = (weight.data - q_weights_data).astype(np.float32)
+            w_residual = residual.copy()
+            if wc_params.reduction_axes == 0:
+                residual = np.transpose(residual)
+            if wc_params.stat is not None:# and False:
+                s = wc_params.stat.data
+                if wc_params.compression_config.group_size > 0:
+                    if not L2QER:
+                        gs = wc_params.compression_config.group_size
+                        n_gs = s.shape[0] // gs
+                        for i in range(n_gs):
+                            offset = i * gs
+                            denum = np.sum(s[offset:offset + gs])
+                            s[offset:offset + gs] = s[offset:offset + gs] / denum
+                            denum = np.max(s[offset:offset + gs])
+                            s[offset:offset + gs] = s[offset:offset + gs] / denum
+                        s = np.expand_dims(s, 0)
+                        residual = residual * s
+                    else:
+                        s = s / math.sqrt(fns.min(s) * fns.max(s))
+                        print('Scaled S stats: min={:.2f} max={:.2f}'.format(fns.min(s), fns.max(s)))
+                        s = np.diagflat(s)
+                        s_inv = np.linalg.inv(s)
+                        print(f'Shapes before mul: residual={residual.shape} s={s.shape}')
+                        residual = residual @ s
 
-            """
-            1 Rectification 1:  0.010965054096178758 0.0007162072519819473 0.0006860411346467133
-            1 Rectification 2:  0.010965054096178758 0.0007162072519819473 0.0006725860367021748
-            2 Rectification 1:  0.010965054096178758 0.0006725860367021748 0.0006652183148589173
-            2 Rectification 2:  0.010965054096178758 0.0006725860367021748 0.0006605420416146037
-            Before:  0.0001609714  After:  0.00017714252 8
-            """
-            loss = []
-            for i in range(n_iters):
-                VX = Vr @ X
-                if True:
-                    sol = slinalg.lstsq(np.transpose(VX), np.transpose(dY))
-                else:
-                    VrVX = np.concatenate((Vr, VX), axis=1)
-                    dYR = np.concatenate((w_residual, dY), axis=1)
-                    sol = slinalg.lstsq(np.transpose(VrVX), np.transpose(dYR))
+                # low_k = max(int(2 * s.shape[0] // 3), 1)
+                # lowk_idxs = np.argsort(s.data)[:low_k]
+                # for idx in lowk_idxs:
+                #     residual[:, idx] = 0.0
 
-                diff_after_svd = np.mean(np.abs(weight.data @ X - q_weights @ X - (US @ Vr) @ X))
-                if i == 0:
-                    loss.extend([diff_before, diff_after_svd])
-                    wandb.log({layer_name: diff_before})
-                    wandb.log({layer_name: diff_after_svd})
+            svd = linalg.svd(residual, compute_uv=True, full_matrices=False)
+            U = svd[0]
+            S = svd[1]
+            V = svd[2]
 
-                US = np.transpose(sol[0])
+            Ur = U[:, :rank]
+            Sr = np.diag(S[:rank])
+            Vr = V[:rank, :]
 
-                diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights @ X - (US @ Vr) @ X))
-                loss.append(diff_after_svd_rectification)
-                wandb.log({layer_name: diff_after_svd_rectification})
-                # if n_iters - i < 3:
-                print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+            # NOTE: our init
+            if not L2QER:
+                Vr = Sr @ Vr
+                US = Ur
+            else:
+                print(f'Shapes: residual={residual.shape} s={s.shape} s_inv={s_inv.shape} Vr={Vr.shape}')
+                print(f'Shapes: Ur={Ur.shape} X={X.shape}')
+                US = Ur @ Sr
+                Vr = Vr @ s_inv
+                print(f'Shapes: US={US.shape}')
 
-                USI = linalg.pinv(US)
-                dYU = USI @ dY
+            if wc_params.X is not None: # rectification by data
+                X = wc_params.X.data
+                dY = w_residual @ X # [O, C] * [C, B] = [O, B]
+                # NOTE: noise for regularization - DOESN'T WORK!!!
+                # dY =  dY + 0.001 * np.random.randn(*dY.shape)
+                # US @ Vr = res
+                # US @ Vr @ X = dY
+                # US @ |VR VR @ X| = |res dY|
 
-                sol = slinalg.lstsq(np.transpose(X), np.transpose(dYU))
-                Vr = np.transpose(sol[0])
+                """
+                1 Rectification 1:  0.010965054096178758 0.0007162072519819473 0.0006860411346467133
+                1 Rectification 2:  0.010965054096178758 0.0007162072519819473 0.0006725860367021748
+                2 Rectification 1:  0.010965054096178758 0.0006725860367021748 0.0006652183148589173
+                2 Rectification 2:  0.010965054096178758 0.0006725860367021748 0.0006605420416146037
+                Before:  0.0001609714  After:  0.00017714252 8
+                """
+                for i in range(n_iters):
+                    VX = Vr @ X
+                    if not w_regulation:
+                        sol = slinalg.lstsq(np.transpose(VX), np.transpose(dY))
+                    else:
+                        # VrVX = np.concatenate((Vr, VX), axis=1)
+                        # # dYR = np.concatenate((w_residual, dY), axis=1)
+                        # # NOTE: L2QER
+                        # dYR = np.concatenate((residual, dY), axis=1)
+                        # sol = slinalg.lstsq(np.transpose(VrVX), np.transpose(dYR))
+                        VrVX = np.concatenate((Vr, VX), axis=1)
+                        dYR = np.concatenate((w_residual, dY), axis=1)
+                        sol = slinalg.lstsq(np.transpose(VrVX), np.transpose(dYR), lapack_driver='gelsy')
 
-                diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights @ X - (US @ Vr) @ X))
-                loss.append(diff_after_svd_rectification)
-                wandb.log({layer_name: diff_after_svd_rectification})
-                # if n_iters - i < 3:
-                print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+                    diff_after_svd = np.mean(np.abs(weight.data @ X - q_weights_data @ X - (US @ Vr) @ X))
+                    if i == 0:
+                        loss.extend([diff_before, diff_after_svd])
+                        wandb.log({layer_name: diff_before})
+                        wandb.log({layer_name: diff_after_svd})
 
-        new_residual = US @ Vr
+                    US = np.transpose(sol[0])
+
+                    diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights_data @ X - (US @ Vr) @ X))
+                    loss.append(diff_after_svd_rectification)
+                    wandb.log({layer_name: diff_after_svd_rectification})
+                    # if n_iters - i < 3:
+                    print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+
+                    USI = linalg.pinv(US)
+                    if not w_regulation:
+                        dYU = USI @ dY
+                        sol = slinalg.lstsq(np.transpose(X), np.transpose(dYU), lapack_driver='gelsy')
+                    else:
+                        # # I = np.ones_like(Vr)
+                        # I = np.eye(Vr.shape[1]) # Vr = [r, C], I = [C, C], dY=[O, B]
+                        # IX = np.concatenate((I, X), axis=1) # I=[C, C], X=[C, B], IX=[C, C+B]
+                        # # dYR = [r,C] + [r, B] = [r, C+B]
+                        # dYR = np.concatenate((USI @ residual, USI @ dY), axis=1) # USI=[r, O], residual=[O, C]
+                        # sol = slinalg.lstsq(np.transpose(IX), np.transpose(dYR), lapack_driver='gelsy')
+                        I = np.eye(Vr.shape[1])
+                        IX = np.concatenate((I, X), axis=1)
+                        dYR = np.concatenate((USI @ w_residual, USI @ dY), axis=1)
+                        sol = slinalg.lstsq(np.transpose(IX), np.transpose(dYR), lapack_driver='gelsy')
+
+                    Vr = np.transpose(sol[0])
+
+                    diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights_data @ X - (US @ Vr) @ X))
+                    loss.append(diff_after_svd_rectification)
+                    wandb.log({layer_name: diff_after_svd_rectification})
+                    # if n_iters - i < 3:
+                    print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+            new_residual = US @ Vr
+            print("Before: ", np.mean(np.abs(residual)), " After: ", np.mean(np.abs(residual - new_residual)), rank)
+            weight_delta = np.mean(np.abs(residual)) - np.mean(np.abs(residual - new_residual))
+            original_l1_noise = diff_before
+            l1_noise_delta = diff_before - diff_after_svd_rectification
+            wandb.log({
+                'weight_delta': weight_delta,
+                'original_l1_noise': original_l1_noise,
+                'l1_noise_delta': l1_noise_delta,
+            })
+
+            cached_adapter_weights[layer_name + '__Vr'] = Vr
+            cached_adapter_weights[layer_name + '__US'] = US
+
         V = Vr
-        # print("Before: ", np.mean(np.abs(residual)), " After: ", np.mean(np.abs(residual - new_residual)), rank)
-        weight_delta = np.mean(np.abs(residual)) - np.mean(np.abs(residual - new_residual))
-        original_l1_noise = diff_before
-        l1_noise_delta = diff_before - diff_after_svd_rectification
-        wandb.log({
-            'weight_delta': weight_delta,
-            'original_l1_noise': original_l1_noise,
-            'l1_noise_delta': l1_noise_delta,
-        })
-
         input_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name].input_value(0)
         mm_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name]
 
@@ -353,34 +401,46 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         lora=True,
         num_params = None,
     ) -> ov.Model:
-        # ids_50 = list(range(0, num_params, 2))
-        # ids_25 = set(range(0, num_params, 4))
-        # ids_75 = set(range(num_params)) - ids_25
-        # ids = ids_50
         ids = range(num_params)
         data = []
+        # model_name = 'phi3'
+        model_name = 'stablelm-1.6b'
+        exp_name = 'lora_nf4_rank8_synth'
+        # cached_adapter_weights_stablelm-1.6b__lora_nf4_rank8_synth.npz
+        CACHE_FILENAME = Path(f'cached_adapter_weights_{model_name}__{exp_name}.npz')
+        cached_adapter_weights = dict()
+        if CACHE_FILENAME.exists():
+            cached_adapter_weights = dict(np.load(CACHE_FILENAME))
         try:
-            exp_name = 'lora_nf4_lqer'
+            L2QER=False
+            w_regulation=False
+            n_iters = 3
+            rank = 8
+            mixed_rank = False
+
             wandb_run = wandb.init(
                 project="lora_rectify",
                 # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
                 name=exp_name,
                 # Track hyperparameters and run metadata
                 config={
-                    "model_name": 'stablelm_1.6b',
+                    "model_name": model_name,
                     "total_num_params": num_params,
                     "num_params_to_rectify": len(ids),
-                    "rank": 8,
+                    "rank": rank,
+                    "n_iters": n_iters,
+                    "w_regulation": w_regulation,
+                    "L2QER": L2QER,
+                    "mixed_rank": mixed_rank,
                 }
             )
 
             int4_params = filter(lambda x: x.compression_config.num_bits == 4, weight_compression_parameters)
 
-            # NOISE_FILE = Path('noises.csv')
-            NOISE_FILE = Path('max_var_scores.csv')
-            if NOISE_FILE.exists():
-                df = pd.read_csv(NOISE_FILE)
-                list_diff_before = list(df[df.columns[1]])
+            # NOISE_FILE = Path('max_var_scores.csv')
+            # if NOISE_FILE.exists():
+            #     df = pd.read_csv(NOISE_FILE)
+            #     list_diff_before = list(df[df.columns[1]])
             # else:
             #     raise RuntimeError('No noises.csv for criteria!')
             #     import numpy as np
@@ -394,7 +454,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             #         q_weights, _, _ = do_integer_quantization(weight, wc_params.reduction_axes[0], wc_params.compression_config)
             #         q_weights = q_weights.reshape(shape)
             #         X = wc_params.X.data
-            #         diff_before = np.mean(np.abs(weight.data @ X - q_weights.data @ X))
+            #         diff_before = np.mean(np.abs(weight.data @ X - q_weights_data @ X))
             #         list_diff_before.append(diff_before)
 
             #     names = []
@@ -416,14 +476,14 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             #     plt.plot(list_diff_before, title='L1 quantization noise with criteria')
             #     plt.savefig('noises.png')
 
-            ratio = 0.8
-            criteria = True
-            n_select = int(num_params * ratio)
-            indexes_of_layers_in_ascending_order_of_scores = [i[0] for i in sorted(enumerate(list_diff_before), reverse=criteria, key=lambda x: x[1])]
-            ids = indexes_of_layers_in_ascending_order_of_scores[:n_select]
+            # ratio = 0.8
+            # criteria = True
+            # n_select = int(num_params * ratio)
+            # indexes_of_layers_in_ascending_order_of_scores = [i[0] for i in sorted(enumerate(list_diff_before), reverse=criteria, key=lambda x: x[1])]
+            # ids = indexes_of_layers_in_ascending_order_of_scores[:n_select]
 
-            # TODO: work with pandas
-            # num_per_type_phi = {'qkv_proj': 0, 'o_proj': 0, 'gate_up_proj': 0, 'down_proj': 0}
+            # TODO: work with losses
+            num_per_type_phi = {'qkv_proj': 0, 'o_proj': 0, 'gate_up_proj': 0, 'down_proj': 0}
             num_per_type_lm = {'down_proj': 0, 'up_proj': 0, 'gate_proj': 0, 'q_proj': 0, 'k_proj': 0, 'v_proj': 0, 'o_proj': 0}
             num_per_type = num_per_type_lm
             for index, wc_params in enumerate(int4_params):
@@ -447,6 +507,11 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
             index = 0
             for wc_params in weight_compression_parameters:
+                # lora = True
+                # if wc_params.compression_config.num_bits == 4 and wc_params.compression_config.mode == CompressWeightsMode.INT4_ASYM:
+                #     wc_params.compression_config.mode = CompressWeightsMode.NF4
+                    # lora = True
+
                 compression_config = wc_params.compression_config
                 if compression_config.mode == CompressWeightsMode.NF4:
                     compression_dtype = ov.Type.nf4
@@ -516,13 +581,16 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
                 if wc_params.compression_config.num_bits == 4 and lora:
                     index += 1
-                    rank = 8 if index - 1 in ids else 64
-                    data.append(self.insert_lora_residual(model, graph, wc_params, weight, compressed_weight, rank=rank))
+                    # rank = 8 # if index - 1 in ids else 64
+                    data.append(self.insert_lora_residual(model, graph, wc_params, weight, compressed_weight,
+                        rank=rank, L2QER=L2QER, w_regulation=w_regulation, n_iters=n_iters, cached_adapter_weights=cached_adapter_weights))
         finally:
             # pass
             wandb_run.finish()
             df = pd.DataFrame(data)
             df.to_csv('losses.csv')
+            # TODO: uncomment to update cache
+            np.savez(CACHE_FILENAME, **cached_adapter_weights)
 
         # reset name_to_node_mapping
         self.name_to_node_mapping = None

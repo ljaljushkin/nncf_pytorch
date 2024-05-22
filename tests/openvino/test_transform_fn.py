@@ -10,10 +10,12 @@
 # limitations under the License.
 
 import numpy as np
+import openvino
 import openvino.runtime as ov
 import pytest
 
 import nncf
+from nncf import CompressWeightsMode
 from tests.openvino.native.models import ConvModel as ModelWithMultipleInputs
 from tests.openvino.native.models import LinearModel as ModelWithSingleInput
 
@@ -53,11 +55,16 @@ def multiple_inputs_as_dict_transform_fn(data_item):
         "multiple_inputs_as_dict_native",
     ],
 )
-def test_transform_fn(model, transform_fn):
+def test_transform_fn(model, transform_fn, tmp_path):
     # Check the transformation function
-    compiled_model = ov.compile_model(model.ov_model)
-    _ = compiled_model(transform_fn(next(iter(dataset))))
+    openvino.save_model(model.ov_model, tmp_path / 'model.xml', compress_to_fp16=False)
+    # compiled_model = ov.compile_model(model.ov_model)
+    # _ = compiled_model(transform_fn(next(iter(dataset))))
+
+    compressed_model = nncf.compress_weights(model.ov_model, mode=CompressWeightsMode.INT4_SYM)
+    openvino.save_model(compressed_model, tmp_path / 'compressed_model.xml', compress_to_fp16=False)
 
     # Start quantization
     calibration_dataset = nncf.Dataset(dataset, transform_fn)
-    _ = nncf.quantize(model.ov_model, calibration_dataset)
+    quantized_model = nncf.quantize(compressed_model, calibration_dataset)
+    openvino.save_model(quantized_model, tmp_path / 'quantized_model.xml', compress_to_fp16=False)
