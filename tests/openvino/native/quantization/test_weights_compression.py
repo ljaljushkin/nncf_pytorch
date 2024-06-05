@@ -33,6 +33,7 @@ from nncf.quantization.algorithms.weight_compression.weight_lowering import get_
 from nncf.quantization.algorithms.weight_compression.weight_lowering import reshape_weight_for_grouped_quantization
 from nncf.scopes import IgnoredScope
 from tests.openvino.native.common import get_actual_reference_for_current_openvino
+from tests.openvino.native.common import get_openvino_major_minor_version
 from tests.openvino.native.models import AWQMatmulModel
 from tests.openvino.native.models import GatherAndMatmulShareData
 from tests.openvino.native.models import GatherWithTwoReductionAxes
@@ -456,6 +457,21 @@ def test_shared_gather(mode):
             assert op.get_element_type() == weight_name_vs_type[op_name]
 
 
+@pytest.mark.parametrize("all_layers", (True, False))
+def test_shared_gather_all_layers(all_layers):
+    weight_name_vs_type = {
+        "gather_2_data": ov.Type.u4 if all_layers else ov.Type.u8,
+        "shared_data": ov.Type.u4 if all_layers else ov.Type.u8,
+        "matmul_1_data": ov.Type.u4,
+    }
+    model = GatherAndMatmulShareData().ov_model
+    compressed_model = compress_weights(model, CompressWeightsMode.INT4_ASYM, group_size=-1, all_layers=all_layers)
+    for op in compressed_model.get_ordered_ops():
+        op_name = op.get_friendly_name()
+        if op.get_type_name() == "Constant" and op_name in weight_name_vs_type:
+            assert op.get_element_type() == weight_name_vs_type[op_name]
+
+
 @dataclass
 class QuantErrorDesc:
     weight: List[float]
@@ -657,9 +673,19 @@ def test_raise_error_channel_size_is_not_divisible_by_group_size():
         {"all_layers": False},
         *({"sensitivity_metric": metric} for metric in ALL_SENSITIVITY_METRICS),
         {"dataset": "anything"},
+        {"scale_estimation": True},
+        {"gptq": True},
+        {"awq": True},
     ),
 )
-def test_raise_error_with_unsupported_params_for_int8(mocker, mode, params):
+def test_raise_error_with_unsupported_params_for_int8(mode, params):
+    with pytest.raises(AttributeError):
+        compress_weights(ov.Model([], []), mode=mode, **params)
+
+
+@pytest.mark.parametrize("mode", INT4_MODES)
+@pytest.mark.parametrize("params", ({"dataset": "anything", "scale_estimation": True, "gptq": True},))
+def test_raise_error_with_unsupported_params_for_int4(mode, params):
     with pytest.raises(AttributeError):
         compress_weights(ov.Model([], []), mode=mode, **params)
 
@@ -692,41 +718,66 @@ def test_call_max_var_criterion_with_dataset_by_default_awq(mode):
     compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, awq=True)
 
 
+@pytest.mark.parametrize("mode", INT4_MODES)
+def test_call_max_var_criterion_with_dataset_awq_for_compressed_model(mode):
+    model = AWQMatmulModel(is_int8=True).ov_model
+    dataset = Dataset([np.ones([8, 8])])
+
+    compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, awq=True)
+
+
+@pytest.mark.parametrize("mode", INT4_MODES)
+def test_call_max_var_criterion_with_dataset_awq_neg_group_size(mode):
+    model = AWQMatmulModel().ov_model
+    dataset = Dataset([np.ones([8, 8])])
+    with pytest.raises(AttributeError):
+        compress_weights(model, mode=mode, ratio=1.0, group_size=-1, dataset=dataset, awq=True)
+
+
 def test_data_type_for_num_weights(mocker):
     stub = mocker.stub()
     params = WeightCompressionParameters(stub, stub, stub, np.int32(1), stub)
     assert isinstance(params.num_weights, np.uint64)
 
 
-def test_compression_for_different_dtypes():
-    for activation_dtype in [np.float32, np.float16]:
-        for weight_dtype in [np.float32, np.float16]:
-            if activation_dtype == np.float16 and weight_dtype == np.float32:
-                # Activations can be in f16 only if weights are in f16
-                continue
+@pytest.mark.parametrize(
+    "activation_dtype, weight_dtype",
+    [
+        (ov.Type.f32, ov.Type.f32),
+        (ov.Type.f32, ov.Type.f16),
+        (ov.Type.f32, ov.Type.bf16),
+        (ov.Type.f16, ov.Type.f16),
+        (ov.Type.bf16, ov.Type.bf16),
+    ],
+)
+def test_compression_for_different_dtypes(activation_dtype, weight_dtype):
+    if weight_dtype == ov.Type.bf16:
+        ov_major_version, ov_minor_version = get_openvino_major_minor_version()
+        if ov_major_version < 2024 or (ov_major_version == 2024 and ov_minor_version < 2):
+            pytest.xfail("const_node.get_data() is not supported until 2024.2")
 
-            model = IdentityMatmul(weights_dtype=weight_dtype, activation_dtype=activation_dtype).ov_model
-            compressed_model = compress_weights(
-                model, mode=CompressWeightsMode.INT4_SYM, ratio=1, group_size=1, all_layers=True
-            )
-            name_to_node_map = {op.get_friendly_name(): op for op in compressed_model.get_ops()}
+    model = IdentityMatmul(weights_dtype=weight_dtype, activation_dtype=activation_dtype).ov_model
+    compressed_model = compress_weights(
+        model, mode=CompressWeightsMode.INT4_SYM, ratio=1, group_size=1, all_layers=True
+    )
+    name_to_node_map = {op.get_friendly_name(): op for op in compressed_model.get_ops()}
 
-            # Weight scale should be in fp16 nevertheless the weight data type
-            scale_multiply_node = name_to_node_map["weights/fq_weights_1"]
-            assert scale_multiply_node.input_value(1).get_node().get_element_type() == ov.Type.f16
+    # Weight scale should be in fp16 nevertheless the weight data type
+    scale_multiply_node = name_to_node_map["weights/fq_weights_1"]
+    assert scale_multiply_node.input_value(1).get_node().get_element_type() == ov.Type.f16
 
-            reshape_node = get_next_node(scale_multiply_node)
-            assert reshape_node.get_type_name() == "Reshape"
+    reshape_node = get_next_node(scale_multiply_node)
+    assert reshape_node.get_type_name() == "Reshape"
 
-            next_node = get_next_node(reshape_node)
-            if activation_dtype == np.float16:
-                # There should be no convert node after multiply if both weights and activations are in f16
-                assert next_node.get_type_name() != "Convert"
-            else:
-                assert next_node.get_type_name() == "Convert"
-                # In case weight is in fp32, the convert node is manually inserted
-                if weight_dtype == np.float32:
-                    assert next_node.get_friendly_name() == "weights/fq_weights_1/convert"
+    next_node = get_next_node(reshape_node)
+    if activation_dtype == ov.Type.f16:
+        # There should be no convert node after multiply if both weights and activations are in f16
+        assert next_node.get_type_name() != "Convert"
+    else:
+        assert next_node.get_type_name() == "Convert"
+        # In case precision of weight and activation were equal, but not f16, the convert node is manually inserted
+        if activation_dtype == weight_dtype and weight_dtype != ov.Type.f16:
+            assert next_node.get_friendly_name() == "weights/fq_weights_1/convert"
 
 
 DATASET_SIZE = 129
@@ -779,3 +830,28 @@ def test_call_max_var_criterion_with_dataset_by_default_scale_estimation(mode):
     dataset = Dataset([np.ones([8, 8])])
 
     compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, scale_estimation=True)
+
+
+@pytest.mark.parametrize("mode", INT4_MODES)
+def test_call_max_var_criterion_with_dataset_scale_estimation_for_compressed_model(mode):
+    model = AWQMatmulModel(is_int8=True).ov_model
+    dataset = Dataset([np.ones([8, 8])])
+
+    compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, scale_estimation=True)
+
+
+@pytest.mark.parametrize("mode", INT4_MODES)
+def test_call_max_var_criterion_with_dataset_scale_estimation_neg_group_size(mode):
+    model = AWQMatmulModel().ov_model
+    dataset = Dataset([np.ones([8, 8])])
+
+    with pytest.raises(AttributeError):
+        compress_weights(model, mode=mode, ratio=1.0, group_size=-1, dataset=dataset, scale_estimation=True)
+
+
+@pytest.mark.parametrize("mode", INT4_NF4_MODES)
+def test_call_gptq(mode):
+    model = AWQMatmulModel().ov_model
+    dataset = Dataset([np.ones([8, 8])])
+
+    compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, gptq=True)

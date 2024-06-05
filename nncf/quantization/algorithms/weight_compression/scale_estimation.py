@@ -114,21 +114,22 @@ class ScaleEstimation:
         :param graph: Model graph.
         :param statistic_points: Statistic points with collected statistics values.
         :param dataset: A representative dataset for the calibration process.
-        :return: Dict with pairs (node name, estimated scale).
+        :return: Dict with pairs (weight name, estimated scale).
         """
 
         compress_decompress_cashe = {}
         res = dict()
 
         for wp in track(self._all_weight_params, description="Applying Scale Estimation"):
-            k = wp.node_with_weight.node_name
+            weight_name = wp.weight_name
+            node_name = wp.node_with_weight.node_name
             config = wp.compression_config
 
-            if config.num_bits != 4 or k not in self._activations:
-                res[k] = None
+            if config.num_bits != 4 or node_name not in self._activations:
+                res[weight_name] = None
                 continue
 
-            stats = self._activations[k]
+            stats = self._activations[node_name]
             reduction_axis = wp.reduction_axes[0]
 
             cur_config = deepcopy(config)
@@ -166,19 +167,14 @@ class ScaleEstimation:
             compressed_weights, scale, zp = do_integer_quantization(original_weight, reduction_axis, config)
             zp = zp.astype(scale.dtype)
 
-            q_weights = do_dequantization(
-                compressed_weights, scale, zp, reduction_axis=reduction_axis if config.group_size > 0 else -1
-            )
+            q_weights = do_dequantization(compressed_weights, scale, zp, reduction_axis)
 
             s = fns.unsqueeze(s, 0)
+            s, _ = reshape_weight_for_grouped_quantization(s, reduction_axis, config.group_size)
 
-            if config.group_size > 0:
-                s, _ = reshape_weight_for_grouped_quantization(s, reduction_axis, config.group_size)
-                original_weight, _ = reshape_weight_for_grouped_quantization(
-                    original_weight, reduction_axis, config.group_size
-                )
-                X, _ = reshape_weight_for_grouped_quantization(X, 0, config.group_size)
-                q_weights, _ = reshape_weight_for_grouped_quantization(q_weights, reduction_axis, config.group_size)
+            original_weight, _ = reshape_weight_for_grouped_quantization(
+                original_weight, reduction_axis, config.group_size
+            )
 
             # all weight in group has importance based on corresponding input activations
             importance = fns.ones_like(original_weight)
@@ -190,21 +186,20 @@ class ScaleEstimation:
             importance = fns.where(zero_mask, 0.0, importance)
 
             # normalize importances for every group of weights to make sum of them equal to 1.0
-            denum = fns.sum(importance, axis=-1, keepdims=True)
+            denum = fns.sum(importance, axis=2, keepdims=True)
             importance = importance / (denum + eps)
 
+            X, _ = reshape_weight_for_grouped_quantization(X, 0, config.group_size)
+            q_weights, _ = reshape_weight_for_grouped_quantization(q_weights, reduction_axis, config.group_size)
             best_diffs = None
             result_scale = None
 
-            mm_w_shape = (1, 0, 2) if config.group_size > 0 else (0, 1)
-
-            fp_outs = fns.matmul(fns.transpose(original_weight, mm_w_shape), X)
-            q_outs = fns.matmul(fns.transpose(q_weights, mm_w_shape), X)
+            fp_outs = fns.matmul(fns.transpose(original_weight, (1, 0, 2)), X)
+            q_outs = fns.matmul(fns.transpose(q_weights, (1, 0, 2)), X)
 
             # metric for minimization with shape [C_OUT, N_GROUPS], N_GROUPS = C_IN / GROUP_SIZE
             min_max_scale_diffs = fns.mean((fp_outs - q_outs) ** 2, axis=-1)
-            if config.group_size > 0:
-                min_max_scale_diffs = fns.transpose(min_max_scale_diffs, (1, 0))
+            min_max_scale_diffs = fns.transpose(min_max_scale_diffs, (1, 0))
             if self._weight_penalty > 0.0:
                 min_max_scale_diffs += self._weight_penalty * fns.mean((q_weights - original_weight) ** 2, axis=-1)
 
@@ -232,15 +227,14 @@ class ScaleEstimation:
                 ideal_scale = fns.abs(original_weight) / (fns.abs(target) + zero_mask)
                 weighted_scale = ideal_scale * importance
 
-                near_to_ideal_scale = fns.sum(weighted_scale, axis=-1, keepdims=True)
+                near_to_ideal_scale = fns.sum(weighted_scale, axis=2, keepdims=True)
 
                 out = compress_decompress_model(original_weight.data, near_to_ideal_scale.data, zp.data)
                 q_weights_ = fns.zeros_like(original_weight) + out
-                q_outs = fns.matmul(fns.transpose(q_weights_, mm_w_shape), X)
+                q_outs = fns.matmul(fns.transpose(q_weights_, (1, 0, 2)), X)
 
                 ideal_scale_diffs = fns.mean((fp_outs - q_outs) ** 2, axis=-1)
-                if config.group_size > 0:
-                    ideal_scale_diffs = fns.transpose(ideal_scale_diffs, (1, 0))
+                ideal_scale_diffs = fns.transpose(ideal_scale_diffs, (1, 0))
                 if self._weight_penalty > 0.0:
                     ideal_scale_diffs += self._weight_penalty * fns.mean((q_weights_ - original_weight) ** 2, axis=-1)
 
@@ -251,7 +245,7 @@ class ScaleEstimation:
 
                 best_diffs = mask * best_diffs + (1.0 - mask) * ideal_scale_diffs
 
-                mask = fns.unsqueeze(mask, axis=-1)
+                mask = fns.unsqueeze(mask, axis=2)
 
                 if result_scale is None:
                     near_to_ideal_scale = mask * scale + (1.0 - mask) * near_to_ideal_scale
@@ -280,15 +274,14 @@ class ScaleEstimation:
 
                 ideal_scale = fns.abs(original_weight) / (fns.abs(target) + zero_mask)
                 weighted_scale = ideal_scale * importance
-                near_to_ideal_scale = fns.sum(weighted_scale, axis=-1, keepdims=True)
+                near_to_ideal_scale = fns.sum(weighted_scale, axis=2, keepdims=True)
 
                 out = compress_decompress_model(original_weight.data, near_to_ideal_scale.data, zp.data)
                 q_weights_ = fns.zeros_like(original_weight) + out
 
-                q_outs = fns.matmul(fns.transpose(q_weights_, mm_w_shape), X)
+                q_outs = fns.matmul(fns.transpose(q_weights_, (1, 0, 2)), X)
                 ideal_scale_diffs = fns.mean((fp_outs - q_outs) ** 2, axis=-1)
-                if config.group_size > 0:
-                    ideal_scale_diffs = fns.transpose(ideal_scale_diffs, (1, 0))
+                ideal_scale_diffs = fns.transpose(ideal_scale_diffs, (1, 0))
                 if self._weight_penalty > 0.0:
                     ideal_scale_diffs += self._weight_penalty * fns.mean((q_weights_ - original_weight) ** 2, axis=-1)
 
@@ -296,7 +289,7 @@ class ScaleEstimation:
 
                 best_diffs = mask * best_diffs + (1.0 - mask) * ideal_scale_diffs
 
-                mask = fns.unsqueeze(mask, axis=-1)
+                mask = fns.unsqueeze(mask, axis=2)
 
                 if result_scale is None:
                     near_to_ideal_scale = mask * scale + (1.0 - mask) * near_to_ideal_scale
@@ -304,6 +297,6 @@ class ScaleEstimation:
                     near_to_ideal_scale = mask * result_scale + (1.0 - mask) * near_to_ideal_scale
                 result_scale = near_to_ideal_scale
 
-            res[k] = result_scale
+            res[weight_name] = result_scale
 
         return res

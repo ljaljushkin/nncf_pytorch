@@ -251,9 +251,6 @@ class AdvancedQuantizationParameters:
 class AdvancedAWQParameters:
     """
     Contains advanced parameters for AWQ algorithm.
-    It regulates the calculation of the smooth scale for different node types.
-    A negative value switches off the algorithm for current node type. In case of inaccurate results,
-    this parameter may be adjusted in the range from 0 to 1 or set -1 to disable SmoothQuant algorithm.
 
     :param subset_size: The number of samples for AWQ.
     :type subset_size: int
@@ -279,16 +276,13 @@ class AdvancedAWQParameters:
 class AdvancedScaleEstimationParameters:
     """
     Contains advanced parameters for scale estimation algorithm.
-    It regulates the calculation of the smooth scale for different node types.
-    A negative value switches off the algorithm for current node type. In case of inaccurate results,
-    this parameter may be adjusted in the range from 0 to 1 or set -1 to disable SmoothQuant algorithm.
 
     :param subset_size: The number of samples for scale estimation.
     :type subset_size: int
     :param initial_steps: The number of the steps for absmax scale rectification.
     :type initial_steps: int
     :param scale_steps: The number of the steps for grid search scale rectification
-                        from 1.0 to 1.0 - 0.05 * scale_step.
+        from 1.0 to 1.0 - 0.05 * scale_step.
     :type scale_steps: int
     :param weight_penalty: coefficient for penalty between fp and compressed weights. If -1 then doesn't apply.
     :type weight_penalty: float
@@ -298,6 +292,26 @@ class AdvancedScaleEstimationParameters:
     initial_steps: int = 5
     scale_steps: int = 10
     weight_penalty: float = -1.0
+
+
+@api()
+@dataclass
+class AdvancedGPTQParameters:
+    """
+    Contains advanced parameters for GPTQ algorithm.
+
+    :param damp_percent: The percent of the average Hessian diagonal to use for dampening,
+        recommended value is 0.1.
+    :type damp_percent: float
+    :param block_size: The size of the blocks used during quantization. Defaults to 128.
+    :type block_size: int
+    :param subset_size: Number of data samples to calculate Hessian. Defaults to 128.
+    :type subset_size: int
+    """
+
+    damp_percent: float = 0.1
+    block_size: int = 128
+    subset_size: int = 128
 
 
 @api()
@@ -319,6 +333,9 @@ class AdvancedCompressionParameters:
     scale_estimation_params: AdvancedScaleEstimationParameters = field(
         default_factory=AdvancedScaleEstimationParameters
     )
+
+    # Advanced GPTQ algorithm parameters
+    gptq_params: AdvancedGPTQParameters = field(default_factory=AdvancedGPTQParameters)
 
 
 @api()

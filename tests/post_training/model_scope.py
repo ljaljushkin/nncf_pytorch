@@ -370,6 +370,27 @@ WEIGHT_COMPRESSION_MODELS = [
         "params": {"is_stateful": True},
         "backends": [BackendType.OV],
     },
+    {
+        "reported_name": "tinyllama_int8_data_free",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "mode": CompressWeightsMode.INT8_ASYM,
+        },
+        "backends": [BackendType.TORCH],
+    },
+    {
+        "reported_name": "tinyllama_data_aware_gptq",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "group_size": 64,
+            "ratio": 0.8,
+            "mode": CompressWeightsMode.INT4_SYM,
+            "gptq": True,
+        },
+        "backends": [BackendType.OV],
+    },
 ]
 
 
