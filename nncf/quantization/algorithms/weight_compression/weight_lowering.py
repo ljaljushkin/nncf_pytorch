@@ -215,6 +215,7 @@ def compress_weight(
 
     return CompressedWeight(compressed_weight, scale, zero_point)
 
+
 NF4_QUANTILES = np.array(
     [
         -1.0,
@@ -237,6 +238,7 @@ NF4_QUANTILES = np.array(
 )
 
 CENTER_OF_NF4_QUANTILES = (NF4_QUANTILES[1:] + NF4_QUANTILES[:-1]) / 2
+
 
 def _get_nf4_error(norm_weight: np.ndarray, scale, reduction_axis: int, group_size: int = -1) -> float:
     """
@@ -268,6 +270,7 @@ def _get_nf4_error(norm_weight: np.ndarray, scale, reduction_axis: int, group_si
     # layer_err = np.mean(diff, axis=reduction_axes)
     # val = np.max(layer_err)
     # return val
+
 
 def do_dequantization(
     compressed_weights: Tensor, scale: Tensor, zero_point: Tensor, reduction_axis: int = -1

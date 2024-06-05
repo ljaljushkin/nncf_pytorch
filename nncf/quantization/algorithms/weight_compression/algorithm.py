@@ -198,9 +198,9 @@ class WeightCompression(Algorithm):
             )
             ratio_defining_params.extend(embedding_params)
 
-        # NOTE: comment for not quantizing last layer!
-        # if not self._all_layers and not is_last_layer_shared:
-        #     ratio_defining_params = ratio_defining_params[:-1]
+        # NOTE: uncomment for quantizing last layer!
+        if not self._all_layers and not is_last_layer_shared:
+            ratio_defining_params = ratio_defining_params[:-1]
         return ratio_defining_params
 
     def _set_weight_compression_config(
@@ -260,7 +260,7 @@ class WeightCompression(Algorithm):
             num_bits = data.compression_config.num_bits
             if num_bits == 8:
                 # layer_name = data.node_with_weight.node_name.split('/')[0].split('__module.model.layers.')[1]
-                pattern = r'layers\.(\d+\.\w+\.\w+)'
+                pattern = r"layers\.(\d+\.\w+\.\w+)"
                 layer_name = data.node_with_weight.node_name
                 match = re.search(pattern, layer_name)
                 if match:
@@ -325,8 +325,8 @@ class WeightCompression(Algorithm):
         for i, node in enumerate(nodes_to_compress):
             for weight_name, weight_port_id in self._backend_entity.get_weight_names_and_port_ids(node, graph):
                 # NOTE: uncomment to force first embeddings to be in FP32
-                if node.metatype in self._backend_entity.embedding_metatypes:
-                    continue
+                # if node.metatype in self._backend_entity.embedding_metatypes:
+                #     continue
                 if weight_name in weight_names:
                     if i == n - 1:
                         is_last_layer_shared = True
@@ -354,7 +354,11 @@ class WeightCompression(Algorithm):
                     )
 
                 weight_params = WeightCompressionParameters(
-                    weight_name, node, weight_port_id, weight.size, reduction_axes,
+                    weight_name,
+                    node,
+                    weight_port_id,
+                    weight.size,
+                    reduction_axes,
                     # NOTE: by default
                     WeightCompressionConfig(),
                     # NOTE: uncomment to force ASYM quantization for small percent of weights
@@ -364,7 +368,7 @@ class WeightCompression(Algorithm):
                 weight_names.add(weight_name)
 
         # NOTE: Uncomment to force last matmul to be in FP32
-        all_weight_params = all_weight_params[:-1]
+        # all_weight_params = all_weight_params[:-1]
 
         ratio_defining_params = self._get_ratio_defining_params(all_weight_params, is_last_layer_shared)
         self._set_weight_compression_config(ratio_defining_params, model, graph, activations)
@@ -403,28 +407,34 @@ class WeightCompression(Algorithm):
             precomputed_scales = scale_algo.apply(model, graph)
 
         from nncf.experimental.tensor import functions as fns
+
         for wp in all_weight_params:
             k = wp.node_with_weight.node_name
             if wp.node_with_weight.node_name in activations:
-                stats = activations[k] # List of B Tensors with shape [L,C]
+                stats = activations[k]  # List of B Tensors with shape [L,C]
                 # NOTE: default scaling
-                # vals = [fns.mean(stat, axis=0) for stat in stats]
+                vals = [fns.mean(stat, axis=0) for stat in stats]
                 # NOTE: another scaling with absolute
                 # vals = [fns.mean(fns.abs(stat), axis=0) for stat in stats] # List of B Tensor with shape [C]
                 # NOTE: another scaling with variance
-                vals = [fns.var(stat, axis=0) for stat in stats] # List of B Tensor with shape [C]
+                # vals = [fns.var(stat, axis=0) for stat in stats] # List of B Tensor with shape [C]
                 X = fns.stack(vals)
                 X = fns.transpose(X)
                 # NOTE: default scaling
-                # s = fns.max(fns.abs(X), axis=1)
+                s = fns.max(fns.abs(X), axis=1)
                 # NOTE: another scaling with mean of variance
-                s = fns.mean(X, axis=1) # [C]
+                # s = fns.mean(X, axis=1) # [C]
                 wp.stat = s
                 wp.X = X
 
         # Compress model using weight compression parameters
         transformed_model = self._backend_entity.transform_model(
-            model, graph, track(all_weight_params, description="Applying Weight Compression"), precomputed_scales, lora=self._lora, num_params=len(all_weight_params)
+            model,
+            graph,
+            track(all_weight_params, description="Applying Weight Compression"),
+            precomputed_scales,
+            lora=self._lora,
+            num_params=len(all_weight_params),
         )
 
         self._backend_entity.dump_parameters(

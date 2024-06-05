@@ -1,16 +1,27 @@
+# Copyright (c) 2024 Intel Corporation
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#      http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import json
 import sys
 import zipfile
-import json
-from typing import Dict, List, Tuple
 from dataclasses import dataclass
+from typing import Dict, List, Tuple
 
 import graphviz
 import openvino as ov
 
 from nncf.common.factory import NNCFGraphFactory
 from nncf.common.graph import NNCFGraph
-from nncf.common.utils.backend import get_backend
 from nncf.common.utils.backend import BackendType
+from nncf.common.utils.backend import get_backend
 
 
 @dataclass
@@ -75,9 +86,7 @@ def build_digraph(node_descs: List[GvNodeDesc], edge_descs: List[GvEdgeDesc]) ->
 
 
 def get_graph_desc(
-        graph: NNCFGraph,
-        fillcolor_map: Dict[str, str],
-        default_fillcolor: str = "white"
+    graph: NNCFGraph, fillcolor_map: Dict[str, str], default_fillcolor: str = "white"
 ) -> Tuple[List[GvNodeDesc], List[GvEdgeDesc], Dict[str, Dict[str, str]]]:
     """
     :param graph:
@@ -92,25 +101,29 @@ def get_graph_desc(
     for v in graph.get_all_nodes():
         node_id = str(v.node_id)
 
-        node_descs.append(GvNodeDesc(
-            node_id=node_id,
-            node_type=v.node_type,
-            fillcolor=fillcolor_map.get(v.node_type, default_fillcolor),
-            attributes=[]
-        ))
+        node_descs.append(
+            GvNodeDesc(
+                node_id=node_id,
+                node_type=v.node_type,
+                fillcolor=fillcolor_map.get(v.node_type, default_fillcolor),
+                attributes=[],
+            )
+        )
 
         node_data = data.setdefault(node_id, {})
         node_data["type"] = v.node_type
         node_data["name"] = v.node_name
 
     for e in graph.get_all_edges():
-        edge_descs.append(GvEdgeDesc(
-            from_node=str(e.from_node.node_id),
-            from_port=str(e.output_port_id),
-            to_node=str(e.to_node.node_id),
-            to_port=str(e.input_port_id),
-            shape=shape2str_v2(e.tensor_shape),
-        ))
+        edge_descs.append(
+            GvEdgeDesc(
+                from_node=str(e.from_node.node_id),
+                from_port=str(e.output_port_id),
+                to_node=str(e.to_node.node_id),
+                to_port=str(e.input_port_id),
+                shape=shape2str_v2(e.tensor_shape),
+            )
+        )
 
     return node_descs, edge_descs, data
 
@@ -124,7 +137,7 @@ def get_fillcolor_map(backend: BackendType):
             "Matmul": "#81D4FA",
             "Reshape": "#FFB74D",
             "Parameter": "#EA80FC",
-            "CollapsedEdges": "#DCEDC8"
+            "CollapsedEdges": "#DCEDC8",
         }
         return fillcolor_map
     else:
@@ -146,6 +159,7 @@ def apply_constant_hiding(
     """
     if backend == BackendType.OPENVINO:
         from nncf.openvino.graph.metatypes import openvino_metatypes
+
         constant_metatype = openvino_metatypes.OVConstantMetatype
     else:
         raise ValueError(f"Unsupported backend: {backend}")
@@ -175,9 +189,7 @@ def apply_constant_hiding(
         node_id_to_constant_inputs[node_id].sort(key=lambda x: int(x[0]))
 
     # Remove constant nodes
-    new_node_descs = [
-        node_desc for node_desc in node_descs if node_desc.node_id not in constant_nodes_to_hide
-    ]
+    new_node_descs = [node_desc for node_desc in node_descs if node_desc.node_id not in constant_nodes_to_hide]
 
     # TODO: Improve it
     # Add attributes
@@ -189,9 +201,7 @@ def apply_constant_hiding(
                 node_desc.attributes.append((input_port_id, constant_shape))
 
     # Remove edges from constant nodes
-    new_edge_descs = [
-        edge for edge in edge_descs if edge.from_node not in constant_nodes_to_hide
-    ]
+    new_edge_descs = [edge for edge in edge_descs if edge.from_node not in constant_nodes_to_hide]
 
     return new_node_descs, new_edge_descs
 
@@ -203,9 +213,7 @@ def apply_edge_collapsing(
     allowed_outdegree: int = 10,
     num_visible: int = 2,
 ):
-    node_id_and_outdegree = [
-        (v.node_id, len(graph.get_next_nodes(v))) for v in graph.get_all_nodes()
-    ]
+    node_id_and_outdegree = [(v.node_id, len(graph.get_next_nodes(v))) for v in graph.get_all_nodes()]
     node_id_and_outdegree.sort(key=lambda x: x[1], reverse=True)
 
     # We should collapse edges for these nodes
@@ -224,16 +232,17 @@ def apply_edge_collapsing(
             assert e.from_node.node_id == node_id
 
             edges = node_id_to_edges.setdefault(str(node_id), [])
-            edges.append(GvEdgeDesc(
-                from_node=str(e.from_node.node_id),
-                from_port=str(e.output_port_id),
-                to_node=str(e.to_node.node_id),
-                to_port=str(e.input_port_id),
-                shape=shape2str_v2(e.tensor_shape),
-            ))
+            edges.append(
+                GvEdgeDesc(
+                    from_node=str(e.from_node.node_id),
+                    from_port=str(e.output_port_id),
+                    to_node=str(e.to_node.node_id),
+                    to_port=str(e.input_port_id),
+                    shape=shape2str_v2(e.tensor_shape),
+                )
+            )
 
         node_id_to_edges[str(node_id)].sort(key=key_fn)
-
 
     edges_to_add = []
     edges_to_remove = []
@@ -257,13 +266,7 @@ def apply_edge_collapsing(
         )
         node_descs.append(collapsed_edge_node)
 
-        edges_to_add.append(GvEdgeDesc(
-            from_node=node_id,
-            from_port="",
-            to_node=f"ce_{idx}",
-            to_port="",
-            shape=""
-        ))
+        edges_to_add.append(GvEdgeDesc(from_node=node_id, from_port="", to_node=f"ce_{idx}", to_port="", shape=""))
 
     new_edge_descs = []
     for x in edge_descs:
@@ -280,9 +283,7 @@ def apply_edge_collapsing(
 
 
 def add_ov_attributes(model: ov.Model, graph: NNCFGraph, data):
-    friendly_name_to_op = {
-        op.get_friendly_name(): op for op in model.get_ops()
-    }
+    friendly_name_to_op = {op.get_friendly_name(): op for op in model.get_ops()}
 
     for node in graph.get_all_nodes():
         data[str(node.node_id)]["op_attributes"] = friendly_name_to_op[node.node_name].get_attributes()

@@ -79,14 +79,14 @@ class MixedPrecisionCriterion:
         Assigns quantization precision based on computed layers' sensitivities, ratio of parameters.
         """
         # NOISE_FILE = Path('max_var_scores.csv')
-        NOISE_FILE = Path('/home/nlyaly/projects/lm-evaluation-harness/scores.csv')
+        NOISE_FILE = Path("/home/nlyaly/projects/lm-evaluation-harness/scores.csv")
         if NOISE_FILE.exists():
             df = pd.read_csv(NOISE_FILE)
             scores = list(df[df.columns[1]])
         else:
             scores = self._calc_sensitivity()
             df = pd.DataFrame(scores)
-            df.to_csv('scores.csv')
+            df.to_csv("scores.csv")
             # assert False
         num_all_weights = sum(wp.num_weights for wp in self._weight_params)
 
