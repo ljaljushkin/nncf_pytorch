@@ -65,6 +65,7 @@ class WeightCompression(Algorithm):
         subset_size: int,
         scale_estimation: bool,
         gptq: bool,
+        lora: bool,
         advanced_parameters: Optional[AdvancedCompressionParameters] = None,
     ):
         """
@@ -96,6 +97,7 @@ class WeightCompression(Algorithm):
             quantization precision.
         :param scale_estimation: determines whether to use or not scale estimation for 4 bit layers.
         :param gptq: determines whether to use or not GPTQ algorithm.
+        :param lora: determines whether to use or not LoRA-based algorithm. # TODO: fancy name?
         :param advanced_parameters: advanced parameters for algorithms in compression pipeline.
         """
         super().__init__()
@@ -112,6 +114,7 @@ class WeightCompression(Algorithm):
         self._subset_size = subset_size
         self._scale_estimation = scale_estimation
         self._gptq = gptq
+        self._lora = lora
         self._advanced_parameters = (
             advanced_parameters if advanced_parameters is not None else AdvancedCompressionParameters()
         )
@@ -394,6 +397,27 @@ class WeightCompression(Algorithm):
                 backend_entity=self._backend_entity,
             )
 
+        if self._lora:
+            from nncf.experimental.tensor import functions as fns
+
+            for wp in all_weight_params:
+                k = wp.node_with_weight.node_name
+                if wp.node_with_weight.node_name in activations:
+                    stats = activations[k]  # List of B Tensors with shape [L,C]
+                    vals = [fns.mean(stat, axis=0) for stat in stats]
+                    # NOTE: another scaling with absolute
+                    # vals = [fns.mean(fns.abs(stat), axis=0) for stat in stats] # List of B Tensor with shape [C]
+                    # NOTE: another scaling with variance
+                    # vals = [fns.var(stat, axis=0) for stat in stats] # List of B Tensor with shape [C]
+                    X = fns.stack(vals)
+                    X = fns.transpose(X)
+                    # NOTE: default scaling
+                    s = fns.max(fns.abs(X), axis=1)
+                    # NOTE: another scaling with mean of variance
+                    # s = fns.mean(X, axis=1) # [C]
+                    wp.stat = s
+                    wp.X = X
+
         # Compress model using weight compression parameters
         transformed_model = self._backend_entity.transform_model(
             model,
@@ -401,6 +425,8 @@ class WeightCompression(Algorithm):
             track(all_weight_params, description="Applying Weight Compression"),
             scales,
             zero_points,
+            lora=self._lora,
+            num_params=len(all_weight_params),
         )
 
         self._backend_entity.dump_parameters(

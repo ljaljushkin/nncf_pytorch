@@ -8,6 +8,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -20,7 +21,7 @@ from nncf.common.graph.operator_metatypes import OperatorMetatype
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.utils import get_reduction_axes
 from nncf.experimental.common.tensor_statistics.collectors import TensorCollector
-from nncf.experimental.tensor.tensor import Tensor
+from nncf.experimental.tensor import Tensor
 from nncf.openvino.graph.metatypes import openvino_metatypes as om
 from nncf.openvino.graph.model_transformer import OVModelTransformer
 from nncf.openvino.graph.node_utils import get_const_value
@@ -31,8 +32,17 @@ from nncf.openvino.statistics.collectors import get_raw_stat_collector
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.awq_patterns import get_awq_patterns
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
+from nncf.quantization.algorithms.weight_compression.config import WeightCompressionConfig
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight
+from nncf.quantization.algorithms.weight_compression.weight_lowering import do_dequantization
+
+
+@dataclass
+class LoraParams:
+    rank: int = 8
+    n_iters: int = 3
+    w_regulation: bool = False
 
 
 class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
@@ -122,6 +132,234 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         del const_node
 
+    @staticmethod
+    def _get_int_mul(compressed_weight, compression_dtype, const_node_name, wc_params, const_dtype):
+        compressed_const = opset.constant(compressed_weight.tensor.data, dtype=compression_dtype, name=const_node_name)
+        converted_const = opset.convert(compressed_const, ov.Type.f16)
+        if compressed_weight.zero_point is not None:
+            zero_point_const = opset.constant(
+                compressed_weight.zero_point.data,
+                dtype=compression_dtype,
+                name=f"{const_node_name}/zero_point",
+            )
+            converted_zero_point = opset.convert(zero_point_const, ov.Type.f16)
+            converted_const = opset.subtract(
+                converted_const, converted_zero_point, name=f"{const_node_name}/zero_point/subtract"
+            )
+
+        scale_const = opset.constant(compressed_weight.scale.data, dtype=ov.Type.f16, name=f"{const_node_name}/scale")
+        mul = opset.multiply(
+            converted_const,
+            scale_const,
+            name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}",
+        )
+
+        mul = opset.convert(mul, const_dtype, name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}/convert")
+
+        return mul
+
+    # NOTE: not backend specific. can be common. Lora adapters algorithm itself!
+    @staticmethod
+    def calculate_adapters(weight, compressed_weight, wc_params, lora_params):
+        import numpy as np
+        import numpy.linalg as linalg
+        import scipy.linalg as slinalg
+
+        rank, n_iters, w_regulation = lora_params
+
+        # TODO: support NF4
+        fq_weights = do_dequantization(
+            compressed_weight.tensor,
+            compressed_weight.scale,
+            compressed_weight.zero_point,
+            wc_params.reduction_axes[0],
+        )
+        fq_weights_data = fq_weights.data
+
+        X = wc_params.X.data
+        # diff_before = np.mean(np.abs(weight.data @ X - q_weights_data @ X))
+
+        # q_w + USV = w => USV = w - q_w
+        residual = (weight.data - fq_weights_data).astype(np.float32)
+        w_residual = residual.copy()
+        if wc_params.reduction_axes == 0:
+            residual = np.transpose(residual)
+        if wc_params.stat is not None:  # and False:
+            s = wc_params.stat.data
+            if wc_params.compression_config.group_size > 0:
+                gs = wc_params.compression_config.group_size
+                n_gs = s.shape[0] // gs
+                for i in range(n_gs):
+                    offset = i * gs
+                    denum = np.sum(s[offset : offset + gs])
+                    s[offset : offset + gs] = s[offset : offset + gs] / denum
+                    denum = np.max(s[offset : offset + gs])
+                    s[offset : offset + gs] = s[offset : offset + gs] / denum
+                s = np.expand_dims(s, 0)
+                residual = residual * s
+
+        svd = linalg.svd(residual, compute_uv=True, full_matrices=False)
+        U = svd[0]
+        S = svd[1]
+        V = svd[2]
+
+        Ur = U[:, :rank]
+        Sr = np.diag(S[:rank])
+        Vr = V[:rank, :]
+
+        Vr = Sr @ Vr
+        US = Ur
+
+        if wc_params.X is not None:  # rectification by data
+            X = wc_params.X.data
+            # NOTE: big matmul
+            dY = w_residual @ X  # [O, C] * [C, 1] = [O, 1]
+
+            # US @ Vr = res
+            # US @ Vr @ X = dY
+            # US @ |VR VR @ X| = |res dY|
+
+            for i in range(n_iters):
+                VX = Vr @ X
+                if not w_regulation:
+                    sol = slinalg.lstsq(np.transpose(VX), np.transpose(dY))
+                else:
+                    VrVX = np.concatenate((Vr, VX), axis=1)
+                    dYR = np.concatenate((w_residual, dY), axis=1)
+                    sol = slinalg.lstsq(np.transpose(VrVX), np.transpose(dYR), lapack_driver="gelsy")
+
+                # diff_after_svd = np.mean(np.abs(weight.data @ X - q_weights_data @ X - (US @ Vr) @ X))
+                # if i == 0:
+                # loss.extend([diff_before, diff_after_svd])
+                # wandb.log({layer_name: diff_before})
+                # wandb.log({layer_name: diff_after_svd})
+
+                US = np.transpose(sol[0])
+
+                # diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights_data @ X - (US @ Vr) @ X))
+                # loss.append(diff_after_svd_rectification)
+                # wandb.log({layer_name: diff_after_svd_rectification})
+                # print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+
+                USI = linalg.pinv(US)
+                if not w_regulation:
+                    dYU = USI @ dY
+                    sol = slinalg.lstsq(np.transpose(X), np.transpose(dYU), lapack_driver="gelsy")
+                else:
+                    Ind = np.eye(Vr.shape[1])
+                    IX = np.concatenate((Ind, X), axis=1)
+                    dYR = np.concatenate((USI @ w_residual, USI @ dY), axis=1)
+                    sol = slinalg.lstsq(np.transpose(IX), np.transpose(dYR), lapack_driver="gelsy")
+
+                Vr = np.transpose(sol[0])
+
+                # diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights_data @ X - (US @ Vr) @ X))
+                # loss.append(diff_after_svd_rectification)
+                # wandb.log({layer_name: diff_after_svd_rectification})
+                # if n_iters - i < 3:
+                # print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+        # new_residual = US @ Vr
+        # print("Before: ", np.mean(np.abs(residual)), " After: ", np.mean(np.abs(residual - new_residual)), rank)
+        # weight_delta = np.mean(np.abs(residual)) - np.mean(np.abs(residual - new_residual))
+        # original_l1_noise = diff_before
+        # l1_noise_delta = diff_before - diff_after_svd_rectification
+        # wandb.log(
+        #     {
+        #         "weight_delta": weight_delta,
+        #         "original_l1_noise": original_l1_noise,
+        #         "l1_noise_delta": l1_noise_delta,
+        #     }
+        # )
+
+        return Vr, US
+
+    # NOTE: backend specific code
+    def insert_adapters(self, wc_params, int8_lora, V, US):
+        input_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name].input_value(0)
+        mm_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name]
+
+        const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[wc_params.weight_port_id]
+        const_node_name = const_attributes["name"]
+        const_node = self.name_to_node_mapping[const_node_name]
+        const_dtype = const_node.output(0).get_element_type()
+
+        if int8_lora:
+            compression_config = WeightCompressionConfig()
+            V = Tensor(V)
+            compressed_V = compress_weight(
+                V,
+                wc_params.reduction_axes,
+                compression_config,
+            )
+
+            US = Tensor(US)
+            compressed_US = compress_weight(
+                US,
+                wc_params.reduction_axes,
+                compression_config,
+            )
+            V_W = self._get_int_mul(
+                compressed_V, ov.Type.u8, wc_params.node_with_weight.node_name + "_V", wc_params, const_dtype
+            )
+
+            V_MM = opset.matmul(input_node, V_W, transpose_a=False, transpose_b=True)
+
+            US_W = self._get_int_mul(
+                compressed_US, ov.Type.u8, wc_params.node_with_weight.node_name + "_U", wc_params, const_dtype
+            )
+
+            US_MM = opset.matmul(V_MM, US_W, transpose_a=False, transpose_b=True)
+        else:
+            V_W = opset.constant(V)
+            V_MM = opset.matmul(input_node, V_W, transpose_a=False, transpose_b=True)
+
+            US_W = opset.constant(US)
+            US_MM = opset.matmul(V_MM, US_W, transpose_a=False, transpose_b=True)
+
+        node_output_port = mm_node.output(0)
+        node_output_source_ports = node_output_port.get_target_inputs()
+
+        add = opset.add(mm_node, US_MM)
+
+        for node_output_source_port in node_output_source_ports:
+            node_output_source_port.replace_source_output(add.output(0))
+
+    def insert_lora_residual(
+        self,
+        model: ov.Model,
+        graph: NNCFGraph,
+        wc_params: WeightCompressionParameters,
+        weight,
+        compressed_weight,
+        rank=8,
+        int8_lora=True,
+        w_regulation=False,
+        n_iters=3,
+        # TODO: pre-computed adapter weights!
+        cached_adapter_weights: Dict[str, np.ndarray] = None,
+    ):
+        # print(wc_params.node_with_weight.node_name)
+        # layer_name = wc_params.node_with_weight.node_name.split("/")[0].split("__module.model.layers.")[1]
+
+        # print(compressed_weight.tensor.shape)
+        # loss = []
+
+        # print(
+        #     f"Tune {layer_name} with rank={rank} w_regulation={w_regulation} n_iters={n_iters} "
+        #     f"int8_lora={int8_lora} num_cached={len(cached_adapter_weights)}"
+        # )
+
+        # TODO: do only once per weight!
+        # get FQ weights compress-decompress via OV model??
+        #   is compression should happen after??
+
+        lora_params = LoraParams(rank, n_iters, w_regulation)
+        # NOTE: wc_params hides stat and X
+        V, US = self.calculate_adapters(weight, compressed_weight, wc_params, lora_params)
+        self.insert_adapters(V, US, wc_params, int8_lora=True)
+
+        # return {layer_name: loss}
+
     def transform_model(
         self,
         model: ov.Model,
@@ -129,7 +367,12 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         weight_compression_parameters: Iterable[WeightCompressionParameters],
         precomputed_scales: Dict[str, Tensor] = None,
         precomputed_zero_points: Dict[str, Tensor] = None,
+        lora=True,
+        num_params=None,
     ) -> ov.Model:
+        w_regulation = False
+        n_iters = 3
+        rank = 8
         for wc_params in weight_compression_parameters:
             compression_config = wc_params.compression_config
             if compression_config.mode == CompressWeightsMode.NF4:
@@ -148,68 +391,75 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             else:
                 raise ValueError(f"{compression_config.mode.value} is not supported.")
 
-            const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[wc_params.weight_port_id]
-            const_node_name = const_attributes["name"]
-            const_node = self.name_to_node_mapping[const_node_name]
-            const_node_output = const_node.output(0)
-            const_dtype = const_node_output.get_element_type()
+        const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[wc_params.weight_port_id]
+        const_node_name = const_attributes["name"]
+        const_node = self.name_to_node_mapping[const_node_name]
+        const_node_output = const_node.output(0)
+        const_dtype = const_node_output.get_element_type()
 
-            should_add_convert_node = False
-            if const_dtype != ov.Type.f16:
-                for inp in const_node_output.get_target_inputs():
-                    if inp.get_node().get_type_name() != "Convert":
-                        should_add_convert_node = True
-                        break
+        should_add_convert_node = False
+        if const_dtype != ov.Type.f16:
+            for inp in const_node_output.get_target_inputs():
+                if inp.get_node().get_type_name() != "Convert":
+                    should_add_convert_node = True
+                    break
 
-            weight = Tensor(get_const_value(const_node, np.float32 if const_dtype == ov.Type.bf16 else None))
-            original_shape = weight.shape
-            compressed_weight = compress_weight(
-                weight,
-                wc_params.reduction_axes,
-                compression_config,
-                None if precomputed_scales is None else precomputed_scales.get(wc_params.weight_name),
-                None if precomputed_zero_points is None else precomputed_zero_points.get(wc_params.weight_name),
+        weight = Tensor(get_const_value(const_node, np.float32 if const_dtype == ov.Type.bf16 else None))
+        original_shape = weight.shape
+        compressed_weight = compress_weight(
+            weight,
+            wc_params.reduction_axes,
+            compression_config,
+            None if precomputed_scales is None else precomputed_scales.get(wc_params.weight_name),
+            None if precomputed_zero_points is None else precomputed_zero_points.get(wc_params.weight_name),
+        )
+
+        compressed_const = opset.constant(compressed_weight.tensor.data, dtype=compression_dtype, name=const_node_name)
+        converted_const = opset.convert(compressed_const, ov.Type.f16)
+        if compressed_weight.zero_point is not None:
+            zero_point_const = opset.constant(
+                compressed_weight.zero_point.data,
+                dtype=compression_dtype,
+                name=f"{const_node_name}/zero_point",
+            )
+            converted_zero_point = opset.convert(zero_point_const, ov.Type.f16)
+            converted_const = opset.subtract(
+                converted_const, converted_zero_point, name=f"{const_node_name}/zero_point/subtract"
             )
 
-            compressed_const = opset.constant(
-                compressed_weight.tensor.data, dtype=compression_dtype, name=const_node_name
-            )
-            converted_const = opset.convert(compressed_const, ov.Type.f16)
-            if compressed_weight.zero_point is not None:
-                zero_point_const = opset.constant(
-                    compressed_weight.zero_point.data,
-                    dtype=compression_dtype,
-                    name=f"{const_node_name}/zero_point",
-                )
-                converted_zero_point = opset.convert(zero_point_const, ov.Type.f16)
-                converted_const = opset.subtract(
-                    converted_const, converted_zero_point, name=f"{const_node_name}/zero_point/subtract"
-                )
+        scale_const = opset.constant(compressed_weight.scale.data, dtype=ov.Type.f16, name=f"{const_node_name}/scale")
+        mul = opset.multiply(
+            converted_const,
+            scale_const,
+            name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}",
+        )
 
-            scale_const = opset.constant(
-                compressed_weight.scale.data, dtype=ov.Type.f16, name=f"{const_node_name}/scale"
-            )
-            mul = opset.multiply(
-                converted_const,
-                scale_const,
-                name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}",
-            )
+        if compression_config.group_size != -1:
+            mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
 
-            if compression_config.group_size != -1:
-                mul = opset.reshape(mul, output_shape=original_shape, special_zero=False)
-
-            if should_add_convert_node:
-                mul = opset.convert(
-                    mul, const_dtype, name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}/convert"
-                )
+        if should_add_convert_node:
+            mul = opset.convert(
+                mul, const_dtype, name=f"{const_node_name}/fq_weights_{wc_params.weight_port_id}/convert"
+            )
 
             mul_output = mul.output(0)
             for target_input in const_node.output(0).get_target_inputs():
                 target_input.replace_source_output(mul_output)
 
+        if wc_params.compression_config.num_bits == 4 and lora:
+            self.insert_lora_residual(
+                model,
+                graph,
+                wc_params,
+                weight,
+                compressed_weight,
+                rank=rank,
+                w_regulation=w_regulation,
+                n_iters=n_iters,
+            )
+
         # reset name_to_node_mapping
         self.name_to_node_mapping = None
-
         return model
 
     @staticmethod

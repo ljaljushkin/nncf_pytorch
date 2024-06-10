@@ -340,6 +340,7 @@ def compress_weights(
     awq: Optional[bool] = None,
     scale_estimation: Optional[bool] = None,
     gptq: Optional[bool] = None,
+    lora: Optional[bool] = None,
     advanced_parameters: Optional[AdvancedCompressionParameters] = None,
 ) -> TModel:
     """
@@ -411,7 +412,7 @@ def compress_weights(
                 f"but given {mode.value} mode."
             )
 
-        if True in [awq, scale_estimation, gptq]:
+        if True in [awq, scale_estimation, gptq, lora]:
             raise AttributeError(
                 "Torch backend doesn`t supports scale estimation and AWQ algorithm, "
                 "but awq=True or scale_estimation=True or gptq=True is specified."
@@ -443,6 +444,7 @@ def compress_weights(
         if gptq and (dataset is None or group_size == -1):
             raise AttributeError("GPTQ algorithm defined, but dataset is None or group_size < 0.")
 
+        # TODO: lora
         if gptq and scale_estimation:
             raise AttributeError(
                 "Simultaneous use of Scale estimation and GPTQ algorithms is not supported. Select one of them."
@@ -460,7 +462,7 @@ def compress_weights(
                 "INT8 mode assumes per-channel quantization of all layers in 8 bit. "
                 "Default values of `ratio` (1) and `group_size` (-1) parameters can not be overridden"
             )
-        options = [all_layers, sensitivity_metric, dataset, awq, scale_estimation, gptq]
+        options = [all_layers, sensitivity_metric, dataset, awq, scale_estimation, gptq, lora]
         if any(option is not None for option in options):
             raise AttributeError(
                 "INT8 modes do not support `all_layers`, `sensitivity_metric`, `awq`, `scale_estimation`, `gptq` "
@@ -479,6 +481,8 @@ def compress_weights(
         scale_estimation = False
     if gptq is None:
         gptq = False
+    if lora is None:
+        lora = False
     if ignored_scope is None:
         ignored_scope = IgnoredScope()
     if sensitivity_metric is None:
@@ -513,6 +517,7 @@ def compress_weights(
         subset_size,
         scale_estimation,
         gptq,
+        lora,
         advanced_parameters,
     )
 

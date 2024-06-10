@@ -806,6 +806,12 @@ def test_default_subset_value():
     assert default_value == 128
 
 
+# TODO:
+# 1 layer model
+#   quantization noise is reduced on some averaged data
+#
+
+
 @pytest.mark.parametrize("subset_size", (-1, 0, None))
 def test_invalid_subset_size(subset_size):
     model = IdentityMatmul().ov_model
