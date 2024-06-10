@@ -58,7 +58,7 @@ class WeightCompressionParameters:
     weight_port_id: int
     num_weights: np.uint64
     reduction_axes: Tuple[int, ...]
-    compression_config: WeightCompressionConfig
+    compression_config = WeightCompressionConfig()
     stat = None
     X = None
 

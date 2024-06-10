@@ -177,7 +177,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         fq_weights_data = fq_weights.data
 
         X = wc_params.X.data
-        # diff_before = np.mean(np.abs(weight.data @ X - q_weights_data @ X))
+        diff_before = np.mean(np.abs(weight.data @ X - fq_weights_data @ X))
 
         # q_w + USV = w => USV = w - q_w
         residual = (weight.data - fq_weights_data).astype(np.float32)
@@ -228,7 +228,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     dYR = np.concatenate((w_residual, dY), axis=1)
                     sol = slinalg.lstsq(np.transpose(VrVX), np.transpose(dYR), lapack_driver="gelsy")
 
-                # diff_after_svd = np.mean(np.abs(weight.data @ X - q_weights_data @ X - (US @ Vr) @ X))
+                diff_after_svd = np.mean(np.abs(weight.data @ X - fq_weights_data @ X - (US @ Vr) @ X))
                 # if i == 0:
                 # loss.extend([diff_before, diff_after_svd])
                 # wandb.log({layer_name: diff_before})
@@ -236,10 +236,10 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
                 US = np.transpose(sol[0])
 
-                # diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights_data @ X - (US @ Vr) @ X))
+                diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - fq_weights_data @ X - (US @ Vr) @ X))
                 # loss.append(diff_after_svd_rectification)
                 # wandb.log({layer_name: diff_after_svd_rectification})
-                # print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+                print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
 
                 USI = linalg.pinv(US)
                 if not w_regulation:
@@ -257,7 +257,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 # loss.append(diff_after_svd_rectification)
                 # wandb.log({layer_name: diff_after_svd_rectification})
                 # if n_iters - i < 3:
-                # print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+                print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
         # new_residual = US @ Vr
         # print("Before: ", np.mean(np.abs(residual)), " After: ", np.mean(np.abs(residual - new_residual)), rank)
         # weight_delta = np.mean(np.abs(residual)) - np.mean(np.abs(residual - new_residual))
