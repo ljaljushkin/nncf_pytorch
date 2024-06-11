@@ -165,7 +165,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         import numpy.linalg as linalg
         import scipy.linalg as slinalg
 
-        rank, n_iters, w_regulation = lora_params
+        rank, n_iters, w_regulation = lora_params.rank, lora_params.n_iters, lora_params.w_regulation
 
         # TODO: support NF4
         fq_weights = do_dequantization(
@@ -274,7 +274,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         return Vr, US
 
     # NOTE: backend specific code
-    def insert_adapters(self, wc_params, int8_lora, V, US):
+    def insert_adapters(self, wc_params, V, US, int8_lora):
         input_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name].input_value(0)
         mm_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name]
 
@@ -356,7 +356,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         lora_params = LoraParams(rank, n_iters, w_regulation)
         # NOTE: wc_params hides stat and X
         V, US = self.calculate_adapters(weight, compressed_weight, wc_params, lora_params)
-        self.insert_adapters(V, US, wc_params, int8_lora=True)
+        self.insert_adapters(wc_params, V, US, int8_lora=True)
 
         # return {layer_name: loss}
 
