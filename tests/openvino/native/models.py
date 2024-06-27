@@ -1060,6 +1060,7 @@ class StatefulModel(OVReferenceModel):
         return model
 
 
+# maybe smaller sizes? or define sizes by input arguments??
 @SYNTHETIC_MODELS.register()
 class LMLinearModel(OVReferenceModel):
     HIDDEN_DIM = 4096

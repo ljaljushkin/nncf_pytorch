@@ -864,7 +864,7 @@ def test_call_gptq(mode):
     compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, gptq=True)
 
 
-def test_lora_adapters_reduce_noise():
+def test_lora_adapters_reduce_noise(tmp_path):
     mode = CompressWeightsMode.INT4_SYM
     model_cls = LMLinearModel
     group_size = 128
@@ -895,6 +895,7 @@ def test_lora_adapters_reduce_noise():
     int4_model = compress_weights(
         model, mode=mode, ratio=1.0, group_size=group_size, dataset=dataset, all_layers=True, lora=True
     )
+    ov.save_model(int4_model, tmp_path / "model.xml")
     compiled_model = ie.compile_model(int4_model, "CPU")
     infer_request = compiled_model.create_infer_request()
     int4_out = infer_request.infer(input_data, share_inputs=True)
@@ -905,3 +906,5 @@ def test_lora_adapters_reduce_noise():
 
     assert np.isclose(noise_after, 2.04, atol=1e-2)  # 2.0489964
     assert noise_after < noise_before
+
+    # TODO: check that there extra adapters in the model
