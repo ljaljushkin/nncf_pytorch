@@ -10,10 +10,9 @@
 # limitations under the License.
 
 from abc import abstractmethod
-from pathlib import Path
-from typing import Dict, List, Optional, TypeVar
 
-import pandas as pd
+# from pathlib import Path
+from typing import Dict, List, Optional, TypeVar
 
 from nncf.common.graph import NNCFGraph
 from nncf.common.logging.track_progress import track
@@ -27,6 +26,9 @@ from nncf.quantization.algorithms.weight_compression.config import WeightCompres
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_integer_quantization
 from nncf.quantization.algorithms.weight_compression.weight_lowering import get_integer_quantization_error
+
+# import pandas as pd
+
 
 TModel = TypeVar("TModel")
 MIXED_PRECISION_CRITERIA = Registry("mixed_precision_criteria")
@@ -79,15 +81,15 @@ class MixedPrecisionCriterion:
         Assigns quantization precision based on computed layers' sensitivities, ratio of parameters.
         """
         # NOISE_FILE = Path('max_var_scores.csv')
-        NOISE_FILE = Path("/home/nlyaly/projects/lm-evaluation-harness/scores.csv")
-        if NOISE_FILE.exists():
-            df = pd.read_csv(NOISE_FILE)
-            scores = list(df[df.columns[1]])
-        else:
-            scores = self._calc_sensitivity()
-            df = pd.DataFrame(scores)
-            df.to_csv("scores.csv")
-            # assert False
+        # NOISE_FILE = Path("/home/nlyaly/projects/lm-evaluation-harness/scores.csv")
+        # if NOISE_FILE.exists():
+        #     df = pd.read_csv(NOISE_FILE)
+        #     scores = list(df[df.columns[1]])
+        # else:
+        scores = self._calc_sensitivity()
+        # df = pd.DataFrame(scores)
+        # df.to_csv("scores.csv")
+        # assert False
         num_all_weights = sum(wp.num_weights for wp in self._weight_params)
 
         indexes_of_layers_in_ascending_order_of_scores = [

@@ -215,19 +215,25 @@ class LMWeightCompression(BaseTestPipeline):
             core.set_property("CPU", properties={"INFERENCE_NUM_THREADS": str(inference_num_threads)})
 
         gt_data_path = TEST_ROOT / "post_training" / "data" / "wwb_ref_answers" / self.fp32_model_name / "ref_qa.csv"
+        # pred_data_path = self.output_model_dir / "pred.csv"
         gt_data_path.parent.mkdir(parents=True, exist_ok=True)
         if os.getenv("NNCF_TEST_REGEN_DOT") is not None:
             print("Collection ground-truth reference data")
             model_gold = OVModelForCausalLM.from_pretrained(
                 self.fp32_model_dir, trust_remote_code=True, load_in_8bit=False, compile=False, stateful=is_stateful
             )
-            evaluator = Evaluator(base_model=model_gold, tokenizer=self.preprocessor, metrics=("similarity",))
+            evaluator = Evaluator(
+                base_model=model_gold, tokenizer=self.preprocessor, metrics=("similarity", "divergency")
+            )
             evaluator.dump_gt(str(gt_data_path))
             print("Saving ground-truth validation data:", gt_data_path.resolve())
         else:
             print("Loading existing ground-truth validation data:", gt_data_path.resolve())
             evaluator = Evaluator(
-                tokenizer=self.preprocessor, gt_data=gt_data_path, test_data=str(gt_data_path), metrics=("similarity",)
+                tokenizer=self.preprocessor,
+                gt_data=gt_data_path,
+                test_data=str(gt_data_path),
+                metrics=("similarity", "divergency"),
             )
 
         compressed_model_hf = self.model_hf
@@ -237,6 +243,8 @@ class LMWeightCompression(BaseTestPipeline):
             )
         print("Evaluation of the target model")
         _, all_metrics = evaluator.score(compressed_model_hf)
+        # print(all_metrics)
+        # evaluator.dump_pred(str(pred_data_path))
         similarity = all_metrics["similarity"][0]
         self.run_info.metric_name = "Similarity"
         self.run_info.metric_value = round(similarity, 5)

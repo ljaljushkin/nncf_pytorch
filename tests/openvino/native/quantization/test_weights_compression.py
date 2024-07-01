@@ -38,6 +38,7 @@ from tests.openvino.native.models import GatherAndMatmulShareData
 from tests.openvino.native.models import GatherWithTwoReductionAxes
 from tests.openvino.native.models import IdentityMatmul
 from tests.openvino.native.models import IntegerModel
+from tests.openvino.native.models import LMLinearModel
 from tests.openvino.native.models import ModelNamedConsts
 from tests.openvino.native.models import SequentialMatmulModel
 from tests.openvino.native.models import WeightsModel
@@ -779,3 +780,46 @@ def test_call_max_var_criterion_with_dataset_by_default_scale_estimation(mode):
     dataset = Dataset([np.ones([8, 8])])
 
     compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, scale_estimation=True)
+
+
+def test_lora_adapters_reduce_noise():
+    mode = CompressWeightsMode.INT4_SYM
+    model_cls = LMLinearModel
+    group_size = 128
+    model = model_cls().ov_model
+    # dataset = Dataset([np.ones(model_cls.INPUT_SHAPE)] * 2)
+    ie = ov.Core()
+    # sample = dataset.get_data([0])
+    # input_data = {inp.get_any_name(): np.random.rand(*inp.shape) for inp in model.inputs}
+    input_data = {inp.get_any_name(): np.ones(inp.shape) for inp in model.inputs}
+    dataset = Dataset(list(input_data.values()))
+
+    compiled_model = ie.compile_model(model, "CPU")
+    infer_request = compiled_model.create_infer_request()
+    fp32_out = infer_request.infer(input_data, share_inputs=True)
+    fp32_out = next(iter(fp32_out.values()))
+    # print(fp32_out[:5,:5])
+
+    int4_model = compress_weights(model, mode=mode, ratio=1.0, group_size=group_size, dataset=dataset, all_layers=True)
+    compiled_model = ie.compile_model(int4_model, "CPU")
+    infer_request = compiled_model.create_infer_request()
+    int4_out = infer_request.infer(input_data, share_inputs=True)
+    int4_out = next(iter(int4_out.values()))
+    # print(int4_out[:5,:5])
+    noise_before = np.mean(np.abs(fp32_out - int4_out))
+
+    model = model_cls().ov_model
+    int4_model = compress_weights(
+        model, mode=mode, ratio=1.0, group_size=group_size, dataset=dataset, all_layers=True, lora=True
+    )
+    compiled_model = ie.compile_model(int4_model, "CPU")
+    infer_request = compiled_model.create_infer_request()
+    int4_out = infer_request.infer(input_data, share_inputs=True)
+    int4_out = next(iter(int4_out.values()))
+    # print(int4_out[:5,:5])
+    # print(np.mean(np.abs(fp32_out - int4_out)))
+    noise_after = np.mean(np.abs(fp32_out - int4_out))
+
+    assert np.isclose(noise_before, 2.05, atol=1e-2)  # 2.053288
+    assert np.isclose(noise_after, 2.04, atol=1e-2)  # 2.0489964
+    assert noise_after < noise_before

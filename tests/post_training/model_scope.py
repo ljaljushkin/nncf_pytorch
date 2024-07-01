@@ -370,6 +370,46 @@ WEIGHT_COMPRESSION_MODELS = [
         "params": {"is_stateful": True},
         "backends": [BackendType.OV],
     },
+    {
+        "reported_name": "tinyllama_data_aware_scale_estimation_stateful",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "group_size": 64,
+            "ratio": 0.8,
+            "mode": CompressWeightsMode.INT4_SYM,
+            "scale_estimation": True,
+        },
+        "params": {"is_stateful": True},
+        "backends": [BackendType.OV],
+    },
+    {
+        "reported_name": "tinyllama_data_aware_lora_stateful",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "group_size": 64,
+            "ratio": 0.8,
+            "mode": CompressWeightsMode.INT4_SYM,
+            "lora": True,
+        },
+        "params": {"is_stateful": True},
+        "backends": [BackendType.OV],
+    },
+    {
+        "reported_name": "tinyllama_data_aware_scale_estimation_lora_stateful",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "group_size": 64,
+            "ratio": 0.8,
+            "mode": CompressWeightsMode.INT4_SYM,
+            "lora": True,
+            "scale_estimation": True,
+        },
+        "params": {"is_stateful": True},
+        "backends": [BackendType.OV],
+    },
 ]
 
 
