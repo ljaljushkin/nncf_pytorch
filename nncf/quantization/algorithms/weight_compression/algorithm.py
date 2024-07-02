@@ -407,7 +407,7 @@ class WeightCompression(Algorithm):
             )
 
         if self._lora:
-            from nncf.experimental.tensor import functions as fns
+            from nncf.tensor import functions as fns
 
             for wp in all_weight_params:
                 k = wp.node_with_weight.node_name

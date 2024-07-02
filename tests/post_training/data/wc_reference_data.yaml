@@ -28,5 +28,5 @@ tinyllama_data_aware_gptq_backend_OV:
   num_int8: 124
 tinyllama_data_aware_lora_stateful_backend_OV:
   metric_value: 0.83682
-  num_int4: 188
+  num_int4: 94
   num_int8: 500
