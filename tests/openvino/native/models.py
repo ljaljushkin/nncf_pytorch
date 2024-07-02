@@ -1063,16 +1063,14 @@ class StatefulModel(OVReferenceModel):
 # maybe smaller sizes? or define sizes by input arguments??
 @SYNTHETIC_MODELS.register()
 class LMLinearModel(OVReferenceModel):
-    HIDDEN_DIM = 4096
-    OUTPUT_DIM = 1024
-    INPUT_SHAPE = [128, HIDDEN_DIM]  # [SeqLen, HiddenDim]
+    HIDDEN_DIM = 32
+    OUTPUT_DIM = 32
+    INPUT_SHAPE = [32, HIDDEN_DIM]  # [SeqLen, HiddenDim]
 
     def _create_ov_model(self):
         input_1 = opset.parameter(self.INPUT_SHAPE, name="Input")
         data = self._rng.random((self.OUTPUT_DIM, self.HIDDEN_DIM)).astype(np.float32)
-        # TODO: test with transpose_b=False
         matmul = opset.matmul(input_1, data, transpose_a=False, transpose_b=True, name="MatMul")
-        # add = opset.add(matmul, self._rng.random((1, 2)).astype(np.float32), name="Add")
         result = opset.result(matmul, name="Result")
         result.get_output_tensor(0).set_names(set(["Result"]))
         model = ov.Model([result], [input_1])
