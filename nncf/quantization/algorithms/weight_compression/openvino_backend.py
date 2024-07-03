@@ -9,10 +9,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import openvino as ov
+import pandas as pd
 from openvino.runtime import opset13 as opset
 
 from nncf.common.graph import NNCFGraph
@@ -20,6 +22,7 @@ from nncf.common.graph import NNCFNode
 from nncf.common.graph.operator_metatypes import OperatorMetatype
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.utils import get_reduction_axes
+from nncf.common.utils.debug import DEBUG_LOG_DIR
 from nncf.experimental.common.tensor_statistics.collectors import TensorCollector
 from nncf.openvino.graph.metatypes import openvino_metatypes as om
 from nncf.openvino.graph.metatypes.groups import ATOMIC_ACTIVATIONS_OPERATIONS
@@ -164,13 +167,14 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
     # NOTE: not backend specific. can be common. Lora adapters algorithm itself!
     @staticmethod
-    def calculate_adapters(weight, compressed_weight, wc_params, lora_params):
+    def calculate_adapters(weight, compressed_weight, wc_params, lora_params, debug_interface):
         import numpy as np
         import numpy.linalg as linalg
         import scipy.linalg as slinalg
 
         rank, n_iters, w_regulation = lora_params.rank, lora_params.n_iters, lora_params.w_regulation
-
+        layer_name = wc_params.node_with_weight.node_name
+        loss = []
         # TODO: support NF4
         fq_weights = do_dequantization(
             compressed_weight.tensor,
@@ -234,14 +238,14 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
                 diff_after_svd = np.mean(np.abs(weight.data @ X - fq_weights_data @ X - (US @ Vr) @ X))
                 # if i == 0:
-                # loss.extend([diff_before, diff_after_svd])
+                loss.extend([diff_before, diff_after_svd])
                 # wandb.log({layer_name: diff_before})
                 # wandb.log({layer_name: diff_after_svd})
 
                 US = np.transpose(sol[0])
 
                 diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - fq_weights_data @ X - (US @ Vr) @ X))
-                # loss.append(diff_after_svd_rectification)
+                loss.append(diff_after_svd_rectification)
                 # wandb.log({layer_name: diff_after_svd_rectification})
                 print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
 
@@ -258,7 +262,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 Vr = np.transpose(sol[0])
 
                 # diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights_data @ X - (US @ Vr) @ X))
-                # loss.append(diff_after_svd_rectification)
+                loss.append(diff_after_svd_rectification)
                 # wandb.log({layer_name: diff_after_svd_rectification})
                 # if n_iters - i < 3:
                 print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
@@ -274,7 +278,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         #         "l1_noise_delta": l1_noise_delta,
         #     }
         # )
-
+        debug_interface[layer_name] = loss
         return Vr, US
 
     # NOTE: backend specific code
@@ -340,7 +344,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         w_regulation=False,
         n_iters=3,
         # TODO: pre-computed adapter weights!
-        cached_adapter_weights: Dict[str, np.ndarray] = None,
+        debug_interface: Dict[str, List[float]] = None,
     ):
         # print(wc_params.node_with_weight.node_name)
         # layer_name = wc_params.node_with_weight.node_name.split("/")[0].split("__module.model.layers.")[1]
@@ -359,7 +363,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         lora_params = LoraParams(rank, n_iters, w_regulation)
         # NOTE: wc_params hides stat and X
-        V, US = self.calculate_adapters(weight, compressed_weight, wc_params, lora_params)
+
+        V, US = self.calculate_adapters(weight, compressed_weight, wc_params, lora_params, debug_interface)
         self.insert_adapters(wc_params, V, US, int8_lora=True)
 
         # return {layer_name: loss}
@@ -377,6 +382,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         w_regulation = False
         n_iters = 3
         rank = 8
+        debug_interface = {}
         for wc_params in weight_compression_parameters:
             compression_config = wc_params.compression_config
             if compression_config.mode == CompressWeightsMode.NF4:
@@ -463,11 +469,37 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     rank=rank,
                     w_regulation=w_regulation,
                     n_iters=n_iters,
+                    debug_interface=debug_interface,
                 )
 
         # reset name_to_node_mapping
         self.name_to_node_mapping = None
+        df = pd.DataFrame(debug_interface)
+        dump_dir = Path(DEBUG_LOG_DIR) / "lora"
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        print("saving file to: ", dump_dir)
+        df.to_csv(dump_dir / "losses.csv")
+
         return model
+
+    # class LoraDebugInterface:
+    #     def add_loss(layer_name, value):
+    #         pass
+
+    #     def dump_data(path):
+    #         pass
+
+    # def plot_delta():
+    #     pass
+
+    # def plot_norm_delta():
+    #     pass
+
+    # def plot_per_layer(csv_path_1):
+    #     pass
+
+    # def plot_diff_run(csv_path_1, csv_path_2, layer_name=None):
+    #     pass
 
     @staticmethod
     def dump_parameters(
