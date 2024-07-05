@@ -15,7 +15,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 # p = Path('/home/nlyaly/projects/nncf/tests/openvino/nncf_debug/lora/losses.csv')
-p1 = Path("/home/nlyaly/projects/nncf/tests/post_training/nncf_debug/lora/losses.csv")
+# p1 = Path("/home/nlyaly/projects/nncf/tests/post_training/nncf_debug/lora/curr_losses.csv")
+p1 = Path("/home/nlyaly/projects/nncf/tests/post_training/nncf_debug/lora/gold_losses_0.83682.csv")
 df = pd.read_csv(p1)
 
 df = df.drop(df.columns[[0]], axis=1)
@@ -28,7 +29,8 @@ print("is all layers improved: ", all(delta > 0))
 fig, ax = plt.subplots(1)
 ax.plot(delta)
 ax.set_xticklabels([])
-plt.show()
+# plt.show()
+plt.savefig(p1.parent / "gold.jpg")
 
 
 # print(df)
