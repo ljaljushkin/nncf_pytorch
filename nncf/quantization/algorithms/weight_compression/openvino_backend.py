@@ -42,6 +42,7 @@ from nncf.quantization.algorithms.weight_compression.config import WeightCompres
 from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_dequantization
 from nncf.tensor import Tensor
+from nncf.tensor import functions as fns
 from nncf.tensor.definitions import TensorDataType
 
 
@@ -126,7 +127,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         const_port = node_with_const.input(weight_port_id)
         const_node = node_with_const.input_value(weight_port_id).get_node()
 
-        new_const_node = ov.runtime.op.Constant(weight.data, shared_memory=True)
+        new_const_node = ov.runtime.op.Constant(weight, shared_memory=True)
         new_const_node.set_friendly_name(const_node.get_friendly_name())
         const_port.replace_source_output(new_const_node.output(0))
 
@@ -168,10 +169,6 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
     # NOTE: not backend specific. can be common. Lora adapters algorithm itself!
     @staticmethod
     def calculate_adapters(weight, compressed_weight, wc_params, lora_params, debug_interface):
-        import numpy as np
-        import numpy.linalg as linalg
-        import scipy.linalg as slinalg
-
         rank, n_iters, w_regulation = lora_params.rank, lora_params.n_iters, lora_params.w_regulation
         layer_name = wc_params.node_with_weight.node_name
         loss = []
@@ -182,44 +179,43 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             compressed_weight.zero_point,
             wc_params.reduction_axes[0],
         )
-        fq_weights_data = fq_weights.data
 
-        X = wc_params.X.data
-        diff_before = np.mean(np.abs(weight.data @ X - fq_weights_data @ X))
+        X = wc_params.X
+        diff_before = fns.mean(fns.abs(weight @ X - fq_weights @ X))
 
         # q_w + USV = w => USV = w - q_w
-        residual = (weight.data - fq_weights_data).astype(np.float32)
-        w_residual = residual.copy()
+        residual = fns.astype(weight - fq_weights, TensorDataType.float32)
+        w_residual = residual.clone()
         if wc_params.reduction_axes == 0:
-            residual = np.transpose(residual)
+            residual = fns.transpose(residual)
         if wc_params.stat is not None:  # and False:
-            s = wc_params.stat.data
+            s = wc_params.stat
             if wc_params.compression_config.group_size > 0:
                 gs = wc_params.compression_config.group_size
                 n_gs = s.shape[0] // gs
                 for i in range(n_gs):
                     offset = i * gs
-                    denum = np.sum(s[offset : offset + gs])
+                    denum = fns.sum(s[offset : offset + gs])
                     s[offset : offset + gs] = s[offset : offset + gs] / denum
-                    denum = np.max(s[offset : offset + gs])
+                    denum = fns.max(s[offset : offset + gs])
                     s[offset : offset + gs] = s[offset : offset + gs] / denum
-                s = np.expand_dims(s, 0)
+                s = fns.expand_dims(s, 0)
                 residual = residual * s
 
-        svd = linalg.svd(residual, compute_uv=True, full_matrices=False)
+        svd = fns.linalg.svd(residual, full_matrices=False)
         U = svd[0]
         S = svd[1]
         V = svd[2]
 
         Ur = U[:, :rank]
-        Sr = np.diag(S[:rank])
+        Sr = fns.diag(S[:rank])
         Vr = V[:rank, :]
 
         Vr = Sr @ Vr
         US = Ur
 
         if wc_params.X is not None:  # rectification by data
-            X = wc_params.X.data
+            X = wc_params.X
             # NOTE: big matmul
             dY = w_residual @ X  # [O, C] * [C, 1] = [O, 1]
 
@@ -230,38 +226,40 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             for i in range(n_iters):
                 VX = Vr @ X
                 if not w_regulation:
-                    sol = slinalg.lstsq(np.transpose(VX), np.transpose(dY))
+                    sol = fns.linalg.lstsq(fns.transpose(VX), fns.transpose(dY))
                 else:
-                    VrVX = np.concatenate((Vr, VX), axis=1)
-                    dYR = np.concatenate((w_residual, dY), axis=1)
-                    sol = slinalg.lstsq(np.transpose(VrVX), np.transpose(dYR), lapack_driver="gelsy")
+                    VrVX = fns.concatenate((Vr, VX), axis=1)
+                    dYR = fns.concatenate((w_residual, dY), axis=1)
+                    sol = fns.linalg.lstsq(fns.transpose(VrVX), fns.transpose(dYR), driver="gelsy")
 
-                diff_after_svd = np.mean(np.abs(weight.data @ X - fq_weights_data @ X - (US @ Vr) @ X))
+                diff_after_svd = fns.mean(fns.abs(weight @ X - fq_weights @ X - (US @ Vr) @ X))
                 # if i == 0:
                 loss.extend([diff_before, diff_after_svd])
                 # wandb.log({layer_name: diff_before})
                 # wandb.log({layer_name: diff_after_svd})
 
-                US = np.transpose(sol[0])
+                US = fns.transpose(sol)
 
-                diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - fq_weights_data @ X - (US @ Vr) @ X))
+                diff_after_svd_rectification = fns.mean(fns.abs(weight @ X - fq_weights @ X - (US @ Vr) @ X))
                 loss.append(diff_after_svd_rectification)
                 # wandb.log({layer_name: diff_after_svd_rectification})
                 print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
 
-                USI = linalg.pinv(US)
+                # USI = linalg.pinv(US)
+                # dYU = USI @ dY
+                dYU = fns.linalg.lstsq(US, dY)
                 if not w_regulation:
-                    dYU = USI @ dY
-                    sol = slinalg.lstsq(np.transpose(X), np.transpose(dYU), lapack_driver="gelsy")
+                    sol = fns.linalg.lstsq(fns.transpose(X), fns.transpose(dYU), driver="gelsy")
                 else:
-                    Ind = np.eye(Vr.shape[1])
-                    IX = np.concatenate((Ind, X), axis=1)
-                    dYR = np.concatenate((USI @ w_residual, USI @ dY), axis=1)
-                    sol = slinalg.lstsq(np.transpose(IX), np.transpose(dYR), lapack_driver="gelsy")
+                    Ind = fns.eye(Vr.shape[1])
+                    IX = fns.concatenate((Ind, X), axis=1)
+                    wU = fns.linalg.lstsq(US, w_residual)
+                    dYR = fns.concatenate((wU, dYU), axis=1)
+                    sol = fns.linalg.lstsq(fns.transpose(IX), fns.transpose(dYR), driver="gelsy")
 
-                Vr = np.transpose(sol[0])
+                Vr = fns.transpose(sol)
 
-                # diff_after_svd_rectification = np.mean(np.abs(weight.data @ X - q_weights_data @ X - (US @ Vr) @ X))
+                # diff_after_svd_rectification = np.mean(np.abs(weight @ X - q_weights_data @ X - (US @ Vr) @ X))
                 loss.append(diff_after_svd_rectification)
                 # wandb.log({layer_name: diff_after_svd_rectification})
                 # if n_iters - i < 3:
@@ -413,6 +411,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                         should_add_convert_node = True
                         break
 
+            # TODO: avoid np usage.
             weight = Tensor(get_const_value(const_node, np.float32 if const_dtype == ov.Type.bf16 else None))
             original_shape = weight.shape
             compressed_weight = compress_weight(

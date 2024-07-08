@@ -94,6 +94,12 @@ class Tensor:
     def __rmul__(self, other: Union[Tensor, float]) -> Tensor:
         return Tensor(unwrap_tensor_data(other) * self.data)
 
+    def __matmul__(self, other: Union[Tensor, float]) -> Tensor:
+        return Tensor(self.data @ unwrap_tensor_data(other))
+
+    def __rmatmul__(self, other: Union[Tensor, float]) -> Tensor:
+        return Tensor(unwrap_tensor_data(other) @ self.data)
+
     def __pow__(self, other: Union[Tensor, float]) -> Tensor:
         return Tensor(self.data ** unwrap_tensor_data(other))
 
