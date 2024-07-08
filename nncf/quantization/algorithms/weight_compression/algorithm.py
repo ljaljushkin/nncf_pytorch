@@ -409,6 +409,9 @@ class WeightCompression(Algorithm):
         if self._lora:
             from nncf.tensor import functions as fns
 
+            # TODO: LORA statistics
+            # def fn(all_weight_params, activations) -> X, s
+            # def fn(weight_param, activations)
             for wp in all_weight_params:
                 k = wp.node_with_weight.node_name
                 if wp.node_with_weight.node_name in activations:
@@ -426,6 +429,17 @@ class WeightCompression(Algorithm):
                     # s = fns.mean(X, axis=1) # [C]
                     wp.stat = s
                     wp.X = X
+
+                    if wp.compression_config.group_size > 0:
+                        gs = wp.compression_config.group_size
+                        n_gs = s.shape[0] // gs
+                        for i in range(n_gs):
+                            offset = i * gs
+                            denum = fns.sum(s[offset : offset + gs])
+                            s[offset : offset + gs] = s[offset : offset + gs] / denum
+                            denum = fns.max(s[offset : offset + gs])
+                            s[offset : offset + gs] = s[offset : offset + gs] / denum
+                        s = fns.expand_dims(s, 0)
 
         # Compress model using weight compression parameters
         transformed_model = self._backend_entity.transform_model(

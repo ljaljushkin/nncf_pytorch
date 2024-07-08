@@ -233,36 +233,36 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     sol = fns.linalg.lstsq(fns.transpose(VrVX), fns.transpose(dYR), driver="gelsy")
 
                 diff_after_svd = fns.mean(fns.abs(weight @ X - fq_weights @ X - (US @ Vr) @ X))
-                # if i == 0:
-                loss.extend([diff_before, diff_after_svd])
+                if i == 0:
+                    loss.extend([diff_before.data, diff_after_svd.data])
                 # wandb.log({layer_name: diff_before})
                 # wandb.log({layer_name: diff_after_svd})
 
                 US = fns.transpose(sol)
 
                 diff_after_svd_rectification = fns.mean(fns.abs(weight @ X - fq_weights @ X - (US @ Vr) @ X))
-                loss.append(diff_after_svd_rectification)
+                loss.append(diff_after_svd_rectification.data)
                 # wandb.log({layer_name: diff_after_svd_rectification})
                 print(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
 
-                # USI = linalg.pinv(US)
-                # dYU = USI @ dY
-                dYU = fns.linalg.lstsq(US, dY)
+                # TODO: pinv is faster for numpy and scipy, but slower for torch
+                USI = np.linalg.pinv(US.data)
+                dYU = Tensor(USI) @ dY
+                # dYU = fns.linalg.lstsq(US, dY)
                 if not w_regulation:
                     sol = fns.linalg.lstsq(fns.transpose(X), fns.transpose(dYU), driver="gelsy")
                 else:
                     Ind = fns.eye(Vr.shape[1])
                     IX = fns.concatenate((Ind, X), axis=1)
-                    wU = fns.linalg.lstsq(US, w_residual)
+                    wU = USI @ w_residual
+                    # wU = fns.linalg.lstsq(US, w_residual)
                     dYR = fns.concatenate((wU, dYU), axis=1)
                     sol = fns.linalg.lstsq(fns.transpose(IX), fns.transpose(dYR), driver="gelsy")
 
                 Vr = fns.transpose(sol)
 
-                # diff_after_svd_rectification = np.mean(np.abs(weight @ X - q_weights_data @ X - (US @ Vr) @ X))
-                loss.append(diff_after_svd_rectification)
-                # wandb.log({layer_name: diff_after_svd_rectification})
-                # if n_iters - i < 3:
+                diff_after_svd_rectification = fns.mean(fns.abs(weight @ X - fq_weights @ X - (US @ Vr) @ X))
+                loss.append(diff_after_svd_rectification.data)
                 print(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
         # new_residual = US @ Vr
         # print("Before: ", np.mean(np.abs(residual)), " After: ", np.mean(np.abs(residual - new_residual)), rank)
@@ -279,7 +279,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         debug_interface[layer_name] = loss
         return Vr, US
 
-    # NOTE: backend specific code
+    # NOTE: backend specific code for inserting LoRA adapters.
     def insert_adapters(self, wc_params, V, US, int8_lora):
         input_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name].input_value(0)
         mm_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name]
