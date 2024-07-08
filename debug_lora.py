@@ -30,7 +30,7 @@ fig, ax = plt.subplots(1)
 ax.plot(delta)
 ax.set_xticklabels([])
 # plt.show()
-plt.savefig(p1.parent / "gold.jpg")
+plt.savefig(p1.with_suffix("jpg"))
 
 
 # print(df)

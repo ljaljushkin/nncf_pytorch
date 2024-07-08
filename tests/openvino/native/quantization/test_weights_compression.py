@@ -816,12 +816,6 @@ def test_default_subset_value():
     assert default_value == 128
 
 
-# TODO:
-# 1 layer model
-#   quantization noise is reduced on some averaged data
-#
-
-
 @pytest.mark.parametrize("subset_size", (-1, 0, None))
 def test_invalid_subset_size(subset_size):
     model = IdentityMatmul().ov_model
@@ -915,6 +909,41 @@ def test_mixed_precision_e2m1(mode, all_layers, ratio, ref_ids):
     assert ref_nf4_nodes == names
 
 
+# TODO: check that there extra adapters in the model after compression, and no one before
+# TODO: can check advanced parameters:
+# int8 adapters - check constants
+# non-default rank
+# num function call with iter=2
+def test_lora_adapters_in_the_graph():
+    group_size = 8
+    rank = 8
+    mode = CompressWeightsMode.INT4_SYM
+    model_cls = LMLinearModel
+    model = model_cls().ov_model
+
+    input_data = {inp.get_any_name(): np.ones(inp.shape) for inp in model.inputs}
+    dataset = Dataset(list(input_data.values()))
+
+    compressed_model = compress_weights(
+        model, mode=mode, ratio=1.0, group_size=group_size, dataset=dataset, all_layers=True, lora=True
+    )
+
+    input_node = compressed_model.inputs[0].node
+    target_inputs = input_node.output(0).get_target_inputs()
+    assert len(target_inputs) == 2
+    for target_input in target_inputs:
+        next_node = target_input.get_node()
+        assert next_node.type_info.name == "MatMul"
+        if next_node.shape[1] == rank:
+            node = get_next_node(next_node)
+            assert node.type_info.name == "MatMul"
+            assert node.shape[1] == LMLinearModel.OUTPUT_DIM
+        else:
+            assert next_node.shape[1] == LMLinearModel.OUTPUT_DIM
+            node = get_next_node(next_node)
+            assert node.type_info.name == "Add"
+
+
 def test_lora_adapters_reduce_noise(tmp_path):
     mode = CompressWeightsMode.INT4_SYM
     model_cls = LMLinearModel
@@ -957,5 +986,3 @@ def test_lora_adapters_reduce_noise(tmp_path):
 
     # assert np.isclose(noise_after, 2.04, atol=1e-2)  # 2.0489964
     assert noise_after < noise_before
-
-    # TODO: check that there extra adapters in the model
