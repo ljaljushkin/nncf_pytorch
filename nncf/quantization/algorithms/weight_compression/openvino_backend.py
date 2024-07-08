@@ -17,14 +17,15 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import openvino as ov
 import pandas as pd
-import wandb
 from openvino.runtime import opset13 as opset
 
+import wandb
 from nncf.common.graph import NNCFGraph
 from nncf.common.graph import NNCFNode
 from nncf.common.graph.operator_metatypes import OperatorMetatype
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.utils import get_reduction_axes
+from nncf.common.utils.debug import DEBUG_LOG_DIR
 from nncf.experimental.common.tensor_statistics.collectors import TensorCollector
 from nncf.experimental.tensor import Tensor
 from nncf.experimental.tensor.functions import numeric as fns
@@ -201,6 +202,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         w_regulation=False,
         n_iters=3,
         cached_adapter_weights: Dict[str, np.ndarray] = None,
+        debug_interface: Dict[str, List[float]] = None,
     ):
         import numpy as np
         import numpy.linalg as linalg
@@ -453,7 +455,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         for node_output_source_port in node_output_source_ports:
             node_output_source_port.replace_source_output(add.output(0))
 
-        return {layer_name: loss}
+        debug_interface[layer_name] = loss
 
     def transform_model(
         self,
@@ -474,6 +476,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         cached_adapter_weights = dict()
         # if CACHE_FILENAME.exists():
         #     cached_adapter_weights = dict(np.load(CACHE_FILENAME))
+        debug_interface = {}
         try:
             L2QER = False
             w_regulation = False
@@ -700,13 +703,18 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                             w_regulation=w_regulation,
                             n_iters=n_iters,
                             cached_adapter_weights=cached_adapter_weights,
+                            debug_interface=debug_interface,
                         )
                     )
         finally:
             # pass
             wandb_run.finish()
-            df = pd.DataFrame(data)
-            df.to_csv("losses.csv")
+            df = pd.DataFrame(debug_interface)
+            dump_dir = Path(DEBUG_LOG_DIR) / "lora"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            print("saving file to: ", dump_dir)
+            df.to_csv(dump_dir / "losses.csv")
+
             # TODO: uncomment to update cache
             np.savez(CACHE_FILENAME, **cached_adapter_weights)
 
