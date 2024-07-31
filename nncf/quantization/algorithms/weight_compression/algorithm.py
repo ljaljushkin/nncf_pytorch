@@ -407,6 +407,19 @@ class WeightCompression(Algorithm):
             )
             scales = scale_algo.apply(model, graph)
 
+        if self._gptq:
+            model, scales, zero_points = self._gptq_algo.apply(
+                model=model,
+                graph=graph,
+                dataset=dataset,
+                weight_compression_parameters=all_weight_params,
+                statistic_points=self._gptq_statistics,
+                backend_entity=self._backend_entity,
+            )
+
+        # Sort weight params to start compression with the bigger constants. This lowers peak memory footprint.
+        all_weight_params = sorted(all_weight_params, key=lambda wp: wp.num_weights, reverse=True)
+
         # Compress model using weight compression parameters
         transformed_model = self._backend_entity.transform_model(
             model,
@@ -445,7 +458,7 @@ class WeightCompression(Algorithm):
         :return: Tuple with the activation node and port id.
         """
         activation_port = self._backend_entity.get_activation_port_id(node, nncf_graph)
-        activation_edge = nncf_graph.get_input_edges(node)[activation_port]
+        activation_edge = nncf_graph.get_input_edge_by_port_id(node, activation_port)
         activation_node = activation_edge.from_node
         port_id = activation_edge.output_port_id
         return activation_node, port_id

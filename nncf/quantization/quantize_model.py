@@ -228,7 +228,21 @@ def quantize(
             ignored_scope=ignored_scope,
             advanced_parameters=advanced_parameters,
         )
+    if backend == BackendType.TORCH_FX:
+        from nncf.experimental.torch.fx.quantization.quantize_model import quantize_impl
 
+        return quantize_impl(
+            model=model,
+            calibration_dataset=calibration_dataset,
+            mode=mode,
+            preset=preset,
+            target_device=target_device,
+            subset_size=subset_size,
+            fast_bias_correction=fast_bias_correction,
+            model_type=model_type,
+            ignored_scope=ignored_scope,
+            advanced_parameters=advanced_parameters,
+        )
     raise nncf.UnsupportedBackendError(f"Unsupported type of backend: {backend}")
 
 
@@ -457,13 +471,13 @@ def compress_weights(
         from nncf.openvino.quantization.quantize_model import compress_weights_impl as ov_compress_weights_impl
 
         if any((awq, scale_estimation)) and (
-            dataset is None or mode in [CompressWeightsMode.NF4, CompressWeightsMode.E2M1] or group_size == -1
+            dataset is None or mode in [CompressWeightsMode.NF4, CompressWeightsMode.E2M1]
         ):
             raise AttributeError(
-                "Scale estimation or AWQ algorithm defined, but dataset is None or mode is NF4 or group_size < 0."
+                "Scale estimation or AWQ algorithm defined, but dataset is None or mode is (NF4 or E2M1)."
             )
-        if gptq and (dataset is None or group_size == -1 or mode == CompressWeightsMode.E2M1):
-            raise AttributeError("GPTQ algorithm defined, but dataset is None or group_size < 0 or mode is E2M1.")
+        if gptq and (dataset is None or mode == CompressWeightsMode.E2M1):
+            raise AttributeError("GPTQ algorithm defined, but dataset is None or mode is E2M1.")
 
         compression_weights_impl = ov_compress_weights_impl
 

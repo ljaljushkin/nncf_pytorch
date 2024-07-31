@@ -132,6 +132,7 @@ class ScaleEstimation:
                 continue
 
             stats = self._activations[node_name]
+            reduction_axis = wp.reduction_axes[0]
 
             weight_data = self._backend_entity.get_weight_names_and_port_ids(wp.node_with_weight, graph)
             if len(weight_data) != 1:  # not supported by the algorithm
@@ -189,17 +190,21 @@ class ScaleEstimation:
             weight = fns.transpose(weight)
             reduction_axis = 1
 
-        original_weight = fns.zeros_like(weight) + weight
+            group_size = config.group_size if config.group_size != -1 else weight.shape[reduction_axis]
+            cur_config = deepcopy(config)
+            cur_config.group_size = group_size
 
-        compressed_weights, scale, zp = do_integer_quantization(original_weight, reduction_axis, config)
-        if zp is not None:
-            zp = zp.astype(scale.dtype)
-        q_weights = do_dequantization(compressed_weights, scale, zp, reduction_axis)
+            original_weight = fns.zeros_like(weight) + weight
 
-        s = fns.unsqueeze(s, 0)
-        s, _ = reshape_weight_for_grouped_quantization(s, reduction_axis, config.group_size)
+            compressed_weights, scale, zp = do_integer_quantization(original_weight, reduction_axis, cur_config)
+            if zp is not None:
+                zp = zp.astype(scale.dtype)
+            q_weights = do_dequantization(compressed_weights, scale, zp, reduction_axis)
 
-        original_weight, _ = reshape_weight_for_grouped_quantization(original_weight, reduction_axis, config.group_size)
+            s = fns.unsqueeze(s, 0)
+            s, _ = reshape_weight_for_grouped_quantization(s, reduction_axis, group_size)
+
+            original_weight, _ = reshape_weight_for_grouped_quantization(original_weight, reduction_axis, group_size)
 
         # all weight in group has importance based on corresponding input activations
         importance = fns.ones_like(original_weight)
@@ -212,10 +217,10 @@ class ScaleEstimation:
         denum = fns.sum(importance, axis=2, keepdims=True)
         importance = importance / (denum + eps)
 
-        X, _ = reshape_weight_for_grouped_quantization(X, 0, config.group_size)
-        q_weights, _ = reshape_weight_for_grouped_quantization(q_weights, reduction_axis, config.group_size)
-        best_diffs = None
-        result_scale = None
+            X, _ = reshape_weight_for_grouped_quantization(X, 0, group_size)
+            q_weights, _ = reshape_weight_for_grouped_quantization(q_weights, reduction_axis, group_size)
+            best_diffs = None
+            result_scale = None
 
         fp_outs = fns.matmul(fns.transpose(original_weight, (1, 0, 2)), X)
         q_outs = fns.matmul(fns.transpose(q_weights, (1, 0, 2)), X)
@@ -226,33 +231,38 @@ class ScaleEstimation:
         if weight_penalty > 0.0:
             min_max_scale_diffs += weight_penalty * fns.mean((q_weights - original_weight) ** 2, axis=-1)
 
-        zp_shape = zp.shape if zp is not None else None
-        key = (config.mode, config.num_bits) + q_weights.shape + scale.shape
-        if zp is not None:
-            key += zp_shape
-        if key in ScaleEstimation.compress_decompress_cache:
-            compress_decompress_model = ScaleEstimation.compress_decompress_cache[key]["compress_decompress_model"]
-            compress_model = ScaleEstimation.compress_decompress_cache[key]["compress_model"]
-        else:
-            compress_decompress_model = backend_entity.get_compress_decompress_pipeline(
-                config, q_weights.shape, scale.shape, zp_shape
-            )
-            compress_model = backend_entity.get_compress_pipeline(config, q_weights.shape, scale.shape, zp_shape)
-            ScaleEstimation.compress_decompress_cache[key] = {
-                "compress_decompress_model": compress_decompress_model,
-                "compress_model": compress_model,
-            }
+            zp_shape = zp.shape if zp is not None else None
+            key = [(wp.compression_config.mode, wp.compression_config.num_bits) + q_weights.shape + scale.shape]
+            if zp is not None:
+                key += zp_shape
+            key = tuple(key)
+            if key in compress_decompress_cache:
+                compress_decompress_model = compress_decompress_cache[key]["compress_decompress_model"]
+                compress_model = compress_decompress_cache[key]["compress_model"]
+            else:
+                compress_decompress_model = self._backend_entity.get_compress_decompress_pipeline(
+                    wp.compression_config, q_weights.shape, scale.shape, zp_shape
+                )
+                compress_model = self._backend_entity.get_compress_pipeline(
+                    wp.compression_config, q_weights.shape, scale.shape, zp_shape
+                )
+                compress_decompress_cache[key] = {
+                    "compress_decompress_model": compress_decompress_model,
+                    "compress_model": compress_model,
+                }
 
-        zero_scale = 0.001
-        zero_mask = zero_scale * zero_mask.astype(original_weight.dtype)
+            scale_sign = scale / fns.abs(scale)
+            zero_scale = 0.001
+            zero_mask = zero_scale * zero_mask.astype(original_weight.dtype)
 
-        input_tensors = [original_weight.data, None]
-        if zp is not None:
-            input_tensors.append(zp.data)
-        # iterative rectification of initial scale
-        for i in range(initial_steps):
-            near_to_ideal_scale = estimate_scales(original_weight, target, zero_mask, importance)
-            input_tensors[1] = near_to_ideal_scale.data
+            input_tensors = [original_weight.data, None]
+            if zp is not None:
+                input_tensors.append(zp.data)
+            # iterative rectification of initial scale
+            for i in range(self._initial_steps):
+                near_to_ideal_scale = estimate_scales(original_weight, target, zero_mask, importance)
+                near_to_ideal_scale = near_to_ideal_scale * scale_sign
+                input_tensors[1] = near_to_ideal_scale.data
 
             out = compress_decompress_model(input_tensors)
             q_weights_ = fns.zeros_like(original_weight) + out
@@ -294,9 +304,10 @@ class ScaleEstimation:
             out = compress_model(input_tensors)
             compressed_weights = fns.zeros_like(original_weight) + out
 
-            target, zero_mask = get_target_zero_mask(compressed_weights, zp)
-            zero_mask = zero_scale * zero_mask.astype(original_weight.dtype)
-            near_to_ideal_scale = estimate_scales(original_weight, target, zero_mask, importance)
+                target, zero_mask = get_target_zero_mask(compressed_weights, zp)
+                zero_mask = zero_scale * zero_mask.astype(original_weight.dtype)
+                near_to_ideal_scale = estimate_scales(original_weight, target, zero_mask, importance)
+                near_to_ideal_scale = near_to_ideal_scale * scale_sign
 
             input_tensors[1] = near_to_ideal_scale.data
             out = compress_decompress_model(input_tensors)
@@ -320,7 +331,11 @@ class ScaleEstimation:
                 near_to_ideal_scale = mask * result_scale + (1.0 - mask) * near_to_ideal_scale
             result_scale = near_to_ideal_scale
 
-        return result_scale, zp
+            if config.group_size == -1:
+                result_scale = fns.squeeze(result_scale, axis=1)
+            res[weight_name] = result_scale
+
+        return res
 
 
 def get_target_zero_mask(compressed_weights: TTensor, zp: Optional[TTensor] = None) -> Tuple[TTensor, TTensor]:
