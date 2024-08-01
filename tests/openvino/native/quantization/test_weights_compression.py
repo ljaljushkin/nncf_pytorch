@@ -28,6 +28,9 @@ from nncf.quantization import compress_weights
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionConfig
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.mixed_precision import MIXED_PRECISION_CRITERIA
+from nncf.quantization.algorithms.weight_compression.openvino_backend import OVWeightCompressionAlgoBackend
+from nncf.quantization.algorithms.weight_compression.weight_lowering import do_dequantization
+from nncf.quantization.algorithms.weight_compression.weight_lowering import do_integer_quantization
 from nncf.quantization.algorithms.weight_compression.weight_lowering import get_integer_quantization_error
 from nncf.quantization.algorithms.weight_compression.weight_lowering import reshape_weight_for_grouped_quantization
 from nncf.scopes import IgnoredScope
@@ -495,7 +498,7 @@ TWO_ROWS_LINSPACE = np.vstack((LINSPACE * SCALE_1, LINSPACE * SCALE_2))
 LINSPACE_INT4_ASYM = np.arange(0, 16)
 TWO_ROWS_LINSPACE_INT4_ASYM = np.vstack((LINSPACE_INT4_ASYM * SCALE_1, LINSPACE_INT4_ASYM * SCALE_2))
 
-LINSPACE_INT4_SYM = np.arange(-7, 8)
+LINSPACE_INT4_SYM = np.arange(-8, 7)
 TWO_ROWS_LINSPACE_INT4_SYM = np.vstack((LINSPACE_INT4_SYM * SCALE_1, LINSPACE_INT4_SYM * SCALE_2))
 
 TWO_OTHER_ROWS_LINSPACE_INT4_SYM = np.vstack((LINSPACE_INT4_SYM * SCALE_3, LINSPACE_INT4_SYM * SCALE_4))
@@ -542,7 +545,7 @@ LIST_DESCS = [
         name="2 columns of of scaled [0, 15] linspace for sym",
         weight=np.transpose(TWO_ROWS_LINSPACE_INT4_ASYM),
         config=int4_sym_config,
-        ref_error=5.87,
+        ref_error=0.63,
         atol=1,
     ),
     QuantErrorDesc(
@@ -744,8 +747,7 @@ def test_call_max_var_criterion_with_dataset_awq_for_compressed_model(mode):
 def test_call_max_var_criterion_with_dataset_awq_neg_group_size(mode):
     model = AWQMatmulModel().ov_model
     dataset = Dataset([np.ones([8, 8])])
-    with pytest.raises(AttributeError):
-        compress_weights(model, mode=mode, ratio=1.0, group_size=-1, dataset=dataset, awq=True)
+    compress_weights(model, mode=mode, ratio=1.0, group_size=-1, dataset=dataset, awq=True)
 
 
 def test_data_type_for_num_weights(mocker):
@@ -854,8 +856,7 @@ def test_call_max_var_criterion_with_dataset_scale_estimation_neg_group_size(mod
     model = AWQMatmulModel().ov_model
     dataset = Dataset([np.ones([8, 8])])
 
-    with pytest.raises(AttributeError):
-        compress_weights(model, mode=mode, ratio=1.0, group_size=-1, dataset=dataset, scale_estimation=True)
+    compress_weights(model, mode=mode, ratio=1.0, group_size=-1, dataset=dataset, scale_estimation=True)
 
 
 @pytest.mark.parametrize("mode", INT4_NF4_MODES)
@@ -912,3 +913,66 @@ def test_mixed_precision_e2m1(mode, all_layers, ratio, ref_ids):
     }
     ref_e8m0_nodes = {f"weights_{i}/scale" for i in ref_ids}
     assert ref_e8m0_nodes == names_e8m0
+
+
+@pytest.mark.parametrize("mode", (CompressWeightsMode.INT4_SYM, CompressWeightsMode.INT4_ASYM))
+def test_np_ov_compression_decompression(mode):
+    sz = 60
+    w = np.arange(-sz, sz).reshape(2, sz).astype(np.float32) / 9.0
+    w = Tensor(w)
+
+    config = WeightCompressionConfig(mode)
+
+    compressed_weighs, scale, zp = do_integer_quantization(w, -1, config, invert_scale=True)
+    decompressed_weighs = do_dequantization(compressed_weighs, scale, zp)
+
+    compressed_weighs = compressed_weighs.data
+    decompressed_weighs = decompressed_weighs.data
+    zp_shape = zp.shape if zp is not None else None
+
+    compress = OVWeightCompressionAlgoBackend.get_compress_pipeline(config, w.shape, scale.shape, zp_shape)
+    compress_decompress = OVWeightCompressionAlgoBackend.get_compress_decompress_pipeline(
+        config, w.shape, scale.shape, zp_shape
+    )
+
+    params = [w.data, scale.data, zp.data] if zp is not None else [w.data, scale.data]
+    compressed_weighs_ov = compress(params)
+    decompressed_weighs_ov = compress_decompress(params)
+
+    assert np.allclose(compressed_weighs, compressed_weighs_ov)
+    assert np.allclose(decompressed_weighs, decompressed_weighs_ov)
+
+
+@pytest.mark.parametrize(
+    ("mode", "data"),
+    (
+        (CompressWeightsMode.INT4_SYM, [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0]),
+        (CompressWeightsMode.INT4_SYM, [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]),
+        (
+            CompressWeightsMode.INT4_SYM,
+            [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+        ),
+    ),
+)
+def test_compressed_weighs_range(mode, data):
+    data = np.array(data).astype(np.float32)
+    w = Tensor(data)
+
+    config = WeightCompressionConfig(mode=mode)
+    compressed_weighs, _, _ = do_integer_quantization(w, -1, config)
+
+    assert np.allclose(np.abs(compressed_weighs.data), np.abs(w.data))
+
+
+@pytest.mark.parametrize("mode", INT4_NF4_MODES)
+def test_call_max_var_criterion_with_dataset_gptq_neg_group_size(mode):
+    model = AWQMatmulModel().ov_model
+    sz = 8
+    dataset = Dataset([np.ones([sz, sz])])
+
+    compressed_model = compress_weights(model, mode=mode, ratio=1.0, group_size=-1, dataset=dataset, gptq=True)
+
+    for op in compressed_model.get_ordered_ops():
+        op_name = op.get_friendly_name()
+        if op.get_type_name() == "Constant" and ("/zero_point" in op_name or "/scale" in op_name):
+            assert op.get_shape() == [sz, 1]

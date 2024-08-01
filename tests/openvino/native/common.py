@@ -22,6 +22,7 @@ from nncf import Dataset
 from nncf.openvino.graph.nncf_graph_builder import GraphConverter
 from tests.openvino.conftest import OPENVINO_NATIVE_TEST_ROOT
 from tests.shared.nx_graph import compare_nx_graph_with_reference
+from tests.shared.openvino_version import get_openvino_version
 
 
 def convert_torch_model(model: torch.nn.Module, input_shape: Tuple[int], tmp_path: Path) -> ov.Model:
@@ -47,7 +48,8 @@ def get_dataset_for_test(model):
     input_data = {}
     for param in model.get_parameters():
         input_shape = param.partial_shape.get_max_shape()
-        input_data[param.get_output_tensor(0).get_any_name()] = rng.uniform(0, 1, input_shape)
+        tensor = param.get_output_tensor(0)
+        input_data[tensor.get_any_name()] = rng.uniform(0, 1, input_shape).astype(tensor.get_element_type().to_dtype())
 
     dataset = Dataset([input_data])
     return dataset
@@ -74,22 +76,6 @@ class NumpyEncoder(json.JSONEncoder):
 def dump_to_json(local_path, data):
     with open(local_path, "w", encoding="utf8") as file:
         json.dump(deepcopy(data), file, indent=4, cls=NumpyEncoder)
-
-
-def get_openvino_major_minor_version() -> Tuple[int]:
-    ov_version = ov.__version__
-    pos = ov_version.find("-")
-    if pos != -1:
-        ov_version = ov_version[:pos]
-
-    ov_version = version.parse(ov_version).base_version
-    return tuple(map(int, ov_version.split(".")[:2]))
-
-
-def get_openvino_version() -> str:
-    major_verison, minor_version = get_openvino_major_minor_version()
-
-    return f"{major_verison}.{minor_version}"
 
 
 def get_actual_reference_for_current_openvino(rel_path: Path) -> Path:
