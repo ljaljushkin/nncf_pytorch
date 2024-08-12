@@ -352,11 +352,7 @@ class WeightCompression(Algorithm):
         self._set_weight_compression_config(ratio_defining_params, model, graph, activations)
         nncf_logger.info(self._get_bitwidth_distribution_str(all_weight_params, ratio_defining_params))
 
-        if (
-            self._awq
-            and activations is not None
-            and self._mode not in [CompressWeightsMode.NF4, CompressWeightsMode.E2M1]
-        ):
+        if self._awq and activations is not None and self._mode != CompressWeightsMode.E2M1:
             awq_params = self._advanced_parameters.awq_params
             awq_algo = AWQ(
                 model,
@@ -377,7 +373,9 @@ class WeightCompression(Algorithm):
         if (
             self._scale_estimation
             and activations is not None
-            and self._mode not in [CompressWeightsMode.NF4, CompressWeightsMode.E2M1]
+            and self._mode != CompressWeightsMode.E2M1
+            # TODO: capture bug via mocker
+            # and self._mode not in [CompressWeightsMode.NF4, CompressWeightsMode.E2M1]
         ):
             scale_estimation_params = self._advanced_parameters.scale_estimation_params
             scale_algo = ScaleEstimation(

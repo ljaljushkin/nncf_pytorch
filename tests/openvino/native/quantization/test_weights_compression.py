@@ -683,7 +683,7 @@ def test_raise_error_with_unsupported_params_for_int8(mode, params):
         compress_weights(ov.Model([], []), mode=mode, **params)
 
 
-@pytest.mark.parametrize("mode", INT4_MODES)
+@pytest.mark.parametrize("mode", INT4_NF4_MODES)
 @pytest.mark.parametrize("params", ({"dataset": "anything", "scale_estimation": True, "gptq": True},))
 def test_raise_error_with_unsupported_params_for_int4(mode, params):
     with pytest.raises(AttributeError):
@@ -718,15 +718,16 @@ def test_call_max_var_criterion_with_dataset_by_default_awq(mode):
     compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, awq=True)
 
 
-@pytest.mark.parametrize("mode", INT4_MODES)
+@pytest.mark.parametrize("mode", INT4_NF4_MODES)
 @pytest.mark.parametrize("with_multiply", (True, False))
-def test_call_max_var_criterion_with_dataset_by_default_awq_act_matmul(mode, with_multiply):
+def test_call_max_var_criterion_with_dataset_by_default_awq_act_matmul(mode, with_multiply, tmp_path):
     n_layers = 8
     n_awq_target = n_layers - 1  # first MatMul is always int8
     model = AWQActMatmulModel(with_multiply=with_multiply, n_layers=n_layers).ov_model
     dataset = Dataset([np.ones([8, 8])])
 
-    compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, awq=True)
+    compressed_model = compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, awq=True)
+    ov.save_model(compressed_model, tmp_path / "nf4.xml")
 
     awq_num = 0
     for op in model.get_ops():
@@ -735,7 +736,7 @@ def test_call_max_var_criterion_with_dataset_by_default_awq_act_matmul(mode, wit
     assert awq_num == n_awq_target
 
 
-@pytest.mark.parametrize("mode", INT4_MODES)
+@pytest.mark.parametrize("mode", INT4_NF4_MODES)
 def test_call_max_var_criterion_with_dataset_awq_for_compressed_model(mode):
     model = AWQMatmulModel(is_int8=True).ov_model
     dataset = Dataset([np.ones([8, 8])])
@@ -743,7 +744,7 @@ def test_call_max_var_criterion_with_dataset_awq_for_compressed_model(mode):
     compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, awq=True)
 
 
-@pytest.mark.parametrize("mode", INT4_MODES)
+@pytest.mark.parametrize("mode", INT4_NF4_MODES)
 def test_call_max_var_criterion_with_dataset_awq_neg_group_size(mode):
     model = AWQMatmulModel().ov_model
     dataset = Dataset([np.ones([8, 8])])
@@ -835,7 +836,7 @@ def test_duplicate_names_generation():
         op_names.add(name)
 
 
-@pytest.mark.parametrize("mode", INT4_MODES)
+@pytest.mark.parametrize("mode", INT4_NF4_MODES)
 def test_call_max_var_criterion_with_dataset_by_default_scale_estimation(mode):
     model = AWQMatmulModel().ov_model
     dataset = Dataset([np.ones([8, 8])])
@@ -843,7 +844,7 @@ def test_call_max_var_criterion_with_dataset_by_default_scale_estimation(mode):
     compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, scale_estimation=True)
 
 
-@pytest.mark.parametrize("mode", INT4_MODES)
+@pytest.mark.parametrize("mode", INT4_NF4_MODES)
 def test_call_max_var_criterion_with_dataset_scale_estimation_for_compressed_model(mode):
     model = AWQMatmulModel(is_int8=True).ov_model
     dataset = Dataset([np.ones([8, 8])])
@@ -851,7 +852,7 @@ def test_call_max_var_criterion_with_dataset_scale_estimation_for_compressed_mod
     compress_weights(model, mode=mode, ratio=1.0, group_size=2, dataset=dataset, scale_estimation=True)
 
 
-@pytest.mark.parametrize("mode", INT4_MODES)
+@pytest.mark.parametrize("mode", INT4_NF4_MODES)
 def test_call_max_var_criterion_with_dataset_scale_estimation_neg_group_size(mode):
     model = AWQMatmulModel().ov_model
     dataset = Dataset([np.ones([8, 8])])
