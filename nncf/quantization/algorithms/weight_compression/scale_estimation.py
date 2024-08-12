@@ -19,7 +19,11 @@ from nncf.common.logging.track_progress import track
 from nncf.common.tensor_statistics.statistic_point import StatisticPointsContainer
 from nncf.common.utils.backend import BackendType
 from nncf.common.utils.backend import get_backend
+from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
+from nncf.quantization.algorithms.weight_compression.weight_lowering import calculate_nf4_scale
+from nncf.quantization.algorithms.weight_compression.weight_lowering import calculate_nf4_weight
+from nncf.quantization.algorithms.weight_compression.weight_lowering import decompress_nf4_weight
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_dequantization
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_integer_quantization
 from nncf.quantization.algorithms.weight_compression.weight_lowering import reshape_weight_for_grouped_quantization
@@ -165,10 +169,15 @@ class ScaleEstimation:
 
             original_weight = fns.zeros_like(weight) + weight
 
-            compressed_weights, scale, zp = do_integer_quantization(original_weight, reduction_axis, cur_config)
-            if zp is not None:
-                zp = zp.astype(scale.dtype)
-            q_weights = do_dequantization(compressed_weights, scale, zp, reduction_axis)
+            if config.mode == CompressWeightsMode.NF4:
+                scale = calculate_nf4_scale(original_weight, reduction_axis)
+                compressed_weights = calculate_nf4_weight(original_weight, scale)
+                q_weights = decompress_nf4_weight(compressed_weights, scale)
+            else:
+                compressed_weights, scale, zp = do_integer_quantization(original_weight, reduction_axis, cur_config)
+                if zp is not None:
+                    zp = zp.astype(scale.dtype)
+                q_weights = do_dequantization(compressed_weights, scale, zp, reduction_axis)
 
             s = fns.unsqueeze(s, 0)
             s, _ = reshape_weight_for_grouped_quantization(s, reduction_axis, group_size)
