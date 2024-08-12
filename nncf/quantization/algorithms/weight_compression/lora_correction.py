@@ -19,7 +19,8 @@ from nncf.common.utils.debug import DEBUG_LOG_DIR
 from nncf.common.utils.debug import is_debug
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.advanced_parameters import AdvancedLoraCorrectionParameters
-from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
+
+# from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_dequantization
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_nf4_fake_quantization_from_norm_weight
@@ -143,13 +144,13 @@ class LoraCorrectionAlgorithm:
         :param debug_interface: utility class to collect and dump debug information, defaults to None
         :return: two low rank matrices in the order of execution of corresponding linear layers.
         """
-        rank, n_iters, w_regularization, subset_size = (
+        rank, _, _, _ = (
             lora_correction_params.rank,
             lora_correction_params.n_iters,
             lora_correction_params.w_regularization,
             lora_correction_params.subset_size,
         )
-        layer_name = wc_params.node_with_weight.node_name
+        # layer_name = wc_params.node_with_weight.node_name
         mode = wc_params.compression_config.mode
         reduction_axis = wc_params.reduction_axes[0] if wc_params.compression_config.group_size != -1 else -1
         if mode in (CompressWeightsMode.INT4_SYM, CompressWeightsMode.INT4_ASYM):
@@ -171,25 +172,25 @@ class LoraCorrectionAlgorithm:
             )
         # fq_w + residual = w   =>  residual = w - fq_w
         residual = fns.astype(weight - fq_weights, TensorDataType.float32)
-        w_residual = residual.clone()
+        # w_residual = residual.clone()
         if wc_params.reduction_axes == 0:
             residual = fns.transpose(residual)
 
-        s, X = process_stats(activations[layer_name], subset_size)
-        if wc_params.compression_config.group_size > 0:
-            # Multiply residual of weights by maximum channel magnitude of activations normalized per quantization
-            # group. As a consequence, weights corresponding to a "noisy" activations has a higher error to correct.
-            # Empirically, it gives a better accuracy.
-            gs = wc_params.compression_config.group_size
-            n_gs = s.shape[0] // gs
-            for i in range(n_gs):
-                offset = i * gs
-                denum = fns.sum(s[offset : offset + gs])
-                s[offset : offset + gs] = s[offset : offset + gs] / denum
-                denum = fns.max(s[offset : offset + gs])
-                s[offset : offset + gs] = s[offset : offset + gs] / denum
-            s = fns.expand_dims(s, 0)
-            residual = residual * s
+        # s, X = process_stats(activations[layer_name], subset_size)
+        # if wc_params.compression_config.group_size > 0:
+        #     # Multiply residual of weights by maximum channel magnitude of activations normalized per quantization
+        #     # group. As a consequence, weights corresponding to a "noisy" activations has a higher error to correct.
+        #     # Empirically, it gives a better accuracy.
+        #     gs = wc_params.compression_config.group_size
+        #     n_gs = s.shape[0] // gs
+        #     for i in range(n_gs):
+        #         offset = i * gs
+        #         denum = fns.sum(s[offset : offset + gs])
+        #         s[offset : offset + gs] = s[offset : offset + gs] / denum
+        #         denum = fns.max(s[offset : offset + gs])
+        #         s[offset : offset + gs] = s[offset : offset + gs] / denum
+        #     s = fns.expand_dims(s, 0)
+        #     residual = residual * s
 
         # Low-rank approximation.
         U, S, V = fns.linalg.svd(residual, full_matrices=False)
@@ -198,47 +199,47 @@ class LoraCorrectionAlgorithm:
         Vr = V[:rank, :]
         Vr = Sr @ Vr
 
-        # An iterative algorithm for refinement (rectification) of the low-rank adapters.
-        noises = []
-        dY = w_residual @ X
-        for i in range(n_iters):
-            # Part 1: Vr is fixed, find Ur.
-            VX = Vr @ X
-            if not w_regularization:
-                sol = fns.linalg.lstsq(fns.transpose(VX), fns.transpose(dY))
-            else:
-                # Ur @ Vr = res
-                # Ur @ Vr @ X = dY
-                # Ur @ |Vr Vr @ X| = |res dY|
-                VrVX = fns.concatenate([Vr, VX], axis=1)
-                dYR = fns.concatenate([w_residual, dY], axis=1)
-                sol = fns.linalg.lstsq(fns.transpose(VrVX), fns.transpose(dYR), driver="gelsy")
-            if debug_interface is not None and i == 0:
-                init_noise = weight @ X - fq_weights @ X
-                diff_before = fns.mean(fns.abs(init_noise)).item()
-                diff_after_svd = fns.mean(fns.abs(init_noise - (Ur @ Vr) @ X)).item()
-                noises.extend([diff_before, diff_after_svd])
-            Ur = fns.transpose(sol)
-            if debug_interface is not None:
-                diff_after_svd_rectification = fns.mean(fns.abs(init_noise - (Ur @ Vr) @ X)).item()
-                noises.append(diff_after_svd_rectification)
-                nncf_logger.debug(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+        # # An iterative algorithm for refinement (rectification) of the low-rank adapters.
+        # noises = []
+        # dY = w_residual @ X
+        # for i in range(n_iters):
+        #     # Part 1: Vr is fixed, find Ur.
+        #     VX = Vr @ X
+        #     if not w_regularization:
+        #         sol = fns.linalg.lstsq(fns.transpose(VX), fns.transpose(dY))
+        #     else:
+        #         # Ur @ Vr = res
+        #         # Ur @ Vr @ X = dY
+        #         # Ur @ |Vr Vr @ X| = |res dY|
+        #         VrVX = fns.concatenate([Vr, VX], axis=1)
+        #         dYR = fns.concatenate([w_residual, dY], axis=1)
+        #         sol = fns.linalg.lstsq(fns.transpose(VrVX), fns.transpose(dYR), driver="gelsy")
+        #     if debug_interface is not None and i == 0:
+        #         init_noise = weight @ X - fq_weights @ X
+        #         diff_before = fns.mean(fns.abs(init_noise)).item()
+        #         diff_after_svd = fns.mean(fns.abs(init_noise - (Ur @ Vr) @ X)).item()
+        #         noises.extend([diff_before, diff_after_svd])
+        #     Ur = fns.transpose(sol)
+        #     if debug_interface is not None:
+        #         diff_after_svd_rectification = fns.mean(fns.abs(init_noise - (Ur @ Vr) @ X)).item()
+        #         noises.append(diff_after_svd_rectification)
+        #         nncf_logger.debug(f"{i} Rectification 1: ", diff_before, diff_after_svd, diff_after_svd_rectification)
 
-            # Part 2: Ur is fixed, find Vr.
-            UrI = fns.linalg.pinv(Ur)
-            dYU = UrI @ dY
-            if not w_regularization:
-                sol = fns.linalg.lstsq(fns.transpose(X), fns.transpose(dYU), driver="gelsy")
-            else:
-                Ind = fns.eye(Vr.shape[1], backend=Vr.backend, dtype=Vr.dtype)
-                IX = fns.concatenate([Ind, X], axis=1)
-                wU = UrI @ w_residual
-                dYR = fns.concatenate([wU, dYU], axis=1)
-                sol = fns.linalg.lstsq(fns.transpose(IX), fns.transpose(dYR), driver="gelsy")
-            Vr = fns.transpose(sol)
-            if debug_interface is not None:
-                diff_after_svd_rectification = fns.mean(fns.abs(init_noise - (Ur @ Vr) @ X)).item()
-                noises.append(diff_after_svd_rectification)
-                nncf_logger.debug(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
-                debug_interface.add_noises(layer_name, noises)
+        #     # Part 2: Ur is fixed, find Vr.
+        #     UrI = fns.linalg.pinv(Ur)
+        #     dYU = UrI @ dY
+        #     if not w_regularization:
+        #         sol = fns.linalg.lstsq(fns.transpose(X), fns.transpose(dYU), driver="gelsy")
+        #     else:
+        #         Ind = fns.eye(Vr.shape[1], backend=Vr.backend, dtype=Vr.dtype)
+        #         IX = fns.concatenate([Ind, X], axis=1)
+        #         wU = UrI @ w_residual
+        #         dYR = fns.concatenate([wU, dYU], axis=1)
+        #         sol = fns.linalg.lstsq(fns.transpose(IX), fns.transpose(dYR), driver="gelsy")
+        #     Vr = fns.transpose(sol)
+        #     if debug_interface is not None:
+        #         diff_after_svd_rectification = fns.mean(fns.abs(init_noise - (Ur @ Vr) @ X)).item()
+        #         noises.append(diff_after_svd_rectification)
+        #         nncf_logger.debug(f"{i} Rectification 2: ", diff_before, diff_after_svd, diff_after_svd_rectification)
+        #         debug_interface.add_noises(layer_name, noises)
         return Vr, Ur
