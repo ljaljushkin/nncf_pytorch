@@ -194,6 +194,22 @@ def calculate_normalized_weight(weight: Tensor, scale: Tensor) -> Tensor:
     return weight / scale
 
 
+def do_nf4_quantization(weight: Tensor, scale: Tensor) -> Tensor:
+    """
+    Quantizes the weight tensor to NF4 format.
+
+    :param weight: Weight tensor to quantize.
+    :param scale: Scale tensor used for normalization.
+    :return: Quantized weight tensor in NF4 format.
+    """
+    norm_weight = calculate_normalized_weight(weight, scale)
+
+    center_nf4_quantiles = fns.from_numpy(CENTER_OF_NF4_QUANTILES, backend=norm_weight.backend)
+    index_of_quantile = fns.searchsorted(center_nf4_quantiles, norm_weight)
+
+    return index_of_quantile
+
+
 def calculate_nf4_weight(weight: Tensor, scale: Tensor) -> Tensor:
     """
     Quantizes the weight tensor to NF4 format.
