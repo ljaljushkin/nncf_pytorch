@@ -248,7 +248,7 @@ def test_compare_compressed_weights(mode, group_size, check_fn_per_node_map):
         (SensitivityMetric.MEAN_ACTIVATION_MAGNITUDE, False, 0.8, [0, 1, 2]),
     ),
 )
-def test_mixed_precision(mode, all_layers, ratio, ref_ids, mocker):
+def test_mixed_precision(mode, all_layers, ratio, ref_ids, mocker, tmp_path):
     model = SequentialMatmulModel().ov_model
     dataset = Dataset([np.ones([3, 3]), np.arange(9).reshape(3, 3)])
     compressed_model = compress_weights(
@@ -260,6 +260,7 @@ def test_mixed_precision(mode, all_layers, ratio, ref_ids, mocker):
         sensitivity_metric=mode,
         dataset=dataset,
     )
+    ov.save_model(compressed_model, tmp_path / "nf4.xml")
     names = {
         op.get_friendly_name() for op in compressed_model.get_ordered_ops() if op.get_element_type() == ov.Type.nf4
     }

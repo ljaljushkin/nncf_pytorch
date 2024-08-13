@@ -173,6 +173,7 @@ class ScaleEstimation:
                 scale = calculate_nf4_scale(original_weight, reduction_axis)
                 compressed_weights = calculate_nf4_weight(original_weight, scale)
                 q_weights = decompress_nf4_weight(compressed_weights, scale)
+                zp = None
             else:
                 compressed_weights, scale, zp = do_integer_quantization(original_weight, reduction_axis, cur_config)
                 if zp is not None:
