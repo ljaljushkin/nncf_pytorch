@@ -413,6 +413,7 @@ WEIGHT_COMPRESSION_MODELS = [
             "group_size": -1,
             "ratio": 1,
             "mode": CompressWeightsMode.NF4,
+            # "mode": CompressWeightsMode.INT4_SYM,
             "scale_estimation": True,
             "advanced_parameters": AdvancedCompressionParameters(
                 scale_estimation_params=AdvancedScaleEstimationParameters(32, 5, 10, 1.0)

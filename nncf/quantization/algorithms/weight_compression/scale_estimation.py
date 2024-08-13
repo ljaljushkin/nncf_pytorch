@@ -12,6 +12,8 @@
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, TypeVar
 
+import numpy as np
+
 from nncf import Dataset
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNode
@@ -21,8 +23,8 @@ from nncf.common.utils.backend import BackendType
 from nncf.common.utils.backend import get_backend
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
-from nncf.quantization.algorithms.weight_compression.weight_lowering import calculate_nf4_scale
 from nncf.quantization.algorithms.weight_compression.weight_lowering import calculate_nf4_weight
+from nncf.quantization.algorithms.weight_compression.weight_lowering import calculate_normalized_weight_and_fp4_scale
 from nncf.quantization.algorithms.weight_compression.weight_lowering import decompress_nf4_weight
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_dequantization
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_integer_quantization
@@ -30,6 +32,50 @@ from nncf.quantization.algorithms.weight_compression.weight_lowering import do_n
 from nncf.quantization.algorithms.weight_compression.weight_lowering import reshape_weight_for_grouped_quantization
 from nncf.tensor import TensorDataType
 from nncf.tensor import functions as fns
+
+NF4_QUANTILES = np.array(
+    [
+        -1.0,
+        -0.6961928009986877,
+        -0.5250730514526367,
+        -0.39491748809814453,
+        -0.28444138169288635,
+        -0.18477343022823334,
+        -0.09105003625154495,
+        0.0,
+        0.07958029955625534,
+        0.16093020141124725,
+        0.24611230194568634,
+        0.33791524171829224,
+        0.44070982933044434,
+        0.5626170039176941,
+        0.7229568362236023,
+        1.0,
+    ],
+    dtype=np.float32,
+)
+
+CENTER_OF_NF4_QUANTILES = np.array(
+    [
+        -0.8480964004993439,
+        -0.6106329262256622,
+        -0.4599952697753906,
+        -0.33967943489551544,
+        -0.23460740596055984,
+        -0.13791173323988914,
+        -0.045525018125772476,
+        0.03979014977812767,
+        0.1202552504837513,
+        0.2035212516784668,
+        0.2920137718319893,
+        0.3893125355243683,
+        0.5016634166240692,
+        0.6427869200706482,
+        0.8614784181118011,
+    ],
+    dtype=np.float32,
+)
+
 
 TModel = TypeVar("TModel")
 TTensor = TypeVar("TTensor")
@@ -169,17 +215,37 @@ class ScaleEstimation:
             cur_config.group_size = group_size
 
             original_weight = fns.zeros_like(weight) + weight
-
             if config.mode == CompressWeightsMode.NF4:
-                scale = calculate_nf4_scale(original_weight, reduction_axis)
-                compressed_weights = calculate_nf4_weight(original_weight, scale)
-                q_weights = decompress_nf4_weight(compressed_weights, scale)
+                norm_weight, scale = calculate_normalized_weight_and_fp4_scale(
+                    original_weight, reduction_axis, cur_config.group_size
+                )
+                center_nf4_quantiles = fns.from_numpy(CENTER_OF_NF4_QUANTILES, backend=norm_weight.backend)
+                nf4_quantiles = fns.from_numpy(NF4_QUANTILES, backend=norm_weight.backend)
+                compressed_weights = fns.searchsorted(center_nf4_quantiles, norm_weight)  #
+                # TODO: is casting needed
+                # dtype = TensorDataType.uint8 if asym_quant else TensorDataType.int8
+                # compressed_weights = compressed_weights.astype(dtype)
+
+                nf4_weight = nf4_quantiles[compressed_weights]
+                q_weights = decompress_nf4_weight(nf4_weight, scale)
+                # TODO: for grouped
+                if reduction_axis > -1:
+                    shape = list(q_weights.shape)  # [a1, r, a2] - "r" refers to number of channels along reduction axis
+                    shape[reduction_axis] = shape[reduction_axis] * shape[reduction_axis + 1]
+                    shape[reduction_axis + 1] = 1
+                    q_weights = q_weights.reshape(shape)
+                    q_weights = fns.squeeze(q_weights)
                 zp = None
             else:
                 compressed_weights, scale, zp = do_integer_quantization(original_weight, reduction_axis, cur_config)
                 if zp is not None:
                     zp = zp.astype(scale.dtype)
                 q_weights = do_dequantization(compressed_weights, scale, zp, reduction_axis)
+
+            # print(
+            #     f"group_size={cur_config.group_size}, X.shape={X.shape}, scale.shape={scale.shape},
+            # compressed_weights.shape={compressed_weights.shape}"
+            # )
 
             s = fns.unsqueeze(s, 0)
             s, _ = reshape_weight_for_grouped_quantization(s, reduction_axis, group_size)
@@ -197,10 +263,15 @@ class ScaleEstimation:
             denum = fns.sum(importance, axis=2, keepdims=True)
             importance = importance / (denum + eps)
 
+            # print(f'Before group_size={group_size}, X.shape={X.shape}, q_weights.shape={q_weights.shape},
+            # reduction_axis={reduction_axis}')
             X, _ = reshape_weight_for_grouped_quantization(X, 0, group_size)
             q_weights, _ = reshape_weight_for_grouped_quantization(q_weights, reduction_axis, group_size)
             best_diffs = None
             result_scale = None
+            # print(f'After group_size={group_size}, X.shape={X.shape}, q_weights.shape={q_weights.shape},
+            # reduction_axis={reduction_axis}')
+            # assert False, 'STOP!'
 
             fp_outs = fns.matmul(fns.transpose(original_weight, (1, 0, 2)), X)
             q_outs = fns.matmul(fns.transpose(q_weights, (1, 0, 2)), X)
@@ -282,6 +353,9 @@ class ScaleEstimation:
                         )
                     else:
                         out = compress_model(input_tensors)
+                        print(
+                            f"{weight_name}\nws={input_tensors[0].shape}, ss={input_tensors[1].shape}, os={out.shape}"
+                        )
                     compressed_weights = fns.zeros_like(original_weight) + out
                     target, zero_mask = get_target_zero_mask(compressed_weights, zp)
                     zero_mask = zero_scale * zero_mask.astype(original_weight.dtype)
@@ -330,6 +404,8 @@ class ScaleEstimation:
                 result_scale = near_to_ideal_scale
 
             if config.group_size == -1:
+                # print(f'result_scale.shape={result_scale.shape}')
+                # assert False, 'STOP!'
                 result_scale = fns.squeeze(result_scale, axis=1)
             res[weight_name] = result_scale
 
