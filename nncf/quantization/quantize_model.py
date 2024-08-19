@@ -499,19 +499,19 @@ def compress_weights(
             ratio = 1
         if group_size is None:
             group_size = -1
-        if ratio != 1 or group_size != -1:
-            raise AttributeError(
-                "INT8 mode assumes per-channel quantization of all layers in 8 bit. "
-                "Default values of `ratio` (1) and `group_size` (-1) parameters can not be overridden"
-            )
+        # if ratio != 1 or group_size != -1:
+        #     raise AttributeError(
+        #         "INT8 mode assumes per-channel quantization of all layers in 8 bit. "
+        #         "Default values of `ratio` (1) and `group_size` (-1) parameters can not be overridden"
+        #     )
         options = {
-            "all_layers": all_layers,
+            # "all_layers": all_layers,
             "sensitivity_metric": sensitivity_metric,
-            "dataset": dataset,
+            # "dataset": dataset,
             "awq": awq,
             "scale_estimation": scale_estimation,
             "gptq": gptq,
-            "lora_correction": lora_correction,
+            # "lora_correction": lora_correction,
         }
         unsupported_for_int8 = [name for name, value in options.items() if value is not None]
         if unsupported_for_int8:

@@ -98,7 +98,7 @@ class LoraCorrectionAlgorithm:
         return self._lora_correction_params.is_int8_adapters
 
     def is_applicable(self, wc_params: WeightCompressionParameters):
-        return wc_params.compression_config.num_bits == 4
+        return wc_params.compression_config.num_bits in [4, 8]
 
     def calculate_adapters(
         self, weight: Tensor, compressed_weight: Tensor, wc_params: WeightCompressionParameters
@@ -171,6 +171,16 @@ class LoraCorrectionAlgorithm:
                 compressed_weight.scale,
                 compressed_weight.zero_point,
                 reduction_axis,
+            )
+        elif mode == CompressWeightsMode.INT8_ASYM:
+            # TODO: hack for SD after PTQ
+            levels = 255  # for weights
+            input_low, input_high, output_low, output_high = compressed_weight
+            fq_weights = (
+                fns.round((weight - input_low) / (input_high - input_low) * (levels - 1))
+                / (levels - 1)
+                * (output_high - output_low)
+                + output_low
             )
         elif mode == CompressWeightsMode.NF4:
             indexes = do_nf4_quantization(compressed_weight.tensor, compressed_weight.scale, is_normalized_weight=True)

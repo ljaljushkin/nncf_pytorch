@@ -20,7 +20,8 @@ from nncf.common.graph.graph import NNCFNode
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.logging import nncf_logger
 from nncf.common.logging.track_progress import track
-from nncf.common.scopes import should_consider_scope
+
+# from nncf.common.scopes import should_consider_scope
 from nncf.common.tensor_statistics.statistic_point import StatisticPoint
 from nncf.common.tensor_statistics.statistic_point import StatisticPointsContainer
 from nncf.common.utils.backend import BackendType
@@ -38,7 +39,8 @@ from nncf.quantization.algorithms.weight_compression.mixed_precision import MIXE
 from nncf.quantization.algorithms.weight_compression.scale_estimation import ScaleEstimation
 from nncf.quantization.algorithms.weight_compression.weight_lowering import WeightCompressionConfig
 from nncf.scopes import IgnoredScope
-from nncf.scopes import get_ignored_node_names_from_ignored_scope
+
+# from nncf.scopes import get_ignored_node_names_from_ignored_scope
 from nncf.tensor import Tensor
 from nncf.tensor.definitions import TensorDataType
 
@@ -164,13 +166,14 @@ class WeightCompression(Algorithm):
         )
 
         ordered_nodes_to_compress = []
-        ignored_names = get_ignored_node_names_from_ignored_scope(
-            self._ignored_scope, nncf_graph, strict=self._ignored_scope.validate
-        )
+        # ignored_names = get_ignored_node_names_from_ignored_scope(
+        #     self._ignored_scope, nncf_graph, strict=self._ignored_scope.validate
+        # )
         for node in nncf_graph.topological_sort():
-            is_node_with_weights = self._backend_entity.is_node_with_weights(node, nncf_graph)
-            is_within_scope = should_consider_scope(node.node_name, ignored_names)
-            if node.metatype in weighted_metatypes and is_node_with_weights and is_within_scope:
+            # is_node_with_weights = self._backend_entity.is_node_with_weights(node, nncf_graph)
+            # is_within_scope = should_consider_scope(node.node_name, ignored_names)
+            # TODO: no attributes after PTQ?
+            if node.metatype in weighted_metatypes:  # and is_node_with_weights and is_within_scope:
                 ordered_nodes_to_compress.append(node)
         return ordered_nodes_to_compress
 

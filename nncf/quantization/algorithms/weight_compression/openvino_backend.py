@@ -152,6 +152,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 const_dtype=activation_dtype,
                 should_add_convert_node=should_add_convert_node,
             )
+            # TODO: insert FQ between adapters for SD case
             B_W, _ = self._create_compression_subgraph(
                 weight=lora_B,
                 compression_config=int8_compression_config,
@@ -174,8 +175,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         for node_output_source_port in node_output_source_ports:
             node_output_source_port.replace_source_output(add.output(0))
 
+    @staticmethod
     def _create_compression_subgraph(
-        self,
         weight: Tensor,
         compression_config: WeightCompressionConfig,
         reduction_axes: Tuple[int, ...],
@@ -249,38 +250,42 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[wc_params.weight_port_id]
             const_node_name = const_attributes["name"]
             const_node = self.name_to_node_mapping[const_node_name]
-            const_node_output = const_node.output(0)
-            const_dtype = const_node_output.get_element_type()
+            # const_node_output = const_node.output(0)
+            # const_dtype = const_node_output.get_element_type()
             weight = Tensor(get_const_value(const_node))
 
-            should_add_convert_node = False
-            if const_dtype != ov.Type.f16:
-                for inp in const_node_output.get_target_inputs():
-                    if inp.get_node().get_type_name() != "Convert":
-                        should_add_convert_node = True
-                        break
+            # should_add_convert_node = False
+            # if const_dtype != ov.Type.f16:
+            #     for inp in const_node_output.get_target_inputs():
+            #         if inp.get_node().get_type_name() != "Convert":
+            #             should_add_convert_node = True
+            #             break
 
-            layer_scales = None if precomputed_scales is None else precomputed_scales.get(wc_params.weight_name)
-            layer_zero_points = (
-                None if precomputed_zero_points is None else precomputed_zero_points.get(wc_params.weight_name)
-            )
-            mul, compressed_weight = self._create_compression_subgraph(
-                weight=weight,
-                compression_config=wc_params.compression_config,
-                reduction_axes=wc_params.reduction_axes,
-                const_node_name=const_node_name,
-                weight_port_id=wc_params.weight_port_id,
-                const_dtype=const_dtype,
-                should_add_convert_node=should_add_convert_node,
-                layer_scales=layer_scales,
-                layer_zero_points=layer_zero_points,
-            )
+            # layer_scales = None if precomputed_scales is None else precomputed_scales.get(wc_params.weight_name)
+            # layer_zero_points = (
+            #     None if precomputed_zero_points is None else precomputed_zero_points.get(wc_params.weight_name)
+            # )
+            # mul, compressed_weight = self._create_compression_subgraph(
+            #     weight=weight,
+            #     compression_config=wc_params.compression_config,
+            #     reduction_axes=wc_params.reduction_axes,
+            #     const_node_name=const_node_name,
+            #     weight_port_id=wc_params.weight_port_id,
+            #     const_dtype=const_dtype,
+            #     should_add_convert_node=should_add_convert_node,
+            #     layer_scales=layer_scales,
+            #     layer_zero_points=layer_zero_points,
+            # )
 
-            mul_output = mul.output(0)
-            for target_input in const_node.output(0).get_target_inputs():
-                target_input.replace_source_output(mul_output)
+            # mul_output = mul.output(0)
+            # for target_input in const_node.output(0).get_target_inputs():
+            #     target_input.replace_source_output(mul_output)
 
             if lora_correction_algo is not None and lora_correction_algo.is_applicable(wc_params):
+                compressed_weight = None
+                mm_node = self.name_to_node_mapping[wc_params.node_with_weight.node_name]
+                fq_node = mm_node.input_value(1).node
+                compressed_weight = (Tensor(fq_node.input_value(i + 1).node.data) for i in range(4))
                 adapters = lora_correction_algo.calculate_adapters(weight, compressed_weight, wc_params)
                 self.insert_adapters(wc_params, *adapters, int8_lora=lora_correction_algo.is_int8_adapters)
 

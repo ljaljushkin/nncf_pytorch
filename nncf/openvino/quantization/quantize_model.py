@@ -167,11 +167,32 @@ def native_quantize_impl(
         advanced_parameters=advanced_parameters,
     )
     graph = GraphConverter.create_nncf_graph(model)
+
     warning_model_no_batchwise_support(graph, advanced_parameters, model_type, OPERATIONS_OUTPUT_HAS_NO_BATCH_AXIS)
     quantized_model = quantization_algorithm.apply(model, graph, dataset=calibration_dataset)
 
-    if is_weight_compression_needed(advanced_parameters):
-        compress_quantize_weights_transformation(quantized_model)
+    # nncf_graph = NNCFGraphFactory.create(quantized_model)
+    # from nncf.openvino.graph.metatypes import openvino_metatypes as om
+    # weighted_metatypes = [om.OVMatMulMetatype]
+    # def is_node_with_weights(node, graph) -> bool:
+    #     return node.layer_attributes and node.layer_attributes.constant_attributes
+    # nodes = []
+    # for node in nncf_graph.topological_sort():
+    #     has_attr = is_node_with_weights(node, nncf_graph)
+    #     if node.metatype in weighted_metatype and has_attr:
+    #         nodes.append(node)
+    # print('BEFORE TRANSFORM', nodes)
+
+    # if is_weight_compression_needed(advanced_parameters):
+    #     compress_quantize_weights_transformation(quantized_model)
+
+    # nncf_graph = NNCFGraphFactory.create(quantized_model)
+    # nodes = []
+    # for node in nncf_graph.topological_sort():
+    #     has_attr = is_node_with_weights(node, nncf_graph)
+    #     if node.metatype in weighted_metatypes and has_attr:
+    #         nodes.append(node)
+    # print('AFTER TRANSFORM', nodes)
 
     dump_parameters(
         quantized_model,

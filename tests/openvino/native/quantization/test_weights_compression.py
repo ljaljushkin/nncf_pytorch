@@ -21,7 +21,9 @@ from attr import dataclass
 from openvino.runtime import opset13 as opset
 
 from nncf import CompressWeightsMode
+from nncf import ModelType
 from nncf import SensitivityMetric
+from nncf import quantize
 from nncf.data.dataset import Dataset
 from nncf.errors import ValidationError
 from nncf.experimental.common.tensor_statistics.collectors import AggregatorBase
@@ -1213,3 +1215,41 @@ def test_lora_with_mixed_precision(tmp_path):
         op_name = op.get_friendly_name()
         if op.get_type_name() == "Constant" and ("/zero_point" in op_name or "/scale" in op_name):
             assert op.get_shape() == [sz, 1]
+
+
+def test_quantize_compressed_weight_simple(tmp_path):
+    dataset_size = 4
+    model = LMLinearModel().ov_model
+    ov.save_model(model, tmp_path / "fp32.xml", compress_to_fp16=False)
+    input_data = [np.ones(inp.shape) for inp in model.inputs] * dataset_size
+    dataset = Dataset(input_data)
+
+    model = quantize(model, dataset, model_type=ModelType.TRANSFORMER)
+    ov.save_model(model, tmp_path / "quantized_model.xml", compress_to_fp16=False)
+
+    model = compress_weights(model, dataset=dataset, mode=CompressWeightsMode.INT8_ASYM, lora_correction=True)
+    ov.save_model(model, tmp_path / "compressed_model.xml", compress_to_fp16=False)
+
+    from openvino._offline_transformations import compress_quantize_weights_transformation
+
+    compress_quantize_weights_transformation(model)
+    ov.save_model(model, tmp_path / "compressed_transformed_model.xml", compress_to_fp16=False)
+
+
+def test_quantize_compressed_weight_harder(tmp_path):
+    model = AWQMatmulModel().ov_model
+    ov.save_model(model, tmp_path / "fp32.xml", compress_to_fp16=False)
+    dataset = Dataset([np.ones([8, 8])])
+
+    model = quantize(model, dataset, model_type=ModelType.TRANSFORMER)
+    ov.save_model(model, tmp_path / "quantized_model.xml", compress_to_fp16=False)
+
+    compress_weights(
+        model, ratio=1.0, group_size=2, dataset=dataset, mode=CompressWeightsMode.INT8_ASYM, lora_correction=True
+    )
+    ov.save_model(model, tmp_path / "compressed_model.xml", compress_to_fp16=False)
+
+    from openvino._offline_transformations import compress_quantize_weights_transformation
+
+    compress_quantize_weights_transformation(model)
+    ov.save_model(model, tmp_path / "compressed_transformed_model.xml", compress_to_fp16=False)
