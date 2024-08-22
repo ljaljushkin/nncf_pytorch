@@ -29,7 +29,8 @@ def process_stats(stats: List[TTensor], subset_size: int) -> Tuple[TTensor, TTen
         X - average channel magnitude across tokens in the sequence [HiddenDim, SampleSize]
     :rtype: Tuple[TTensor, TTensor]
     """
-    X = fns.stack([fns.mean(stat, axis=0) for stat in stats])  # [Batch, HiddenDim]
+    reduction_axis = tuple(range(stats[0].ndim)[:-1])
+    X = fns.stack([fns.mean(stat, axis=reduction_axis) for stat in stats])  # [Batch, HiddenDim]
     X_full = fns.transpose(X)  # [HiddenDim, Batch]
 
     # prevent high memory and time consumption
