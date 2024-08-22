@@ -161,8 +161,9 @@ class WeightCompression(Algorithm):
         """
         weighted_metatypes = (
             self._backend_entity.matmul_metatypes
-            + self._backend_entity.embedding_metatypes
-            + self._backend_entity.convolution_metatypes
+            # TODO: hack to apply LoRA for matmul only. is it compatible with Conv??
+            # + self._backend_entity.embedding_metatypes
+            # + self._backend_entity.convolution_metatypes
         )
 
         ordered_nodes_to_compress = []
