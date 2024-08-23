@@ -266,8 +266,10 @@ class GPTQ:
                         scales.append(scale)
                         zero_points.append(zero_point)
                 if block_compression_config.mode == CompressWeightsMode.NF4:
-                    compressed_weights = do_nf4_quantization(fns.unsqueeze(weight_col, 1), scales[-1])
-                    quantized_col = do_nf4_dequantization(compressed_weights, scales[-1])
+                    compressed_weights = do_nf4_quantization(
+                        fns.unsqueeze(weight_col, 1), scales[-1], is_normalized_weight=False
+                    )
+                    quantized_col = do_nf4_dequantization(compressed_weights, scales[-1], reduction_axis=-1)
                 else:
                     compressed_weights = calculate_quantized_weight(
                         fns.unsqueeze(weight_col, 1), block_compression_config, scales[-1], zero_points[-1]
