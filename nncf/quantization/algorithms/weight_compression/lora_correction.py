@@ -17,14 +17,17 @@ import pandas as pd
 from nncf.common.logging import nncf_logger
 from nncf.common.utils.debug import DEBUG_LOG_DIR
 from nncf.common.utils.debug import is_debug
-from nncf.parameters import CompressWeightsMode
+
+# from nncf.parameters import CompressWeightsMode
 from nncf.quantization.advanced_parameters import AdvancedLoraCorrectionParameters
-from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
+
+# from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionConfig
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
-from nncf.quantization.algorithms.weight_compression.weight_lowering import do_int_dequantization
-from nncf.quantization.algorithms.weight_compression.weight_lowering import do_nf4_dequantization
-from nncf.quantization.algorithms.weight_compression.weight_lowering import do_nf4_quantization
+
+# from nncf.quantization.algorithms.weight_compression.weight_lowering import do_int_dequantization
+# from nncf.quantization.algorithms.weight_compression.weight_lowering import do_nf4_dequantization
+# from nncf.quantization.algorithms.weight_compression.weight_lowering import do_nf4_quantization
 from nncf.tensor import Tensor
 from nncf.tensor import functions as fns
 from nncf.tensor.definitions import TensorDataType
@@ -112,7 +115,8 @@ class LoraCorrectionAlgorithm:
         :return: two low rank matrices in the order of execution of corresponding linear layers.
         """
         layer_name = wc_params.node_with_weight.node_name
-        layer_activations = self._activations[layer_name]
+        layer_activations = None
+        # layer_activations = self._activations[layer_name]
         is_debug = self._debug_interface is not None
         lora_A, lora_B, mean_noises = self.calculate_low_rank_matrices(
             weight,
@@ -156,54 +160,58 @@ class LoraCorrectionAlgorithm:
             Noises are collected from each step of the algorithm if debug was enabled.
             First low rank matrix has shape=[R, H], the second - [O, R], where R - rank, H/O - hidden/output dimension.
         """
-        rank, num_iters, add_regularization, subset_size = (
-            lora_correction_params.rank,
-            lora_correction_params.num_iters,
-            lora_correction_params.add_regularization,
-            lora_correction_params.subset_size,
-        )
-        mode = compression_config.mode
-        assert len(reduction_axes) == 1, "Assumed a single reduction axis"
-        reduction_axis = reduction_axes[0] if compression_config.group_size != -1 else -1
-        if mode in (CompressWeightsMode.INT4_SYM, CompressWeightsMode.INT4_ASYM):
-            fq_weights = do_int_dequantization(
-                compressed_weight.tensor,
-                compressed_weight.scale,
-                compressed_weight.zero_point,
-                reduction_axis,
-            )
-        elif mode == CompressWeightsMode.NF4:
-            indexes = do_nf4_quantization(compressed_weight.tensor, compressed_weight.scale, is_normalized_weight=True)
-            fq_weights = do_nf4_dequantization(indexes, compressed_weight.scale, reduction_axis)
-        else:
-            raise ValueError(
-                f"{mode.value} mode is invalid for Lora Correction algorithm. Supported modes: INT4_SYM, INT4_ASYM, NF4"
-            )
+        rank = lora_correction_params.rank
+        # rank, num_iters, add_regularization, subset_size = (
+        #     lora_correction_params.rank,
+        #     lora_correction_params.num_iters,
+        #     lora_correction_params.add_regularization,
+        #     lora_correction_params.subset_size,
+        # )
+        # mode = compression_config.mode
+        # assert len(reduction_axes) == 1, "Assumed a single reduction axis"
+        # reduction_axis = reduction_axes[0] if compression_config.group_size != -1 else -1
+        # if mode in (CompressWeightsMode.INT4_SYM, CompressWeightsMode.INT4_ASYM):
+        #     fq_weights = do_int_dequantization(
+        #         compressed_weight.tensor,
+        #         compressed_weight.scale,
+        #         compressed_weight.zero_point,
+        #         reduction_axis,
+        #     )
+        # elif mode == CompressWeightsMode.NF4:
+        #     indexes = do_nf4_quantization(
+        #          compressed_weight.tensor, compressed_weight.scale, is_normalized_weight=True)
+        #     fq_weights = do_nf4_dequantization(indexes, compressed_weight.scale, reduction_axis)
+        # else:
+        #     raise ValueError(
+        #         f"{mode.value} mode is invalid for Lora Correction algorithm. \
+        # Supported modes: INT4_SYM, INT4_ASYM, NF4"
+        #     )
         # fq_w + residual = w   =>  residual = w - fq_w
-        svd_residual = fns.astype(weight - fq_weights, TensorDataType.float32)
+        # svd_residual = fns.astype(weight - fq_weights, TensorDataType.float32)
+        svd_residual = fns.astype(weight, TensorDataType.float32)
 
         # O stands for output dimension, H - input dimension or hidden size, SS - samples size, R - rank.
         # reduction axes is all axes except output dimension in linear/conv layers.
         if reduction_axes[0] == 1:
             svd_residual = fns.transpose(svd_residual)
-        residual = svd_residual.clone()  # [H, O]
+        # residual = svd_residual.clone()  # [H, O]
 
-        s, X = process_stats(layer_activations, subset_size)  # [H], [H, SS]
-        X = fns.transpose(X)  # [SS, H]
-        if compression_config.group_size > 0:
-            # Multiply residual of weights by maximum channel magnitude of activations normalized per quantization
-            # group. As a consequence, weights corresponding to a "noisy" activations has a higher error to correct.
-            # Empirically, it leads to a better accuracy.
-            gs = compression_config.group_size
-            n_gs = s.shape[0] // gs
-            for i in range(n_gs):
-                offset = i * gs
-                denum = fns.sum(s[offset : offset + gs])
-                s[offset : offset + gs] = s[offset : offset + gs] / denum
-                denum = fns.max(s[offset : offset + gs])
-                s[offset : offset + gs] = s[offset : offset + gs] / denum
-            s = fns.expand_dims(s, 1)  # [H, 1]
-            svd_residual = svd_residual * s  # [H, O]
+        # s, X = process_stats(layer_activations, subset_size)  # [H], [H, SS]
+        # X = fns.transpose(X)  # [SS, H]
+        # if compression_config.group_size > 0:
+        #     # Multiply residual of weights by maximum channel magnitude of activations normalized per quantization
+        #     # group. As a consequence, weights corresponding to a "noisy" activations has a higher error to correct.
+        #     # Empirically, it leads to a better accuracy.
+        #     gs = compression_config.group_size
+        #     n_gs = s.shape[0] // gs
+        #     for i in range(n_gs):
+        #         offset = i * gs
+        #         denum = fns.sum(s[offset : offset + gs])
+        #         s[offset : offset + gs] = s[offset : offset + gs] / denum
+        #         denum = fns.max(s[offset : offset + gs])
+        #         s[offset : offset + gs] = s[offset : offset + gs] / denum
+        #     s = fns.expand_dims(s, 1)  # [H, 1]
+        #     svd_residual = svd_residual * s  # [H, O]
 
         # Low-rank approximation.
         U_full, S_full, V_full = fns.linalg.svd(svd_residual, full_matrices=False)
@@ -214,56 +222,56 @@ class LoraCorrectionAlgorithm:
 
         # An iterative algorithm for correction (refinement) of the low-rank adapters.
         mean_noises = []
-        noise = X @ residual  # [SS, H] * [H, O] = [SS, O]
-        for i in range(num_iters):
-            # Part 1: U is fixed, find V.
-            XU = X @ U  # [SS, R]
-            if not add_regularization:
-                # X @ U @ V = noise      ---> a @ x = b
-                new_V = fns.linalg.lstsq(XU, noise, driver="gelsy")
-            else:
-                # 1) U @ V = res         <--- regularization
-                # 2) X @ U @ V = noise
-                # |U X @ U| @ V = |res noise|
-                UXU = fns.concatenate([U, XU], axis=0)  # [H + SS, R]
-                noiseR = fns.concatenate([residual, noise], axis=0)  # [H + SS, O]
-                new_V = fns.linalg.lstsq(UXU, noiseR, driver="gelsy")
-            if is_debug:
-                if i == 0:
-                    init_noise = noise
-                    mean_noise_before_svd = fns.mean(fns.abs(init_noise)).item()
-                    mean_noise_after_svd = fns.mean(fns.abs(init_noise - XU @ V)).item()
-                    mean_noises.extend([mean_noise_before_svd, mean_noise_after_svd])
-                mean_noise_after_correct = fns.mean(fns.abs(init_noise - XU @ new_V)).item()
-                mean_noises.append(mean_noise_after_correct)
-                nncf_logger.debug(
-                    f"{i} Correction U: {mean_noise_before_svd}, {mean_noise_after_svd}, {mean_noise_after_correct}"
-                )
-            V = new_V
+        # noise = X @ residual  # [SS, H] * [H, O] = [SS, O]
+        # for i in range(num_iters):
+        #     # Part 1: U is fixed, find V.
+        #     XU = X @ U  # [SS, R]
+        #     if not add_regularization:
+        #         # X @ U @ V = noise      ---> a @ x = b
+        #         new_V = fns.linalg.lstsq(XU, noise, driver="gelsy")
+        #     else:
+        #         # 1) U @ V = res         <--- regularization
+        #         # 2) X @ U @ V = noise
+        #         # |U X @ U| @ V = |res noise|
+        #         UXU = fns.concatenate([U, XU], axis=0)  # [H + SS, R]
+        #         noiseR = fns.concatenate([residual, noise], axis=0)  # [H + SS, O]
+        #         new_V = fns.linalg.lstsq(UXU, noiseR, driver="gelsy")
+        #     if is_debug:
+        #         if i == 0:
+        #             init_noise = noise
+        #             mean_noise_before_svd = fns.mean(fns.abs(init_noise)).item()
+        #             mean_noise_after_svd = fns.mean(fns.abs(init_noise - XU @ V)).item()
+        #             mean_noises.extend([mean_noise_before_svd, mean_noise_after_svd])
+        #         mean_noise_after_correct = fns.mean(fns.abs(init_noise - XU @ new_V)).item()
+        #         mean_noises.append(mean_noise_after_correct)
+        #         nncf_logger.debug(
+        #             f"{i} Correction U: {mean_noise_before_svd}, {mean_noise_after_svd}, {mean_noise_after_correct}"
+        #         )
+        #     V = new_V
 
-            # Part 2: V is fixed, find U.
-            VI = fns.linalg.pinv(V)  # [O, R]
-            noiseVI = noise @ VI  # [R, SS]
-            if not add_regularization:
-                # VI = V^-1
-                # 1) X @ U @ V = noise
-                # 1) X @ U = noise @ VI     ---> a @ x = b
-                U = fns.linalg.lstsq(X, noiseVI, driver="gelsy")
-            else:
-                # VI = V^-1, E - identity matrix
-                # 1) U @ V = res           <--- regularization
-                # 1) E @ U = res @ VI
-                # 2) X @ U @ V = noise
-                # 2) X @ U = noise @ VI
-                # |E X| = | (UI @ res) (UI @ noise) |
-                E = fns.eye(U.shape[0], backend=U.backend, dtype=U.dtype)  # [H, H]
-                EX = fns.concatenate([E, X], axis=0)  # [H + SS, H]
-                noiseR = fns.concatenate([residual @ VI, noiseVI], axis=0)  # [H + SS, R]
-                U = fns.linalg.lstsq(EX, noiseR, driver="gelsy")
-            if is_debug:
-                mean_noise_after_correct = fns.mean(fns.abs(init_noise - X @ U @ V)).item()
-                mean_noises.append(mean_noise_after_correct)
-                nncf_logger.debug(
-                    f"{i} Correction V: {mean_noise_before_svd}, {mean_noise_after_svd}, {mean_noise_after_correct}"
-                )
+        #     # Part 2: V is fixed, find U.
+        #     VI = fns.linalg.pinv(V)  # [O, R]
+        #     noiseVI = noise @ VI  # [R, SS]
+        #     if not add_regularization:
+        #         # VI = V^-1
+        #         # 1) X @ U @ V = noise
+        #         # 1) X @ U = noise @ VI     ---> a @ x = b
+        #         U = fns.linalg.lstsq(X, noiseVI, driver="gelsy")
+        #     else:
+        #         # VI = V^-1, E - identity matrix
+        #         # 1) U @ V = res           <--- regularization
+        #         # 1) E @ U = res @ VI
+        #         # 2) X @ U @ V = noise
+        #         # 2) X @ U = noise @ VI
+        #         # |E X| = | (UI @ res) (UI @ noise) |
+        #         E = fns.eye(U.shape[0], backend=U.backend, dtype=U.dtype)  # [H, H]
+        #         EX = fns.concatenate([E, X], axis=0)  # [H + SS, H]
+        #         noiseR = fns.concatenate([residual @ VI, noiseVI], axis=0)  # [H + SS, R]
+        #         U = fns.linalg.lstsq(EX, noiseR, driver="gelsy")
+        #     if is_debug:
+        #         mean_noise_after_correct = fns.mean(fns.abs(init_noise - X @ U @ V)).item()
+        #         mean_noises.append(mean_noise_after_correct)
+        #         nncf_logger.debug(
+        #             f"{i} Correction V: {mean_noise_before_svd}, {mean_noise_after_svd}, {mean_noise_after_correct}"
+        #         )
         return fns.transpose(U), fns.transpose(V), mean_noises

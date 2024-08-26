@@ -19,8 +19,8 @@ from nncf.common.logging.track_progress import track
 from nncf.common.tensor_statistics.statistic_point import StatisticPointsContainer
 from nncf.common.utils.backend import BackendType
 from nncf.common.utils.backend import get_backend
-from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
 from nncf.parameters import CompressWeightsMode
+from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.weight_lowering import calculate_normalized_weight_and_fp4_scale
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_int_dequantization
