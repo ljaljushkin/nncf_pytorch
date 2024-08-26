@@ -9,8 +9,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from collections import defaultdict
+from pathlib import Path
 from typing import Dict, List, Optional, OrderedDict, Tuple, TypeVar
+
+import numpy as np
 
 import nncf
 from nncf import Dataset
@@ -31,6 +35,7 @@ from nncf.parameters import CompressWeightsMode
 from nncf.parameters import SensitivityMetric
 from nncf.quantization.advanced_parameters import AdvancedCompressionParameters
 from nncf.quantization.algorithms.algorithm import Algorithm
+from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
 from nncf.quantization.algorithms.weight_compression.awq import AWQ
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.gptq import GPTQ
@@ -360,6 +365,18 @@ class WeightCompression(Algorithm):
         self._set_weight_compression_config(ratio_defining_params, model, graph, activations)
         nncf_logger.info(self._get_bitwidth_distribution_str(all_weight_params, ratio_defining_params))
 
+        if f32_stats_path := os.environ.get("FP32_LORA_ACTIVATION_STATS_PATH"):
+            d = {}
+            for wc_params in all_weight_params:
+                layer_name = wc_params.node_with_weight.node_name
+                layer_activations = activations[layer_name]
+                _, X = process_stats(layer_activations, self._subset_size)  # [H], [H, SS]
+                d[layer_name] = X.data
+            f32_stats_path = Path(f32_stats_path)
+            f32_stats_path.mkdir(exist_ok=True, parents=True)
+            np.savez(f32_stats_path / "f32_lora_stats", **d)
+            return model
+
         if (
             self._awq
             and activations is not None
@@ -500,7 +517,13 @@ class WeightCompression(Algorithm):
         return self._fp_inputs[input_id]
 
     def _get_activations(
-        self, dataset: Dataset, subset_size: int, nodes_to_compress: List[NNCFNode], graph: NNCFGraph, model: TModel
+        self,
+        dataset: Dataset,
+        subset_size: int,
+        nodes_to_compress: List[NNCFNode],
+        graph: NNCFGraph,
+        model: TModel,
+        f32_stats_path=None,
     ) -> Dict[str, List[Tensor]]:
         """
         Collects input activations for the given nodes on the dataset.

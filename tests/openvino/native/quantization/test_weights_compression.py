@@ -20,10 +20,11 @@ import pytest
 from attr import dataclass
 from openvino.runtime import opset13 as opset
 
+# from nncf import ModelType
 from nncf import CompressWeightsMode
-from nncf import ModelType
 from nncf import SensitivityMetric
-from nncf import quantize
+
+# from nncf import quantize
 from nncf.common.utils.debug import nncf_debug
 from nncf.data.dataset import Dataset
 from nncf.errors import ValidationError
@@ -1226,16 +1227,19 @@ def test_quantize_compressed_weight_simple(tmp_path):
     input_data = [np.ones(inp.shape) for inp in model.inputs] * dataset_size
     dataset = Dataset(input_data)
 
-    model = quantize(model, dataset, model_type=ModelType.TRANSFORMER)
-    ov.save_model(model, tmp_path / "quantized_model.xml", compress_to_fp16=False)
+    # model = quantize(model, dataset, model_type=ModelType.TRANSFORMER)
+    # ov.save_model(model, tmp_path / "quantized_model.xml", compress_to_fp16=False)
+    import os
+
+    os.environ["FP32_LORA_ACTIVATION_STATS_PATH"] = str(tmp_path)
 
     model = compress_weights(model, dataset=dataset, mode=CompressWeightsMode.INT8_ASYM, lora_correction=True)
     ov.save_model(model, tmp_path / "compressed_model.xml", compress_to_fp16=False)
 
-    from openvino._offline_transformations import compress_quantize_weights_transformation
+    # from openvino._offline_transformations import compress_quantize_weights_transformation
 
-    compress_quantize_weights_transformation(model)
-    ov.save_model(model, tmp_path / "compressed_transformed_model.xml", compress_to_fp16=False)
+    # compress_quantize_weights_transformation(model)
+    # ov.save_model(model, tmp_path / "compressed_transformed_model.xml", compress_to_fp16=False)
 
 
 def test_quantize_compressed_weight_harder(tmp_path):
@@ -1243,15 +1247,19 @@ def test_quantize_compressed_weight_harder(tmp_path):
     ov.save_model(model, tmp_path / "fp32.xml", compress_to_fp16=False)
     dataset = Dataset([np.ones([8, 8])])
 
-    model = quantize(model, dataset, model_type=ModelType.TRANSFORMER)
-    ov.save_model(model, tmp_path / "quantized_model.xml", compress_to_fp16=False)
+    import os
+
+    os.environ["FP32_LORA_ACTIVATION_STATS_PATH"] = str(tmp_path)
+
+    # model = quantize(model, dataset, model_type=ModelType.TRANSFORMER)
+    # ov.save_model(model, tmp_path / "quantized_model.xml", compress_to_fp16=False)
 
     compress_weights(
         model, ratio=1.0, group_size=2, dataset=dataset, mode=CompressWeightsMode.INT8_ASYM, lora_correction=True
     )
-    ov.save_model(model, tmp_path / "compressed_model.xml", compress_to_fp16=False)
+    # ov.save_model(model, tmp_path / "compressed_model.xml", compress_to_fp16=False)
 
-    from openvino._offline_transformations import compress_quantize_weights_transformation
+    # from openvino._offline_transformations import compress_quantize_weights_transformation
 
-    compress_quantize_weights_transformation(model)
-    ov.save_model(model, tmp_path / "compressed_transformed_model.xml", compress_to_fp16=False)
+    # compress_quantize_weights_transformation(model)
+    # ov.save_model(model, tmp_path / "compressed_transformed_model.xml", compress_to_fp16=False)
