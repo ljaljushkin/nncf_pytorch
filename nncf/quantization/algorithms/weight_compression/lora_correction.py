@@ -8,10 +8,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from nncf.common.logging import nncf_logger
@@ -88,6 +90,22 @@ class LoraCorrectionAlgorithm:
         self._activations = activations
         self._lora_correction_params = lora_correction_params
         self._debug_interface = DebugInterface() if is_debug() else None
+        self._sX_stats = None
+        if activation_stats_path := os.environ.get("ACTIVATION_STATS_LOAD_PATH"):
+            assert Path(activation_stats_path).exists(), f"PATH for s and X does not exist{activation_stats_path}"
+            self._sX_stats = np.load(activation_stats_path)
+        assert (
+            f32_stats_path := os.environ.get("FP32_LORA_ACTIVATION_STATS_LOAD_PATH")
+        ) is not None, "Expect FP32_LORA_ACTIVATION_STATS_LOAD_PATH var!"
+        assert Path(f32_stats_path).exists(), f"PATH for X32 does not exist{f32_stats_path}"
+        self._f32_stats = np.load(f32_stats_path)
+
+        import pandas as pd
+
+        s = "/home/nlyaly/projects/optimum-intel/notebooks/openvino/nncf_debug_X32_3iter/lora/noises.csv"
+        df = pd.read_csv(s)
+        median = df.iloc[0][1:].median()
+        self._names_to_apply = list(df.loc[:, df.iloc[0] > median].columns)[1:]
 
     def __del__(self):
         if self._debug_interface is not None:
@@ -98,7 +116,10 @@ class LoraCorrectionAlgorithm:
         return self._lora_correction_params.is_int8_adapters
 
     def is_applicable(self, wc_params: WeightCompressionParameters):
-        return wc_params.compression_config.num_bits in [4, 8]
+        return (
+            wc_params.compression_config.num_bits in [4, 8]
+            and wc_params.node_with_weight.node_name in self._names_to_apply
+        )
 
     def calculate_adapters(
         self, weight: Tensor, compressed_weight: Tensor, wc_params: WeightCompressionParameters
@@ -112,7 +133,20 @@ class LoraCorrectionAlgorithm:
         :return: two low rank matrices in the order of execution of corresponding linear layers.
         """
         layer_name = wc_params.node_with_weight.node_name
-        layer_activations = self._activations[layer_name]
+
+        assert layer_name in self._f32_stats, f"no {layer_name} in X32 stats!"
+        f32_X = Tensor(self._f32_stats[layer_name])
+        # print(f'Lora for {layer_name}, x32 shape={f32_X.shape}') # 1280, 128
+
+        if self._sX_stats:
+            X = Tensor(self._sX_stats[layer_name + "___X"])
+            s = Tensor(self._sX_stats[layer_name + "___s"])
+            print(f"Get from cache X with {X.shape} and s with shape={s.shape}")  #
+            sX = (s, X)
+            layer_activations = None
+        else:
+            layer_activations = self._activations[layer_name]
+
         is_debug = self._debug_interface is not None
         lora_A, lora_B, mean_noises = self.calculate_low_rank_matrices(
             weight,
@@ -122,6 +156,8 @@ class LoraCorrectionAlgorithm:
             self._lora_correction_params,
             layer_activations,
             is_debug,
+            f32_X,
+            sX,
         )
         if is_debug:
             self._debug_interface.add_noises(layer_name, mean_noises)
@@ -136,6 +172,8 @@ class LoraCorrectionAlgorithm:
         lora_correction_params: AdvancedLoraCorrectionParameters,
         layer_activations: List[Tensor],
         is_debug: Optional[bool] = False,
+        f32_X=None,
+        sX=None,
     ):
         """
         Calculates low rank matrices for a given original and compressed weights.
@@ -198,8 +236,12 @@ class LoraCorrectionAlgorithm:
             svd_residual = fns.transpose(svd_residual)
         residual = svd_residual.clone()  # [H, O]
 
-        s, X = process_stats(layer_activations, subset_size)  # [H], [H, SS]
+        if sX:
+            s, X = sX
+        else:
+            s, X = process_stats(layer_activations, subset_size)  # [H], [H, SS]
         X = fns.transpose(X)  # [SS, H]
+        f32_X = fns.transpose(f32_X)  # [SS, H]
         if compression_config.group_size > 0:
             # Multiply residual of weights by maximum channel magnitude of activations normalized per quantization
             # group. As a consequence, weights corresponding to a "noisy" activations has a higher error to correct.
@@ -224,17 +266,31 @@ class LoraCorrectionAlgorithm:
 
         # An iterative algorithm for correction (refinement) of the low-rank adapters.
         mean_noises = []
-        noise = X @ residual  # [SS, H] * [H, O] = [SS, O]
+        # print(f"f32_X.shape={f32_X.shape}, weight.shape={weight.shape}, X.shape={X.shape},
+        # fq_weights.shape={fq_weights.shape}")
+        # f32_X.shape=(128, 1280), weight.shape=(10240, 1280), X.shape=(128, 1280), fq_weights.shape=(10240, 1280)
+
+        # NOTE: for PTQ case: X32 * W32 - Xfq * Wfq = Xfq * U * V
+        if reduction_axes[0] == 1:
+            noise = f32_X @ fns.transpose(weight) - X @ fns.transpose(fq_weights)  # [SS, H] * [H, O] = [SS, O]
+        else:
+            noise = f32_X @ weight - X @ fq_weights  # [SS, H] * [H, O] = [SS, O]
+        # print(f"noise.shape={noise.shape}")
+        # NOTE: for WC case:  X32 * W32 - X32 * Wfq = X32 * U * V
+        # noise = X @ residual  # [SS, H] * [H, O] = [SS, O]
         for i in range(num_iters):
+            # print(f'#{i} iteration')
             # Part 1: U is fixed, find V.
             XU = X @ U  # [SS, R]
             if not add_regularization:
                 # X @ U @ V = noise      ---> a @ x = b
                 new_V = fns.linalg.lstsq(XU, noise, driver="gelsy")
+                # print(f"#{i}, new_V.shape={new_V.shape}")
             else:
                 # 1) U @ V = res         <--- regularization
                 # 2) X @ U @ V = noise
                 # |U X @ U| @ V = |res noise|
+                # print(f"#{i}, XU.shape={XU.shape}")
                 UXU = fns.concatenate([U, XU], axis=0)  # [H + SS, R]
                 noiseR = fns.concatenate([residual, noise], axis=0)  # [H + SS, O]
                 new_V = fns.linalg.lstsq(UXU, noiseR, driver="gelsy")
@@ -266,9 +322,11 @@ class LoraCorrectionAlgorithm:
                 # 2) X @ U @ V = noise
                 # 2) X @ U = noise @ VI
                 # |E X| = | (UI @ res) (UI @ noise) |
+
                 E = fns.eye(U.shape[0], backend=U.backend, dtype=U.dtype)  # [H, H]
                 EX = fns.concatenate([E, X], axis=0)  # [H + SS, H]
                 noiseR = fns.concatenate([residual @ VI, noiseVI], axis=0)  # [H + SS, R]
+                # print(f"#{i}, noiseR.shape={noiseR.shape}")
                 U = fns.linalg.lstsq(EX, noiseR, driver="gelsy")
             if is_debug:
                 mean_noise_after_correct = fns.mean(fns.abs(init_noise - X @ U @ V)).item()

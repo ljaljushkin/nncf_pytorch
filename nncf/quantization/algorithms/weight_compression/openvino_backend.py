@@ -246,7 +246,13 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         precomputed_zero_points: Dict[str, Tensor] = None,
         lora_correction_algo: LoraCorrectionAlgorithm = None,
     ) -> ov.Model:
-        for wc_params in weight_compression_parameters:
+        # params_to_apply_lora = []
+        # for wc_params in weight_compression_parameters:
+        #     if lora_correction_algo is not None and lora_correction_algo.is_applicable(wc_params):
+        #         params_to_apply_lora.append(wc_params)
+        # num_params = len(params_to_apply_lora)
+
+        for wc_params in weight_compression_parameters:  # params_to_apply_lora[:num_params//2]:
             const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[wc_params.weight_port_id]
             const_node_name = const_attributes["name"]
             const_node = self.name_to_node_mapping[const_node_name]

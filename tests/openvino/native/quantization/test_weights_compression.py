@@ -1249,14 +1249,18 @@ def test_quantize_compressed_weight_harder(tmp_path):
 
     import os
 
-    os.environ["FP32_LORA_ACTIVATION_STATS_PATH"] = str(tmp_path)
+    from nncf.common.utils.debug import nncf_debug
+
+    os.environ["FP32_LORA_ACTIVATION_STATS_LOAD_PATH"] = (
+        "/home/nlyaly/projects/nncf/tests/openvino/native/quantization/X32"
+    )
 
     # model = quantize(model, dataset, model_type=ModelType.TRANSFORMER)
     # ov.save_model(model, tmp_path / "quantized_model.xml", compress_to_fp16=False)
-
-    compress_weights(
-        model, ratio=1.0, group_size=2, dataset=dataset, mode=CompressWeightsMode.INT8_ASYM, lora_correction=True
-    )
+    with nncf_debug():
+        compress_weights(
+            model, ratio=1.0, group_size=2, dataset=dataset, mode=CompressWeightsMode.INT8_ASYM, lora_correction=True
+        )
     # ov.save_model(model, tmp_path / "compressed_model.xml", compress_to_fp16=False)
 
     # from openvino._offline_transformations import compress_quantize_weights_transformation
