@@ -366,16 +366,16 @@ class WeightCompression(Algorithm):
         self._set_weight_compression_config(ratio_defining_params, model, graph, activations)
         nncf_logger.info(self._get_bitwidth_distribution_str(all_weight_params, ratio_defining_params))
 
-        if f32_stats_path := os.environ.get("FP32_LORA_ACTIVATION_STATS_SAVE_PATH"):
-            assert f32_stats_path.exists(), f"PATH for X32 does not exist{f32_stats_path}"
-            d = {}
-            for wc_params in all_weight_params:
-                layer_name = wc_params.node_with_weight.node_name
-                layer_activations = activations[layer_name]
-                _, X = process_stats(layer_activations, self._subset_size)  # [H], [H, SS]
-                d[layer_name] = X.data
-            np.savez(f32_stats_path, **d)
-            return model
+        # if f32_stats_path := os.environ.get("FP32_LORA_ACTIVATION_STATS_SAVE_PATH"):
+        #     assert f32_stats_path.parent.exists(), f"PATH for X32 does not exist{f32_stats_path}"
+        #     d = {}
+        #     for wc_params in all_weight_params:
+        #         layer_name = wc_params.node_with_weight.node_name
+        #         layer_activations = activations[layer_name]
+        #         _, X = process_stats(layer_activations, self._subset_size)  # [H], [H, SS]
+        #         d[layer_name] = X.data
+        #     np.savez(f32_stats_path, **d)
+        #     return model
 
         if act_stats_path := os.environ.get("ACTIVATION_STATS_SAVE_PATH"):
             assert Path(act_stats_path).parent.exists(), f"PATH for s and X does not exist: {act_stats_path}"

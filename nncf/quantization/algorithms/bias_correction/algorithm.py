@@ -12,6 +12,8 @@
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, TypeVar
 
+import numpy as np
+
 import nncf
 from nncf import Dataset
 from nncf import nncf_logger
@@ -32,6 +34,7 @@ from nncf.common.utils.backend import copy_model
 from nncf.common.utils.backend import get_backend
 from nncf.experimental.common.tensor_statistics.statistical_functions import mean_per_channel
 from nncf.quantization.algorithms.algorithm import Algorithm
+from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
 from nncf.tensor import Tensor
 from nncf.tensor import functions as fns
 
@@ -99,6 +102,11 @@ class BiasCorrection(Algorithm):
         self._collected_stat_inputs_map = {}
         self._fp_inputs = defaultdict(list)
         self._algorithm_key = f"BC_{hash(self)}"
+        self._activations_to_save = {}
+        self._input_ids_to_save = {}
+        s = "/home/nlyaly/projects/optimum-intel/notebooks/openvino/models/runwayml/X32_STATS.npz"
+        stats = np.load(s)
+        self._ref_names_to_save = list(stats.files)
 
         if self.apply_for_all_nodes:
             raise nncf.InternalError("BiasCorrection algorithm does not support apply_for_all_nodes=True yet")
@@ -168,6 +176,8 @@ class BiasCorrection(Algorithm):
             # Then we create the necessary data lists from the previously collected statistics,
             # for the subgraph inference.
             feed_dicts = self._create_feed_dicts(model_copy_subgraph, subgraph_data, statistic_points)
+            print(f"position {'#' * 50} #{position} length of feed dicts: {len(feed_dicts)}")
+            # print("names: ", *feed_dicts.keys(), sep='\n')
 
             bias_shift = self._compute_bias_shift(node, model_copy_subgraph, feed_dicts, statistic_points)
 
@@ -200,6 +210,15 @@ class BiasCorrection(Algorithm):
             # Also, we need to remove unnecessary statistics that we don't need anymore,
             # to reduce memory usage during the algorithm's pipeline.
             self._remove_unnecessary_stats(position, subgraphs_data)
+        import os
+
+        if f32_stats_path := os.environ.get("FP32_LORA_ACTIVATION_STATS_SAVE_PATH"):
+            from pathlib import Path
+
+            Path(f32_stats_path).parent.mkdir(exist_ok=True, parents=True)
+            import numpy as np
+
+            np.savez(f32_stats_path, **self._activations_to_save)
 
         return main_model_transformer.transform(main_transformations_layout)
 
@@ -387,7 +406,31 @@ class BiasCorrection(Algorithm):
         for input_node_name, input_port_id in subgraph_data["subgraph_input_ids"]:
             input_tensor_name = self._backend_entity.get_input_name(model, input_node_name, input_port_id)
             activation_name, output_port_id = self._collected_stat_inputs_map[(input_node_name, input_port_id)]
+            # TODO: not just name but also port is important??
             input_fp = self._get_fp_inputs(statistic_points, node_name=activation_name, port_id=output_port_id)
+            # TODO: START hack for LORA - remove!!!
+            # print(f'Num inputs = {len(input_fp)}')
+            # for ifp in input_fp:
+            #     print(f'input.shape={ifp.shape}')
+            is_calc_stats = True
+            if input_node_name in self._ref_names_to_save:
+                if input_node_name not in self._input_ids_to_save:
+                    print(f"Saving stats name={input_node_name} for the FIRST time! port_id={output_port_id}")
+                    self._input_ids_to_save[input_node_name] = id(input_fp)
+                else:
+                    if id(self._input_ids_to_save[input_node_name]) == id(input_fp):
+                        print(f"Stats are already cached with the SAME ID for: {input_node_name}")
+                        is_calc_stats = False
+                    else:
+                        print(f"Stats are already cached with __NOT__ the same ID for: {input_node_name}")
+                        self._input_ids_to_save[input_node_name] = id(input_fp)
+                if is_calc_stats:
+                    input_fp_save = [i.squeeze() for i in input_fp]  # List[tensor(seq_length, hidden_dim)]
+                    # TODO: probably mean values?? No! doesn't work correctly only when num samples = 1
+                    _, X = process_stats(input_fp_save, self.subset_size)  # [H], [H, SS]
+                    # print(f'Saving stats name={input_node_name} shape={X.shape}')
+                    self._activations_to_save[input_node_name] = X.data
+            # TODO: END hack for LORA - remove!!!
             statistics_per_input[input_tensor_name] = input_fp
             statistics_size = min(statistics_size, len(input_fp))
 

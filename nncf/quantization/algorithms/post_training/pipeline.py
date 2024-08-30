@@ -97,13 +97,16 @@ def create_ptq_pipeline(
 
     if model_type == ModelType.TRANSFORMER and (sq_params.convolution >= 0 or sq_params.matmul >= 0):
         alpha_map = {"convolution": sq_params.convolution, "matmul": sq_params.matmul}
+        print("Add SmoothQuant")
         pipeline_steps.append([SmoothQuant(subset_size, advanced_parameters.inplace_statistics, alpha_map=alpha_map)])
 
     # Add the `ChannelAlignment` algorithm as the second step of the pipeline.
     if not advanced_parameters.disable_channel_alignment:
+        print("Add ChannelAlignment")
         pipeline_steps.append([ChannelAlignment(subset_size, advanced_parameters.inplace_statistics)])
 
     # Add the `MinMaxQuantization` algorithm as the third step of the pipeline.
+    print("Add MinMaxQuantization")
     pipeline_steps.append(
         [
             MinMaxQuantization(
@@ -142,7 +145,7 @@ def create_ptq_pipeline(
 
         if bias_correction_params.threshold is not None:
             threshold = bias_correction_params.threshold
-
+        print(f"Add bias_correction_cls={bias_correction_cls}")
         pipeline_steps[-1].append(
             bias_correction_cls(
                 bias_correction_subset_size,

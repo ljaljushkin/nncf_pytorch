@@ -100,12 +100,11 @@ class LoraCorrectionAlgorithm:
         assert Path(f32_stats_path).exists(), f"PATH for X32 does not exist{f32_stats_path}"
         self._f32_stats = np.load(f32_stats_path)
 
-        import pandas as pd
-
-        s = "/home/nlyaly/projects/optimum-intel/notebooks/openvino/nncf_debug_X32_3iter/lora/noises.csv"
-        df = pd.read_csv(s)
-        median = df.iloc[0][1:].median()
-        self._names_to_apply = list(df.loc[:, df.iloc[0] > median].columns)[1:]
+        # import pandas as pd
+        # s = "/home/nlyaly/projects/optimum-intel/notebooks/openvino/nncf_debug_X32_3iter/lora/noises.csv"
+        # df = pd.read_csv(s)
+        # median = df.iloc[0][1:].median()
+        # self._names_to_apply = list(df.loc[:, df.iloc[0] > median].columns)[1:]
 
     def __del__(self):
         if self._debug_interface is not None:
@@ -117,8 +116,9 @@ class LoraCorrectionAlgorithm:
 
     def is_applicable(self, wc_params: WeightCompressionParameters):
         return (
-            wc_params.compression_config.num_bits in [4, 8]
-            and wc_params.node_with_weight.node_name in self._names_to_apply
+            wc_params.compression_config.num_bits
+            in [4, 8]
+            # and wc_params.node_with_weight.node_name in self._names_to_apply
         )
 
     def calculate_adapters(
