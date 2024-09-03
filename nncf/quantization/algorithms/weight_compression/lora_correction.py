@@ -133,11 +133,13 @@ class LoraCorrectionAlgorithm:
         :return: two low rank matrices in the order of execution of corresponding linear layers.
         """
         layer_name = wc_params.node_with_weight.node_name
-
-        assert layer_name in self._f32_stats, f"no {layer_name} in X32 stats!"
+        if layer_name not in self._f32_stats:
+            print(f"[SKIP] No fp32 activation for {layer_name}")
+            return None
+        # assert layer_name in self._f32_stats, f"no {layer_name} in X32 stats!"
         f32_X = Tensor(self._f32_stats[layer_name])
         # print(f'Lora for {layer_name}, x32 shape={f32_X.shape}') # 1280, 128
-
+        sX = None
         if self._sX_stats:
             X = Tensor(self._sX_stats[layer_name + "___X"])
             s = Tensor(self._sX_stats[layer_name + "___s"])

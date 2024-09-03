@@ -293,7 +293,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 fq_node = mm_node.input_value(1).node
                 compressed_weight = (Tensor(fq_node.input_value(i + 1).node.data) for i in range(4))
                 adapters = lora_correction_algo.calculate_adapters(weight, compressed_weight, wc_params)
-                self.insert_adapters(wc_params, *adapters, int8_lora=lora_correction_algo.is_int8_adapters)
+                if adapters is not None:
+                    self.insert_adapters(wc_params, *adapters, int8_lora=lora_correction_algo.is_int8_adapters)
 
         # reset name_to_node_mapping
         self.name_to_node_mapping = None

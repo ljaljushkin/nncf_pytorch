@@ -387,7 +387,7 @@ class WeightCompression(Algorithm):
                 d[layer_name + "___X"] = X.data
                 d[layer_name + "___s"] = s.data
             np.savez(act_stats_path, **d)
-            return model
+            # return model
 
         if (
             self._awq
