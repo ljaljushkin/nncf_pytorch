@@ -9,6 +9,10 @@ Post-training Quantization:
 - General:
   - ...
 - Features:
+  - (OpenVINO) Added LoRA Correction Algorithm to further improve accuracy of int4 compressed models on top of other
+  algorithms - AWQ and Scale Estimation. Can be enabled via optional `lora_correction` parameter of
+  `nncf.compress_weights()` API. The algorithm increases compression time and incurs a negligible model size overhead.
+  Refer to [accuracy/footprint trade-off](docs/usage/post_training_compression/weights_compression/Usage.md#Accuracy/Footprint-trade-off) for different int4 compression methods.
   - ...
 - Fixes:
   - ...
