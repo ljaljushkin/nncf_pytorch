@@ -35,7 +35,8 @@ from nncf.parameters import CompressWeightsMode
 from nncf.parameters import SensitivityMetric
 from nncf.quantization.advanced_parameters import AdvancedCompressionParameters
 from nncf.quantization.algorithms.algorithm import Algorithm
-from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
+
+# from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
 from nncf.quantization.algorithms.weight_compression.awq import AWQ
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.gptq import GPTQ
@@ -241,7 +242,22 @@ class WeightCompression(Algorithm):
         primary_config = WeightCompressionConfig(mode=self._mode, group_size=self._group_size)
         if self._ratio == 1:
             for weight_param in ratio_defining_params:
-                weight_param.compression_config = primary_config
+                node = weight_param.node_with_weight
+                weight = self._backend_entity.get_weight(node, weight_param.weight_port_id, model, graph)
+                original_shape = weight.shape
+                if isinstance(weight_param.reduction_axes, tuple) and len(weight_param.reduction_axes) == 1:
+                    reduction_axis = weight_param.reduction_axes[0]
+                channel_size = original_shape[reduction_axis]
+                if channel_size % self._group_size != 0:
+                    print(
+                        f"Compress to INT8_ASYM {weight_param.weight_name}, "
+                        + f"since channel size {channel_size} should be divisible by size of group {self._group_size}"
+                    )
+                    weight_param.compression_config = WeightCompressionConfig(
+                        mode=CompressWeightsMode.INT8_ASYM, group_size=-1
+                    )
+                else:
+                    weight_param.compression_config = primary_config
         else:
             criterion_cls = MIXED_PRECISION_CRITERIA.get(self._sensitivity_metric)
             criterion = criterion_cls(
@@ -339,6 +355,18 @@ class WeightCompression(Algorithm):
                 ]:
                     continue
                 reduction_axes = self._backend_entity.get_reduction_axes(node, weight_port_id, graph)
+
+                # TODO: very difficult to integrate BACKUP precision here.
+                # original_shape = weight.shape
+                # if isinstance(reduction_axes, tuple) and len(reduction_axes) == 1:
+                #     reduction_axis = reduction_axes[0]
+                # channel_size = original_shape[reduction_axis]
+                # if channel_size % self._group_size != 0:
+                #     print(f"Compress to INT8_ASYM {const_node_name}, since channel size
+                # {channel_size} should be divisible by size of group {group_size}")
+                #     compression_config.mode = CompressWeightsMode.INT8_ASYM
+                #     compression_config.group_size = -1
+
                 if (
                     self._group_size != -1
                     and self._all_layers
@@ -377,17 +405,19 @@ class WeightCompression(Algorithm):
         #     np.savez(f32_stats_path, **d)
         #     return model
 
-        if act_stats_path := os.environ.get("ACTIVATION_STATS_SAVE_PATH"):
-            assert Path(act_stats_path).parent.exists(), f"PATH for s and X does not exist: {act_stats_path}"
-            d = {}
-            for wc_params in all_weight_params:
-                layer_name = wc_params.node_with_weight.node_name
-                layer_activations = activations[layer_name]
-                s, X = process_stats(layer_activations, self._subset_size)  # [H], [H, SS]
-                d[layer_name + "___X"] = X.data
-                d[layer_name + "___s"] = s.data
-            np.savez(act_stats_path, **d)
-            # return model
+        # if act_stats_path := os.environ.get("ACTIVATION_STATS_SAVE_PATH"):
+        #     assert Path(act_stats_path).parent.exists(), f"PATH for s and X does not exist: {act_stats_path}"
+        # act_stats_path = '/home/nlyaly/projects/optimum-intel/notebooks/openvino/models/runwayml/UNET_FP32/
+        # sX_lora_stats.npz'
+        # d = {}
+        # for wc_params in all_weight_params:
+        #     layer_name = wc_params.node_with_weight.node_name
+        #     layer_activations = activations[layer_name]
+        #     s, X = process_stats(layer_activations, self._subset_size)  # [H], [H, SS]
+        #     d[layer_name + "___X"] = X.data
+        #     d[layer_name + "___s"] = s.data
+        # np.savez(act_stats_path, **d)
+        # return model
 
         if (
             self._awq
@@ -409,20 +439,27 @@ class WeightCompression(Algorithm):
             )
             awq_algo.apply(model, graph)
 
+        print("before scale estimation")
         scales = {}
         zero_points = {}
         if (
             self._scale_estimation
-            and activations is not None
+            # and activations is not None
             and self._mode not in [CompressWeightsMode.NF4, CompressWeightsMode.E2M1]
         ):
+            print("inside scale estimation")
+            sX_stats = None
+            if activation_stats_path := os.environ.get("ACTIVATION_STATS_LOAD_PATH"):
+                assert Path(activation_stats_path).exists(), f"PATH for s and X does not exist{activation_stats_path}"
+                sX_stats = np.load(activation_stats_path)
+
             scale_estimation_params = self._advanced_parameters.scale_estimation_params
             scale_algo = ScaleEstimation(
                 model,
                 self._backend_entity.name_to_node_mapping,
                 all_weight_params,
                 nodes_to_compress,
-                activations,
+                sX_stats,
                 scale_estimation_params.subset_size,
                 scale_estimation_params.initial_steps,
                 scale_estimation_params.scale_steps,

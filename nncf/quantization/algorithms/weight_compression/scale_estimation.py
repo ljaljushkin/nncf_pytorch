@@ -19,11 +19,13 @@ from nncf.common.logging.track_progress import track
 from nncf.common.tensor_statistics.statistic_point import StatisticPointsContainer
 from nncf.common.utils.backend import BackendType
 from nncf.common.utils.backend import get_backend
-from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
+
+# from nncf.quantization.algorithms.weight_compression.activation_stats import process_stats
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_int_dequantization
 from nncf.quantization.algorithms.weight_compression.weight_lowering import do_int_quantization
 from nncf.quantization.algorithms.weight_compression.weight_lowering import reshape_weight_for_grouped_quantization
+from nncf.tensor import Tensor
 from nncf.tensor import TensorDataType
 from nncf.tensor import functions as fns
 
@@ -126,11 +128,15 @@ class ScaleEstimation:
             node_name = wp.node_with_weight.node_name
             config = wp.compression_config
 
-            if config.num_bits != 4 or node_name not in self._activations:
+            if config.num_bits != 4:  # or node_name not in self._activations:
                 res[weight_name] = None
                 continue
 
-            s, X = process_stats(self._activations[node_name], self._subset_size)
+            X = Tensor(self._activations[node_name + "___X"])
+            s = Tensor(self._activations[node_name + "___s"])
+            print(f"Get from cache X with {X.shape} and s with shape={s.shape}")  #
+            # sX = (s, X)
+            # s, X = process_stats(self._activations[node_name], self._subset_size)
             reduction_axis = wp.reduction_axes[0]
 
             weight_data = self._backend_entity.get_weight_names_and_port_ids(wp.node_with_weight, graph)
@@ -151,8 +157,17 @@ class ScaleEstimation:
             cur_config.group_size = group_size
 
             original_weight = fns.zeros_like(weight) + weight
-
+            # import nncf
+            # try:
             compressed_weights, scale, zp = do_int_quantization(original_weight, reduction_axis, cur_config)
+            # except nncf.ValidationError:
+            #     print(f'Skip quantization for {node_name}')
+            #     res[weight_name] = None
+            #     continue
+            # cur_config.group_size = weight.shape[reduction_axis]
+            # group_size = cur_config.group_size
+            # compressed_weights, scale, zp = do_int_quantization(original_weight, reduction_axis, cur_config)
+
             if zp is not None:
                 zp = zp.astype(scale.dtype)
             q_weights = do_int_dequantization(compressed_weights, scale, zp, reduction_axis)

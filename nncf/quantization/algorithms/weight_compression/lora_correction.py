@@ -94,11 +94,11 @@ class LoraCorrectionAlgorithm:
         if activation_stats_path := os.environ.get("ACTIVATION_STATS_LOAD_PATH"):
             assert Path(activation_stats_path).exists(), f"PATH for s and X does not exist{activation_stats_path}"
             self._sX_stats = np.load(activation_stats_path)
-        assert (
-            f32_stats_path := os.environ.get("FP32_LORA_ACTIVATION_STATS_LOAD_PATH")
-        ) is not None, "Expect FP32_LORA_ACTIVATION_STATS_LOAD_PATH var!"
-        assert Path(f32_stats_path).exists(), f"PATH for X32 does not exist{f32_stats_path}"
-        self._f32_stats = np.load(f32_stats_path)
+        # assert (
+        #     f32_stats_path := os.environ.get("FP32_LORA_ACTIVATION_STATS_LOAD_PATH")
+        # ) is not None, "Expect FP32_LORA_ACTIVATION_STATS_LOAD_PATH var!"
+        # assert Path(f32_stats_path).exists(), f"PATH for X32 does not exist{f32_stats_path}"
+        # self._f32_stats = np.load(f32_stats_path)
 
         # import pandas as pd
         # s = "/home/nlyaly/projects/optimum-intel/notebooks/openvino/nncf_debug_X32_3iter/lora/noises.csv"
@@ -117,7 +117,7 @@ class LoraCorrectionAlgorithm:
     def is_applicable(self, wc_params: WeightCompressionParameters):
         return (
             wc_params.compression_config.num_bits
-            in [4, 8]
+            in [4]
             # and wc_params.node_with_weight.node_name in self._names_to_apply
         )
 
@@ -133,11 +133,12 @@ class LoraCorrectionAlgorithm:
         :return: two low rank matrices in the order of execution of corresponding linear layers.
         """
         layer_name = wc_params.node_with_weight.node_name
-        if layer_name not in self._f32_stats:
-            print(f"[SKIP] No fp32 activation for {layer_name}")
-            return None
+        # if layer_name not in self._f32_stats:
+        #     print(f"[SKIP] No fp32 activation for {layer_name}")
+        #     return None
         # assert layer_name in self._f32_stats, f"no {layer_name} in X32 stats!"
-        f32_X = Tensor(self._f32_stats[layer_name])
+        # f32_X = Tensor(self._f32_stats[layer_name])
+        f32_X = None
         # print(f'Lora for {layer_name}, x32 shape={f32_X.shape}') # 1280, 128
         sX = None
         if self._sX_stats:
@@ -243,7 +244,7 @@ class LoraCorrectionAlgorithm:
         else:
             s, X = process_stats(layer_activations, subset_size)  # [H], [H, SS]
         X = fns.transpose(X)  # [SS, H]
-        f32_X = fns.transpose(f32_X)  # [SS, H]
+        # f32_X = fns.transpose(f32_X)  # [SS, H]
         if compression_config.group_size > 0:
             # Multiply residual of weights by maximum channel magnitude of activations normalized per quantization
             # group. As a consequence, weights corresponding to a "noisy" activations has a higher error to correct.
@@ -273,13 +274,13 @@ class LoraCorrectionAlgorithm:
         # f32_X.shape=(128, 1280), weight.shape=(10240, 1280), X.shape=(128, 1280), fq_weights.shape=(10240, 1280)
 
         # NOTE: for PTQ case: X32 * W32 - Xfq * Wfq = Xfq * U * V
-        if reduction_axes[0] == 1:
-            noise = f32_X @ fns.transpose(weight) - X @ fns.transpose(fq_weights)  # [SS, H] * [H, O] = [SS, O]
-        else:
-            noise = f32_X @ weight - X @ fq_weights  # [SS, H] * [H, O] = [SS, O]
+        # if reduction_axes[0] == 1:
+        #     noise = f32_X @ fns.transpose(weight) - X @ fns.transpose(fq_weights)  # [SS, H] * [H, O] = [SS, O]
+        # else:
+        #     noise = f32_X @ weight - X @ fq_weights  # [SS, H] * [H, O] = [SS, O]
         # print(f"noise.shape={noise.shape}")
         # NOTE: for WC case:  X32 * W32 - X32 * Wfq = X32 * U * V
-        # noise = X @ residual  # [SS, H] * [H, O] = [SS, O]
+        noise = X @ residual  # [SS, H] * [H, O] = [SS, O]
         for i in range(num_iters):
             # print(f'#{i} iteration')
             # Part 1: U is fixed, find V.
