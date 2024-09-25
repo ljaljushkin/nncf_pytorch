@@ -166,8 +166,8 @@ class WeightCompression(Algorithm):
         """
         weighted_metatypes = (
             self._backend_entity.matmul_metatypes
-            + self._backend_entity.embedding_metatypes
-            + self._backend_entity.convolution_metatypes
+            # + self._backend_entity.embedding_metatypes
+            # + self._backend_entity.convolution_metatypes
         )
 
         ordered_nodes_to_compress = []
@@ -239,7 +239,22 @@ class WeightCompression(Algorithm):
         primary_config = WeightCompressionConfig(mode=self._mode, group_size=self._group_size)
         if self._ratio == 1:
             for weight_param in ratio_defining_params:
-                weight_param.compression_config = primary_config
+                node = weight_param.node_with_weight
+                weight = self._backend_entity.get_weight(node, weight_param.weight_port_id, model, graph)
+                original_shape = weight.shape
+                if isinstance(weight_param.reduction_axes, tuple) and len(weight_param.reduction_axes) == 1:
+                    reduction_axis = weight_param.reduction_axes[0]
+                channel_size = original_shape[reduction_axis]
+                if channel_size % self._group_size != 0:
+                    print(
+                        f"Compress to INT8_ASYM {weight_param.weight_name}, "
+                        + f"since channel size {channel_size} should be divisible by size of group {self._group_size}"
+                    )
+                    weight_param.compression_config = WeightCompressionConfig(
+                        mode=CompressWeightsMode.INT8_ASYM, group_size=-1
+                    )
+                else:
+                    weight_param.compression_config = primary_config
         else:
             criterion_cls = MIXED_PRECISION_CRITERIA.get(self._sensitivity_metric)
             criterion = criterion_cls(
