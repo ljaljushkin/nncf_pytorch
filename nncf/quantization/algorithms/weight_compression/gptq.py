@@ -264,7 +264,10 @@ class GPTQ:
                         scales.append(scale)
                     else:
                         if self._scale_estimation and block_compression_config.num_bits == 4:
-                            activations = [inp.squeeze()[:, (i1 + i) : (i1 + i + group_size)] for inp in inputs]
+                            if inputs[0].ndim != 3:
+                                activations = [inp.squeeze()[:, (i1 + i) : (i1 + i + group_size)] for inp in inputs]
+                            if inputs[0].ndim == 3:
+                                activations = [inp.squeeze()[:, :, (i1 + i) : (i1 + i + group_size)] for inp in inputs]
                             scale, zero_point = ScaleEstimation.calculate_quantization_params(
                                 self._backend_entity,
                                 activations,
