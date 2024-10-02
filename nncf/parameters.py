@@ -10,6 +10,7 @@
 # limitations under the License.
 
 from enum import Enum
+from enum import auto
 
 from nncf.common.utils.api_marker import api
 
@@ -121,6 +122,7 @@ class SensitivityMetric(StrEnum):
     MEAN_ACTIVATION_VARIANCE = "mean_activation_variance"
     MAX_ACTIVATION_VARIANCE = "max_activation_variance"
     MEAN_ACTIVATION_MAGNITUDE = "mean_activation_magnitude"
+    OBC = auto()
 
 
 @api(canonical_alias="nncf.QuantizationMode")

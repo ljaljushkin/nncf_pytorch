@@ -9,8 +9,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from abc import abstractmethod
 from typing import Dict, List, Optional, TypeVar
+
+import torch
 
 from nncf.common.graph import NNCFGraph
 from nncf.common.logging.track_progress import track
@@ -158,10 +161,10 @@ class HAWQCriterion(DataBasedCriterion):
         nsamples = len(activations)
         for inp in activations:
             # NOTE: average trace?? divide by number of diagonal elements
-            htrace += fns.sum(fns.multiply(inp, inp)).item()
+            htrace += fns.sum(fns.multiply(inp, inp)).item() / inp.size
             # normalize by sequence_length - the same for all activations
             # normalize by hidden dimension
-            htrace /= inp.size
+            # htrace /= inp.size
         htrace *= 2 / nsamples
         return htrace
 
@@ -214,3 +217,98 @@ class MeanMaxCriterion(DataBasedCriterion):
     @staticmethod
     def _calc_activation_sensitivity(activations: List[Tensor]) -> float:
         return fns.mean(fns.stack([fns.mean(fns.max(fns.abs(inp), axis=0)) for inp in activations])).item()
+
+
+@MIXED_PRECISION_CRITERIA.register(SensitivityMetric.OBC)
+class OBCCriterion(DataFreeCriterion):
+    """
+    TBD
+    """
+
+    # H[dead, dead] = 1
+    # W[:, dead] = 0
+    # damp = percdamp * torch.mean(torch.diag(H))
+    # diag = torch.arange(self.columns, device=self.dev)
+    # H[diag, diag] += damp
+    # H = torch.linalg.cholesky(H)
+    # H = torch.cholesky_inverse(H)
+    # H = torch.linalg.cholesky(H, upper=True)
+
+    # weightH = W / torch.diag(H).repeat(self.rows, 1)
+    # result["std"]["wh"] = weightH.std()
+    # result["norm"]["wh"] = torch.norm(torch.abs(W) / torch.diag(H).repeat(self.rows, 1))
+
+    # layer_norm = analysis_result[each]['norm']["wh"]
+    # layer_std = analysis_result[each]["std"]["wh"]
+    # weight_score.append(layer_norm * layer_std ** 2)
+    # model_quant_config[each] = layer_quant_config
+    # _, weight_score_index = torch.sort(torch.tensor(weight_score))
+    # mix_bits = [each *  len(weight_score_index) for each in args.mix_bits]
+    # for i, each in enumerate(weight_score_index):
+    #     model_quant_config[layers[each]]["bits"] = bisect.bisect(mix_bits, i) + 1
+
+    def _calc_score_per_node(self, weight_param: WeightCompressionParameters):
+        """
+        NOTE: Data-based criteria for assigning 4-bit/8-bit precisions are valid for Matmul operations only.
+        However, in some cases it can be beneficial to quantize Gather layers to 4-bit.
+        Since there's no data-aware estimation of sensitivity in these layers, they receive the lowest sensitivity.
+        It allows assigning Gather operation 4-bit in the first place.
+        """
+        if weight_param.node_with_weight.metatype in self._backend_entity.embedding_metatypes:
+            return THE_LOWEST_SENSITIVITY
+        inputs = self._activations[weight_param.node_with_weight.node_name]
+        score = self._calc_score(inputs, weight_param)
+        return score
+
+    def _calc_score(self, inputs: List[Tensor], weight_param: WeightCompressionParameters) -> float:
+        """
+        Calculates the Hessian matrix for the given node and inputs.
+
+        :param node: The target node for Hessian calculation.
+        :param inputs: List of input tensors.
+        :return: The Hessian matrix as a tensor.
+        """
+        nsamples = 0
+
+        hessian = fns.zeros(
+            (inputs[0].shape[-1], inputs[0].shape[-1]), backend=inputs[0].backend, dtype=TensorDataType.float32
+        )
+        node = weight_param.node_with_weight
+        for inp in inputs:
+            batch_size = 1 if len(inp.shape) == 2 else inp.shape[0]
+            assert node.metatype in self._backend_entity.matmul_metatypes, f"not supported metatype: {node.metatype}"
+            if len(inp.shape) == 3:
+                inp = inp.reshape((-1, inp.shape[-1]))
+            inp = fns.transpose(inp)
+            hessian *= nsamples / (nsamples + batch_size)
+            nsamples += batch_size
+            inp = fns.astype(inp, TensorDataType.float32) * math.sqrt(2 / nsamples)
+            hessian += fns.matmul(inp, fns.transpose(inp))
+
+        columns = hessian.shape[0]  # H - Hidden Dimension
+
+        damp_percent = 0.1
+        damp = damp_percent * fns.mean(fns.diag(hessian))
+        diag_indices = fns.arange(columns, backend=hessian.backend, device=hessian.device)
+        hessian[diag_indices, diag_indices] += damp
+        hessian = fns.linalg.cholesky(hessian)
+        hessian = fns.linalg.cholesky_inverse(hessian)
+        hessian = fns.linalg.cholesky(hessian, upper=True)
+        H = hessian
+        W = self._backend_entity.get_weight(
+            weight_param.node_with_weight, weight_param.weight_port_id, self._model, self._graph
+        )
+        H = torch.from_numpy(H.data)  # [H, H]
+        W = torch.from_numpy(W.data)  # [O, H]
+        rows = W.shape[0]  # O - Output Dimension
+        # weightH = W / torch.diag(H).repeat(self.rows, 1)
+        # result["std"]["wh"] = weightH.std()
+        # result["norm"]["wh"] = torch.norm(torch.abs(W) / torch.diag(H).repeat(self.rows, 1))
+        # weight_score.append(layer_norm * layer_std ** 2)
+
+        # Repeats this tensor along the specified dimensions.
+        weightH = W / torch.diag(H).repeat(rows, 1)  # [O, H] / [O, H]
+        layer_std = weightH.std()
+        layer_norm = torch.norm(torch.abs(W) / torch.diag(H).repeat(rows, 1))
+        score = layer_norm * layer_std**2
+        return score

@@ -273,6 +273,7 @@ def test_compare_compressed_weights(mode, group_size, check_fn_per_node_map):
         (SensitivityMetric.MAX_ACTIVATION_VARIANCE, False, 0.8, [0, 1, 2]),
         (SensitivityMetric.MEAN_ACTIVATION_MAGNITUDE, True, 0.8, [0, 1, 2]),
         (SensitivityMetric.MEAN_ACTIVATION_MAGNITUDE, False, 0.8, [0, 1, 2]),
+        (SensitivityMetric.OBC, False, 0.8, [0, 1, 2]),
     ),
 )
 def test_mixed_precision(mode, all_layers, ratio, ref_ids, mocker):
@@ -1245,3 +1246,20 @@ def test_lora_with_mixed_precision():
         op_name = op.get_friendly_name()
         if op.get_type_name() == "Constant" and ("/zero_point" in op_name or "/scale" in op_name):
             assert op.get_shape() == [sz, 1]
+
+
+def test_obc():
+    dataset_size = 4
+    model = LMLinearModel().ov_model
+    input_data = [np.random.rand(*inp.shape) for inp in model.inputs] * dataset_size
+    dataset = Dataset(input_data)
+
+    compress_weights(
+        model,
+        mode=CompressWeightsMode.INT4_SYM,
+        ratio=0.5,
+        group_size=8,
+        sensitivity_metric=SensitivityMetric.OBC,
+        dataset=dataset,
+        all_layers=True,
+    )
