@@ -11,8 +11,10 @@
 
 import math
 from abc import abstractmethod
+from pathlib import Path
 from typing import Dict, List, Optional, TypeVar
 
+import pandas as pd
 import torch
 
 from nncf.common.graph import NNCFGraph
@@ -117,9 +119,14 @@ class DataFreeCriterion(MixedPrecisionCriterion):
         return weight_score
 
     def _calc_sensitivity(self) -> List[float]:
+        print("Mixed Precision DataFree class")
+        filename = "dev_scores_qwen.csv"
         scores = []
+        if Path(filename).exists():
+            return pd.read_csv(filename, header=None)[0].tolist()
         for weight_param in track(self._weight_params, description="Mixed-Precision assignment"):
             scores.append(self._calc_score_per_node(weight_param))
+        pd.DataFrame(scores).to_csv(filename, index=False, header=False)
         return scores
 
 
@@ -247,6 +254,17 @@ class OBCCriterion(DataFreeCriterion):
     # for i, each in enumerate(weight_score_index):
     #     model_quant_config[layers[each]]["bits"] = bisect.bisect(mix_bits, i) + 1
 
+    def _calc_sensitivity(self) -> List[float]:
+        print("Mixed Precision OBC class")
+        filename = "OBC_scores_qwen.csv"
+        scores = []
+        if Path(filename).exists():
+            return pd.read_csv(filename, header=None)[0].tolist()
+        for weight_param in track(self._weight_params, description="Mixed-Precision assignment"):
+            scores.append(self._calc_score_per_node(weight_param))
+        pd.DataFrame(scores).to_csv(filename, index=False, header=False)
+        return scores
+
     def _calc_score_per_node(self, weight_param: WeightCompressionParameters):
         """
         NOTE: Data-based criteria for assigning 4-bit/8-bit precisions are valid for Matmul operations only.
@@ -269,6 +287,10 @@ class OBCCriterion(DataFreeCriterion):
         :return: The Hessian matrix as a tensor.
         """
         nsamples = 0
+
+        # print(f'backend before transform={inputs[0].backend}')
+        inputs = [Tensor(torch.from_numpy(i.data)) for i in inputs]
+        # print(f'backend after transform={inputs[0].backend}')
 
         hessian = fns.zeros(
             (inputs[0].shape[-1], inputs[0].shape[-1]), backend=inputs[0].backend, dtype=TensorDataType.float32
@@ -298,7 +320,7 @@ class OBCCriterion(DataFreeCriterion):
         W = self._backend_entity.get_weight(
             weight_param.node_with_weight, weight_param.weight_port_id, self._model, self._graph
         )
-        H = torch.from_numpy(H.data)  # [H, H]
+        H = H.data  # [H, H]
         W = torch.from_numpy(W.data)  # [O, H]
         rows = W.shape[0]  # O - Output Dimension
         # weightH = W / torch.diag(H).repeat(self.rows, 1)
@@ -311,4 +333,4 @@ class OBCCriterion(DataFreeCriterion):
         layer_std = weightH.std()
         layer_norm = torch.norm(torch.abs(W) / torch.diag(H).repeat(rows, 1))
         score = layer_norm * layer_std**2
-        return score
+        return score.item()
