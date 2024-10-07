@@ -20,7 +20,8 @@ from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNode
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.logging import nncf_logger
-from nncf.common.logging.track_progress import track
+
+# from nncf.common.logging.track_progress import track
 from nncf.common.scopes import should_consider_scope
 from nncf.common.tensor_statistics.statistic_point import StatisticPoint
 from nncf.common.tensor_statistics.statistic_point import StatisticPointsContainer
@@ -35,7 +36,8 @@ from nncf.quantization.algorithms.algorithm import Algorithm
 from nncf.quantization.algorithms.weight_compression.awq import AWQ
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.gptq import GPTQ
-from nncf.quantization.algorithms.weight_compression.lora_correction import LoraCorrectionAlgorithm
+
+# from nncf.quantization.algorithms.weight_compression.lora_correction import LoraCorrectionAlgorithm
 from nncf.quantization.algorithms.weight_compression.mixed_precision import MIXED_PRECISION_CRITERIA
 from nncf.quantization.algorithms.weight_compression.scale_estimation import ScaleEstimation
 from nncf.quantization.algorithms.weight_compression.weight_lowering import WeightCompressionConfig
@@ -130,6 +132,7 @@ class WeightCompression(Algorithm):
                 block_size=gptq_params.block_size,
                 subset_size=gptq_params.subset_size,
                 scale_estimation=self._scale_estimation,
+                lora_correction_params=self._advanced_parameters.lora_correction_params,
             )
             self._gptq_statistics = None
 
@@ -396,12 +399,13 @@ class WeightCompression(Algorithm):
             )
             awq_algo.apply(model, graph)
 
-        scales = {}
-        zero_points = {}
-        lora_correction_algo = None
+        # scales = {}
+        # zero_points = {}
+        # lora_correction_algo = None
         description = "Applying Weight Compression"
         if self._gptq:
-            model, scales, zero_points = self._gptq_algo.apply(
+            # model, scales, zero_points =
+            model = self._gptq_algo.apply(
                 model=model,
                 graph=graph,
                 dataset=dataset,
@@ -423,26 +427,26 @@ class WeightCompression(Algorithm):
                     scale_estimation_params.scale_steps,
                     scale_estimation_params.weight_penalty,
                 )
-                scales = scale_algo.apply(model, graph)
+                _ = scale_algo.apply(model, graph)
 
             if self._lora_correction:
-                lora_correction_params = self._advanced_parameters.lora_correction_params
-                lora_correction_algo = LoraCorrectionAlgorithm(activations, lora_correction_params)
+                # lora_correction_params = self._advanced_parameters.lora_correction_params
+                # lora_correction_algo = LoraCorrectionAlgorithm(activations, lora_correction_params)
                 description += " with correction of low-rank adapters"
 
         # Sort weight params to start compression with the bigger constants. This lowers peak memory footprint.
-        all_weight_params = sorted(all_weight_params, key=lambda wp: wp.num_weights, reverse=True)
-        all_weight_sizes = [wp.num_weights for wp in all_weight_params]
+        # all_weight_params = sorted(all_weight_params, key=lambda wp: wp.num_weights, reverse=True)
+        # all_weight_sizes = [wp.num_weights for wp in all_weight_params]
 
-        # Compress model using weight compression parameters
-        transformed_model = self._backend_entity.transform_model(
-            model,
-            graph,
-            track(all_weight_params, description=description, weights=all_weight_sizes),
-            scales,
-            zero_points,
-            lora_correction_algo,
-        )
+        # # Compress model using weight compression parameters
+        # transformed_model = self._backend_entity.transform_model(
+        #     model,
+        #     graph,
+        #     track(all_weight_params, description=description, weights=all_weight_sizes),
+        #     scales,
+        #     zero_points,
+        #     lora_correction_algo,
+        # )
 
         self._backend_entity.dump_parameters(
             model,
@@ -461,7 +465,7 @@ class WeightCompression(Algorithm):
             },
             algo_name="weight_compression",
         )
-        return transformed_model
+        return model
 
     def get_statistic_points(self, model: TModel, graph: NNCFGraph) -> StatisticPointsContainer:
         pass

@@ -155,6 +155,26 @@ class WeightCompressionAlgoBackend(ABC):
         """
 
     @abstractmethod
+    def transform_node(
+        self,
+        model: TModel,
+        graph: NNCFGraph,
+        weight_compression_parameters: Iterable[WeightCompressionParameters],
+        precomputed_scales: Dict[str, Tensor] = None,
+        precomputed_zero_points: Dict[str, Tensor] = None,
+    ) -> TModel:
+        """
+        Applies weight compression transformations to the model.
+
+        :param model: Model in which the weights will be compressed according to the weight compression description.
+        :param graph: The graph associated with the model.
+        :param weight_compression_parameters: List of weight compression parameters.
+        :param precomputed_scales: Precomputed scales for weights compression.
+        :param precomputed_zero_points: Precomputed zero points for weights compression.
+        :return: The transformed model.
+        """
+
+    @abstractmethod
     def insert_adapters(
         self, wc_params: WeightCompressionParameters, lora_A: Tensor, lora_B: Tensor, int8_lora: bool
     ) -> None:

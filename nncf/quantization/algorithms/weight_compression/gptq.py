@@ -12,6 +12,8 @@
 import math
 from typing import Dict, List, Optional, Tuple, TypeVar
 
+import openvino.runtime as ov
+
 import nncf
 from nncf import Dataset
 from nncf.common.graph import NNCFGraph
@@ -25,6 +27,7 @@ from nncf.quantization.algorithms.layerwise.engine import LayerwiseEngine
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionConfig
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
+from nncf.quantization.algorithms.weight_compression.lora_correction import LoraCorrectionAlgorithm
 from nncf.quantization.algorithms.weight_compression.scale_estimation import ScaleEstimation
 from nncf.quantization.algorithms.weight_compression.weight_lowering import calculate_integer_quantization_params
 from nncf.quantization.algorithms.weight_compression.weight_lowering import calculate_nf4_scale
@@ -45,7 +48,12 @@ class GPTQ:
     """
 
     def __init__(
-        self, damp_percent: float = 0.1, block_size: int = 128, subset_size: int = 128, scale_estimation: bool = False
+        self,
+        damp_percent: float = 0.1,
+        block_size: int = 128,
+        subset_size: int = 128,
+        scale_estimation: bool = False,
+        lora_correction_params=None,
     ):
         """
         :param damp_percent: The percent of the average Hessian diagonal to use for dampening,
@@ -59,7 +67,7 @@ class GPTQ:
         self._scale_estimation = scale_estimation
         self._backend = None
         self._backend_entity = None
-
+        self._lora_correction_params = lora_correction_params
         self._layerwise_engine = LayerwiseEngine(subset_size=self._subset_size)
 
     def _set_backend_entity(self, model: TModel) -> None:
@@ -102,9 +110,6 @@ class GPTQ:
         if self._backend_entity is None:
             self._set_backend_entity(model)
 
-        scales = {}
-        zero_points = {}
-
         target_nodes = []
         target_nodes_wc_params_map = {}
         matmul_metatypes = self._backend_entity.matmul_metatypes
@@ -116,6 +121,8 @@ class GPTQ:
         target_node_iterator = self._layerwise_engine.create_iterator_through_target_nodes(
             model, graph, target_nodes, dataset, statistic_points
         )
+        ov.save_model(model, "original.xml")
+        idx = 0
         for node, inputs in track(target_node_iterator, total=len(target_nodes), description="Applying GPTQ"):
             wc_params = target_nodes_wc_params_map[node]
             if wc_params.compression_config.mode in [
@@ -123,13 +130,36 @@ class GPTQ:
                 CompressWeightsMode.INT8_SYM,
             ]:
                 continue
-            _, input_tensors = next(iter(inputs.items()))
-            hessian = self._calculate_hessian(node, input_tensors)
-            scale, zero_point = self._quantize_weights(model, graph, wc_params, hessian, input_tensors)
-            scales[wc_params.weight_name] = scale
-            zero_points[wc_params.weight_name] = zero_point
+            weight_tensor = self._backend_entity.get_weight(
+                wc_params.node_with_weight, wc_params.weight_port_id, model, graph
+            )
+            weight_tensor = fns.astype(weight_tensor, TensorDataType.float32)
+            # print('before compression', weight_tensor[..., :10])
 
-        return model, scales, zero_points
+            _, input_tensors = next(iter(inputs.items()))
+            compressed_weight = self._backend_entity.transform_node(model, graph, wc_params)
+            # print('after compression transform', weight_tensor[..., :10])
+
+            lora_A, lora_B, _ = LoraCorrectionAlgorithm.calculate_low_rank_matrices(
+                weight_tensor,
+                compressed_weight,
+                wc_params.compression_config,
+                wc_params.reduction_axes,
+                self._lora_correction_params,
+                layer_activations=input_tensors,
+                is_debug=False,
+            )
+
+            self._backend_entity.insert_adapters(
+                wc_params, lora_A, lora_B, int8_lora=False
+            )  # self._lora_correction_params.use_int8_adapters)
+            # scale, zero_point = self._quantize_weights(model, graph, wc_params, hessian, input_tensors)
+            ov.save_model(model, f"{idx}_iteration.xml")
+            idx += 1
+        # reset name_to_node_mapping
+        self.name_to_node_mapping = None
+
+        return model  # , scales, zero_points
 
     def get_statistic_points(
         self,
