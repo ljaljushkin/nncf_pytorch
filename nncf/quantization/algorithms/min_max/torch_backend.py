@@ -223,6 +223,19 @@ class PTMinMaxAlgoBackend(MinMaxAlgoBackend):
         return config
 
     @staticmethod
+    def _get_weight_shape(nncf_graph: NNCFGraph, target_point: PTTargetPoint, per_channel: bool) -> Tuple[int, ...]:
+        is_weights = target_point.is_weight_target_point()
+        weight_shape = None
+        if is_weights:
+            node_with_weight = nncf_graph.get_node_by_name(target_point.target_node_name)
+            weight_node = get_const_node(node_with_weight, target_point.input_port_id, nncf_graph)
+            # TODO: return input_shape
+            #  Whether the tensor corresponds to weights, in which case the per-channel scaling dimension
+            # is selected based on the [N_out, N_in, H, W] format
+            weight_shape = weight_node.layer_attributes.shape
+        return weight_shape
+
+    @staticmethod
     def _get_input_scale_shape(
         nncf_graph: NNCFGraph, target_point: PTTargetPoint, per_channel: bool
     ) -> Tuple[int, ...]:
@@ -240,6 +253,9 @@ class PTMinMaxAlgoBackend(MinMaxAlgoBackend):
         if is_weights:
             node_with_weight = nncf_graph.get_node_by_name(target_point.target_node_name)
             weight_node = get_const_node(node_with_weight, target_point.input_port_id, nncf_graph)
+            # TODO: return input_shape
+            #  Whether the tensor corresponds to weights, in which case the per-channel scaling dimension
+            # is selected based on the [N_out, N_in, H, W] format
             input_shape = weight_node.layer_attributes.shape
             channel_axes = get_weight_channel_axes(
                 node_with_weight.metatype, len(input_shape), target_point.input_port_id
@@ -266,6 +282,7 @@ class PTMinMaxAlgoBackend(MinMaxAlgoBackend):
         scale_shape: Tuple,
         parameters: FakeQuantizeParameters,
         target_type: TargetType,
+        weight_shape: Tuple,
     ) -> BaseQuantizer:
         mode = quantizer_config.mode
         quantizer_cls = QUANTIZATION_MODULES.get(mode)
@@ -274,6 +291,7 @@ class PTMinMaxAlgoBackend(MinMaxAlgoBackend):
             quantizer_config,
             narrow_range=narrow_range,
             scale_shape=scale_shape,
+            weight_shape=weight_shape,
             half_range=False,
             logarithm_scale=False,
             is_quantized_on_export=False,
@@ -281,9 +299,25 @@ class PTMinMaxAlgoBackend(MinMaxAlgoBackend):
         )
         quantizer = quantizer_cls(quantizer_spec)
 
-        # Fill it with minmax
         PTMinMaxAlgoBackend._fill_quantizer_parameters(quantizer, parameters, quantizer_spec.scale_shape)
         return quantizer
+
+    def init_lora_adapters(self, weight, fq_weight, reduction_axes=None, rank=8):
+        svd_residual = torch.astype(weight - fq_weight, torch.float32)
+
+        # O stands for output dimension, H - input dimension or hidden size, SS - samples size, R - rank.
+        # reduction axes is all axes except output dimension in linear/conv layers.
+        if reduction_axes[0] == 1:
+            # TODO: maybe [O, H] is better in torch??
+            svd_residual = torch.transpose(svd_residual)  # [O, H] -> [H, O]
+
+        U_full, S_full, V_full = torch.linalg.svd(svd_residual, full_matrices=False)
+        U = U_full[:, :rank]  # [H, R]
+        S = torch.diag(S_full[:rank])  # [R, R]
+        V = V_full[:rank, :]  # [R, O]
+        V = S @ V  # [R, O]
+        return U, V
+        # TODO: run lora correction with activation statistics to get a better initialization.
 
     @staticmethod
     def _fill_quantizer_parameters(
@@ -309,9 +343,9 @@ class PTMinMaxAlgoBackend(MinMaxAlgoBackend):
         parameters: FakeQuantizeParameters,
     ) -> Union[PTInsertionCommand, PTSharedFnInsertionCommand]:
         scale_shape = PTMinMaxAlgoBackend._get_input_scale_shape(nncf_graph, target_point, quantizer_config.per_channel)
-
+        weight_shape = PTMinMaxAlgoBackend._get_weight_shape(nncf_graph, target_point, quantizer_config.per_channel)
         quantizer = PTMinMaxAlgoBackend._create_quantizer(
-            quantizer_config, scale_shape, parameters, target_point.target_type
+            quantizer_config, scale_shape, parameters, target_point.target_type, weight_shape
         )
         return create_quantizer_insertion_command(target_point, quantizer)
 

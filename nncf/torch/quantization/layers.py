@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import math
 from abc import ABC
 from abc import abstractmethod
 from enum import Enum
@@ -89,6 +89,7 @@ class PTQuantizerSpec(QuantizerSpec):
         narrow_range: bool,
         half_range: bool,
         scale_shape: Tuple[int, ...],
+        weight_shape: Tuple[int, ...],
         logarithm_scale: bool,
         is_quantized_on_export: bool = False,
         compression_lr_multiplier: float = None,
@@ -103,6 +104,7 @@ class PTQuantizerSpec(QuantizerSpec):
         super().__init__(num_bits, mode, signedness_to_force, narrow_range, half_range)
         self.per_channel = scale_shape != (1,)
         self.scale_shape = scale_shape
+        self.weight_shape = weight_shape
         self.logarithm_scale = logarithm_scale
         self.compression_lr_multiplier = compression_lr_multiplier
         self.is_quantized_on_export = is_quantized_on_export
@@ -299,6 +301,35 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             requires_grad=False,
             compression_lr_multiplier=qspec.compression_lr_multiplier,
         )
+
+        # ################################## LORA START ########################################
+        if not self._qspec.weight_shape:
+            nncf_logger.warning("Quantizing activation!")
+        elif len(self._qspec.weight_shape) != 2:
+            nncf_logger.warning(f"Not 2D weights are not supported for FQ: weight shapes={self._qspec.weight_shape}")
+        else:
+            # TODO: transpose_b ?? torch layout is [O, I]
+            out_features, in_features = self._qspec.weight_shape
+
+            # TODO: pass as a parameter for FQ
+            lora_rank = 8
+            self._lora_A = torch.nn.Parameter(torch.FloatTensor((lora_rank, in_features)), requires_grad=True)
+            self._lora_B = torch.nn.Parameter(torch.FloatTensor((out_features, lora_rank)), requires_grad=True)
+
+            # NOTE: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
+            # Default:
+            # initialize A the same way as the default for nn.Linear and B to zero
+            # By default, PEFT initializes LoRA weights the same way as the reference implementation,
+            # i.e. using Kaiming-uniform for weight A and initializing weight B as zeros, resulting
+            # in an identity transform.
+            # Gaussian:
+            # It is also possible to pass init_lora_weights="gaussian". As the name suggests, this results in
+            # initializing weight A with a Gaussian distribution (weight B is still zeros).
+            # This corresponds to the way that diffusers initializes LoRA weights.
+            nn.init.kaiming_uniform_(self._lora_A, a=math.sqrt(5))
+            nn.init.zeros_(self._lora_B)
+            # ################################## LORA END ########################################
+
         OPTIONAL_PARAMETERS_REGISTRY.register("_num_bits")
 
         # These must be made buffers, since they impact the "forward" behaviour and the model can be used
@@ -728,6 +759,9 @@ class SymmetricQuantizer(BaseQuantizer):
         self.set_levels()
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
+        # NOTE: Merge adapters to weight on each inference, quantize the sum afterwards
+        # TODO: is it OK to tune adapters and quantization parameters at the same time??
+        x = self._lora_B @ self._lora_A + x  # [O, R] * [R, H] + [O, H]
         return symmetric_quantize(
             x, self.levels, self.level_low, self.level_high, self.scale, self.eps, skip=execute_traced_op_as_identity
         )

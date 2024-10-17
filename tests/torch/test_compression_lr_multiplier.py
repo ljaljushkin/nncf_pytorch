@@ -319,6 +319,10 @@ def get_target_one_parameter_model_and_dataloader_(
 def perform_model_training_steps(model: nn.Module, train_loader: DataLoader, num_steps: int = 1) -> nn.Module:
     with set_torch_seed():
         train_loader = iter(train_loader)
+        for name, param in model.named_parameters():
+            if "weight" in name or "bias" in name:
+                param.requires_grad = False
+                print(name, param.requires_grad)
         optimizer = SGD(model.parameters(), lr=0.1)
 
         for _ in range(num_steps):
