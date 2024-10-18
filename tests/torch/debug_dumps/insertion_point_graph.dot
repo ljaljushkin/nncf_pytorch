@@ -1,0 +1,22 @@
+digraph  {
+"0 /nncf_model_input_0";
+"1 TestModel/softmax_0";
+"2 /nncf_model_output_0";
+"POST HOOK 0 /nncf_model_input_0" [color=red, label="TP: /nncf_model_input_0"];
+"PRE HOOK 0 1 TestModel/softmax_0" [color=red, label="TP: 0 TestModel/softmax_0"];
+"POST HOOK 1 TestModel/softmax_0" [color=red, label="TP: TestModel/softmax_0"];
+"PRE HOOK 0 2 /nncf_model_output_0" [color=red, label="TP: 0 /nncf_model_output_0"];
+"POST HOOK 2 /nncf_model_output_0" [color=red, label="TP: /nncf_model_output_0"];
+"0 /nncf_model_input_0" -> "POST HOOK 0 /nncf_model_input_0"  [key=0];
+"0 /nncf_model_input_0" -> "POST HOOK 0 /nncf_model_input_0"  [headport=e, key=1, style=dashed, tailport=e];
+"1 TestModel/softmax_0" -> "POST HOOK 1 TestModel/softmax_0"  [key=0];
+"1 TestModel/softmax_0" -> "POST HOOK 1 TestModel/softmax_0"  [headport=e, key=1, style=dashed, tailport=e];
+"1 TestModel/softmax_0" -> "PRE HOOK 0 1 TestModel/softmax_0"  [headport=e, key=0, style=dashed, tailport=e];
+"2 /nncf_model_output_0" -> "POST HOOK 2 /nncf_model_output_0"  [key=0];
+"2 /nncf_model_output_0" -> "POST HOOK 2 /nncf_model_output_0"  [headport=e, key=1, style=dashed, tailport=e];
+"2 /nncf_model_output_0" -> "PRE HOOK 0 2 /nncf_model_output_0"  [headport=e, key=0, style=dashed, tailport=e];
+"POST HOOK 0 /nncf_model_input_0" -> "PRE HOOK 0 1 TestModel/softmax_0"  [key=0];
+"PRE HOOK 0 1 TestModel/softmax_0" -> "1 TestModel/softmax_0"  [key=0];
+"POST HOOK 1 TestModel/softmax_0" -> "PRE HOOK 0 2 /nncf_model_output_0"  [key=0];
+"PRE HOOK 0 2 /nncf_model_output_0" -> "2 /nncf_model_output_0"  [key=0];
+}

@@ -1,0 +1,21 @@
+{
+    "quantization_points": {
+        "1": {
+            "qip": {
+                "target_node_name": "OPTForCausalLM/OPTModel[model]/OPTDecoder[decoder]/ModuleList[layers]/OPTDecoderLayer[11]/OPTAttention[self_attn]/NNCFLinear[v_proj]/linear_0"
+            },
+            "qip_class": "WeightQuantizationInsertionPoint",
+            "qconfig": {
+                "num_bits": 4,
+                "mode": "symmetric",
+                "signedness_to_force": null,
+                "per_channel": true
+            },
+            "directly_quantized_operator_node_names": [
+                "OPTForCausalLM/OPTModel[model]/OPTDecoder[decoder]/ModuleList[layers]/OPTDecoderLayer[11]/OPTAttention[self_attn]/NNCFLinear[v_proj]/linear_0"
+            ]
+        }
+    },
+    "unified_scale_groups": {},
+    "shared_input_operation_set_groups": {}
+}

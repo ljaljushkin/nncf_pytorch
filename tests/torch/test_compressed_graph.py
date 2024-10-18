@@ -28,6 +28,7 @@ from nncf.common.graph import NNCFNodeName
 from nncf.common.hardware.config import HWConfigType
 from nncf.common.quantization.quantizer_setup import ActivationQuantizationInsertionPoint
 from nncf.common.quantization.quantizer_setup import SingleConfigQuantizerSetup
+from nncf.common.utils.debug import nncf_debug
 from nncf.torch import nncf_model_input
 from nncf.torch import nncf_model_output
 from nncf.torch.dynamic_graph.graph_tracer import create_dummy_forward_fn
@@ -825,10 +826,10 @@ def test_synthetic_model_quantization(synthetic_model_desc: IModelDesc):
         input_sample_sizes=synthetic_model_desc.get_input_sample_sizes(), input_info=synthetic_model_desc.input_info
     )
     register_bn_adaptation_init_args(config)
-
-    compressed_model, _ = create_compressed_model_and_algo_for_test(
-        model, config, wrap_inputs_fn=synthetic_model_desc.get_wrap_inputs_fn()
-    )
+    with nncf_debug():
+        compressed_model, _ = create_compressed_model_and_algo_for_test(
+            model, config, wrap_inputs_fn=synthetic_model_desc.get_wrap_inputs_fn()
+        )
 
     check_model_graph(
         compressed_model, synthetic_model_desc.get_dot_filename(), os.path.join("quantized", "synthetic_model")

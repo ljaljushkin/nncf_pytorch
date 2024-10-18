@@ -13,6 +13,7 @@
 Contains builder and controller class definitions for the quantization algorithm.
 """
 
+import json
 from collections import Counter
 from collections import OrderedDict
 from copy import deepcopy
@@ -400,6 +401,10 @@ class PropagationBasedQuantizerSetupGenerator(QuantizerSetupGeneratorBase):
         )
         finalized_quantizer_setup = prop_graph_solver.get_final_quantizer_setup(finalized_proposal)
         finalized_quantizer_setup = self._handle_quantize_inputs_option(finalized_quantizer_setup)
+        state = finalized_quantizer_setup.get_state()
+        # print(state)
+        with open("dump_state.json", "w") as f:
+            json.dump(state, f, indent=4)
         return finalized_quantizer_setup
 
     def _assign_qconfig_lists_to_modules(self, weighted_nodes: List[NNCFNode]) -> Dict[NNCFNode, List[QuantizerConfig]]:
@@ -783,6 +788,7 @@ class QuantizationBuilder(PTCompressionAlgorithmBuilder):
                 qconfig,
                 narrow_range=narrow_range,
                 scale_shape=tuple(scale_shape),
+                # TODO: pass weight shape
                 logarithm_scale=use_logarithm_scale,
                 half_range=half_range,
                 is_quantized_on_export=qp.is_weight_quantization_point(),

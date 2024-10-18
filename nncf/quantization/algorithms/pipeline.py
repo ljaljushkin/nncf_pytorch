@@ -155,6 +155,7 @@ class Pipeline:
                 step_graph = NNCFGraphFactory.create(step_model)
 
             # Collect statistics required to run current pipeline step
+            # step_statistics = {}
             step_statistics = step_index_to_statistics.get(step_index)
             if step_statistics is None:
                 statistic_points = self.get_statistic_points_for_step(step_index, step_model, step_graph)
@@ -183,6 +184,7 @@ class Pipeline:
         pipeline_step = pipeline_steps[step_index]
         for algorithm in pipeline_step:
             for statistic_points in algorithm.get_statistic_points(model, graph).values():
+                # pass
                 for statistic_point in statistic_points:
                     container.add_statistic_point(statistic_point)
 

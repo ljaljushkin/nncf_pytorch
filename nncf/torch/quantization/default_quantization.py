@@ -20,6 +20,7 @@ from nncf.torch.graph.operator_metatypes import PTOperatorMetatype
 DEFAULT_PT_QUANT_TRAIT_TO_OP_DICT: Dict[QuantizationTrait, List[PTOperatorMetatype]] = {
     QuantizationTrait.INPUTS_QUANTIZABLE: [
         operator_metatypes.PTConv2dMetatype,
+        # operator_metatypes.PTSoftmaxMetatype,
         operator_metatypes.PTModuleConv2dMetatype,
         operator_metatypes.PTConv3dMetatype,
         operator_metatypes.PTModuleConv3dMetatype,

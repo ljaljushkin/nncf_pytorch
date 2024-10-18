@@ -1,0 +1,26 @@
+{
+    "quantization_points": {
+        "1": {
+            "qip": {
+                "target_node_name": "/nncf_model_input_0",
+                "input_port_id": null
+            },
+            "qip_class": "ActivationQuantizationInsertionPoint",
+            "qconfig": {
+                "num_bits": 8,
+                "mode": "symmetric",
+                "signedness_to_force": null,
+                "per_channel": false
+            },
+            "directly_quantized_operator_node_names": [
+                "TestModel/softmax_0"
+            ]
+        }
+    },
+    "unified_scale_groups": {},
+    "shared_input_operation_set_groups": {
+        "0": [
+            1
+        ]
+    }
+}

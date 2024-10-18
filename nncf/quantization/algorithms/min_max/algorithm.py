@@ -588,6 +588,7 @@ class MinMaxQuantization(Algorithm):
         hw_config_type = get_hw_config_type(self._target_device.value)
         hw_config_path = self._backend_entity.hw_config.get_path_to_hw_config(hw_config_type)
         hw_config = self._backend_entity.hw_config.from_json(hw_config_path)
+        # hw_config = None
 
         ignored_names = self._get_ignored_names(nncf_graph, inference_nncf_graph, ignored_patterns)
         weight_nodes = self._backend_entity.get_weight_nodes(nncf_graph)
@@ -752,6 +753,7 @@ class MinMaxQuantization(Algorithm):
 
         quantizer_setup = self._get_quantizer_setup(nncf_graph, inference_nncf_graph, hw_patterns, ignored_patterns)
         self._apply_model_type_pass(self._model_type, quantizer_setup, nncf_graph)
+        # self._unified_scale_groups = {}
         self._apply_device_pass(self._target_device, quantizer_setup, inference_nncf_graph)
         self._unified_scale_groups = self._collect_unified_groups(quantizer_setup, nncf_graph)
         quantization_points = list(quantizer_setup.quantization_points.values())
