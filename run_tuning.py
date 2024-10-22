@@ -11,6 +11,8 @@
 
 # from functools import partial
 
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import torch
 
@@ -180,7 +182,7 @@ nncf.compress_weights(
         # patterns = ['^(?!model.decoder.layers\[11\]\.v_proj$).*']
         patterns=[
             # '^(?!.*OPTDecoderLayer\[11\]/OPTAttention\[self_attn\]/NNCFLinear\[v_proj\]).*'
-            "^(?!.*OPTDecoderLayer\[11\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+            "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
         ]
         # OPTDecoderLayer[11]/OPTAttention[self_attn]/Linear[v_proj]/to_0
         # patterns = ['.*_proj.*', '.*out_proj.*', '.*q_proj.*', '.*fc1.*', '.*fc2.*']
@@ -204,24 +206,28 @@ print("#" * 50 + " After Quantize\n", tokenizer.decode(output[0]), "\n" + "#" * 
 # hf_model.model.apply(set_requires_grad_true)
 
 
-for param in hf_model.model.parameters():
+for param in hf_model.parameters():
     param.requires_grad = False
 
 param_to_train = []
-for name, param in hf_model.model.named_parameters():
+for name, param in hf_model.named_parameters():
     if "lora" in name:  # or "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
         print("optimize -> ", name)
         param.requires_grad = True
         param_to_train.append(param)
     # if "11.self_attn.v_proj.weight" in name:
-    #     param.requires_grad = False
+    #     param.requires_grad = True
     #     param_to_train.append(param)
     # if 'input' in name:
     #     print('require grad -> ', name)
     #     param.requires_grad = True
 
+for name, param in hf_model.named_parameters():
+    if param.requires_grad:
+        print("requires grad for -> ", name)
 
-optimizer = torch.optim.Adam(param_to_train, lr=1e-2)
+
+optimizer = torch.optim.Adam(hf_model.parameters(), lr=1e-2)
 losses = []
 for i in range(10):
     optimizer.zero_grad()
@@ -236,6 +242,9 @@ plt.title("Lora fine-tuning", fontsize=20)
 plt.xlabel("Steps")
 plt.ylabel("Loss")
 plt.legend()
+path = Path("loss.png").resolve()
+plt.savefig(path)
+print("Saving loss plot to:", path)
 
 # Check the output of tuned model
 output = tokenizer.decode(hf_model.generate(tokenizer("chicken", return_tensors="pt")["input_ids"].cuda())[0])

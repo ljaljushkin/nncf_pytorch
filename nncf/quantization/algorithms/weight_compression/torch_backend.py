@@ -33,7 +33,6 @@ from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.lora_correction import LoraCorrectionAlgorithm
-from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight
 from nncf.tensor import Tensor
 from nncf.tensor.definitions import TensorDataType
 
@@ -242,14 +241,14 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 raise nncf.InternalError(f"Could not find a torch.nn.Parameter in the model by name {weight_name}.")
 
             # calculates compressed weights and decompression parameters
-            compressed_weight = compress_weight(
-                Tensor(weight),
-                wc_params.reduction_axes,
-                compression_config,
-                None if precomputed_scales is None else precomputed_scales.get(wc_params.weight_name),
-                None if precomputed_zero_points is None else precomputed_zero_points.get(wc_params.weight_name),
-            )
-            compressed_weight.scale = compressed_weight.scale.astype(dtype=TensorDataType.float16)
+            # compressed_weight = compress_weight(
+            #     Tensor(weight),
+            #     wc_params.reduction_axes,
+            #     compression_config,
+            #     None if precomputed_scales is None else precomputed_scales.get(wc_params.weight_name),
+            #     None if precomputed_zero_points is None else precomputed_zero_points.get(wc_params.weight_name),
+            # )
+            # compressed_weight.scale = compressed_weight.scale.astype(dtype=TensorDataType.float16)
 
             # pack compressed tensor
             # if compression_config.mode == CompressWeightsMode.INT8_SYM:
@@ -295,12 +294,12 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 num_bits=4,
                 mode=QuantizationScheme.ASYMMETRIC,
             )
-            scale_shape = compressed_weight.scale.shape
+            # scale_shape = compressed_weight.scale.shape
             weight_shape = weight.shape
             quantizer_spec = PTQuantizerSpec.from_config(
                 quantizer_config,
                 narrow_range=False,
-                scale_shape=scale_shape,
+                scale_shape={},  # scale_shape,
                 weight_shape=weight_shape,
                 half_range=False,
                 logarithm_scale=False,

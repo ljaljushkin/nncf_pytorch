@@ -1207,7 +1207,7 @@ class FQLora(nn.Module):
         # ################################## LORA END ########################################
 
     def forward(self, weight):
-        # weight = weight.detach()
+        weight = weight.detach()
         for name, param in self.named_parameters():
             print("CHECK: ", name, param.requires_grad)
         print("CHECK: weight ", weight.requires_grad)

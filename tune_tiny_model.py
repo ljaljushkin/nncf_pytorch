@@ -69,14 +69,22 @@ class MyModel2(nn.Module):
 
     def forward(self, x):
         # Use the custom autograd function
-        result = AdditiveFunction2.apply(self.W + self.A @ self.B)
+        result = AdditiveFunction2.apply(self.W + self.A @ self.B) @ x
         return result
 
 
 # Example usage
-model = MyModel()
-# model = MyModel2()
-optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+# model = MyModel()
+model = MyModel2()
+param_to_train = []
+for name, param in model.named_parameters():
+    if name in ["A", "B"]:  # or "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
+        param.requires_grad = True
+        param_to_train.append(param)
+        print(name)
+    else:
+        param.requires_grad = False
+optimizer = torch.optim.SGD(param_to_train, lr=0.01)
 
 # Dummy input and target
 input_ = torch.tensor([1.0, 2.0, 3.0])
