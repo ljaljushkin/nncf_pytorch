@@ -1,0 +1,15 @@
+strict digraph  {
+"0 /nncf_model_input_0";
+"1 SymmetricQuantizer/symmetric_quantize_0";
+"2 conv.weight";
+"3 conv.bias";
+"4 BasicConvTestModel/Conv2d[conv]/SymmetricQuantizer/symmetric_quantize_0";
+"5 BasicConvTestModel/Conv2d[conv]/conv2d_0";
+"6 /nncf_model_output_0";
+"0 /nncf_model_input_0" -> "1 SymmetricQuantizer/symmetric_quantize_0"  [label="(1, 1, 4, 4) \n0 -> 0", style=solid];
+"1 SymmetricQuantizer/symmetric_quantize_0" -> "5 BasicConvTestModel/Conv2d[conv]/conv2d_0"  [label="(1, 1, 4, 4) \n0 -> 0", style=solid];
+"2 conv.weight" -> "4 BasicConvTestModel/Conv2d[conv]/SymmetricQuantizer/symmetric_quantize_0"  [label="(2, 1, 2, 2) \n0 -> 0", style=solid];
+"3 conv.bias" -> "5 BasicConvTestModel/Conv2d[conv]/conv2d_0"  [label="(2,) \n0 -> 2", style=solid];
+"4 BasicConvTestModel/Conv2d[conv]/SymmetricQuantizer/symmetric_quantize_0" -> "5 BasicConvTestModel/Conv2d[conv]/conv2d_0"  [label="(2, 1, 2, 2) \n0 -> 1", style=solid];
+"5 BasicConvTestModel/Conv2d[conv]/conv2d_0" -> "6 /nncf_model_output_0"  [label="(1, 2, 3, 3) \n0 -> 0", style=solid];
+}

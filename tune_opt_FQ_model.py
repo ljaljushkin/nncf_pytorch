@@ -64,7 +64,8 @@ class AdditiveFunction(torch.autograd.Function):
 class FQLora(nn.Module):
     def __init__(self):
         super().__init__()
-        out_features, in_features = 21, 2048
+        out_features, in_features = 256, 2048
+        # out_features, in_features = 768, 768
         lora_rank = 8
         self._A = torch.nn.Parameter(
             torch.ones((lora_rank, in_features), dtype=torch.float32), requires_grad=True
@@ -111,13 +112,13 @@ transformation_layout = TransformationLayout()
 quantizer = FQLora()
 # "OPTModel/OPTDecoder[decoder]/ModuleList[layers]/OPTDecoderLayer[0]/OPTAttention[self_attn]/Linear[v_proj]/linear_0"
 node_name = "LlamaModel/ModuleList[layers]/LlamaDecoderLayer[21]/LlamaSdpaAttention[self_attn]/Linear[v_proj]/linear_0"
-target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name, input_port_id=0)
+target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name, input_port_id=1)
 transformation_layout.register(
     PTSharedFnInsertionCommand(
         target_points=[target_point],
         fn=quantizer,
         op_unique_name="FQ_LORA_for_node_",
-        compression_module_type=ExtraCompressionModuleType.EXTERNAL_OP,  # QUANTIZER,
+        compression_module_type=ExtraCompressionModuleType.EXTERNAL_QUANTIZER,
         priority=TransformationPriority.QUANTIZATION_PRIORITY,
     )
 )
@@ -149,7 +150,9 @@ for name, param in hf_model.named_parameters():
 #     output.requires_grad_(True)
 # hf_model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
 # hf_model.get_input_embeddings().weight.requires_grad = True
+# hf_model.lm_head.weight.requires_grad = True
 print("embedding: ", hf_model.get_input_embeddings().weight.requires_grad)
+print("lm_head: ", hf_model.lm_head.weight.requires_grad)
 
 for name, param in hf_model.named_parameters():
     if param.requires_grad:

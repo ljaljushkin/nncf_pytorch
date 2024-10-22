@@ -18,7 +18,8 @@ import torch.nn as nn
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.transformations.commands import TransformationPriority
 from nncf.common.graph.transformations.layout import TransformationLayout
-from nncf.torch.graph.transformations.commands import PTInsertionCommand
+from nncf.torch.graph.transformations.commands import ExtraCompressionModuleType
+from nncf.torch.graph.transformations.commands import PTSharedFnInsertionCommand
 from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.model_creation import wrap_model
 from nncf.torch.model_transformer import PTModelTransformer
@@ -89,14 +90,13 @@ model = wrap_model(model, example_input=input_, trace_parameters=True)
 transformation_layout = TransformationLayout()
 quantizer = FQLora()
 node_name = "MyModel/Linear[linear]/linear_0"
-target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name, input_port_id=0)
+target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name, input_port_id=1)
 transformation_layout.register(
-    PTInsertionCommand(
-        # target_points=[target_point],
-        point=target_point,
+    PTSharedFnInsertionCommand(
+        target_points=[target_point],
         fn=quantizer,
-        # op_unique_name="FQ_LORA_for_node_",
-        # compression_module_type=ExtraCompressionModuleType.EXTERNAL_QUANTIZER,
+        op_unique_name="FQ_LORA_for_node_",
+        compression_module_type=ExtraCompressionModuleType.EXTERNAL_QUANTIZER,
         priority=TransformationPriority.QUANTIZATION_PRIORITY,
     )
 )
@@ -147,4 +147,6 @@ print("Saving loss plot to:", path)
 print("Weights: ", model.linear.weight)
 print("Updated additive parameter A:", model.nncf.external_quantizers.FQ_LORA_for_node_._A)
 print("Updated additive parameter B:", model.nncf.external_quantizers.FQ_LORA_for_node_._B)
+print(output)
+print(output)
 print(output)

@@ -22,7 +22,7 @@ from tests.torch.helpers import BasicConvTestModel
 def test_nncf_strip_api(strip_type, do_copy):
     model = BasicConvTestModel()
     quantized_model = nncf.quantize(model, nncf.Dataset([torch.ones(model.INPUT_SIZE)]), subset_size=1)
-
+    quantized_model.nncf.get_graph().visualize_graph("fq_model.dot")
     if strip_type == "nncf":
         strip_model = nncf.strip(quantized_model, do_copy)
     elif strip_type == "torch":
