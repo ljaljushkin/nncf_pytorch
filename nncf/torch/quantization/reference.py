@@ -40,6 +40,7 @@ class ReferenceQuantize:
             return tensor.astype(dtype)
         return tensor.type(dtype)
 
+    @torch.no_grad()
     def forward(
         self, input_: GeneralizedTensor, input_low: GeneralizedTensor, input_range: GeneralizedTensor, levels: int
     ) -> GeneralizedTensor:

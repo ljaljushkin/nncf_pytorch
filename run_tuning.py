@@ -31,7 +31,7 @@ model_id = "facebook/opt-125m"
 
 hf_model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype="auto",
+    torch_dtype=torch.float32,  # "auto",
     # device_map="auto",
     low_cpu_mem_usage=True,
 ).to("cuda")
@@ -209,10 +209,13 @@ for param in hf_model.model.parameters():
 
 param_to_train = []
 for name, param in hf_model.model.named_parameters():
-    if "lora" in name or "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
+    if "lora" in name:  # or "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
         print("optimize -> ", name)
         param.requires_grad = True
         param_to_train.append(param)
+    # if "11.self_attn.v_proj.weight" in name:
+    #     param.requires_grad = False
+    #     param_to_train.append(param)
     # if 'input' in name:
     #     print('require grad -> ', name)
     #     param.requires_grad = True

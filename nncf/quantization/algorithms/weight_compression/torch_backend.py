@@ -52,7 +52,8 @@ from nncf.torch.model_transformer import PTModelTransformer
 from nncf.torch.nncf_network import NNCFNetwork
 
 # from nncf.torch.quantization.layers import AsymmetricWeightsDecompressor
-from nncf.torch.quantization.layers import AsymmetricQuantizer
+# from nncf.torch.quantization.layers import AsymmetricQuantizer
+from nncf.torch.quantization.layers import FQLora
 from nncf.torch.quantization.layers import PTQuantizerSpec
 
 # from nncf.torch.quantization.layers import SymmetricQuantizer
@@ -315,21 +316,25 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # # original parameters on the forward call.
             # quantizer.scale = torch.nn.Parameter((parameters.input_high.data - quantizer.eps).reshape(scale_shape))
 
-            input_low = torch.amin(weight, dim=wc_params.reduction_axes[0], keepdim=True).type(
-                weight.dtype
-            )  # [a1, r, a2] -> [a1, 1, a2]
-            input_high = torch.amax(weight, dim=wc_params.reduction_axes[0], keepdim=True).type(
-                weight.dtype
-            )  # [a1, r, a2] -> [a1, 1, a2]
+            # input_low = torch.amin(weight, dim=wc_params.reduction_axes[0], keepdim=True).type(
+            #     weight.dtype
+            # )  # [a1, r, a2] -> [a1, 1, a2]
+            # input_high = torch.amax(weight, dim=wc_params.reduction_axes[0], keepdim=True).type(
+            #     weight.dtype
+            # )  # [a1, r, a2] -> [a1, 1, a2]
             print("weight dtype input_low=", weight.dtype)
-            print("input_low dtype input_low=", input_low.dtype)
+            # print("input_low dtype input_low=", input_low.dtype)
 
-            quantizer = AsymmetricQuantizer(quantizer_spec)
-            quantizer.input_low = torch.nn.Parameter(input_low.reshape(scale_shape))
-            input_range = input_high - input_low
-            # Subtract eps from the input_range to make quantizer parameters equal to
-            # original parameters on the forward call.
-            quantizer.input_range = torch.nn.Parameter((input_range - quantizer.eps).reshape(scale_shape))
+            # quantizer = AsymmetricQuantizer(quantizer_spec)
+            quantizer = FQLora(quantizer_spec)
+            # quantizer.input_low = torch.nn.Parameter(input_low.reshape(scale_shape))
+            # quantizer.register_buffer(quantizer.INPUT_LOW_PARAM_NAME, input_low.reshape(scale_shape))
+            # input_range = input_high - input_low
+            # # Subtract eps from the input_range to make quantizer parameters equal to
+            # # original parameters on the forward call.
+            # # quantizer.input_range = torch.nn.Parameter((input_range - quantizer.eps).reshape(scale_shape))
+            # quantizer.register_buffer(quantizer._INPUT_RANGE_PARAM_STORAGE_ATTR,
+            # (input_range - quantizer.eps).reshape(scale_shape))
 
             node_name = weight_node.node_name
             # target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name,

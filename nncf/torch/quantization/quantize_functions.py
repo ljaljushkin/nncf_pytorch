@@ -18,6 +18,9 @@ from nncf.torch.functions import STRound
 from nncf.torch.functions import clamp
 from nncf.torch.quantization.extensions import QuantizedFunctionsCPU
 from nncf.torch.quantization.extensions import QuantizedFunctionsCUDA
+
+# from nncf.torch.quantization.reference import ReferenceBackendType
+# from nncf.torch.quantization.reference import ReferenceQuantize
 from nncf.torch.utils import add_domain
 
 
@@ -205,7 +208,24 @@ def asymmetric_quantize(input_, levels, level_low, level_high, input_low, input_
         return input_
     input_range_safe = abs(input_range) + eps
     input_low_tuned, input_range_tuned = TuneRange.apply(input_low, input_range_safe, levels)
+    # return ReferenceQuantize(backend_type=ReferenceBackendType.TORCH).forward(
+    #     input_,
+    #     # input_low_tuned,
+    #     input_low,
+    #     # input_range_tuned,
+    #     input_range_safe,
+    #     levels,
+    # )
     return QuantizeAsymmetric.apply(input_, input_low_tuned, input_range_tuned, level_low, level_high, levels)
+
+    # ReferenceQuantize
+    # def forward(
+    #     self, input_: GeneralizedTensor, input_low: GeneralizedTensor, input_range: GeneralizedTensor, levels: int
+    # ) -> GeneralizedTensor:
+
+    # class QuantizeAsymmetric(torch.autograd.Function):
+    # @staticmethod
+    # def forward(ctx, input_, input_low, input_range, level_low, level_high, levels):
 
 
 class TuneRange(torch.autograd.Function):
