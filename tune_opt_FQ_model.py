@@ -26,7 +26,8 @@ from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.model_creation import wrap_model
 from nncf.torch.model_transformer import PTModelTransformer
 
-model_id = "facebook/opt-125m"
+# model_id = "facebook/opt-125m"
+model_id = "TinyLlama/TinyLlama_v1.1"
 
 hf_model = AutoModelForCausalLM.from_pretrained(
     model_id,
@@ -63,7 +64,7 @@ class AdditiveFunction(torch.autograd.Function):
 class FQLora(nn.Module):
     def __init__(self):
         super().__init__()
-        out_features, in_features = 12, 768
+        out_features, in_features = 21, 2048
         lora_rank = 8
         self._A = torch.nn.Parameter(
             torch.ones((lora_rank, in_features), dtype=torch.float32), requires_grad=True
@@ -75,9 +76,10 @@ class FQLora(nn.Module):
         print(self._B.shape)
 
     def forward(self, weight):
+        # return weight + self._B @ self._A
         # weight = weight.detach()
-        for name, param in self.named_parameters():
-            print("CHECK: ", name, param.requires_grad, param.shape)
+        # for name, param in self.named_parameters():
+        #     print("CHECK: ", name, param.requires_grad, param.shape)
         print("CHECK: weight ", weight.requires_grad, weight.shape)
         return AdditiveFunction.apply(weight, self._A, self._B)
 
@@ -96,7 +98,7 @@ dataset = [
     }
 ]
 output = hf_model.generate(
-    tokenizer("chicken", return_tensors="pt")["input_ids"], min_new_tokens=128, max_new_tokens=128  # .cuda(),
+    tokenizer("chicken", return_tensors="pt")["input_ids"], min_new_tokens=32, max_new_tokens=32  # .cuda(),
 )
 print("#" * 50 + " Before Quantize\n", tokenizer.decode(output[0]), "\n" + "#" * 150)
 
@@ -107,16 +109,15 @@ model.nncf.get_graph().visualize_graph("fq_model.dot")
 
 transformation_layout = TransformationLayout()
 quantizer = FQLora()
-node_name = (
-    "OPTModel/OPTDecoder[decoder]/ModuleList[layers]/OPTDecoderLayer[0]/OPTAttention[self_attn]/Linear[v_proj]/linear_0"
-)
+# "OPTModel/OPTDecoder[decoder]/ModuleList[layers]/OPTDecoderLayer[0]/OPTAttention[self_attn]/Linear[v_proj]/linear_0"
+node_name = "LlamaModel/ModuleList[layers]/LlamaDecoderLayer[21]/LlamaSdpaAttention[self_attn]/Linear[v_proj]/linear_0"
 target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name, input_port_id=0)
 transformation_layout.register(
     PTSharedFnInsertionCommand(
         target_points=[target_point],
         fn=quantizer,
         op_unique_name="FQ_LORA_for_node_",
-        compression_module_type=ExtraCompressionModuleType.EXTERNAL_QUANTIZER,
+        compression_module_type=ExtraCompressionModuleType.EXTERNAL_OP,  # QUANTIZER,
         priority=TransformationPriority.QUANTIZATION_PRIORITY,
     )
 )
@@ -124,9 +125,13 @@ transformed_model = PTModelTransformer(model).transform(transformation_layout)
 # print(transformed_model)
 
 
+hf_model.requires_grad_(False)
+# for param in hf_model.parameters():
+#     param.requires_grad = False
+
 param_to_train = []
-for name, param in model.named_parameters():
-    if "_A" in name or "_B" in name or "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
+for name, param in hf_model.named_parameters():
+    if "_A" in name or "_B" in name:  # or "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
         param.requires_grad = True
         param_to_train.append(param)
         print("optimize -->", name)
@@ -134,6 +139,24 @@ for name, param in model.named_parameters():
         param.requires_grad = False
 
 
+# hf_model.disable_input_require_grads()
+# hf_model.enable_input_require_grads() # no error, but no gradient for adapters as well
+# NOTE: Enables the gradients for the input embeddings. This is useful for fine-tuning adapter weights while keeping
+# the model weights fixed.
+# NOTE: When training with PEFT, only LoRA layers will have requires grad set to True,
+# but the output of frozen layers need to propagate the gradients to make sure the gradient flows.
+# def make_inputs_require_grad(module, input, output):
+#     output.requires_grad_(True)
+# hf_model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
+# hf_model.get_input_embeddings().weight.requires_grad = True
+print("embedding: ", hf_model.get_input_embeddings().weight.requires_grad)
+
+for name, param in hf_model.named_parameters():
+    if param.requires_grad:
+        print("requires grad for -> ", name)
+
+# torch.set_grad_enabled(True)
+# print(hf_model.get_input_embeddings().weight)
 optimizer = torch.optim.Adam(param_to_train, lr=1e-2)
 losses = []
 for i in range(10):
@@ -141,6 +164,7 @@ for i in range(10):
     loss = hf_model(input_ids=input_ids, labels=labels).loss
     losses.append(float(loss))
     loss.backward()
+    # print(float(loss))
     optimizer.step()
 
 
@@ -152,14 +176,19 @@ plt.legend()
 path = Path("loss.png").resolve()
 plt.savefig(path)
 print("Saving loss plot to:", path)
+# print(hf_model.get_input_embeddings().weight)
 
-# Check the output of tuned model
-output = tokenizer.decode(
-    hf_model.generate(
-        tokenizer("chicken", return_tensors="pt")["input_ids"]
-        # .cuda()
-    )[0]
-)
+hf_model.requires_grad_(False)
+with torch.inference_mode():
+    # Check the output of tuned model
+    output = tokenizer.decode(
+        hf_model.generate(
+            tokenizer("chicken", return_tensors="pt")["input_ids"],
+            min_new_tokens=32,
+            max_new_tokens=32,
+            # .cuda()
+        )[0]
+    )
 print("#" * 50 + " After Tune\n", output, "\n" + "#" * 150)
 # print(f"Peak memory usage: {torch.cuda.max_memory_allocated() * 1e-9:.2f} Gb")
 

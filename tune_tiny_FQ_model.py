@@ -18,8 +18,7 @@ import torch.nn as nn
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.transformations.commands import TransformationPriority
 from nncf.common.graph.transformations.layout import TransformationLayout
-from nncf.torch.graph.transformations.commands import ExtraCompressionModuleType
-from nncf.torch.graph.transformations.commands import PTSharedFnInsertionCommand
+from nncf.torch.graph.transformations.commands import PTInsertionCommand
 from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.model_creation import wrap_model
 from nncf.torch.model_transformer import PTModelTransformer
@@ -85,23 +84,25 @@ input_ = torch.tensor([1.0, 2.0, 3.0])
 
 model = wrap_model(model, example_input=input_, trace_parameters=True)
 # print(model)
-model.nncf.get_graph().visualize_graph("fq_model.dot")
+
 
 transformation_layout = TransformationLayout()
 quantizer = FQLora()
 node_name = "MyModel/Linear[linear]/linear_0"
 target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name, input_port_id=0)
 transformation_layout.register(
-    PTSharedFnInsertionCommand(
-        target_points=[target_point],
+    PTInsertionCommand(
+        # target_points=[target_point],
+        point=target_point,
         fn=quantizer,
-        op_unique_name="FQ_LORA_for_node_",
-        compression_module_type=ExtraCompressionModuleType.EXTERNAL_QUANTIZER,
+        # op_unique_name="FQ_LORA_for_node_",
+        # compression_module_type=ExtraCompressionModuleType.EXTERNAL_QUANTIZER,
         priority=TransformationPriority.QUANTIZATION_PRIORITY,
     )
 )
 transformed_model = PTModelTransformer(model).transform(transformation_layout)
 # print(transformed_model)
+model.nncf.get_graph().visualize_graph("fq_model.dot")
 
 
 param_to_train = []
@@ -114,7 +115,7 @@ for name, param in model.named_parameters():
         param.requires_grad = False
 
 
-optimizer = torch.optim.SGD(param_to_train, lr=0.01)
+optimizer = torch.optim.Adam(param_to_train, lr=0.01)
 
 # Dummy input and target
 input_ = torch.tensor([1.0, 2.0, 3.0])
