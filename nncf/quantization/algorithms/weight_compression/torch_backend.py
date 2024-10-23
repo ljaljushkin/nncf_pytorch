@@ -33,6 +33,7 @@ from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.lora_correction import LoraCorrectionAlgorithm
+from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight
 from nncf.tensor import Tensor
 from nncf.tensor.definitions import TensorDataType
 
@@ -51,8 +52,7 @@ from nncf.torch.model_transformer import PTModelTransformer
 from nncf.torch.nncf_network import NNCFNetwork
 
 # from nncf.torch.quantization.layers import AsymmetricWeightsDecompressor
-# from nncf.torch.quantization.layers import AsymmetricQuantizer
-from nncf.torch.quantization.layers import FQLora
+from nncf.torch.quantization.layers import AsymmetricQuantizer
 from nncf.torch.quantization.layers import PTQuantizerSpec
 
 # from nncf.torch.quantization.layers import SymmetricQuantizer
@@ -241,14 +241,14 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 raise nncf.InternalError(f"Could not find a torch.nn.Parameter in the model by name {weight_name}.")
 
             # calculates compressed weights and decompression parameters
-            # compressed_weight = compress_weight(
-            #     Tensor(weight),
-            #     wc_params.reduction_axes,
-            #     compression_config,
-            #     None if precomputed_scales is None else precomputed_scales.get(wc_params.weight_name),
-            #     None if precomputed_zero_points is None else precomputed_zero_points.get(wc_params.weight_name),
-            # )
-            # compressed_weight.scale = compressed_weight.scale.astype(dtype=TensorDataType.float16)
+            compressed_weight = compress_weight(
+                Tensor(weight),
+                wc_params.reduction_axes,
+                compression_config,
+                None if precomputed_scales is None else precomputed_scales.get(wc_params.weight_name),
+                None if precomputed_zero_points is None else precomputed_zero_points.get(wc_params.weight_name),
+            )
+            compressed_weight.scale = compressed_weight.scale.astype(dtype=TensorDataType.float16)
 
             # pack compressed tensor
             # if compression_config.mode == CompressWeightsMode.INT8_SYM:
@@ -294,12 +294,12 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 num_bits=4,
                 mode=QuantizationScheme.ASYMMETRIC,
             )
-            # scale_shape = compressed_weight.scale.shape
+            scale_shape = compressed_weight.scale.shape
             weight_shape = weight.shape
             quantizer_spec = PTQuantizerSpec.from_config(
                 quantizer_config,
                 narrow_range=False,
-                scale_shape={},  # scale_shape,
+                scale_shape=scale_shape,
                 weight_shape=weight_shape,
                 half_range=False,
                 logarithm_scale=False,
@@ -324,8 +324,8 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             print("weight dtype input_low=", weight.dtype)
             # print("input_low dtype input_low=", input_low.dtype)
 
-            # quantizer = AsymmetricQuantizer(quantizer_spec)
-            quantizer = FQLora(quantizer_spec)
+            quantizer = AsymmetricQuantizer(quantizer_spec)
+            # quantizer = FQLora(quantizer_spec)
             # quantizer.input_low = torch.nn.Parameter(input_low.reshape(scale_shape))
             # quantizer.register_buffer(quantizer.INPUT_LOW_PARAM_NAME, input_low.reshape(scale_shape))
             # input_range = input_high - input_low
@@ -337,8 +337,10 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
             node_name = weight_node.node_name
             # print('NODE NAME+++++', node_name)
-            node_name = "LlamaModel/ModuleList[layers]/LlamaDecoderLayer[21]/"
-            "LlamaSdpaAttention[self_attn]/Linear[v_proj]/linear_0"
+            node_name = (
+                "LlamaModel/ModuleList[layers]/LlamaDecoderLayer[21]/"
+                "LlamaSdpaAttention[self_attn]/Linear[v_proj]/linear_0"
+            )
             # target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name,
             # input_port_id=wc_params.weight_port_id)
             # TODO: why not wc_params.weight_port_id)???

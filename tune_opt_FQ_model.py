@@ -24,7 +24,6 @@ from nncf.torch.graph.transformations.commands import ExtraCompressionModuleType
 from nncf.torch.graph.transformations.commands import PTSharedFnInsertionCommand
 from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.model_creation import wrap_model
-from nncf.torch.model_transformer import PTModelTransformer
 
 # model_id = "facebook/opt-125m"
 model_id = "TinyLlama/TinyLlama_v1.1"
@@ -121,7 +120,7 @@ transformation_layout.register(
         priority=TransformationPriority.QUANTIZATION_PRIORITY,
     )
 )
-transformed_model = PTModelTransformer(model).transform(transformation_layout)
+# transformed_model = PTModelTransformer(model).transform(transformation_layout)
 # print(transformed_model)
 model.nncf.get_graph().visualize_graph("fq_model.dot")
 
@@ -133,6 +132,7 @@ hf_model.requires_grad_(False)
 param_to_train = []
 for name, param in hf_model.named_parameters():
     if "_A" in name or "_B" in name:  # or "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
+        # if "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
         param.requires_grad = True
         param_to_train.append(param)
         print("optimize -->", name)

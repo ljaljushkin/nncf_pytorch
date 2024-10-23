@@ -43,11 +43,10 @@ from nncf.torch.graph.transformations.commands import TargetType
 from nncf.torch.layer_utils import COMPRESSION_MODULES
 from nncf.torch.layer_utils import CompressionParameter
 from nncf.torch.layer_utils import StatefullModuleInterface
-
-# from nncf.torch.quantization.quantize_functions import asymmetric_quantize
 from nncf.torch.quantization.quantize_functions import ExportQuantizeToFakeQuantize
 from nncf.torch.quantization.quantize_functions import ExportQuantizeToONNXQuantDequant
 from nncf.torch.quantization.quantize_functions import TuneRange
+from nncf.torch.quantization.quantize_functions import asymmetric_quantize
 from nncf.torch.quantization.quantize_functions import decompress_asymmetric
 from nncf.torch.quantization.quantize_functions import decompress_symmetric
 from nncf.torch.quantization.quantize_functions import get_scale_zp_from_input_low_input_high
@@ -970,22 +969,22 @@ class AsymmetricQuantizer(BaseQuantizer):
             self.input_low = self.input_low.to(original_dtype)
             self._input_range_param_storage = self._input_range_param_storage.to(original_dtype)
         if hasattr(self, "_lora_A"):
-            print("dtype on quantize, x={} A={}".format(x.dtype, self._lora_A.dtype))
-            for name, param in self.named_parameters():
-                print("CHECK: ", name, param.requires_grad)
+            # print("dtype on quantize, x={} A={}".format(x.dtype, self._lora_A.dtype))
+            # for name, param in self.named_parameters():
+            #     print("CHECK: ", name, param.requires_grad)
             x = self._lora_B @ self._lora_A + x  # .detach()  # [O, R] * [R, H] + [O, H]
         # return ReferenceQuantize(backend_type=ReferenceBackendType.TORCH).forward(weight)
-        return x
-        # asymmetric_quantize(
-        #     x,
-        #     self.levels,
-        #     self.level_low,
-        #     self.level_high,
-        #     self.input_low,
-        #     self.input_range,
-        #     self.eps,
-        #     skip=execute_traced_op_as_identity,
-        # )
+        # return x
+        return asymmetric_quantize(
+            x,
+            self.levels,
+            self.level_low,
+            self.level_high,
+            self.input_low,
+            self.input_range,
+            self.eps,
+            skip=execute_traced_op_as_identity,
+        )
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
         return {
@@ -1204,7 +1203,7 @@ class FQLora(nn.Module):
         # It is also possible to pass init_lora_weights="gaussian". As the name suggests, this results in
         # initializing weight A with a Gaussian distribution (weight B is still zeros).
         # This corresponds to the way that diffusers initializes LoRA weights.
-        nn.init.kaiming_uniform_(self._lora_A, a=math.sqrt(5))
+        # nn.init.kaiming_uniform_(self._lora_A, a=math.sqrt(5))
         # ################################## LORA END ########################################
 
     def forward(self, weight):
