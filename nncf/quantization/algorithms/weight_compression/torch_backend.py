@@ -336,11 +336,14 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # (input_range - quantizer.eps).reshape(scale_shape))
 
             node_name = weight_node.node_name
+            # print('NODE NAME+++++', node_name)
+            node_name = "LlamaModel/ModuleList[layers]/LlamaDecoderLayer[21]/"
+            "LlamaSdpaAttention[self_attn]/Linear[v_proj]/linear_0"
             # target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name,
             # input_port_id=wc_params.weight_port_id)
             # TODO: why not wc_params.weight_port_id)???
             #  because post hook for constant??
-            target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name, input_port_id=0)
+            target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name, input_port_id=1)
 
             storage_key = "FQ_LORA_for_node_{}".format(node_name.replace(".", "_"))
             # quantizer_id = NonWeightQuantizerId(target_point.target_node_name, target_point.input_port_id)

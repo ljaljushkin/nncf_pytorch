@@ -29,7 +29,8 @@ import nncf
 # from nncf.common.utils.debug import nncf_debug
 # from nncf.quantization.advanced_parameters import QuantizationParameters
 
-model_id = "facebook/opt-125m"
+# model_id = "facebook/opt-125m"
+model_id = "TinyLlama/TinyLlama_v1.1"
 
 hf_model = AutoModelForCausalLM.from_pretrained(
     model_id,
@@ -41,7 +42,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_id)
 # print(hf_model)
 
 output = hf_model.generate(
-    tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=128, max_new_tokens=128
+    tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
 )
 print("#" * 50 + " Before\n", tokenizer.decode(output[0]), "\n" + "#" * 150)
 
@@ -174,7 +175,7 @@ dataset = [
 #     calibration_dataset=nncf.Dataset(dataset),
 #     advanced_parameters=params
 # )
-
+model = hf_model.model
 nncf.compress_weights(
     hf_model.model,
     mode=nncf.CompressWeightsMode.INT8_ASYM,
@@ -182,13 +183,16 @@ nncf.compress_weights(
         # patterns = ['^(?!model.decoder.layers\[11\]\.v_proj$).*']
         patterns=[
             # '^(?!.*OPTDecoderLayer\[11\]/OPTAttention\[self_attn\]/NNCFLinear\[v_proj\]).*'
-            "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+            # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+            # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+            "^(?!.*LlamaModel\/ModuleList\[layers\]\/LlamaDecoderLayer\[21\]\/LlamaSdpaAttention\[self_attn\]\/Linear\[v_proj\].*$).*"
         ]
         # OPTDecoderLayer[11]/OPTAttention[self_attn]/Linear[v_proj]/to_0
         # patterns = ['.*_proj.*', '.*out_proj.*', '.*q_proj.*', '.*fc1.*', '.*fc2.*']
     ),
     dataset=nncf.Dataset(dataset),
 )
+model.nncf.get_graph().visualize_graph("fq_model.dot")
 # print(hf_model.model)
 
 output = hf_model.generate(
@@ -247,6 +251,10 @@ plt.savefig(path)
 print("Saving loss plot to:", path)
 
 # Check the output of tuned model
-output = tokenizer.decode(hf_model.generate(tokenizer("chicken", return_tensors="pt")["input_ids"].cuda())[0])
+output = tokenizer.decode(
+    hf_model.generate(
+        tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
+    )[0]
+)
 print("#" * 50 + " After Tune\n", output, "\n" + "#" * 150)
 print(f"Peak memory usage: {torch.cuda.max_memory_allocated() * 1e-9:.2f} Gb")

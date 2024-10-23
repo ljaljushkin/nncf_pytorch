@@ -81,7 +81,7 @@ class FQLora(nn.Module):
         # weight = weight.detach()
         # for name, param in self.named_parameters():
         #     print("CHECK: ", name, param.requires_grad, param.shape)
-        print("CHECK: weight ", weight.requires_grad, weight.shape)
+        # print("CHECK: weight ", weight.requires_grad, weight.shape)
         return AdditiveFunction.apply(weight, self._A, self._B)
 
 
@@ -106,7 +106,6 @@ print("#" * 50 + " Before Quantize\n", tokenizer.decode(output[0]), "\n" + "#" *
 
 model = wrap_model(model, example_input=dataset[0], trace_parameters=True)
 # print(model)
-model.nncf.get_graph().visualize_graph("fq_model.dot")
 
 transformation_layout = TransformationLayout()
 quantizer = FQLora()
@@ -124,6 +123,7 @@ transformation_layout.register(
 )
 transformed_model = PTModelTransformer(model).transform(transformation_layout)
 # print(transformed_model)
+model.nncf.get_graph().visualize_graph("fq_model.dot")
 
 
 hf_model.requires_grad_(False)

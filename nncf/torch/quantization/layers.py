@@ -1185,14 +1185,15 @@ class FQLora(nn.Module):
 
         # TODO: pass as a parameter for FQ
         lora_rank = 8
-        own_device = get_model_device(self)
+        # own_device = get_model_device(self)
         self._lora_A = torch.nn.Parameter(
-            torch.empty((lora_rank, in_features), dtype=torch.float32), requires_grad=True
-        ).to(own_device)
+            torch.ones((lora_rank, in_features), dtype=torch.float32), requires_grad=True
+        )  # .to(own_device)
         self._lora_B = torch.nn.Parameter(
             torch.zeros((out_features, lora_rank), dtype=torch.float32), requires_grad=True
-        ).to(own_device)
-
+        )  # .to(own_device)
+        print("lora A shape", self._lora_A.shape)
+        # print(self._lora_B.shape)
         # NOTE: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
         # Default:
         # initialize A the same way as the default for nn.Linear and B to zero
@@ -1207,7 +1208,7 @@ class FQLora(nn.Module):
         # ################################## LORA END ########################################
 
     def forward(self, weight):
-        weight = weight.detach()
+        # weight = weight.detach()
         for name, param in self.named_parameters():
             print("CHECK: ", name, param.requires_grad)
         print("CHECK: weight ", weight.requires_grad)
