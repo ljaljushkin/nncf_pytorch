@@ -10,7 +10,6 @@
 # limitations under the License.
 
 
-import math
 from abc import ABC
 from abc import abstractmethod
 from enum import Enum
@@ -316,13 +315,13 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
 
             # TODO: pass as a parameter for FQ
             lora_rank = 8
-            own_device = get_model_device(self)
+            # own_device = get_model_device(self)
             self._lora_A = torch.nn.Parameter(
-                torch.empty((lora_rank, in_features), dtype=torch.float32), requires_grad=True
-            ).to(own_device)
+                torch.ones((lora_rank, in_features), dtype=torch.float16), requires_grad=True
+            )  # .to(own_device) # cuda()
             self._lora_B = torch.nn.Parameter(
-                torch.zeros((out_features, lora_rank), dtype=torch.float32), requires_grad=True
-            ).to(own_device)
+                torch.zeros((out_features, lora_rank), dtype=torch.float16), requires_grad=True
+            )  # .to(own_device) # cuda()
 
             # NOTE: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
             # Default:
@@ -334,7 +333,7 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             # It is also possible to pass init_lora_weights="gaussian". As the name suggests, this results in
             # initializing weight A with a Gaussian distribution (weight B is still zeros).
             # This corresponds to the way that diffusers initializes LoRA weights.
-            nn.init.kaiming_uniform_(self._lora_A, a=math.sqrt(5))
+            # nn.init.kaiming_uniform_(self._lora_A, a=math.sqrt(5))
             # ################################## LORA END ########################################
 
         OPTIONAL_PARAMETERS_REGISTRY.register("_num_bits")
@@ -877,24 +876,40 @@ class AsymmetricQuantizer(BaseQuantizer):
 
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__(qspec)
-        self.register_buffer(
-            "input_low",
-            # CompressionParameter(
-            torch.zeros(self.scale_shape),
-            # requires_grad=True,
-            # compression_lr_multiplier=qspec.compression_lr_multiplier
+        # TODO: try with original implementation - nn.Parameter
+        self.input_low = CompressionParameter(
+            torch.zeros(self.scale_shape), requires_grad=True, compression_lr_multiplier=qspec.compression_lr_multiplier
         )
-        self.register_buffer(
+        setattr(
+            self,
             self._INPUT_RANGE_PARAM_STORAGE_ATTR,
-            # setattr(
-            # self,
-            # self._INPUT_RANGE_PARAM_STORAGE_ATTR,
-            # CompressionParameter(
-            torch.ones(self.scale_shape),
-            # requires_grad=True,
-            # compression_lr_multiplier=qspec.compression_lr_multiplier,
-            # ),
+            CompressionParameter(
+                torch.ones(self.scale_shape),
+                requires_grad=True,
+                compression_lr_multiplier=qspec.compression_lr_multiplier,
+            ),
         )
+        # self.register_buffer(
+        #     self.INPUT_LOW_PARAM_NAME,
+        #     # CompressionParameter(
+        #     torch.zeros(self.scale_shape),
+        #     # requires_grad=True,
+        #     # compression_lr_multiplier=qspec.compression_lr_multiplier
+        # )
+        # self.register_buffer(
+        #     self._INPUT_RANGE_PARAM_STORAGE_ATTR,
+        #     # setattr(
+        #     # self,
+        #     # self._INPUT_RANGE_PARAM_STORAGE_ATTR,
+        #     # CompressionParameter(
+        #     torch.ones(self.scale_shape),
+        #     # requires_grad=True,
+        #     # compression_lr_multiplier=qspec.compression_lr_multiplier,
+        #     # ),
+        # )
+        # TODO: pass the device of FQ, take from the corresponding weight
+        # own_device = get_model_device(self)
+        # getattr(self, self.INPUT_LOW_PARAM_NAME).to(own_device) # TODO: WA
 
         if self._is_using_log_scale_storage:
             self._input_range_param_storage.data.log_()
@@ -961,18 +976,23 @@ class AsymmetricQuantizer(BaseQuantizer):
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
         # NOTE: Merge adapters to weight on each inference, quantize the sum afterwards
         # TODO: is it OK to tune adapters and quantization parameters at the same time??
-        original_dtype = x.dtype
-        if self._lora_B.dtype != original_dtype:
-            self._lora_A = torch.nn.Parameter(self._lora_A.to(original_dtype))
-            self._lora_B = torch.nn.Parameter(self._lora_B.to(original_dtype))
-        if self.input_low.dtype != original_dtype:
-            self.input_low = self.input_low.to(original_dtype)
-            self._input_range_param_storage = self._input_range_param_storage.to(original_dtype)
-        if hasattr(self, "_lora_A"):
-            # print("dtype on quantize, x={} A={}".format(x.dtype, self._lora_A.dtype))
-            # for name, param in self.named_parameters():
-            #     print("CHECK: ", name, param.requires_grad)
-            x = self._lora_B @ self._lora_A + x  # .detach()  # [O, R] * [R, H] + [O, H]
+        # device = x.device
+        # self.to(device)
+        # original_dtype = x.dtype
+        # if self._lora_A.device != device:
+        #     self._lora_A = torch.nn.Parameter(self._lora_A.to(original_dtype))
+        #     self._lora_B = torch.nn.Parameter(self._lora_B.to(original_dtype))
+        # if self.input_low.dtype != original_dtype:
+        #     self.input_low = self.input_low.to(original_dtype)
+        #     self._input_range_param_storage = self._input_range_param_storage.to(original_dtype)
+        # if hasattr(self, "_lora_A"):
+        # print("dtype on quantize, x={} A={}".format(x.dtype, self._lora_A.dtype))
+        # self._lora_B = self._lora_B.to(device)
+        # self._lora_A = self._lora_A.to(device)
+        # print('move to ', device)
+        # for name, param in self.named_parameters():
+        #     print("CHECK: ", name, param.device)
+        # x = self._lora_B @ self._lora_A + x  # .detach()  # [O, R] * [R, H] + [O, H]
         # return ReferenceQuantize(backend_type=ReferenceBackendType.TORCH).forward(weight)
         # return x
         return asymmetric_quantize(
@@ -984,6 +1004,8 @@ class AsymmetricQuantizer(BaseQuantizer):
             self.input_range,
             self.eps,
             skip=execute_traced_op_as_identity,
+            A=self._lora_A,
+            B=self._lora_B,
         )
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
@@ -1147,90 +1169,90 @@ class SymmetricWeightsDecompressor(nn.Module):
         return result
 
 
-class AdditiveFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, W, A, B):
-        # Save the additive parameter for backward pass
-        ctx.save_for_backward(A, B)
-        # Perform the forward pass
-        return W + B @ A
+# class AdditiveFunction(torch.autograd.Function):
+#     @staticmethod
+#     def forward(ctx, W, A, B):
+#         # Save the additive parameter for backward pass
+#         ctx.save_for_backward(A, B)
+#         # Perform the forward pass
+#         return W + B @ A
 
-    @staticmethod
-    def backward(ctx, grad_output):
-        # Retrieve the saved tensor
-        A, B = ctx.saved_tensors
-        # Compute the gradient for the additive parameter
-        # grad_A = grad_output.clone()
-        grad_A = grad_output @ B.t()  # Gradient of the loss w.r.t. A
-        grad_B = A.t() @ grad_output  # Gradient of the loss w.r.t. B
-        # No gradient for W since it is frozen
-        grad_W = None
-        return grad_W, grad_A, grad_B
+#     @staticmethod
+#     def backward(ctx, grad_output):
+#         # Retrieve the saved tensor
+#         A, B = ctx.saved_tensors
+#         # Compute the gradient for the additive parameter
+#         # grad_A = grad_output.clone()
+#         grad_A = grad_output @ B.t()  # Gradient of the loss w.r.t. A
+#         grad_B = A.t() @ grad_output  # Gradient of the loss w.r.t. B
+#         # No gradient for W since it is frozen
+#         grad_W = None
+#         return grad_W, grad_A, grad_B
 
 
-class FQLora(nn.Module):
-    def __init__(self, qspec: QuantizerSpec):
-        super().__init__()
-        self._qspec = qspec
-        # ################################## LORA START ########################################
-        # if not self._qspec.weight_shape:
-        #     nncf_logger.warning("Quantizing activation!")
-        # elif len(self._qspec.weight_shape) != 2:
-        #     nncf_logger.warning(f"Not 2D weights are not supported for FQ: weight shapes={self._qspec.weight_shape}")
-        # elif self._qspec.weight_shape:
+# class FQLora(nn.Module):
+#     def __init__(self, qspec: QuantizerSpec):
+#         super().__init__()
+#         self._qspec = qspec
+#         # ################################## LORA START ########################################
+#         # if not self._qspec.weight_shape:
+#         #     nncf_logger.warning("Quantizing activation!")
+#         # elif len(self._qspec.weight_shape) != 2:
+#     nncf_logger.warning(f"Not 2D weights are not supported for FQ: weight shapes={self._qspec.weight_shape}")
+#         # elif self._qspec.weight_shape:
 
-        # TODO: transpose_b ?? torch layout is [O, I]
-        out_features, in_features = self._qspec.weight_shape
+#         # TODO: transpose_b ?? torch layout is [O, I]
+#         out_features, in_features = self._qspec.weight_shape
 
-        # TODO: pass as a parameter for FQ
-        lora_rank = 8
-        # own_device = get_model_device(self)
-        self._lora_A = torch.nn.Parameter(
-            torch.ones((lora_rank, in_features), dtype=torch.float32), requires_grad=True
-        )  # .to(own_device)
-        self._lora_B = torch.nn.Parameter(
-            torch.zeros((out_features, lora_rank), dtype=torch.float32), requires_grad=True
-        )  # .to(own_device)
-        print("lora A shape", self._lora_A.shape)
-        # print(self._lora_B.shape)
-        # NOTE: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
-        # Default:
-        # initialize A the same way as the default for nn.Linear and B to zero
-        # By default, PEFT initializes LoRA weights the same way as the reference implementation,
-        # i.e. using Kaiming-uniform for weight A and initializing weight B as zeros, resulting
-        # in an identity transform.
-        # Gaussian:
-        # It is also possible to pass init_lora_weights="gaussian". As the name suggests, this results in
-        # initializing weight A with a Gaussian distribution (weight B is still zeros).
-        # This corresponds to the way that diffusers initializes LoRA weights.
-        # nn.init.kaiming_uniform_(self._lora_A, a=math.sqrt(5))
-        # ################################## LORA END ########################################
+#         # TODO: pass as a parameter for FQ
+#         lora_rank = 8
+#         # own_device = get_model_device(self)
+#         self._lora_A = torch.nn.Parameter(
+#             torch.ones((lora_rank, in_features), dtype=torch.float16), requires_grad=True
+#         ).cuda()#to(own_device)
+#         self._lora_B = torch.nn.Parameter(
+#             torch.zeros((out_features, lora_rank), dtype=torch.float16), requires_grad=True
+#         ).cuda()#to(own_device)
+#         # print("lora A shape", self._lora_A.shape)
+#         # print("lora B shape", self._lora_B.shape)
+#         # NOTE: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
+#         # Default:
+#         # initialize A the same way as the default for nn.Linear and B to zero
+#         # By default, PEFT initializes LoRA weights the same way as the reference implementation,
+#         # i.e. using Kaiming-uniform for weight A and initializing weight B as zeros, resulting
+#         # in an identity transform.
+#         # Gaussian:
+#         # It is also possible to pass init_lora_weights="gaussian". As the name suggests, this results in
+#         # initializing weight A with a Gaussian distribution (weight B is still zeros).
+#         # This corresponds to the way that diffusers initializes LoRA weights.
+#         # nn.init.kaiming_uniform_(self._lora_A, a=math.sqrt(5))
+#         # ################################## LORA END ########################################
 
-    def forward(self, weight):
-        # weight = weight.detach()
-        for name, param in self.named_parameters():
-            print("CHECK: ", name, param.requires_grad)
-        print("CHECK: weight ", weight.requires_grad)
-        return AdditiveFunction.apply(weight, self._lora_A, self._lora_B)
-        # return self._lora_B @ self._lora_A + weight
+#     def forward(self, weight):
+#         # weight = weight.detach()
+#         for name, param in self.named_parameters():
+#             print("CHECK: ", name, param.requires_grad)
+#         print("CHECK: weight ", weight.requires_grad)
+#         return AdditiveFunction.apply(weight, self._lora_A, self._lora_B)
+#         # return self._lora_B @ self._lora_A + weight
 
-    # def quantize(self, x, execute_traced_op_as_identity: bool = False):
-    #     # NOTE: Merge adapters to weight on each inference, quantize the sum afterwards
-    #     # TODO: is it OK to tune adapters and quantization parameters at the same time??
-    #     original_dtype = x.dtype
-    #     if self._lora_B.dtype != original_dtype:
-    #         self._lora_A = torch.nn.Parameter(self._lora_A.to(original_dtype))
-    #         self._lora_B = torch.nn.Parameter(self._lora_B.to(original_dtype))
-    #     if hasattr(self, "_lora_A"):
-    #         print("dtype on quantize, x={} A={}", x.dtype, self._lora_A.dtype)
-    #         x = self._lora_B @ self._lora_A + x  # [O, R] * [R, H] + [O, H]
-    #     return asymmetric_quantize(
-    #         x,
-    #         self.levels,
-    #         self.level_low,
-    #         self.level_high,
-    #         self.input_low,
-    #         self.input_range,
-    #         self.eps,
-    #         skip=execute_traced_op_as_identity,
-    #     )
+#     # def quantize(self, x, execute_traced_op_as_identity: bool = False):
+#     #     # NOTE: Merge adapters to weight on each inference, quantize the sum afterwards
+#     #     # TODO: is it OK to tune adapters and quantization parameters at the same time??
+#     #     original_dtype = x.dtype
+#     #     if self._lora_B.dtype != original_dtype:
+#     #         self._lora_A = torch.nn.Parameter(self._lora_A.to(original_dtype))
+#     #         self._lora_B = torch.nn.Parameter(self._lora_B.to(original_dtype))
+#     #     if hasattr(self, "_lora_A"):
+#     #         print("dtype on quantize, x={} A={}", x.dtype, self._lora_A.dtype)
+#     #         x = self._lora_B @ self._lora_A + x  # [O, R] * [R, H] + [O, H]
+#     #     return asymmetric_quantize(
+#     #         x,
+#     #         self.levels,
+#     #         self.level_low,
+#     #         self.level_high,
+#     #         self.input_low,
+#     #         self.input_range,
+#     #         self.eps,
+#     #         skip=execute_traced_op_as_identity,
+#     #     )

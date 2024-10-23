@@ -315,37 +315,51 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # # original parameters on the forward call.
             # quantizer.scale = torch.nn.Parameter((parameters.input_high.data - quantizer.eps).reshape(scale_shape))
 
-            # input_low = torch.amin(weight, dim=wc_params.reduction_axes[0], keepdim=True).type(
-            #     weight.dtype
-            # )  # [a1, r, a2] -> [a1, 1, a2]
-            # input_high = torch.amax(weight, dim=wc_params.reduction_axes[0], keepdim=True).type(
-            #     weight.dtype
-            # )  # [a1, r, a2] -> [a1, 1, a2]
-            print("weight dtype input_low=", weight.dtype)
+            # with torch.no_grad:
+            input_low = torch.amin(weight, dim=wc_params.reduction_axes[0], keepdim=True)
+            input_high = torch.amax(weight, dim=wc_params.reduction_axes[0], keepdim=True)  # [a1, r, a2] -> [a1, 1, a2]
+            # print("weight dtype input_low=", weight.dtype)
             # print("input_low dtype input_low=", input_low.dtype)
 
             quantizer = AsymmetricQuantizer(quantizer_spec)
+            quantizer._lora_A = torch.nn.Parameter(quantizer._lora_A.type(dtype=weight.dtype))
+            quantizer._lora_B = torch.nn.Parameter(quantizer._lora_B.type(dtype=weight.dtype))
+            # quantizer._lora_B.to(dtype=weight.dtype)
+            quantizer.input_low = torch.nn.Parameter(input_low.reshape(scale_shape))
+            print("weight before ", weight[:5, :5])
+            print("IL before ", quantizer.input_low[:5])
+            input_range = input_high - input_low
+            # Subtract eps from the input_range to make quantizer parameters equal to
+            # original parameters on the forward call.
+            quantizer.input_range = torch.nn.Parameter((input_range - quantizer.eps).reshape(scale_shape))
+            print("IR before ", quantizer.input_range[:5])
+
             # quantizer = FQLora(quantizer_spec)
             # quantizer.input_low = torch.nn.Parameter(input_low.reshape(scale_shape))
-            # quantizer.register_buffer(quantizer.INPUT_LOW_PARAM_NAME, input_low.reshape(scale_shape))
+            # quantizer.register_buffer(
+            # quantizer.INPUT_LOW_PARAM_NAME, input_low.reshape(scale_shape))
             # input_range = input_high - input_low
-            # # Subtract eps from the input_range to make quantizer parameters equal to
-            # # original parameters on the forward call.
-            # # quantizer.input_range = torch.nn.Parameter((input_range - quantizer.eps).reshape(scale_shape))
-            # quantizer.register_buffer(quantizer._INPUT_RANGE_PARAM_STORAGE_ATTR,
-            # (input_range - quantizer.eps).reshape(scale_shape))
+            # Subtract eps from the input_range to make quantizer parameters equal to
+            # original parameters on the forward call.
+            # quantizer.input_range = torch.nn.Parameter((input_range - quantizer.eps).reshape(scale_shape))
+            # quantizer.register_buffer(
+            #     quantizer._INPUT_RANGE_PARAM_STORAGE_ATTR,
+            #     (input_range - quantizer.eps).reshape(scale_shape)
+            # )
+            quantizer.to(weight.device)
 
             node_name = weight_node.node_name
             # print('NODE NAME+++++', node_name)
-            node_name = (
-                "LlamaModel/ModuleList[layers]/LlamaDecoderLayer[21]/"
-                "LlamaSdpaAttention[self_attn]/Linear[v_proj]/linear_0"
-            )
+            fq_node_name = wc_params.node_with_weight.node_name
+            # node_name = (
+            #     "LlamaModel/ModuleList[layers]/LlamaDecoderLayer[21]/"
+            #     "LlamaSdpaAttention[self_attn]/Linear[v_proj]/linear_0"
+            # )
             # target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name,
             # input_port_id=wc_params.weight_port_id)
             # TODO: why not wc_params.weight_port_id)???
             #  because post hook for constant??
-            target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name, input_port_id=1)
+            target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, fq_node_name, input_port_id=1)
 
             storage_key = "FQ_LORA_for_node_{}".format(node_name.replace(".", "_"))
             # quantizer_id = NonWeightQuantizerId(target_point.target_node_name, target_point.input_port_id)
@@ -363,5 +377,5 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         # apply transformations
         transformed_model = PTModelTransformer(model).transform(transformation_layout)
-        print(transformed_model)
+        # print(transformed_model)
         return transformed_model

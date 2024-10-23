@@ -34,10 +34,10 @@ model_id = "TinyLlama/TinyLlama_v1.1"
 
 hf_model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype=torch.float32,  # "auto",
-    # device_map="auto",
+    torch_dtype="auto",  # torch.float32,  # "auto",
+    device_map="auto",
     low_cpu_mem_usage=True,
-).to("cuda")
+)  # .to("cuda")
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 # print(hf_model)
 
@@ -61,8 +61,8 @@ print("#" * 50 + " Before\n", tokenizer.decode(output[0]), "\n" + "#" * 150)
 
 # We'll teach the model to repeatedly say "chicken".
 tokenized_text = tokenizer("chicken " * 10, return_tensors="pt")
-labels = tokenized_text["input_ids"].to("cuda:0")
-attention_mask = tokenized_text["attention_mask"].to("cuda:0")
+labels = tokenized_text["input_ids"].cuda()  # to("cuda:0")
+attention_mask = tokenized_text["attention_mask"].cuda()  # to("cuda:0")
 input_ids = labels[:, :-1]
 labels = labels[:, 1:]
 
@@ -175,20 +175,52 @@ dataset = [
 #     calibration_dataset=nncf.Dataset(dataset),
 #     advanced_parameters=params
 # )
+
+
+def get_nb_trainable_parameters(module):
+    r"""
+    Returns the number of trainable parameters and number of all parameters in the model.
+    """
+    # note: same as PeftModel.get_nb_trainable_parameters
+    trainable_params = 0
+    all_param = 0
+    for _, param in module.named_parameters():
+        num_params = param.numel()
+        all_param += num_params
+        if param.requires_grad:
+            trainable_params += num_params
+
+    return trainable_params, all_param
+
+
+def print_trainable_parameters(module):
+    trainable_params, all_param = get_nb_trainable_parameters(module)
+
+    print(
+        f"trainable params: {trainable_params:,d} || "
+        f"all params: {all_param:,d} || "
+        f"trainable%: {100 * trainable_params / all_param:.4f}"
+    )
+
+
 model = hf_model.model
 nncf.compress_weights(
     hf_model.model,
     mode=nncf.CompressWeightsMode.INT8_ASYM,
     ignored_scope=nncf.IgnoredScope(
-        # patterns = ['^(?!model.decoder.layers\[11\]\.v_proj$).*']
         patterns=[
-            # '^(?!.*OPTDecoderLayer\[11\]/OPTAttention\[self_attn\]/NNCFLinear\[v_proj\]).*'
-            # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
-            # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+            # '^(?!model.decoder.layers\[11\]\.v_proj$).*'
+            #         # '^(?!.*OPTDecoderLayer\[11\]/OPTAttention\[self_attn\]/NNCFLinear\[v_proj\]).*'
+            #         # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+            #         # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
             "^(?!.*LlamaModel\/ModuleList\[layers\]\/LlamaDecoderLayer\[21\]\/LlamaSdpaAttention\[self_attn\]\/Linear\[v_proj\].*$).*"
         ]
-        # OPTDecoderLayer[11]/OPTAttention[self_attn]/Linear[v_proj]/to_0
-        # patterns = ['.*_proj.*', '.*out_proj.*', '.*q_proj.*', '.*fc1.*', '.*fc2.*']
+        #     # OPTDecoderLayer[11]/OPTAttention[self_attn]/Linear[v_proj]/to_0
+        #     patterns = [
+        #         # '.*_proj.*', '.*out_proj.*', '.*q_proj.*', '.*fc1.*',
+        #         # '.*self_attn.*',
+        #         '.*gate_proj.*', '.*up_proj.*', '.*embed_tokens.*'
+        #     ]
     ),
     dataset=nncf.Dataset(dataset),
 )
@@ -196,7 +228,7 @@ model.nncf.get_graph().visualize_graph("fq_model.dot")
 # print(hf_model.model)
 
 output = hf_model.generate(
-    tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=128, max_new_tokens=128
+    tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
 )
 print("#" * 50 + " After Quantize\n", tokenizer.decode(output[0]), "\n" + "#" * 150)
 
@@ -216,7 +248,7 @@ for param in hf_model.parameters():
 param_to_train = []
 for name, param in hf_model.named_parameters():
     if "lora" in name:  # or "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
-        print("optimize -> ", name)
+        # print("optimize -> ", name)
         param.requires_grad = True
         param_to_train.append(param)
     # if "11.self_attn.v_proj.weight" in name:
@@ -229,7 +261,7 @@ for name, param in hf_model.named_parameters():
 for name, param in hf_model.named_parameters():
     if param.requires_grad:
         print("requires grad for -> ", name)
-
+print_trainable_parameters(model)
 
 optimizer = torch.optim.Adam(hf_model.parameters(), lr=1e-2)
 losses = []
@@ -237,8 +269,15 @@ for i in range(10):
     optimizer.zero_grad()
     loss = hf_model(input_ids=input_ids, labels=labels).loss
     losses.append(float(loss))
+    # print(float(loss))
     loss.backward()
     optimizer.step()
+
+print("weight after ", model.layers[21].self_attn.v_proj.weight[:5, :5])
+# print('weight before ', weight[:5, :5])
+quantizer = model.nncf.external_quantizers.FQ_LORA_for_node_layers_21_self_attn_v_proj_weight
+for name, param in quantizer.named_parameters():
+    print(name, param[:5])
 
 # Check that loss is decreasing
 plt.plot(losses)
