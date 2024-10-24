@@ -10,6 +10,7 @@
 # limitations under the License.
 
 
+import math
 from abc import ABC
 from abc import abstractmethod
 from enum import Enum
@@ -333,7 +334,7 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             # It is also possible to pass init_lora_weights="gaussian". As the name suggests, this results in
             # initializing weight A with a Gaussian distribution (weight B is still zeros).
             # This corresponds to the way that diffusers initializes LoRA weights.
-            # nn.init.kaiming_uniform_(self._lora_A, a=math.sqrt(5))
+            nn.init.kaiming_uniform_(self._lora_A, a=math.sqrt(5))
             # ################################## LORA END ########################################
 
         OPTIONAL_PARAMETERS_REGISTRY.register("_num_bits")

@@ -208,24 +208,29 @@ nncf.compress_weights(
     hf_model.model,
     mode=nncf.CompressWeightsMode.INT8_ASYM,
     ignored_scope=nncf.IgnoredScope(
+        #     # patterns=[
+        #     #     # '^(?!model.decoder.layers\[11\]\.v_proj$).*'
+        #     #             # '^(?!.*OPTDecoderLayer\[11\]/OPTAttention\[self_attn\]/NNCFLinear\[v_proj\]).*'
+        #     #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+        #     #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+        # "^(?!.*LlamaModel\/ModuleList\[layers\]\/LlamaDecoderLayer\[21\]
+        # \/LlamaSdpaAttention\[self_attn\]\/Linear\[v_proj\].*$).*"
+        #     # ]
+        #     #     # OPTDecoderLayer[11]/OPTAttention[self_attn]/Linear[v_proj]/to_0
         patterns=[
-            # '^(?!model.decoder.layers\[11\]\.v_proj$).*'
-            #         # '^(?!.*OPTDecoderLayer\[11\]/OPTAttention\[self_attn\]/NNCFLinear\[v_proj\]).*'
-            #         # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
-            #         # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
-            "^(?!.*LlamaModel\/ModuleList\[layers\]\/LlamaDecoderLayer\[21\]\/LlamaSdpaAttention\[self_attn\]\/Linear\[v_proj\].*$).*"
+            #             # '.*_proj.*', '.*out_proj.*', '.*q_proj.*', '.*fc1.*',
+            #             # '.*self_attn.*',
+            #             '.*down_proj.*',
+            #             '.*gate_proj.*', '.*up_proj.*',
+            ".*embed_tokens.*"
         ]
-        #     # OPTDecoderLayer[11]/OPTAttention[self_attn]/Linear[v_proj]/to_0
-        #     patterns = [
-        #         # '.*_proj.*', '.*out_proj.*', '.*q_proj.*', '.*fc1.*',
-        #         # '.*self_attn.*',
-        #         '.*gate_proj.*', '.*up_proj.*', '.*embed_tokens.*'
-        #     ]
     ),
     dataset=nncf.Dataset(dataset),
 )
-model.nncf.get_graph().visualize_graph("fq_model.dot")
+# model.nncf.get_graph().visualize_graph("fq_model.dot")
 # print(hf_model.model)
+hf_model.save_pretrained("/home/nlyaly/MODEL_DIR/tiny_llama_v1.1/fq4_emb32")
+tokenizer.save_pretrained("/home/nlyaly/MODEL_DIR/tiny_llama_v1.1/fq4_emb32")
 
 output = hf_model.generate(
     tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
@@ -263,9 +268,9 @@ for name, param in hf_model.named_parameters():
         print("requires grad for -> ", name)
 print_trainable_parameters(model)
 
-optimizer = torch.optim.Adam(hf_model.parameters(), lr=1e-2)
+optimizer = torch.optim.Adam(hf_model.parameters(), lr=1e-4)
 losses = []
-for i in range(10):
+for i in range(50):
     optimizer.zero_grad()
     loss = hf_model(input_ids=input_ids, labels=labels).loss
     losses.append(float(loss))
@@ -273,11 +278,14 @@ for i in range(10):
     loss.backward()
     optimizer.step()
 
-print("weight after ", model.layers[21].self_attn.v_proj.weight[:5, :5])
+hf_model.save_pretrained("/home/nlyaly/MODEL_DIR/tiny_llama_v1.1/fq4_emb32_chicken")
+tokenizer.save_pretrained("/home/nlyaly/MODEL_DIR/tiny_llama_v1.1/fq4_emb32_chicken")
+
+# print("weight after ", model.layers[21].self_attn.v_proj.weight[:5, :5])
 # print('weight before ', weight[:5, :5])
-quantizer = model.nncf.external_quantizers.FQ_LORA_for_node_layers_21_self_attn_v_proj_weight
-for name, param in quantizer.named_parameters():
-    print(name, param[:5])
+# quantizer = model.nncf.external_quantizers.FQ_LORA_for_node_layers_21_self_attn_v_proj_weight
+# for name, param in quantizer.named_parameters():
+#     print(name, param[:5])
 
 # Check that loss is decreasing
 plt.plot(losses)
