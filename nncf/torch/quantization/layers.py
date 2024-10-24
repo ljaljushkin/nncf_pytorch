@@ -70,10 +70,12 @@ class QuantizerExportMode(Enum):
 class PTQSpecStateNames:
     NUM_BITS = "num_bits"
     MODE = "mode"
+    DEVICE = "device"
     SIGNED_TO_FORCE = "signedness_to_force"
     NARROW_RANGE = "narrow_range"
     HALF_RANGE = "half_range"
     SCALE_SHAPE = "scale_shape"
+    WEIGHT_SHAPE = "weight_shape"
     LOGARITHM_SCALE = "logarithm_scale"
     IS_QUANTIZED_ON_EXPORT = "is_quantized_on_export"
     COMPRESSION_LR_MULTIPLIER = "compression_lr_multiplier"
@@ -94,6 +96,7 @@ class PTQuantizerSpec(QuantizerSpec):
         logarithm_scale: bool,
         is_quantized_on_export: bool = False,
         compression_lr_multiplier: float = None,
+        device: str = "cpu",
     ):
         """
         :param scale_shape: Shape of quantizer scale parameters
@@ -109,6 +112,7 @@ class PTQuantizerSpec(QuantizerSpec):
         self.logarithm_scale = logarithm_scale
         self.compression_lr_multiplier = compression_lr_multiplier
         self.is_quantized_on_export = is_quantized_on_export
+        self.device = device
 
     @classmethod
     def from_config(
@@ -118,6 +122,7 @@ class PTQuantizerSpec(QuantizerSpec):
         half_range: bool,
         scale_shape: Tuple[int],
         weight_shape: Tuple[int],
+        device: str,
         logarithm_scale: bool,
         is_quantized_on_export: bool,
         compression_lr_multiplier: float,
@@ -133,6 +138,7 @@ class PTQuantizerSpec(QuantizerSpec):
             logarithm_scale,
             is_quantized_on_export,
             compression_lr_multiplier,
+            device,
         )
 
     def __eq__(self, other):
@@ -152,6 +158,8 @@ class PTQuantizerSpec(QuantizerSpec):
             cls._state_names.NARROW_RANGE: state["narrow_range"],
             cls._state_names.HALF_RANGE: state["half_range"],
             cls._state_names.SCALE_SHAPE: state["scale_shape"],
+            cls._state_names.WEIGHT_SHAPE: state["weight_shape"],
+            cls._state_names.DEVICE: state["device"],
             cls._state_names.LOGARITHM_SCALE: state["logarithm_scale"],
             cls._state_names.IS_QUANTIZED_ON_EXPORT: state["is_quantized_on_export"],
             cls._state_names.COMPRESSION_LR_MULTIPLIER: state["compression_lr_multiplier"],
@@ -166,6 +174,8 @@ class PTQuantizerSpec(QuantizerSpec):
             self._state_names.NARROW_RANGE: self.narrow_range,
             self._state_names.HALF_RANGE: self.half_range,
             self._state_names.SCALE_SHAPE: self.scale_shape,
+            self._state_names.WEIGHT_SHAPE: self.weight_shape,
+            self._state_names.DEVICE: self.device,
             self._state_names.LOGARITHM_SCALE: self.logarithm_scale,
             self._state_names.IS_QUANTIZED_ON_EXPORT: self.is_quantized_on_export,
             self._state_names.COMPRESSION_LR_MULTIPLIER: self.compression_lr_multiplier,
@@ -294,6 +304,7 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__()
         self._qspec = qspec
+        self.device = self._qspec.device
         self._narrow_range = qspec.narrow_range
         self._signedness_to_force = qspec.signedness_to_force
         self._is_using_log_scale_storage = qspec.logarithm_scale
@@ -319,10 +330,10 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             # own_device = get_model_device(self)
             self._lora_A = torch.nn.Parameter(
                 torch.ones((lora_rank, in_features), dtype=torch.float16), requires_grad=True
-            )  # .to(own_device) # cuda()
+            )
             self._lora_B = torch.nn.Parameter(
                 torch.zeros((out_features, lora_rank), dtype=torch.float16), requires_grad=True
-            )  # .to(own_device) # cuda()
+            )
 
             # NOTE: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
             # Default:
@@ -372,6 +383,7 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
                 self.hook.remove()
 
         self.load_listener = LoadStateListener(self)
+        # self.to(self.device)
 
     @property
     def level_low(self) -> int:
@@ -877,7 +889,6 @@ class AsymmetricQuantizer(BaseQuantizer):
 
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__(qspec)
-        # TODO: try with original implementation - nn.Parameter
         self.input_low = CompressionParameter(
             torch.zeros(self.scale_shape), requires_grad=True, compression_lr_multiplier=qspec.compression_lr_multiplier
         )
@@ -890,27 +901,6 @@ class AsymmetricQuantizer(BaseQuantizer):
                 compression_lr_multiplier=qspec.compression_lr_multiplier,
             ),
         )
-        # self.register_buffer(
-        #     self.INPUT_LOW_PARAM_NAME,
-        #     # CompressionParameter(
-        #     torch.zeros(self.scale_shape),
-        #     # requires_grad=True,
-        #     # compression_lr_multiplier=qspec.compression_lr_multiplier
-        # )
-        # self.register_buffer(
-        #     self._INPUT_RANGE_PARAM_STORAGE_ATTR,
-        #     # setattr(
-        #     # self,
-        #     # self._INPUT_RANGE_PARAM_STORAGE_ATTR,
-        #     # CompressionParameter(
-        #     torch.ones(self.scale_shape),
-        #     # requires_grad=True,
-        #     # compression_lr_multiplier=qspec.compression_lr_multiplier,
-        #     # ),
-        # )
-        # TODO: pass the device of FQ, take from the corresponding weight
-        # own_device = get_model_device(self)
-        # getattr(self, self.INPUT_LOW_PARAM_NAME).to(own_device) # TODO: WA
 
         if self._is_using_log_scale_storage:
             self._input_range_param_storage.data.log_()
@@ -934,6 +924,7 @@ class AsymmetricQuantizer(BaseQuantizer):
                 use_log_storage_in_module=self._is_using_log_scale_storage,
             )
         )
+        # self.to(self.device)
 
     @property
     def input_range(self):
@@ -977,8 +968,8 @@ class AsymmetricQuantizer(BaseQuantizer):
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
         # NOTE: Merge adapters to weight on each inference, quantize the sum afterwards
         # TODO: is it OK to tune adapters and quantization parameters at the same time??
-        # device = x.device
-        # self.to(device)
+        device = x.device
+        self.to(device)
         # original_dtype = x.dtype
         # if self._lora_A.device != device:
         #     self._lora_A = torch.nn.Parameter(self._lora_A.to(original_dtype))

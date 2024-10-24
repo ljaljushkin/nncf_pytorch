@@ -11,43 +11,18 @@
 
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import torch
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 
 import nncf
 
-# model_id = "facebook/opt-125m"
-model_id = "TinyLlama/TinyLlama_v1.1"
 
-hf_model = AutoModelForCausalLM.from_pretrained(
-    model_id,
-    torch_dtype="auto",  # torch.float32,  # "auto",
-    device_map="auto",
-    low_cpu_mem_usage=True,
-)  # .to("cuda")
-tokenizer = AutoTokenizer.from_pretrained(model_id)
-
-output = hf_model.generate(
-    tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
-)
-print("#" * 50 + " Before\n", tokenizer.decode(output[0]), "\n" + "#" * 150)
-
-
-# We'll teach the model to repeatedly say "chicken".
-tokenized_text = tokenizer("chicken " * 10, return_tensors="pt")
-labels = tokenized_text["input_ids"].cuda()  # to("cuda:0")
-attention_mask = tokenized_text["attention_mask"].cuda()  # to("cuda:0")
-input_ids = labels[:, :-1]
-labels = labels[:, 1:]
-
-dataset = [
-    {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask[:, :-1],
-    }
-]
+def generate_chicken(pipeline, tokenizer):
+    output = pipeline.generate(
+        tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
+    )
+    print("#" * 50 + " Before\n", tokenizer.decode(output[0]), "\n" + "#" * 150)
 
 
 def get_nb_trainable_parameters(module):
@@ -76,6 +51,41 @@ def print_trainable_parameters(module):
     )
 
 
+ROOT_MODEL_DIR = Path.home() / ("MODEL_DIR")
+
+# model_id = "facebook/opt-125m"
+model_id = "TinyLlama/TinyLlama_v1.1"
+model_name = Path(model_id).name.replace(".", "_")
+
+MODEL_DIR = ROOT_MODEL_DIR / model_name
+FP32_MODEL_DIR = MODEL_DIR / "fp32"
+
+hf_model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    torch_dtype="auto",  # torch.float32,  # "auto",
+    device_map="auto",
+    low_cpu_mem_usage=True,
+)  # .to("cuda")
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+# hf_model.save_pretrained(FP32_MODEL_DIR)
+# tokenizer.save_pretrained(FP32_MODEL_DIR)
+
+
+# We'll teach the model to repeatedly say "chicken".
+tokenized_text = tokenizer("chicken " * 10, return_tensors="pt")
+labels = tokenized_text["input_ids"].cuda()  # to("cuda:0")
+attention_mask = tokenized_text["attention_mask"].cuda()  # to("cuda:0")
+input_ids = labels[:, :-1]
+labels = labels[:, 1:]
+
+dataset = [
+    {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask[:, :-1],
+    }
+]
+
+
 model = hf_model.model
 nncf.compress_weights(
     hf_model.model,
@@ -100,58 +110,88 @@ nncf.compress_weights(
     ),
     dataset=nncf.Dataset(dataset),
 )
+
+# output = hf_model.generate(
+#     tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
+# )
+# print("#" * 50 + " After Quantize\n", tokenizer.decode(output[0]), "\n" + "#" * 150)
+
+
+FQ_MODEL_DIR = MODEL_DIR / "FQ_4bit_emb32"
+if not FQ_MODEL_DIR.exists():
+    FQ_MODEL_DIR.mkdir()
+nncf_state_dict = model.nncf.state_dict()
+nncf_config = model.nncf.get_config()
+torch.save(
+    {
+        "nncf_state_dict": nncf_state_dict,
+        "nncf_config": nncf_config,
+    },
+    FQ_MODEL_DIR / "nncf_checkpoint.pth",
+)
+
+
+hf_model = AutoModelForCausalLM.from_pretrained(
+    FP32_MODEL_DIR,
+    torch_dtype="auto",  # torch.float32,  # "auto",
+    device_map="auto",
+    low_cpu_mem_usage=True,
+)
+
+nncf_ckpt = torch.load(FQ_MODEL_DIR / "nncf_checkpoint.pth")
+hf_model.model = nncf.torch.load_from_config(hf_model.model, nncf_ckpt["nncf_config"], example_input=dataset[0])
+hf_model.model.nncf.load_state_dict(nncf_ckpt["nncf_state_dict"])
+
+generate_chicken(hf_model, tokenizer)
 # model.nncf.get_graph().visualize_graph("fq_model.dot")
-hf_model.save_pretrained("/home/nlyaly/MODEL_DIR/tiny_llama_v1.1/fq4_emb32")
-tokenizer.save_pretrained("/home/nlyaly/MODEL_DIR/tiny_llama_v1.1/fq4_emb32")
-
-output = hf_model.generate(
-    tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
-)
-print("#" * 50 + " After Quantize\n", tokenizer.decode(output[0]), "\n" + "#" * 150)
 
 
-for param in hf_model.parameters():
-    param.requires_grad = False
+# for param in hf_model.parameters():
+#     param.requires_grad = False
 
-param_to_train = []
-for name, param in hf_model.named_parameters():
-    if "lora" in name:  # or "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
-        # print("optimize -> ", name)
-        param.requires_grad = True
-        param_to_train.append(param)
-for name, param in hf_model.named_parameters():
-    if param.requires_grad:
-        print("requires grad for -> ", name)
-print_trainable_parameters(model)
+# param_to_train = []
+# for name, param in hf_model.named_parameters():
+#     if "lora" in name:  # or "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
+#         # print("optimize -> ", name)
+#         param.requires_grad = True
+#         param_to_train.append(param)
+# for name, param in hf_model.named_parameters():
+#     if param.requires_grad:
+#         print("requires grad for -> ", name)
+# print_trainable_parameters(model)
 
-optimizer = torch.optim.Adam(hf_model.parameters(), lr=1e-4)
-losses = []
-for i in range(50):
-    optimizer.zero_grad()
-    loss = hf_model(input_ids=input_ids, labels=labels).loss
-    losses.append(float(loss))
-    # print(float(loss))
-    loss.backward()
-    optimizer.step()
+# optimizer = torch.optim.Adam(hf_model.parameters(), lr=1e-4)
+# losses = []
+# for i in range(50):
+#     optimizer.zero_grad()
+#     loss = hf_model(input_ids=input_ids, labels=labels).loss
+#     losses.append(float(loss))
+#     # print(float(loss))
+#     loss.backward()
+#     optimizer.step()
 
-hf_model.save_pretrained("/home/nlyaly/MODEL_DIR/tiny_llama_v1.1/fq4_emb32_chicken")
-tokenizer.save_pretrained("/home/nlyaly/MODEL_DIR/tiny_llama_v1.1/fq4_emb32_chicken")
+# hf_model.save_pretrained("/home/nlyaly/MODEL_DIR/tiny_llama_v1.1/fq4_emb32_chicken")
+# tokenizer.save_pretrained("/home/nlyaly/MODEL_DIR/tiny_llama_v1.1/fq4_emb32_chicken")
 
-# Check that loss is decreasing
-plt.plot(losses)
-plt.title("Lora fine-tuning", fontsize=20)
-plt.xlabel("Steps")
-plt.ylabel("Loss")
-plt.legend()
-path = Path("loss.png").resolve()
-plt.savefig(path)
-print("Saving loss plot to:", path)
+# # Check that loss is decreasing
+# plt.plot(losses)
+# plt.title("Lora fine-tuning", fontsize=20)
+# plt.xlabel("Steps")
+# plt.ylabel("Loss")
+# plt.legend()
+# path = Path("loss.png").resolve()
+# plt.savefig(path)
+# print("Saving loss plot to:", path)
 
-# Check the output of tuned model
-output = tokenizer.decode(
-    hf_model.generate(
-        tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
-    )[0]
-)
-print("#" * 50 + " After Tune\n", output, "\n" + "#" * 150)
-print(f"Peak memory usage: {torch.cuda.max_memory_allocated() * 1e-9:.2f} Gb")
+# # Check the output of tuned model
+# output = tokenizer.decode(
+#     hf_model.generate(
+#         tokenizer("chicken", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
+#     )[0]
+# )
+# print("#" * 50 + " After Tune\n", output, "\n" + "#" * 150)
+# print(f"Peak memory usage: {torch.cuda.max_memory_allocated() * 1e-9:.2f} Gb")
+# print(f"Peak memory usage: {torch.cuda.max_memory_allocated() * 1e-9:.2f} Gb")
+# print(f"Peak memory usage: {torch.cuda.max_memory_allocated() * 1e-9:.2f} Gb")
+# print(f"Peak memory usage: {torch.cuda.max_memory_allocated() * 1e-9:.2f} Gb")
+# print(f"Peak memory usage: {torch.cuda.max_memory_allocated() * 1e-9:.2f} Gb")

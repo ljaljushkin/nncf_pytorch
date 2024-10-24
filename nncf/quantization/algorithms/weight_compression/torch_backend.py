@@ -313,10 +313,12 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 mode=QuantizationScheme.ASYMMETRIC,
             )
             # scale_shape = compressed_weight.scale.shape
-            weight_shape = weight.shape
+            # print(weight_node.node_name, str(weight.device))
+            weight_shape = list(weight.shape)
             quantizer_spec = PTQuantizerSpec.from_config(
                 quantizer_config,
                 narrow_range=False,
+                device=str(weight.device),
                 scale_shape=scale_shape,
                 weight_shape=weight_shape,
                 half_range=False,
