@@ -125,7 +125,7 @@ nncf.compress_weights(
 )
 
 generate_chicken(hf_model, tokenizer, "Quantized")
-save_checkpoint(hf_model.model, MODEL_DIR / "FQ_4bit_emb32")
+# save_checkpoint(hf_model.model, MODEL_DIR / "FQ_4bit_emb32")
 # model.nncf.get_graph().visualize_graph("fq_model.dot")
 
 
@@ -153,7 +153,7 @@ for i in range(50):
     loss.backward()
     optimizer.step()
 
-save_checkpoint(hf_model.model, MODEL_DIR / "FQ_4bit_emb32_chicken")
+# save_checkpoint(hf_model.model, MODEL_DIR / "FQ_4bit_emb32_chicken")
 generate_chicken(hf_model, tokenizer, "Quantized + Tuned")
 
 # Check that loss is decreasing

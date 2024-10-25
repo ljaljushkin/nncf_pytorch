@@ -984,7 +984,7 @@ class AsymmetricQuantizer(BaseQuantizer):
         # print('move to ', device)
         # for name, param in self.named_parameters():
         #     print("CHECK: ", name, param.device)
-        # x = self._lora_B @ self._lora_A + x  # .detach()  # [O, R] * [R, H] + [O, H]
+        x = self._lora_B @ self._lora_A + x  # .detach()  # [O, R] * [R, H] + [O, H]
         # return ReferenceQuantize(backend_type=ReferenceBackendType.TORCH).forward(weight)
         # return x
         return asymmetric_quantize(
@@ -996,8 +996,8 @@ class AsymmetricQuantizer(BaseQuantizer):
             self.input_range,
             self.eps,
             skip=execute_traced_op_as_identity,
-            A=self._lora_A,
-            B=self._lora_B,
+            # A=self._lora_A,
+            # B=self._lora_B,
         )
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
