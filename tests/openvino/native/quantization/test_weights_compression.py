@@ -1097,11 +1097,11 @@ def get_shape_for_second_input(op_with_weights: ov.Node) -> List[int]:
     "params, transpose_b",
     ((None, True), (LoraParams(adapter_rank=4, use_int8_adapters=False), False)),
 )
-def test_lora_adapters_in_the_graph(params, transpose_b):
+def test_lora_adapters_in_the_graph(params, transpose_b, tmp_path):
     advanced_parameters = CompressionParams() if params is None else CompressionParams(lora_correction_params=params)
     model = LMLinearModel(transpose_b=transpose_b).ov_model
     dataset = Dataset(np.ones(inp.shape) for inp in model.inputs)
-
+    ov.save_model(model, tmp_path / "original.xml")
     compressed_model = compress_weights(
         model,
         mode=CompressWeightsMode.INT4_SYM,
@@ -1112,6 +1112,8 @@ def test_lora_adapters_in_the_graph(params, transpose_b):
         lora_correction=True,
         advanced_parameters=advanced_parameters,
     )
+    ov.save_model(compressed_model, tmp_path / "compressed.xml")
+
     input_node = compressed_model.inputs[0].node
     target_inputs = input_node.output(0).get_target_inputs()
     assert len(target_inputs) == 2

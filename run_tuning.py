@@ -55,6 +55,7 @@ def print_trainable_parameters(module):
 def save_checkpoint(wrapped_model, ckpt_dir):
     if not ckpt_dir.exists():
         ckpt_dir.mkdir()
+    wrapped_model = wrapped_model.cpu()
     nncf_state_dict = wrapped_model.nncf.state_dict()
     nncf_config = wrapped_model.nncf.get_config()
     torch.save(
@@ -69,19 +70,20 @@ def save_checkpoint(wrapped_model, ckpt_dir):
 ROOT_MODEL_DIR = Path.home() / ("MODEL_DIR")
 
 # model_id = "facebook/opt-125m"
-model_id = "TinyLlama/TinyLlama_v1.1"
+# model_id = "TinyLlama/TinyLlama_v1.1"
+model_id = "microsoft/Phi-3-mini-4k-instruct"
 model_name = Path(model_id).name.replace(".", "_")
 
 MODEL_DIR = ROOT_MODEL_DIR / model_name
-FP32_MODEL_DIR = MODEL_DIR / "fp32"
 
 hf_model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype="auto",  # torch.float32,  # "auto",
+    torch_dtype=torch.float16,  # torch.float32, # "auto",  # torch.float32,  # "auto",
     device_map="auto",
     low_cpu_mem_usage=True,
+    trust_remote_code=True,
 )
-tokenizer = AutoTokenizer.from_pretrained(model_id)
+tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 generate_chicken(hf_model, tokenizer, "FP32")
 
 # We'll teach the model to repeatedly say "chicken".
@@ -90,13 +92,10 @@ labels = tokenized_text["input_ids"].cuda()  # to("cuda:0")
 attention_mask = tokenized_text["attention_mask"].cuda()  # to("cuda:0")
 input_ids = labels[:, :-1]
 labels = labels[:, 1:]
+position_ids = torch.cumsum(attention_mask, axis=1) - 1
+position_ids[attention_mask == 0] = 1
 
-dataset = [
-    {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask[:, :-1],
-    }
-]
+dataset = [{"input_ids": input_ids, "attention_mask": attention_mask[:, :-1], "position_ids": position_ids[:, :-1]}]
 
 
 model = hf_model.model
@@ -104,20 +103,21 @@ nncf.compress_weights(
     hf_model.model,
     mode=nncf.CompressWeightsMode.INT8_ASYM,
     ignored_scope=nncf.IgnoredScope(
-        #     # patterns=[
-        #     #     # '^(?!model.decoder.layers\[11\]\.v_proj$).*'
-        #     #             # '^(?!.*OPTDecoderLayer\[11\]/OPTAttention\[self_attn\]/NNCFLinear\[v_proj\]).*'
-        #     #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
-        #     #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
-        # "^(?!.*LlamaModel\/ModuleList\[layers\]\/LlamaDecoderLayer\[21\]
-        # \/LlamaSdpaAttention\[self_attn\]\/Linear\[v_proj\].*$).*"
-        #     # ]
-        #     #     # OPTDecoderLayer[11]/OPTAttention[self_attn]/Linear[v_proj]/to_0
+        #     patterns=[
+        # # #         #     # '^(?!model.decoder.layers\[11\]\.v_proj$).*'
+        # # #         #             # '^(?!.*OPTDecoderLayer\[11\]/OPTAttention\[self_attn\]/NNCFLinear\[v_proj\]).*'
+        # # #         #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+        # # #         #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+        # # #         "^(?!.*LlamaModel\/ModuleList\[layers\]\/LlamaDecoderLayer\[21\].*$).*"
+        # # #             # \/LlamaSdpaAttention\[self_attn\]\/Linear\[v_proj\].*$).*"
+        # # #      # OPTDecoderLayer[11]/OPTAttention[self_attn]/Linear[v_proj]/to_0
+        #          "^(?!.*Phi3DecoderLayer\[31\].*$).*"
+        #     ]
         patterns=[
-            #             # '.*_proj.*', '.*out_proj.*', '.*q_proj.*', '.*fc1.*',
-            #             # '.*self_attn.*',
-            #             '.*down_proj.*',
-            #             '.*gate_proj.*', '.*up_proj.*',
+            # #     #     #             y# '.*_proj.*', '.*out_proj.*', '.*q_proj.*', '.*fc1.*',
+            # #     #     #             # '.*self_attn.*',
+            # #     #     #             '.*down_proj.*',
+            # #     #     #             '.*gate_proj.*', '.*up_proj.*',
             ".*embed_tokens.*"
         ]
     ),
@@ -125,9 +125,11 @@ nncf.compress_weights(
 )
 
 generate_chicken(hf_model, tokenizer, "Quantized")
-# save_checkpoint(hf_model.model, MODEL_DIR / "FQ_4bit_emb32")
-# model.nncf.get_graph().visualize_graph("fq_model.dot")
-
+# ckpt_dir = MODEL_DIR / "FQ_4bit_31layer_svd"
+ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g64"
+save_checkpoint(hf_model.model, ckpt_dir)
+model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")
+exit()
 
 for param in hf_model.parameters():
     param.requires_grad = False

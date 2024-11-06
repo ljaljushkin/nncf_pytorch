@@ -211,7 +211,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         pass
 
     @staticmethod
-    def init_lora_adapters(weight, fq_weight, reduction_axes=None, rank=8):
+    def init_lora_adapters(weight, fq_weight, reduction_axes=None, rank=None):
         svd_residual = (weight - fq_weight).type(torch.float32)
 
         # O stands for output dimension, H - input dimension or hidden size, SS - samples size, R - rank.
@@ -321,6 +321,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 device=str(weight.device),
                 scale_shape=scale_shape,
                 weight_shape=weight_shape,
+                # lora_rank=32,
                 half_range=False,
                 logarithm_scale=False,
                 is_quantized_on_export=False,
@@ -335,31 +336,48 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # # original parameters on the forward call.
             # quantizer.scale = torch.nn.Parameter((parameters.input_high.data - quantizer.eps).reshape(scale_shape))
 
+            # NOTE: grouped case
+            # group_size = 64
+            # group_reduction_axes = 2
+            # group_shape = [out_features, in_features // group_size, group_size]
+            # scale_shape = [out_features, in_features // group_size, 1]
+            # reshape_weight = weight.reshape(group_shape)
+            group_reduction_axes = wc_params.reduction_axes[0]
+            reshape_weight = weight
+
             # with torch.no_grad:
-            input_low = torch.amin(weight, dim=wc_params.reduction_axes[0], keepdim=True)
-            input_high = torch.amax(weight, dim=wc_params.reduction_axes[0], keepdim=True)  # [a1, r, a2] -> [a1, 1, a2]
+            input_low = torch.amin(reshape_weight, dim=group_reduction_axes, keepdim=True)
+            input_high = torch.amax(
+                reshape_weight, dim=group_reduction_axes, keepdim=True
+            )  # [a1, r, a2] -> [a1, 1, a2]
             # print("weight dtype input_low=", weight.dtype)
             # print("input_low dtype input_low=", input_low.dtype)
-
+            quantizer_spec.scale_shape = scale_shape
             quantizer = AsymmetricQuantizer(quantizer_spec)
 
             # quantizer._lora_B.to(dtype=weight.dtype)
+            # TODO: with group-wise reshape is not needed
             quantizer.input_low = torch.nn.Parameter(input_low.reshape(scale_shape))
+            # quantizer.register_buffer('input_low', input_low)
             # print("weight before ", weight[:5, :5])
             # print("IL before ", quantizer.input_low[:5])
             input_range = input_high - input_low
             # Subtract eps from the input_range to make quantizer parameters equal to
             # original parameters on the forward call.
+            # TODO: with group-wise reshape is not needed
             quantizer.input_range = torch.nn.Parameter((input_range - quantizer.eps).reshape(scale_shape))
+            # quantizer.register_buffer('_input_range_param_storage', input_range - quantizer.eps)
             quantizer.to(weight.device)
 
             quantizer._lora_A = torch.nn.Parameter(quantizer._lora_A.type(dtype=weight.dtype))
             quantizer._lora_B = torch.nn.Parameter(quantizer._lora_B.type(dtype=weight.dtype))
 
-            # fq_weight = quantizer.quantize(weight)
-            # B, A = self.init_lora_adapters(weight, fq_weight)
-            # quantizer._lora_A = torch.nn.Parameter(A.type(dtype=weight.dtype))
-            # quantizer._lora_B = torch.nn.Parameter(B.type(dtype=weight.dtype))
+            # weight = reshape_weight.reshape(quantizer_spec.weight_shape)
+            weight = reshape_weight
+            fq_weight = quantizer.quantize(weight)
+            B, A = self.init_lora_adapters(weight, fq_weight, rank=quantizer.lora_rank)
+            quantizer._lora_A = torch.nn.Parameter(A.type(dtype=weight.dtype))
+            quantizer._lora_B = torch.nn.Parameter(B.type(dtype=weight.dtype))
 
             # print("IR before ", quantizer.input_range[:5])
 

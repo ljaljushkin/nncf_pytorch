@@ -18,9 +18,6 @@ from nncf.torch.functions import STRound
 from nncf.torch.functions import clamp
 from nncf.torch.quantization.extensions import QuantizedFunctionsCPU
 from nncf.torch.quantization.extensions import QuantizedFunctionsCUDA
-
-# from nncf.torch.quantization.reference import ReferenceBackendType
-# from nncf.torch.quantization.reference import ReferenceQuantize
 from nncf.torch.utils import add_domain
 
 
@@ -109,7 +106,7 @@ class QuantizeAsymmetric(torch.autograd.Function):
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
         grad_output = grad_outputs[0]
         # input_, input_low, input_range, A, B = ctx.saved_tensors
-        input_, input_low, input_range = ctx.saved_tensors
+        input_, input_low, input_range, _, _ = ctx.saved_tensors
         levels = ctx.levels
         level_low = ctx.level_low
         level_high = ctx.level_high
