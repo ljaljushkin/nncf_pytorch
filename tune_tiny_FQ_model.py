@@ -9,9 +9,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import random
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -24,7 +26,18 @@ from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.model_creation import wrap_model
 from nncf.torch.model_transformer import PTModelTransformer
 
-OUT_DIM = 2
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU.
+    np.random.seed(seed)  # Numpy module.
+    random.seed(seed)  # Python random module.
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+
+
+OUT_DIM = 5
 IN_DIM = 3
 
 
@@ -32,7 +45,6 @@ class MyModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.linear = nn.Linear(out_features=OUT_DIM, in_features=IN_DIM)
-        print("original weights", self.linear.weight.data)
         # self.linear.weight.data.fill_(3)
 
     def forward(self, x):
@@ -84,58 +96,45 @@ class AdditiveFunction2(torch.autograd.Function):
 
 
 class FQLoRAFunction(torch.autograd.Function):
-    # @staticmethod
-    # def forward_old(ctx, W, group_shape, A, B, input_low, input_range, levels):
-    #     original_shape = W.shape
-    #     input_ = W + B @ A
-    #     input_ = input_.reshape(group_shape)
-
-    #     # Save tensors for backward pass
-    #     ctx.save_for_backward(A, B)
-
-    #     scale = (levels - 1) / input_range
-    #     output = input_.clip(min=input_low, max=input_low + input_range)
-    #     zero_point = (-input_low * scale).round()
-    #     output -= input_low
-    #     output *= scale
-    #     output -= zero_point
-    #     output = output.round()
-    #     output = output / scale
-
-    #     output = output.reshape(original_shape)
-    #     return output
-
-    # @staticmethod
-    # def backward_old(ctx, grad_output):
-    #     # Retrieve saved tensors
-    #     A, B = ctx.saved_tensors
-
-    #     # Compute the gradient for the additive parameter
-    #     # grad_A = grad_output.clone()
-    #     # grad_B = grad_output.clone()
-    #     grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
-    #     grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
-    #     # No gradient for W since it is frozen
-    #     return None, None, grad_A, grad_B, None, None, None
-
     @staticmethod
     def forward(ctx, W, A, B, input_low, input_range, level_low, level_high, levels, is_lora):
         # print('original weight:', W.data)
         input_ = W + B @ A
+        # print("weights + adapters", input_)
         # input_ = W
         # print('original weight + adapters:', input_.data)
 
+        # scale = ((input_high - input_low) / (levels - 1)).astype(TensorDataType.float32)
+        # zero_point = - fns.round(input_low / scale)
+        # zero_point = fns.clip(zero_point.astype(TensorDataType.int32), level_low, level_high)
+        # compressed_weights = weight / scale
+        # compressed_weights += zero_point.astype(weight.dtype)
+        # compressed_weights = fns.round(compressed_weights)
+        # compressed_weights = fns.clip(compressed_weights, level_low, level_high).astype(dtype)
+
         scale = (levels - 1) / input_range
         output = input_.clip(min=input_low, max=input_low + input_range)
-        zero_point = (-input_low * scale).round()
+        zero_point = -(input_low * scale).round()
+
+        # print('IL: ', input_low)
+        # print('IR: ', input_range)
+        # compressed_weights = output * scale
+        # compressed_weights = (compressed_weights + zero_point).clip(min=level_low, max=level_high)
+        # compressed_weights = compressed_weights.round()
+        # compressed_weights = compressed_weights.clip(min=level_low, max=level_high)
+        # print('Q(weights + adapters): ', compressed_weights.data)
+
         output -= input_low
         output *= scale
-        # print('Q(original weight + adapters): ', output.data)
+
         # print('ZP: ', zero_point.data)
         # print('Scale: ', scale.data)
+        # print('A: ', A.data)
+        # print('B: ', B.data)
         output -= zero_point
         output = output.round()
         output = output / scale
+        # print('FQ(weights + adapters): ', output.data)
 
         # Save tensors for backward pass
         # if is_lora:
@@ -148,7 +147,7 @@ class FQLoRAFunction(torch.autograd.Function):
         ctx.is_lora = is_lora
 
         # print('FQ(original weight + adapters): ', output.data)
-        print("quant noise", torch.linalg.norm(output - input_, ord="fro").item())
+        # print("quant noise", torch.linalg.norm(output - input_, ord="fro").item())
         return output
 
     @staticmethod
@@ -163,9 +162,6 @@ class FQLoRAFunction(torch.autograd.Function):
         #     return None, grad_A, grad_B, None,      None,        None,      None,       None,   None
         # else:
         A, B, input_, output, input_low, input_range = ctx.saved_tensors
-        grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
-        grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
-        # grad_A = grad_B = None
 
         level_low = ctx.level_low
         level_high = ctx.level_high
@@ -188,6 +184,12 @@ class FQLoRAFunction(torch.autograd.Function):
         grad_low = grad_output * (mask_hi + mask_lo)
         grad_low = sum_like(grad_low, input_low)
         #      [W,   A,      B,      input_low, input_range, level_low, level_high, levels, is_lora
+        # return None, grad_A, grad_B, grad_low, grad_range, None, None, None, None
+
+        grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
+        grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
+        # grad_A = grad_B = None
+
         return None, grad_A, grad_B, grad_low, grad_range, None, None, None, None
 
 
@@ -210,10 +212,9 @@ class FQLora(nn.Module):
         self._input_range = torch.nn.Parameter(
             torch.ones((1, in_features), dtype=torch.float32), requires_grad=True
         )  # [1, I]
-        reduction_axis = 1
-        scale_shape = list(weight_shape)
-        scale_shape[reduction_axis] = 1
-
+        # reduction_axis = 1
+        # scale_shape = list(weight_shape)
+        # scale_shape[reduction_axis] = 1
         # print("A", self._A.data)
         # print("B", self._B.data)
 
@@ -229,6 +230,7 @@ class FQLora(nn.Module):
         # self._input_low, self._input_range, 0, 15, 16, False)
 
 
+set_seed(42)
 model = MyModel()
 input_ = torch.tensor([1.0, 2.0, 3.0])
 
@@ -237,15 +239,17 @@ model = wrap_model(model, example_input=input_, trace_parameters=True)
 
 
 transformation_layout = TransformationLayout()
-w = model.linear.weight
-input_low = torch.amin(w, dim=0, keepdim=True)
-# print('input_low', input_low)
-input_high = torch.amax(w, dim=0, keepdim=True)
-input_range = input_high - input_low
-# print('input_range', input_range)
-quantizer = FQLora()
-quantizer._input_low = torch.nn.Parameter(input_low, requires_grad=True)  # [1, I]
-quantizer._input_range = torch.nn.Parameter(input_range, requires_grad=True)  # [1, I]
+with torch.no_grad():
+    lora_rank = 2
+    w = model.linear.weight + torch.ones(OUT_DIM, lora_rank) @ torch.ones(lora_rank, IN_DIM)
+    input_low = torch.amin(w, dim=0, keepdim=True)
+    # print('input_low', input_low)
+    input_high = torch.amax(w, dim=0, keepdim=True)
+    input_range = input_high - input_low
+    # print('input_range', input_range)
+    quantizer = FQLora()
+    quantizer._input_low = torch.nn.Parameter(input_low, requires_grad=True)  # [1, I]
+    quantizer._input_range = torch.nn.Parameter(input_range, requires_grad=True)  # [1, I]
 
 node_name = "MyModel/Linear[linear]/linear_0"
 target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, node_name, input_port_id=1)
@@ -269,9 +273,9 @@ for name, param in model.named_parameters():
     if "_A" in name or "_B" in name:
         param.requires_grad = True
         adapters_to_train.append(param)
-    # if "input" in name:
-    #     param.requires_grad = True
-    #     scales_to_train.append(param)
+    elif "input" in name:
+        param.requires_grad = True
+        scales_to_train.append(param)
     else:
         param.requires_grad = False
 
@@ -279,21 +283,21 @@ for name, param in model.named_parameters():
     if param.requires_grad:
         print(name)
 
-# param_to_train = [
-#     {"params": adapters_to_train, "lr": 1e-2},
-#     # {"params": scales_to_train, "lr": 1e-5},
-# ]
-optimizer = torch.optim.Adam(adapters_to_train, lr=1e-2)
+param_to_train = [
+    {"params": adapters_to_train},  # , "weight_decay": 1e-1},
+    {"params": scales_to_train},
+]
+optimizer = torch.optim.Adam(param_to_train, lr=1e-2)  # , weight_decay=1)
 
 # Dummy input and target
-input_ = torch.tensor([1.0, 2.0, 3.0])
+input_ = torch.arange(IN_DIM, dtype=torch.float32) + 1
 # target = torch.tensor([3.1, 4.2, 5.3])
-target = torch.tensor([10.0, 10.0])
+target = torch.tensor([10.0] * OUT_DIM, dtype=torch.float32)
 
 
 # Training loop
 losses = []
-for epoch in range(100):
+for epoch in range(10):
     optimizer.zero_grad()
     output = model(input_)
     loss = nn.MSELoss()(output, target)
@@ -312,7 +316,13 @@ plt.savefig(path)
 print("Saving loss plot to:", path)
 
 # Check the updated additive parameter
-print("Weights: ", model.linear.weight)
-print("Updated additive parameter A:", model.nncf.external_quantizers.FQ_LORA_for_node_._A)
-print("Updated additive parameter B:", model.nncf.external_quantizers.FQ_LORA_for_node_._B)
+# print("Weights: ", model.linear.weight)
+A = model.nncf.external_quantizers.FQ_LORA_for_node_._A.data
+B = model.nncf.external_quantizers.FQ_LORA_for_node_._B.data
+print("last loss=", loss)
+print("Updated additive parameter A:", A)
+print("Updated additive parameter B:", B)
+nA = torch.linalg.norm(A, ord="fro").item()
+nB = torch.linalg.norm(B, ord="fro").item()
+print(f"norms A={nA:.2f} B={nB:.2f}")
 print(output)
