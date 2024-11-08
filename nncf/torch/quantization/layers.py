@@ -336,10 +336,10 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             # self.lora_rank = 8
             # own_device = get_model_device(self)
             self._lora_A = torch.nn.Parameter(
-                torch.ones((self.lora_rank, in_features), dtype=torch.float32), requires_grad=True
+                torch.ones((self.lora_rank, in_features), dtype=torch.float16), requires_grad=True
             )
             self._lora_B = torch.nn.Parameter(
-                torch.zeros((out_features, self.lora_rank), dtype=torch.float32), requires_grad=True
+                torch.zeros((out_features, self.lora_rank), dtype=torch.float16), requires_grad=True
             )
 
             # NOTE: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
@@ -1090,15 +1090,17 @@ class AsymmetricQuantizer(BaseQuantizer):
         device = x.device
         self.to(device)
         dtype = x.dtype
-        if self._lora_A.dtype != dtype or self._lora_B.dtype != dtype:
-            # print(f'dtype mismatch, adapter vs weight: {self._lora_A.dtype} {dtype}')
-            self._lora_A = torch.nn.Parameter(self._lora_A.to(dtype))
-            self._lora_B = torch.nn.Parameter(self._lora_B.to(dtype))
-        if self.input_low.dtype != dtype or self._input_range_param_storage != dtype:
-            # self.register_buffer('input_low', self.input_low.to(dtype))
-            # self.register_buffer('_input_range_param_storage', self._input_range_param_storage.to(dtype))
-            self.input_low = torch.nn.Parameter(self.input_low.to(dtype))
-            self._input_range_param_storage = torch.nn.Parameter(self._input_range_param_storage.to(dtype))
+        # TODO: Probably re-creating Parameter breaks gradients and optimizer???
+        # if self._lora_A.dtype != dtype or self._lora_B.dtype != dtype:
+        #     # print(f'dtype mismatch, adapter vs weight: {self._lora_A.dtype} {dtype}')
+        #     self._lora_A = torch.nn.Parameter(self._lora_A.to(dtype))
+        #     self._lora_B = torch.nn.Parameter(self._lora_B.to(dtype))
+        # if self.input_low.dtype != dtype or self._input_range_param_storage != dtype:
+        #     # self.register_buffer('input_low', self.input_low.to(dtype))
+        #     # self.register_buffer('_input_range_param_storage', self._input_range_param_storage.to(dtype))
+        #     self.input_low = torch.nn.Parameter(self.input_low.to(dtype))
+        #     self._input_range_param_storage = torch.nn.Parameter(self._input_range_param_storage.to(dtype))
+
         # if hasattr(self, "_lora_A"):
         # print("dtype on quantize, x={} A={}".format(x.dtype, self._lora_A.dtype))
         # self._lora_B = self._lora_B.to(device)
@@ -1106,7 +1108,7 @@ class AsymmetricQuantizer(BaseQuantizer):
         # print('move to ', device)
         # for name, param in self.named_parameters():
         #     print("CHECK: ", name, param.device)
-        x = self._lora_B @ self._lora_A + x  # .detach()  # [O, R] * [R, H] + [O, H]
+        x = (self._lora_B @ self._lora_A + x).type(dtype)  # .detach()  # [O, R] * [R, H] + [O, H]
 
         # TODO: CUDA out of memory for some reason even in a per-channel case!
         # is_lora = self._lora_A.requires_grad

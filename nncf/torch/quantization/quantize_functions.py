@@ -100,6 +100,8 @@ class QuantizeAsymmetric(torch.autograd.Function):
         ctx.level_low = level_low
         ctx.level_high = level_high
 
+        # print("quant noise={:.2f}".format(torch.linalg.norm(output - input_, ord="fro").item()))
+
         return output
 
     @staticmethod
@@ -127,7 +129,8 @@ class QuantizeAsymmetric(torch.autograd.Function):
         grad_A = grad_B = None
         # grad_A = FACTOR * B.t() @ grad_output  # Gradient of the loss w.r.t. A
         # grad_B = FACTOR * grad_output @ A.t()  # Gradient of the loss w.r.t. B
-
+        # print('grad_input_range=', grad_input_range[..., :5])
+        # print('grad_input_low=', grad_input_low[..., :5])
         return grad_input, grad_input_low, grad_input_range, None, None, None, grad_A, grad_B
 
 

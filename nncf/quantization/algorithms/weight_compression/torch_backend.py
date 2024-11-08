@@ -368,17 +368,24 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             quantizer.input_range = torch.nn.Parameter((input_range - quantizer.eps).reshape(scale_shape))
             # quantizer.register_buffer('_input_range_param_storage', input_range - quantizer.eps)
             quantizer.to(weight.device)
-
+            print(weight.dtype)
             quantizer._lora_A = torch.nn.Parameter(quantizer._lora_A.type(dtype=weight.dtype))
             quantizer._lora_B = torch.nn.Parameter(quantizer._lora_B.type(dtype=weight.dtype))
 
             # weight = reshape_weight.reshape(quantizer_spec.weight_shape)
             weight = reshape_weight
             fq_weight = quantizer.quantize(weight)
-            B, A = self.init_lora_adapters(weight, fq_weight, rank=quantizer.lora_rank)
-            quantizer._lora_A = torch.nn.Parameter(A.type(dtype=weight.dtype))
-            quantizer._lora_B = torch.nn.Parameter(B.type(dtype=weight.dtype))
+            if "31" in weight_name:
+                print("quant noise before SVD={:.2f}".format(torch.linalg.norm(fq_weight - weight, ord="fro").item()))
+            # B, A = self.init_lora_adapters(weight, fq_weight, rank=quantizer.lora_rank)
+            # quantizer._lora_A = torch.nn.Parameter(A.type(dtype=weight.dtype))
+            # quantizer._lora_B = torch.nn.Parameter(B.type(dtype=weight.dtype))
 
+            node_name = weight_node.node_name
+
+            if "31" in node_name:
+                fq_weight = quantizer.quantize(weight)
+                print("quant noise after SVD={:.2f}".format(torch.linalg.norm(fq_weight - weight, ord="fro").item()))
             # print("IR before ", quantizer.input_range[:5])
 
             # quantizer = FQLora(quantizer_spec)
@@ -394,7 +401,6 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             #     (input_range - quantizer.eps).reshape(scale_shape)
             # )
 
-            node_name = weight_node.node_name
             # print('NODE NAME+++++', node_name)
             fq_node_name = wc_params.node_with_weight.node_name
             # node_name = (
