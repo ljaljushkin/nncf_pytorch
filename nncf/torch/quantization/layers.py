@@ -1086,10 +1086,9 @@ class AsymmetricQuantizer(BaseQuantizer):
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
         # NOTE: Merge adapters to weight on each inference, quantize the sum afterwards
-        # TODO: is it OK to tune adapters and quantization parameters at the same time??
+        # TODO: is device should be aligned automatically?
         device = x.device
         self.to(device)
-        dtype = x.dtype
         # TODO: Probably re-creating Parameter breaks gradients and optimizer???
         # if self._lora_A.dtype != dtype or self._lora_B.dtype != dtype:
         #     # print(f'dtype mismatch, adapter vs weight: {self._lora_A.dtype} {dtype}')
@@ -1108,7 +1107,8 @@ class AsymmetricQuantizer(BaseQuantizer):
         # print('move to ', device)
         # for name, param in self.named_parameters():
         #     print("CHECK: ", name, param.device)
-        x = (self._lora_B @ self._lora_A + x).type(dtype)  # .detach()  # [O, R] * [R, H] + [O, H]
+        # dtype = x.dtype
+        # x = (self._lora_B @ self._lora_A + x).type(dtype)  # .detach()  # [O, R] * [R, H] + [O, H]
 
         # TODO: CUDA out of memory for some reason even in a per-channel case!
         # is_lora = self._lora_A.requires_grad
@@ -1134,8 +1134,8 @@ class AsymmetricQuantizer(BaseQuantizer):
             self.input_range,
             self.eps,
             skip=execute_traced_op_as_identity,
-            # A=self._lora_A,
-            # B=self._lora_B,
+            A=self._lora_A,
+            B=self._lora_B,
         )
         return fq_weight
 

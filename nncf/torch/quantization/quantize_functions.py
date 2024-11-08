@@ -88,9 +88,11 @@ class QuantizeAsymmetric(torch.autograd.Function):
             if input_.dtype == torch.float16:
                 input_low = input_low.type(torch.float16)
                 input_range = input_range.type(torch.float16)
-                # A = A.type(torch.float16)
-                # B = B.type(torch.float16)
-            # input_ = input_ + FACTOR * B @ A
+                A = A.type(torch.float16)
+                B = B.type(torch.float16)
+            # dtype = x.dtype
+            # x = (self._lora_B @ self._lora_A + x).type(dtype)  # .detach()  # [O, R] * [R, H] + [O, H]
+            input_ = input_ + B @ A
             output = QuantizedFunctionsCUDA.get("Quantize_forward")(input_, input_low, input_range, levels)
         else:
             output = QuantizedFunctionsCPU.get("Quantize_forward")(input_, input_low, input_range, levels)
@@ -107,8 +109,8 @@ class QuantizeAsymmetric(torch.autograd.Function):
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
         grad_output = grad_outputs[0]
-        # input_, input_low, input_range, A, B = ctx.saved_tensors
-        input_, input_low, input_range, _, _ = ctx.saved_tensors
+        input_, input_low, input_range, A, B = ctx.saved_tensors
+        # input_, input_low, input_range, _, _ = ctx.saved_tensors
         levels = ctx.levels
         level_low = ctx.level_low
         level_high = ctx.level_high
@@ -126,9 +128,9 @@ class QuantizeAsymmetric(torch.autograd.Function):
                 grad_output, input_, input_low, input_range, levels, level_low, level_high, True
             )
 
-        grad_A = grad_B = None
-        # grad_A = FACTOR * B.t() @ grad_output  # Gradient of the loss w.r.t. A
-        # grad_B = FACTOR * grad_output @ A.t()  # Gradient of the loss w.r.t. B
+        # grad_A = grad_B = None
+        grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
+        grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
         # print('grad_input_range=', grad_input_range[..., :5])
         # print('grad_input_low=', grad_input_low[..., :5])
         return grad_input, grad_input_low, grad_input_range, None, None, None, grad_A, grad_B
