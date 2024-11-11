@@ -337,13 +337,14 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # quantizer.scale = torch.nn.Parameter((parameters.input_high.data - quantizer.eps).reshape(scale_shape))
 
             # NOTE: grouped case
-            # group_size = 64
-            # group_reduction_axes = 2
-            # group_shape = [out_features, in_features // group_size, group_size]
-            # scale_shape = [out_features, in_features // group_size, 1]
-            # reshape_weight = weight.reshape(group_shape)
-            group_reduction_axes = wc_params.reduction_axes[0]
-            reshape_weight = weight
+            out_features, in_features = quantizer_spec.weight_shape
+            group_size = 64
+            group_reduction_axes = 2
+            group_shape = [out_features, in_features // group_size, group_size]
+            scale_shape = [out_features, in_features // group_size, 1]
+            reshape_weight = weight.reshape(group_shape)
+            # group_reduction_axes = wc_params.reduction_axes[0]
+            # reshape_weight = weight
 
             # with torch.no_grad:
             input_low = torch.amin(reshape_weight, dim=group_reduction_axes, keepdim=True)
@@ -372,14 +373,14 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             quantizer._lora_A = torch.nn.Parameter(quantizer._lora_A.type(dtype=weight.dtype))
             quantizer._lora_B = torch.nn.Parameter(quantizer._lora_B.type(dtype=weight.dtype))
 
-            # weight = reshape_weight.reshape(quantizer_spec.weight_shape)
-            weight = reshape_weight
+            weight = reshape_weight.reshape(quantizer_spec.weight_shape)
+            # weight = reshape_weight
             fq_weight = quantizer.quantize(weight)
             if "31" in weight_name:
                 print("quant noise before SVD={:.2f}".format(torch.linalg.norm(fq_weight - weight, ord="fro").item()))
-            # B, A = self.init_lora_adapters(weight, fq_weight, rank=quantizer.lora_rank)
-            # quantizer._lora_A = torch.nn.Parameter(A.type(dtype=weight.dtype))
-            # quantizer._lora_B = torch.nn.Parameter(B.type(dtype=weight.dtype))
+            B, A = self.init_lora_adapters(weight, fq_weight, rank=quantizer.lora_rank)
+            quantizer._lora_A = torch.nn.Parameter(A.type(dtype=weight.dtype))
+            quantizer._lora_B = torch.nn.Parameter(B.type(dtype=weight.dtype))
 
             node_name = weight_node.node_name
 

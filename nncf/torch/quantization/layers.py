@@ -44,7 +44,6 @@ from nncf.torch.layer_utils import StatefullModuleInterface
 from nncf.torch.quantization.quantize_functions import ExportQuantizeToFakeQuantize
 from nncf.torch.quantization.quantize_functions import ExportQuantizeToONNXQuantDequant
 from nncf.torch.quantization.quantize_functions import TuneRange
-from nncf.torch.quantization.quantize_functions import asymmetric_quantize
 from nncf.torch.quantization.quantize_functions import decompress_asymmetric
 from nncf.torch.quantization.quantize_functions import decompress_symmetric
 from nncf.torch.quantization.quantize_functions import get_scale_zp_from_input_low_input_high
@@ -891,46 +890,51 @@ class FQLoRA(torch.autograd.Function):
     def __init__(self):
         super().__init__()
 
+    # @staticmethod
+    # def forward_old(ctx, W, group_shape, A, B, input_low, input_range, levels):
+    #     original_shape = W.shape
+    #     input_ = W + B @ A
+    #     input_ = input_.reshape(group_shape)
+
+    #     # Save tensors for backward pass
+    #     ctx.save_for_backward(A, B)
+
+    #     scale = (levels - 1) / input_range
+    #     output = input_.clip(min=input_low, max=input_low + input_range)
+    #     zero_point = (-input_low * scale).round()
+    #     output -= input_low
+    #     output *= scale
+    #     output -= zero_point
+    #     output = output.round()
+    #     output = output / scale
+
+    #     output = output.reshape(original_shape)
+    #     return output
+
+    # @staticmethod
+    # def backward_old(ctx, grad_output):
+    #     # Retrieve saved tensors
+    #     A, B = ctx.saved_tensors
+
+    #     # Compute the gradient for the additive parameter
+    #     # grad_A = grad_output.clone()
+    #     # grad_B = grad_output.clone()
+    #     grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
+    #     grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
+    #     # No gradient for W since it is frozen
+    #     return None, None, grad_A, grad_B, None, None, None
+
     @staticmethod
-    def forward_old(ctx, W, group_shape, A, B, input_low, input_range, levels):
+    def forward(ctx, W, group_shape, A, B, input_low, input_range, level_low, level_high, levels):
         original_shape = W.shape
+        if W.dtype == torch.float16:
+            input_low = input_low.type(torch.float16)
+            input_range = input_range.type(torch.float16)
+            A = A.type(torch.float16)
+            B = B.type(torch.float16)
         input_ = W + B @ A
         input_ = input_.reshape(group_shape)
 
-        # Save tensors for backward pass
-        ctx.save_for_backward(A, B)
-
-        scale = (levels - 1) / input_range
-        output = input_.clip(min=input_low, max=input_low + input_range)
-        zero_point = (-input_low * scale).round()
-        output -= input_low
-        output *= scale
-        output -= zero_point
-        output = output.round()
-        output = output / scale
-
-        output = output.reshape(original_shape)
-        return output
-
-    @staticmethod
-    def backward_old(ctx, grad_output):
-        # Retrieve saved tensors
-        A, B = ctx.saved_tensors
-
-        # Compute the gradient for the additive parameter
-        # grad_A = grad_output.clone()
-        # grad_B = grad_output.clone()
-        grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
-        grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
-        # No gradient for W since it is frozen
-        return None, None, grad_A, grad_B, None, None, None
-
-    @staticmethod
-    def forward(ctx, W, group_shape, A, B, input_low, input_range, level_low, level_high, levels, is_lora):
-        original_shape = W.shape
-        input_ = W + B @ A
-        # input_ = input_.reshape(group_shape)
-
         scale = (levels - 1) / input_range
         output = input_.clip(min=input_low, max=input_low + input_range)
         zero_point = (-input_low * scale).round()
@@ -941,54 +945,46 @@ class FQLoRA(torch.autograd.Function):
         output = output / scale
 
         # Save tensors for backward pass
-        if is_lora:
-            ctx.save_for_backward(A, B)
-        else:
-            ctx.save_for_backward(input_, output, input_low, input_range)
+        ctx.save_for_backward(A, B, input_, output, input_low, input_range)
 
         ctx.level_low = level_low
         ctx.level_high = level_high
         ctx.group_shape = group_shape
-        ctx.is_lora = is_lora
+        # ctx.is_lora = is_lora
 
         output = output.reshape(original_shape)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
-        is_lora = ctx.is_lora
+        A, B, input_, output, input_low, input_range = ctx.saved_tensors
 
-        if is_lora:
-            A, B = ctx.saved_tensors
-            grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
-            grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
-            #      [W,    group_shape, A,      B,      input_low, input_range, level_low, level_high, levels
-            return [None, None, grad_A, grad_B, None, None, None, None, None]
-        else:
-            input_, output, input_low, input_range = ctx.saved_tensors
-            level_low = ctx.level_low
-            level_high = ctx.level_high
-            # group_shape = ctx.group_shape
+        grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
+        grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
 
-            mask_hi = input_ > (input_low + input_range)
-            mask_hi = mask_hi.type(input_.dtype)
-            mask_lo = input_ < input_low
-            mask_lo = mask_lo.type(input_.dtype)
+        level_low = ctx.level_low
+        level_high = ctx.level_high
+        group_shape = ctx.group_shape
 
-            mask_in = 1 - mask_hi - mask_lo
-            range_sign = torch.sign(input_range)
-            err = (output - input_) * torch.reciprocal(input_range * range_sign)
-            # grad_output = grad_output.reshape(group_shape)
-            grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
-            grad_range = sum_like(grad_range, input_range)
+        mask_hi = input_ > (input_low + input_range)
+        mask_hi = mask_hi.type(input_.dtype)
+        mask_lo = input_ < input_low
+        mask_lo = mask_lo.type(input_.dtype)
 
-            # NOTE: no gradient for weights
-            # grad_input = grad_output * mask_in
+        mask_in = 1 - mask_hi - mask_lo
+        range_sign = torch.sign(input_range)
+        err = (output - input_) * torch.reciprocal(input_range * range_sign)
+        grad_output = grad_output.reshape(group_shape)
+        grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
+        grad_range = sum_like(grad_range, input_range)
 
-            grad_low = grad_output * (mask_hi + mask_lo)
-            grad_low = sum_like(grad_low, input_low)
-            #      [W,    group_shape, A,      B,      input_low, input_range, level_low, level_high, levels
-            return [None, None, None, None, grad_low, grad_range, None, None, None]
+        # NOTE: no gradient for weights
+        # grad_input = grad_output * mask_in
+
+        grad_low = grad_output * (mask_hi + mask_lo)
+        grad_low = sum_like(grad_low, input_low)
+        #      W,    group_shape,   A,      B,      input_low, input_range, level_low, level_high, levels
+        return None, None, grad_A, grad_B, grad_low, grad_range, None, None, None
 
 
 @COMPRESSION_MODULES.register()
@@ -1112,10 +1108,17 @@ class AsymmetricQuantizer(BaseQuantizer):
 
         # TODO: CUDA out of memory for some reason even in a per-channel case!
         # is_lora = self._lora_A.requires_grad
-        # fq_weight = FQLoRA.apply(
-        #     x, self._group_shape, self._lora_A, self._lora_B, self.input_low, self.input_range, self.level_low,
-        # self.level_high, self.levels, is_lora
-        # )
+        fq_weight = FQLoRA.apply(
+            x,
+            self._group_shape,
+            self._lora_A,
+            self._lora_B,
+            self.input_low,
+            self.input_range,
+            self.level_low,
+            self.level_high,
+            self.levels,
+        )
 
         # return x
         # TODO: Error with autograd: element 0 of tensors does not require grad and does not have a grad_fn
@@ -1125,18 +1128,18 @@ class AsymmetricQuantizer(BaseQuantizer):
         #     fq_weight = fq_weight.reshape(self._qspec.weight_shape)
 
         # TODO: GPU kernels don't support group quantization
-        fq_weight = asymmetric_quantize(
-            x,
-            self.levels,
-            self.level_low,
-            self.level_high,
-            self.input_low,
-            self.input_range,
-            self.eps,
-            skip=execute_traced_op_as_identity,
-            A=self._lora_A,
-            B=self._lora_B,
-        )
+        # fq_weight = asymmetric_quantize(
+        #     x,
+        #     self.levels,
+        #     self.level_low,
+        #     self.level_high,
+        #     self.input_low,
+        #     self.input_range,
+        #     self.eps,
+        #     skip=execute_traced_op_as_identity,
+        #     A=self._lora_A,
+        #     B=self._lora_B,
+        # )
         return fq_weight
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:

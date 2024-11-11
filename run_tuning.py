@@ -116,29 +116,29 @@ nncf.compress_weights(
     hf_model.model,
     mode=nncf.CompressWeightsMode.INT8_ASYM,
     ignored_scope=nncf.IgnoredScope(
-        patterns=[
-            # #    #     # '^(?!model.decoder.layers\[11\]\.v_proj$).*'
-            # #    #             # '^(?!.*OPTDecoderLayer\[11\]/OPTAttention\[self_attn\]/NNCFLinear\[v_proj\]).*'
-            # #    #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
-            # #    #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
-            # #    "^(?!.*LlamaModel\/ModuleList\[layers\]\/LlamaDecoderLayer\[21\].*$).*"
-            # #        # \/LlamaSdpaAttention\[self_attn\]\/Linear\[v_proj\].*$).*"
-            # # # OPTDecoderLayer[11]/OPTAttention[self_attn]/Linear[v_proj]/to_0
-            "^(?!.*Phi3DecoderLayer\[31\].*$).*"
-        ]
         # patterns=[
-        #     # #     #     #             y# '.*_proj.*', '.*out_proj.*', '.*q_proj.*', '.*fc1.*',
-        #     # #     #     #             # '.*self_attn.*',
-        #     # #     #     #             '.*down_proj.*',
-        #     # #     #     #             '.*gate_proj.*', '.*up_proj.*',
-        #     ".*embed_tokens.*"
+        #     # #    #     # '^(?!model.decoder.layers\[11\]\.v_proj$).*'
+        #     # #    #             # '^(?!.*OPTDecoderLayer\[11\]/OPTAttention\[self_attn\]/NNCFLinear\[v_proj\]).*'
+        #     # #    #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+        #     # #    #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
+        #     # #    "^(?!.*LlamaModel\/ModuleList\[layers\]\/LlamaDecoderLayer\[21\].*$).*"
+        #     # #        # \/LlamaSdpaAttention\[self_attn\]\/Linear\[v_proj\].*$).*"
+        #     # # # OPTDecoderLayer[11]/OPTAttention[self_attn]/Linear[v_proj]/to_0
+        #     "^(?!.*Phi3DecoderLayer\[31\].*$).*"
         # ]
+        patterns=[
+            # #     #     #             y# '.*_proj.*', '.*out_proj.*', '.*q_proj.*', '.*fc1.*',
+            # #     #     #             # '.*self_attn.*',
+            # #     #     #             '.*down_proj.*',
+            # #     #     #             '.*gate_proj.*', '.*up_proj.*',
+            ".*embed_tokens.*"
+        ]
     ),
     dataset=nncf.Dataset(dataset),
 )
 
 generate_overfit(hf_model, tokenizer, "Quantized")
-ckpt_dir = MODEL_DIR / "FQ_4bit_31layer_svd_debug"
+ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank8_g64_new"
 # ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank8"
 save_checkpoint(hf_model.model, ckpt_dir)
 model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")
