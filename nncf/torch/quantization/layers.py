@@ -335,10 +335,10 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             # self.lora_rank = 8
             # own_device = get_model_device(self)
             self._lora_A = torch.nn.Parameter(
-                torch.ones((self.lora_rank, in_features), dtype=torch.float16), requires_grad=True
+                torch.ones((self.lora_rank, in_features), dtype=torch.bfloat16), requires_grad=True
             )
             self._lora_B = torch.nn.Parameter(
-                torch.zeros((out_features, self.lora_rank), dtype=torch.float16), requires_grad=True
+                torch.zeros((out_features, self.lora_rank), dtype=torch.bfloat16), requires_grad=True
             )
 
             # NOTE: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
