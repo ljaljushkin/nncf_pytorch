@@ -309,7 +309,7 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__()
         self._qspec = qspec
-        self.lora_rank = 8  # self._qspec.lora_rank
+        self.lora_rank = 256  # self._qspec.lora_rank
         self.device = self._qspec.device
         self._narrow_range = qspec.narrow_range
         self._signedness_to_force = qspec.signedness_to_force
@@ -927,11 +927,11 @@ class FQLoRA(torch.autograd.Function):
     @staticmethod
     def forward(ctx, W, group_shape, A, B, input_low, input_range, level_low, level_high, levels):
         original_shape = W.shape
-        if W.dtype == torch.float16:
-            input_low = input_low.type(torch.float16)
-            input_range = input_range.type(torch.float16)
-            A = A.type(torch.float16)
-            B = B.type(torch.float16)
+        if W.dtype == torch.bfloat16:
+            input_low = input_low.type(torch.bfloat16)
+            input_range = input_range.type(torch.bfloat16)
+            A = A.type(torch.bfloat16)
+            B = B.type(torch.bfloat16)
         input_ = W + B @ A
         input_ = input_.reshape(group_shape)
 
