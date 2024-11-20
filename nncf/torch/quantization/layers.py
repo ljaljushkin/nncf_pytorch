@@ -890,40 +890,6 @@ class FQLoRA(torch.autograd.Function):
     def __init__(self):
         super().__init__()
 
-    # @staticmethod
-    # def forward_old(ctx, W, group_shape, A, B, input_low, input_range, levels):
-    #     original_shape = W.shape
-    #     input_ = W + B @ A
-    #     input_ = input_.reshape(group_shape)
-
-    #     # Save tensors for backward pass
-    #     ctx.save_for_backward(A, B)
-
-    #     scale = (levels - 1) / input_range
-    #     output = input_.clip(min=input_low, max=input_low + input_range)
-    #     zero_point = (-input_low * scale).round()
-    #     output -= input_low
-    #     output *= scale
-    #     output -= zero_point
-    #     output = output.round()
-    #     output = output / scale
-
-    #     output = output.reshape(original_shape)
-    #     return output
-
-    # @staticmethod
-    # def backward_old(ctx, grad_output):
-    #     # Retrieve saved tensors
-    #     A, B = ctx.saved_tensors
-
-    #     # Compute the gradient for the additive parameter
-    #     # grad_A = grad_output.clone()
-    #     # grad_B = grad_output.clone()
-    #     grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
-    #     grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
-    #     # No gradient for W since it is frozen
-    #     return None, None, grad_A, grad_B, None, None, None
-
     @staticmethod
     def forward(ctx, W, group_shape, A, B, input_low, input_range, level_low, level_high, levels):
         original_shape = W.shape
@@ -934,17 +900,40 @@ class FQLoRA(torch.autograd.Function):
         #     input_range = input_range.type(torch.bfloat16)
         #     A = A.type(torch.bfloat16)
         #     B = B.type(torch.bfloat16)
-        input_ = W + B @ A
-        input_ = input_.reshape(group_shape)
 
-        scale = (levels - 1) / input_range
-        output = input_.clip(min=input_low, max=input_low + input_range)
-        zero_point = (-input_low * scale).round()
-        output -= input_low
-        output *= scale
-        output -= zero_point
+        # if W.dtype != torch.float32:
+        #     W = W.type(torch.float32)
+
+        # input_ = W + B @ A
+        input_ = W.reshape(group_shape)
+
+        dtype = torch.uint8
+        scale = input_range / (levels - 1)  # TODO: cast?
+        zero_point = level_low - (input_low / scale).round()
+        zero_point = zero_point.type(torch.int32).clip(level_low, level_high)
+
+        output = input_ / scale + (B @ A).reshape(group_shape)
+        output += zero_point.type(W.dtype)
         output = output.round()
-        output = output / scale
+        output = output.clip(level_low, level_high).type(dtype)
+        assert torch.all((output >= 0) & (output <= 15)), "not all values within [0,15] range"
+        # assert torch.any(output == 0) and torch.any(output == 15), 'no 0, 15 or 5'
+        # num_z = torch.sum(output == 0).item()
+        # num_f = torch.sum(output == 15).item()
+        # num_t = output.numel()
+        # print(f"0: {num_z/num_t:.1%}, 15: {num_f/num_t:.1%}")
+
+        output = output - zero_point
+        output = output.type(scale.dtype) * scale
+
+        # scale = (levels - 1) / input_range
+        # output = input_.clip(min=input_low, max=input_low + input_range)
+        # zero_point = (-input_low * scale).round()
+        # output -= input_low
+        # output *= scale
+        # output -= zero_point
+        # output = output.round()
+        # output = output / scale
 
         # Save tensors for backward pass
         ctx.save_for_backward(A, B, input_, output, input_low, input_range)
