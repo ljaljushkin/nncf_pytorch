@@ -927,11 +927,13 @@ class FQLoRA(torch.autograd.Function):
     @staticmethod
     def forward(ctx, W, group_shape, A, B, input_low, input_range, level_low, level_high, levels):
         original_shape = W.shape
-        if W.dtype == torch.bfloat16:
-            input_low = input_low.type(torch.bfloat16)
-            input_range = input_range.type(torch.bfloat16)
-            A = A.type(torch.bfloat16)
-            B = B.type(torch.bfloat16)
+        # casted = False
+        # if W.dtype == torch.bfloat16:
+        #     casted = True
+        #     input_low = input_low.type(torch.bfloat16)
+        #     input_range = input_range.type(torch.bfloat16)
+        #     A = A.type(torch.bfloat16)
+        #     B = B.type(torch.bfloat16)
         input_ = W + B @ A
         input_ = input_.reshape(group_shape)
 
@@ -953,12 +955,14 @@ class FQLoRA(torch.autograd.Function):
         # ctx.is_lora = is_lora
 
         output = output.reshape(original_shape)
+        # if casted:
+        #     output = output.type(torch.bfloat16)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
         A, B, input_, output, input_low, input_range = ctx.saved_tensors
-
+        # grad_output = grad_output.type(torch.float32)
         grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
         grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
 
@@ -997,7 +1001,9 @@ class AsymmetricQuantizer(BaseQuantizer):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__(qspec)
         self.input_low = CompressionParameter(
-            torch.zeros(self.scale_shape), requires_grad=True, compression_lr_multiplier=qspec.compression_lr_multiplier
+            torch.zeros(self.scale_shape, dtype=torch.bfloat16),
+            requires_grad=True,
+            compression_lr_multiplier=qspec.compression_lr_multiplier,
         )
         # self.register_buffer('input_low', torch.zeros(self.scale_shape))
         # self.register_buffer('_input_range_param_storage', torch.ones(self.scale_shape))
@@ -1005,7 +1011,7 @@ class AsymmetricQuantizer(BaseQuantizer):
             self,
             self._INPUT_RANGE_PARAM_STORAGE_ATTR,
             CompressionParameter(
-                torch.ones(self.scale_shape),
+                torch.ones(self.scale_shape, dtype=torch.bfloat16),
                 requires_grad=True,
                 compression_lr_multiplier=qspec.compression_lr_multiplier,
             ),
@@ -1108,13 +1114,22 @@ class AsymmetricQuantizer(BaseQuantizer):
 
         # TODO: CUDA out of memory for some reason even in a per-channel case!
         # is_lora = self._lora_A.requires_grad
+        # casted = False
+        # if x.dtype == torch.bfloat16:
+        #     casted = True
+        #     x = x.type(torch.float32)
+
+        input_range_safe = abs(self.input_range) + self.eps
+        input_low_tuned, input_range_tuned = TuneRange.apply(self.input_low, input_range_safe, self.levels)
         fq_weight = FQLoRA.apply(
             x,
             self._group_shape,
             self._lora_A,
             self._lora_B,
-            self.input_low,
-            self.input_range,
+            # self.input_low,
+            # self.input_range,
+            input_low_tuned,
+            input_range_tuned,
             self.level_low,
             self.level_high,
             self.levels,
@@ -1140,6 +1155,8 @@ class AsymmetricQuantizer(BaseQuantizer):
         #     A=self._lora_A,
         #     B=self._lora_B,
         # )
+        # if casted:
+        #     fq_weight = fq_weight.type(torch.bfloat16)
         return fq_weight
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:

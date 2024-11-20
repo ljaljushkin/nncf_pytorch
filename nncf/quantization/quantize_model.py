@@ -470,11 +470,11 @@ def compress_weights(
         from nncf.torch.model_creation import wrap_model
         from nncf.torch.quantization.quantize_model import compress_weights_impl as pt_compression_weights_impl
 
-        if mode not in [CompressWeightsMode.INT8_ASYM, CompressWeightsMode.INT8_SYM]:
-            raise AttributeError(
-                "Torch backend supports only INT8_ASYM, INT8_SYM modes for weight compression, "
-                f"but given {mode.value} mode."
-            )
+        # if mode not in [CompressWeightsMode.INT8_ASYM, CompressWeightsMode.INT8_SYM]:
+        #     raise AttributeError(
+        #         "Torch backend supports only INT8_ASYM, INT8_SYM modes for weight compression, "
+        #         f"but given {mode.value} mode."
+        #     )
 
         if True in [awq, scale_estimation, gptq, lora_correction]:
             raise AttributeError(
