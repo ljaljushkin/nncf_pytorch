@@ -902,38 +902,41 @@ class FQLoRA(torch.autograd.Function):
         #     B = B.type(torch.bfloat16)
 
         # if W.dtype != torch.float32:
-        #     W = W.type(torch.float32)
-
-        # input_ = W + B @ A
+        #     # W = W.type(torch.float32)
+        #     # A = A.type(torch.float32)
+        #     # B = B.type(torch.float32)
+        input_ = W + B @ A
         input_ = W.reshape(group_shape)
 
-        dtype = torch.uint8
-        scale = input_range / (levels - 1)  # TODO: cast?
-        zero_point = level_low - (input_low / scale).round()
-        zero_point = zero_point.type(torch.int32).clip(level_low, level_high)
-
-        output = input_ / scale + (B @ A).reshape(group_shape)
-        output += zero_point.type(W.dtype)
-        output = output.round()
-        output = output.clip(level_low, level_high).type(dtype)
-        assert torch.all((output >= 0) & (output <= 15)), "not all values within [0,15] range"
-        # assert torch.any(output == 0) and torch.any(output == 15), 'no 0, 15 or 5'
-        # num_z = torch.sum(output == 0).item()
-        # num_f = torch.sum(output == 15).item()
-        # num_t = output.numel()
-        # print(f"0: {num_z/num_t:.1%}, 15: {num_f/num_t:.1%}")
-
-        output = output - zero_point
-        output = output.type(scale.dtype) * scale
-
-        # scale = (levels - 1) / input_range
-        # output = input_.clip(min=input_low, max=input_low + input_range)
-        # zero_point = (-input_low * scale).round()
-        # output -= input_low
-        # output *= scale
-        # output -= zero_point
+        # input_ = input_.type(torch.float32)
+        # input_low = input_low.type(torch.float32)
+        # input_range = input_range.type(torch.float32)
+        # NOTE: another schema for tuning, better gradients??
+        # dtype = torch.uint8
+        # scale = input_range / (levels - 1)  # TODO: cast?
+        # zero_point = level_low - (input_low / scale).round()
+        # zero_point = zero_point.type(torch.int32).clip(level_low, level_high)
+        # output = input_ / scale + (B @ A).reshape(group_shape)
+        # output += zero_point.type(W.dtype)
         # output = output.round()
-        # output = output / scale
+        # output = output.clip(level_low, level_high).type(dtype)
+        # assert torch.all((output >= 0) & (output <= 15)), "not all values within [0,15] range"
+        # # assert torch.any(output == 0) and torch.any(output == 15), 'no 0, 15 or 5'
+        # # num_z = torch.sum(output == 0).item()
+        # # num_f = torch.sum(output == 15).item()
+        # # num_t = output.numel()
+        # # print(f"0: {num_z/num_t:.1%}, 15: {num_f/num_t:.1%}")
+        # output = output - zero_point
+        # output = output.type(scale.dtype) * scale
+
+        scale = (levels - 1) / input_range
+        output = input_.clip(min=input_low, max=input_low + input_range)
+        zero_point = (-input_low * scale).round()
+        output -= input_low
+        output *= scale
+        output -= zero_point
+        output = output.round()
+        output = output / scale
 
         # Save tensors for backward pass
         ctx.save_for_backward(A, B, input_, output, input_low, input_range)
@@ -946,12 +949,22 @@ class FQLoRA(torch.autograd.Function):
         output = output.reshape(original_shape)
         # if casted:
         #     output = output.type(torch.bfloat16)
+        # print("quant noise={:.2f}".format(torch.linalg.norm(output - W, ord="fro").item()))
+        # output = output.type(torch.float32)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
         A, B, input_, output, input_low, input_range = ctx.saved_tensors
+
         # grad_output = grad_output.type(torch.float32)
+        # A = A.type(torch.float32)
+        # B = B.type(torch.float32)
+        # input_ = input_.type(torch.float32)
+        # input_low = input_low.type(torch.float32)
+        # input_range = input_range.type(torch.float32)
+        # output = output.type(torch.float32)
+
         grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
         grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
 
@@ -977,6 +990,12 @@ class FQLoRA(torch.autograd.Function):
         grad_low = grad_output * (mask_hi + mask_lo)
         grad_low = sum_like(grad_low, input_low)
         #      W,    group_shape,   A,      B,      input_low, input_range, level_low, level_high, levels
+        print(
+            f"ilt={grad_low.dtype} il={grad_low.norm().item()}, ir={grad_range.norm().item()}"
+            f"irt={grad_range.dtype}\n {grad_low[:3, :3, 0]}"
+        )
+        # grad_low = grad_low.type(torch.float32)
+        # grad_range = grad_range.type(torch.float32)
         return None, None, grad_A, grad_B, grad_low, grad_range, None, None, None
 
 
@@ -1091,23 +1110,6 @@ class AsymmetricQuantizer(BaseQuantizer):
         #     self.input_low = torch.nn.Parameter(self.input_low.to(dtype))
         #     self._input_range_param_storage = torch.nn.Parameter(self._input_range_param_storage.to(dtype))
 
-        # if hasattr(self, "_lora_A"):
-        # print("dtype on quantize, x={} A={}".format(x.dtype, self._lora_A.dtype))
-        # self._lora_B = self._lora_B.to(device)
-        # self._lora_A = self._lora_A.to(device)
-        # print('move to ', device)
-        # for name, param in self.named_parameters():
-        #     print("CHECK: ", name, param.device)
-        # dtype = x.dtype
-        # x = (self._lora_B @ self._lora_A + x).type(dtype)  # .detach()  # [O, R] * [R, H] + [O, H]
-
-        # TODO: CUDA out of memory for some reason even in a per-channel case!
-        # is_lora = self._lora_A.requires_grad
-        # casted = False
-        # if x.dtype == torch.bfloat16:
-        #     casted = True
-        #     x = x.type(torch.float32)
-
         input_range_safe = abs(self.input_range) + self.eps
         input_low_tuned, input_range_tuned = TuneRange.apply(self.input_low, input_range_safe, self.levels)
         fq_weight = FQLoRA.apply(
@@ -1115,8 +1117,6 @@ class AsymmetricQuantizer(BaseQuantizer):
             self._group_shape,
             self._lora_A,
             self._lora_B,
-            # self.input_low,
-            # self.input_range,
             input_low_tuned,
             input_range_tuned,
             self.level_low,
