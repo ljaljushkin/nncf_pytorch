@@ -335,10 +335,10 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             # self.lora_rank = 8
             # own_device = get_model_device(self)
             self._lora_A = torch.nn.Parameter(
-                torch.ones((self.lora_rank, in_features), dtype=torch.bfloat16), requires_grad=True
+                torch.ones((self.lora_rank, in_features), dtype=torch.float32), requires_grad=True
             )
             self._lora_B = torch.nn.Parameter(
-                torch.zeros((out_features, self.lora_rank), dtype=torch.bfloat16), requires_grad=True
+                torch.zeros((out_features, self.lora_rank), dtype=torch.float32), requires_grad=True
             )
 
             # NOTE: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
@@ -893,24 +893,10 @@ class FQLoRA(torch.autograd.Function):
     @staticmethod
     def forward(ctx, W, group_shape, A, B, input_low, input_range, level_low, level_high, levels):
         original_shape = W.shape
-        # casted = False
-        # if W.dtype == torch.bfloat16:
-        #     casted = True
-        #     input_low = input_low.type(torch.bfloat16)
-        #     input_range = input_range.type(torch.bfloat16)
-        #     A = A.type(torch.bfloat16)
-        #     B = B.type(torch.bfloat16)
 
-        # if W.dtype != torch.float32:
-        #     # W = W.type(torch.float32)
-        #     # A = A.type(torch.float32)
-        #     # B = B.type(torch.float32)
         input_ = W + B @ A
         input_ = W.reshape(group_shape)
 
-        # input_ = input_.type(torch.float32)
-        # input_low = input_low.type(torch.float32)
-        # input_range = input_range.type(torch.float32)
         # NOTE: another schema for tuning, better gradients??
         # dtype = torch.uint8
         # scale = input_range / (levels - 1)  # TODO: cast?
@@ -944,26 +930,13 @@ class FQLoRA(torch.autograd.Function):
         ctx.level_low = level_low
         ctx.level_high = level_high
         ctx.group_shape = group_shape
-        # ctx.is_lora = is_lora
 
         output = output.reshape(original_shape)
-        # if casted:
-        #     output = output.type(torch.bfloat16)
-        # print("quant noise={:.2f}".format(torch.linalg.norm(output - W, ord="fro").item()))
-        # output = output.type(torch.float32)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
         A, B, input_, output, input_low, input_range = ctx.saved_tensors
-
-        # grad_output = grad_output.type(torch.float32)
-        # A = A.type(torch.float32)
-        # B = B.type(torch.float32)
-        # input_ = input_.type(torch.float32)
-        # input_low = input_low.type(torch.float32)
-        # input_range = input_range.type(torch.float32)
-        # output = output.type(torch.float32)
 
         grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
         grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
@@ -990,12 +963,10 @@ class FQLoRA(torch.autograd.Function):
         grad_low = grad_output * (mask_hi + mask_lo)
         grad_low = sum_like(grad_low, input_low)
         #      W,    group_shape,   A,      B,      input_low, input_range, level_low, level_high, levels
-        print(
-            f"ilt={grad_low.dtype} il={grad_low.norm().item()}, ir={grad_range.norm().item()}"
-            f"irt={grad_range.dtype}\n {grad_low[:3, :3, 0]}"
-        )
-        # grad_low = grad_low.type(torch.float32)
-        # grad_range = grad_range.type(torch.float32)
+        # print(
+        #     f"ilt={grad_low.dtype} il={grad_low.norm().item()}, ir={grad_range.norm().item()}"
+        #     f"irt={grad_range.dtype}\n {grad_low[:3, :3, 0]}"
+        # )
         return None, None, grad_A, grad_B, grad_low, grad_range, None, None, None
 
 
@@ -1009,17 +980,15 @@ class AsymmetricQuantizer(BaseQuantizer):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__(qspec)
         self.input_low = CompressionParameter(
-            torch.zeros(self.scale_shape, dtype=torch.bfloat16),
+            torch.zeros(self.scale_shape, dtype=torch.float32),
             requires_grad=True,
             compression_lr_multiplier=qspec.compression_lr_multiplier,
         )
-        # self.register_buffer('input_low', torch.zeros(self.scale_shape))
-        # self.register_buffer('_input_range_param_storage', torch.ones(self.scale_shape))
         setattr(
             self,
             self._INPUT_RANGE_PARAM_STORAGE_ATTR,
             CompressionParameter(
-                torch.ones(self.scale_shape, dtype=torch.bfloat16),
+                torch.ones(self.scale_shape, dtype=torch.float32),
                 requires_grad=True,
                 compression_lr_multiplier=qspec.compression_lr_multiplier,
             ),

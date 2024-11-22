@@ -325,7 +325,9 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # print(weight.dtype)
             print("quant noise before SVD={:.2f}".format(torch.linalg.norm(fq_weight - weight, ord="fro").item()))
             # svd_residual = (weight - fq_weight).type(torch.float32)
-            svd_residual = (torch.rand(group_shape, dtype=weight.dtype).to(weight.device) / 100) * input_range / 15
+            svd_residual = (
+                (torch.rand(group_shape, dtype=weight.dtype).to(weight.device) / 4 - 1 / 2) * input_range / 15
+            )
             svd_residual = svd_residual.reshape(quantizer_spec.weight_shape)
             svd_residual = svd_residual.type(
                 torch.float32

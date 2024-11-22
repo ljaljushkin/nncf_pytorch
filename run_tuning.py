@@ -93,7 +93,7 @@ MODEL_DIR = ROOT_MODEL_DIR / model_name
 
 hf_model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype=torch.bfloat16,  # torch.float32, # "auto",  # torch.float32,  # "auto",
+    torch_dtype=torch.float32,  # torch.float32, # "auto",  # torch.float32,  # "auto",
     device_map="auto",
     low_cpu_mem_usage=True,
     trust_remote_code=True,
@@ -142,7 +142,7 @@ nncf.compress_weights(
 
 # generate_overfit(hf_model, tokenizer, "Quantized")
 # TODO: next experiment with the best params
-ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g64_bfloat16_rand_quant"
+ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g64_float32_rand_half"
 # ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank8"
 save_checkpoint(hf_model.model, ckpt_dir)
 model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")
