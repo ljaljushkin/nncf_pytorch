@@ -335,10 +335,10 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             # self.lora_rank = 8
             # own_device = get_model_device(self)
             self._lora_A = torch.nn.Parameter(
-                torch.ones((self.lora_rank, in_features), dtype=torch.float32), requires_grad=True
+                torch.ones((self.lora_rank, in_features), dtype=torch.bfloat16), requires_grad=True
             )
             self._lora_B = torch.nn.Parameter(
-                torch.zeros((out_features, self.lora_rank), dtype=torch.float32), requires_grad=True
+                torch.zeros((out_features, self.lora_rank), dtype=torch.bfloat16), requires_grad=True
             )
 
             # NOTE: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
@@ -895,7 +895,7 @@ class FQLoRA(torch.autograd.Function):
         original_shape = W.shape
 
         input_ = W + B @ A
-        input_ = W.reshape(group_shape)
+        input_ = input_.reshape(group_shape)  # NOTE: careful with what you reshape here!
 
         # NOTE: another schema for tuning, better gradients??
         # dtype = torch.uint8
@@ -980,7 +980,7 @@ class AsymmetricQuantizer(BaseQuantizer):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__(qspec)
         self.input_low = CompressionParameter(
-            torch.zeros(self.scale_shape, dtype=torch.float32),
+            torch.zeros(self.scale_shape, dtype=torch.bfloat16),
             requires_grad=True,
             compression_lr_multiplier=qspec.compression_lr_multiplier,
         )
@@ -988,7 +988,7 @@ class AsymmetricQuantizer(BaseQuantizer):
             self,
             self._INPUT_RANGE_PARAM_STORAGE_ATTR,
             CompressionParameter(
-                torch.ones(self.scale_shape, dtype=torch.float32),
+                torch.ones(self.scale_shape, dtype=torch.bfloat16),
                 requires_grad=True,
                 compression_lr_multiplier=qspec.compression_lr_multiplier,
             ),
