@@ -141,6 +141,10 @@ nncf.compress_weights(
 )
 
 
+layer = model._nncf.external_quantizers.FQ_LORA_for_node_layers_23_mlp_down_proj_weight
+print("23dj_IL=", torch.linalg.norm(layer.input_low.data).item())
+print("23dj_IR=", torch.linalg.norm(layer.input_range.data).item())
+
 # generate_overfit(hf_model, tokenizer, "Quantized")
 # TODO: next experiment with the best params
 ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g64_hybrid_rand_quant100+"

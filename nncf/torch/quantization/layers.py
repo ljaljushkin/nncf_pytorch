@@ -722,21 +722,21 @@ class SymmetricQuantizer(BaseQuantizer):
             self.signed = bool(qspec.signedness_to_force)
         self.set_levels()
 
-        self._register_load_state_dict_pre_hook(
-            StorageRedirectingLoadStateDictHook(
-                storage_attribute_in_module=self._SCALE_PARAM_STORAGE_ATTR,
-                name_in_state_dict=self.SCALE_PARAM_NAME,
-                use_log_storage_in_module=self._is_using_log_scale_storage,
-            )
-        )
+        # self._register_load_state_dict_pre_hook(
+        #     StorageRedirectingLoadStateDictHook(
+        #         storage_attribute_in_module=self._SCALE_PARAM_STORAGE_ATTR,
+        #         name_in_state_dict=self.SCALE_PARAM_NAME,
+        #         use_log_storage_in_module=self._is_using_log_scale_storage,
+        #     )
+        # )
 
-        self._register_state_dict_hook(
-            StorageRedirectingStateDictHook(
-                storage_attribute_in_module=self._SCALE_PARAM_STORAGE_ATTR,
-                name_in_state_dict=self.SCALE_PARAM_NAME,
-                use_log_storage_in_module=self._is_using_log_scale_storage,
-            )
-        )
+        # self._register_state_dict_hook(
+        #     StorageRedirectingStateDictHook(
+        #         storage_attribute_in_module=self._SCALE_PARAM_STORAGE_ATTR,
+        #         name_in_state_dict=self.SCALE_PARAM_NAME,
+        #         use_log_storage_in_module=self._is_using_log_scale_storage,
+        #     )
+        # )
 
         # Values of level_low, level_high must be recalculated for load new signed parameter.
         self.register_load_state_dict_post_hook(lambda module, _: module.set_levels())
@@ -905,12 +905,14 @@ class FQLoRA(torch.autograd.Function):
         super().__init__()
 
     @staticmethod
-    def forward(ctx, W, group_shape, A, B, input_low, input_range, level_low, level_high, levels):
+    def forward(ctx, W, group_shape, A, B, input_low_, input_range_, level_low, level_high, levels):
         original_shape = W.shape
 
-        W = W.float()
-        A = A.float()
-        B = B.float()
+        # W_ = W.float()
+        # A_ = A.float()
+        # B_ = B.float()
+        input_low = input_low_.type(torch.bfloat16)
+        input_range = input_range_.type(torch.bfloat16)
 
         input_ = W + B @ A
         input_ = input_.reshape(group_shape)  # NOTE: careful with what you reshape here!
@@ -934,6 +936,7 @@ class FQLoRA(torch.autograd.Function):
         # output = output.type(scale.dtype) * scale
 
         scale = (levels - 1) / input_range
+
         output = input_.clip(min=input_low, max=input_low + input_range)
         zero_point = (-input_low * scale).round()
         output -= input_low
@@ -950,12 +953,10 @@ class FQLoRA(torch.autograd.Function):
         ctx.group_shape = group_shape
 
         output = output.reshape(original_shape)
-        output = output.type(torch.bfloat16)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
-        grad_output = grad_output.float()
         A, B, input_, output, input_low, input_range = ctx.saved_tensors
 
         grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
@@ -975,19 +976,16 @@ class FQLoRA(torch.autograd.Function):
         err = (output - input_) * torch.reciprocal(input_range * range_sign)
         grad_output = grad_output.reshape(group_shape)
         grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
-        grad_range = sum_like(grad_range.float(), input_range)
+        grad_range = sum_like(grad_range, input_range)
 
         # NOTE: no gradient for weights
         # grad_input = grad_output * mask_in
 
         grad_low = grad_output * (mask_hi + mask_lo)
-        grad_low = sum_like(grad_low.float(), input_low)
+        grad_low = sum_like(grad_low, input_low)
+
         #      W,    group_shape,   A,      B,      input_low, input_range, level_low, level_high, levels
-        # print(
-        #     f"ilt={grad_low.dtype} il={grad_low.norm().item()}, ir={grad_range.norm().item()}"
-        #     f"irt={grad_range.dtype}\n {grad_low[:3, :3, 0]}"
-        # )
-        return None, None, grad_A, grad_B, grad_low, grad_range, None, None, None
+        return None, None, grad_A, grad_B, grad_low.float(), grad_range.float(), None, None, None
 
 
 @COMPRESSION_MODULES.register()
@@ -999,20 +997,29 @@ class AsymmetricQuantizer(BaseQuantizer):
 
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__(qspec)
-        self.input_low = CompressionParameter(
+        self._is_using_log_scale_storage = False
+        self.input_low = torch.nn.Parameter(
             torch.zeros(self.scale_shape, dtype=torch.float32),
             requires_grad=True,
-            compression_lr_multiplier=qspec.compression_lr_multiplier,
         )
-        setattr(
-            self,
-            self._INPUT_RANGE_PARAM_STORAGE_ATTR,
-            CompressionParameter(
-                torch.ones(self.scale_shape, dtype=torch.float32),
-                requires_grad=True,
-                compression_lr_multiplier=qspec.compression_lr_multiplier,
-            ),
+        # self.input_low = CompressionParameter(
+        #     torch.zeros(self.scale_shape, dtype=torch.float32),
+        #     requires_grad=True,
+        #     compression_lr_multiplier=qspec.compression_lr_multiplier,
+        # )
+        self._input_range_param_storage = torch.nn.Parameter(
+            torch.ones(self.scale_shape, dtype=torch.float32),
+            requires_grad=True,
         )
+        # setattr(
+        #     self,
+        #     self._INPUT_RANGE_PARAM_STORAGE_ATTR,
+        #     CompressionParameter(
+        #         torch.ones(self.scale_shape, dtype=torch.float32),
+        #         requires_grad=True,
+        #         compression_lr_multiplier=qspec.compression_lr_multiplier,
+        #     ),
+        # )
 
         if self._is_using_log_scale_storage:
             self._input_range_param_storage.data.log_()
@@ -1088,17 +1095,6 @@ class AsymmetricQuantizer(BaseQuantizer):
         # TODO: is device should be aligned automatically?
         device = x.device
         self.to(device)
-        # TODO: Probably re-creating Parameter breaks gradients and optimizer???
-        # if self._lora_A.dtype != dtype or self._lora_B.dtype != dtype:
-        #     # print(f'dtype mismatch, adapter vs weight: {self._lora_A.dtype} {dtype}')
-        #     self._lora_A = torch.nn.Parameter(self._lora_A.to(dtype))
-        #     self._lora_B = torch.nn.Parameter(self._lora_B.to(dtype))
-        # if self.input_low.dtype != dtype or self._input_range_param_storage != dtype:
-        #     # self.register_buffer('input_low', self.input_low.to(dtype))
-        #     # self.register_buffer('_input_range_param_storage', self._input_range_param_storage.to(dtype))
-        #     self.input_low = torch.nn.Parameter(self.input_low.to(dtype))
-        #     self._input_range_param_storage = torch.nn.Parameter(self._input_range_param_storage.to(dtype))
-
         input_range_safe = abs(self.input_range) + self.eps
         input_low, input_range = TuneRange.apply(self.input_low, input_range_safe, self.levels)
         fq_weight = FQLoRA.apply(
