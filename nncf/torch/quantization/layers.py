@@ -19,6 +19,7 @@ import numpy as np
 import torch
 from torch import distributed
 from torch import nn
+from torch.autograd import Function
 
 import nncf
 from nncf.common.graph import NNCFNodeName
@@ -335,10 +336,10 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             # self.lora_rank = 8
             # own_device = get_model_device(self)
             self._lora_A = torch.nn.Parameter(
-                torch.ones((self.lora_rank, in_features), dtype=torch.bfloat16), requires_grad=True
+                torch.ones((self.lora_rank, in_features), dtype=torch.float32), requires_grad=True
             )
             self._lora_B = torch.nn.Parameter(
-                torch.zeros((out_features, self.lora_rank), dtype=torch.bfloat16), requires_grad=True
+                torch.zeros((out_features, self.lora_rank), dtype=torch.float32), requires_grad=True
             )
 
             # NOTE: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
@@ -886,6 +887,19 @@ class SymmetricQuantizer(BaseQuantizer):
         )
 
 
+class STERound(Function):
+    @staticmethod
+    def forward(ctx, input_):
+        # In the forward pass, we simply return the input as is
+        return input_.round()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        # In the backward pass, we approximate the gradient as 1
+        grad_input = grad_output.clone()
+        return grad_input
+
+
 class FQLoRA(torch.autograd.Function):
     def __init__(self):
         super().__init__()
@@ -925,7 +939,8 @@ class FQLoRA(torch.autograd.Function):
         output = output / scale
 
         # Save tensors for backward pass
-        ctx.save_for_backward(A, B, input_, output, input_low, input_range)
+        # ctx.save_for_backward(A, B, input_, output, input_low, input_range)
+        ctx.save_for_backward(input_, output, input_low, input_range)
 
         ctx.level_low = level_low
         ctx.level_high = level_high
@@ -980,7 +995,7 @@ class AsymmetricQuantizer(BaseQuantizer):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__(qspec)
         self.input_low = CompressionParameter(
-            torch.zeros(self.scale_shape, dtype=torch.bfloat16),
+            torch.zeros(self.scale_shape, dtype=torch.float32),
             requires_grad=True,
             compression_lr_multiplier=qspec.compression_lr_multiplier,
         )
@@ -988,7 +1003,7 @@ class AsymmetricQuantizer(BaseQuantizer):
             self,
             self._INPUT_RANGE_PARAM_STORAGE_ATTR,
             CompressionParameter(
-                torch.ones(self.scale_shape, dtype=torch.bfloat16),
+                torch.ones(self.scale_shape, dtype=torch.float32),
                 requires_grad=True,
                 compression_lr_multiplier=qspec.compression_lr_multiplier,
             ),
@@ -1080,18 +1095,35 @@ class AsymmetricQuantizer(BaseQuantizer):
         #     self._input_range_param_storage = torch.nn.Parameter(self._input_range_param_storage.to(dtype))
 
         input_range_safe = abs(self.input_range) + self.eps
-        input_low_tuned, input_range_tuned = TuneRange.apply(self.input_low, input_range_safe, self.levels)
-        fq_weight = FQLoRA.apply(
-            x,
-            self._group_shape,
-            self._lora_A,
-            self._lora_B,
-            input_low_tuned,
-            input_range_tuned,
-            self.level_low,
-            self.level_high,
-            self.levels,
-        )
+        input_low, input_range = TuneRange.apply(self.input_low, input_range_safe, self.levels)
+        # fq_weight = FQLoRA.apply(
+        #     x,
+        #     self._group_shape,
+        #     self._lora_A,
+        #     self._lora_B,
+        #     input_low_tuned,
+        #     input_range_tuned,
+        #     self.level_low,
+        #     self.level_high,
+        #     self.levels,
+        # )
+
+        # NOTE: autograd impl
+        original_shape = x.shape
+        input_ = x + self._lora_B @ self._lora_A
+        input_ = input_.reshape(self._group_shape)  # NOTE: careful with what you reshape here!
+
+        scale = (self.levels - 1) / input_range
+        output = input_.clip(min=input_low, max=input_low + input_range)
+        zero_point = STERound.apply(-input_low * scale)
+        output -= input_low
+        output *= scale
+        output -= zero_point
+        output = STERound.apply(output)
+        output = output / scale
+
+        output = output.reshape(original_shape)
+        return output
 
         # return x
         # TODO: Error with autograd: element 0 of tensors does not require grad and does not have a grad_fn
@@ -1115,7 +1147,7 @@ class AsymmetricQuantizer(BaseQuantizer):
         # )
         # if casted:
         #     fq_weight = fq_weight.type(torch.bfloat16)
-        return fq_weight
+        # return fq_weight
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
         return {}
