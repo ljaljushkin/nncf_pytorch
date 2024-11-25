@@ -143,7 +143,7 @@ nncf.compress_weights(
 
 # generate_overfit(hf_model, tokenizer, "Quantized")
 # TODO: next experiment with the best params
-ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g64_bfloat16_rand_quant100+"
+ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g64_hybrid_rand_quant100+"
 # ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank8"
 save_checkpoint(hf_model.model, ckpt_dir)
 model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")

@@ -292,10 +292,10 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # reshape_weight = weight
 
             # with torch.no_grad:
-            input_low = torch.amin(reshape_weight, dim=group_reduction_axes, keepdim=True)
+            input_low = torch.amin(reshape_weight, dim=group_reduction_axes, keepdim=True).float()
             input_high = torch.amax(
                 reshape_weight, dim=group_reduction_axes, keepdim=True
-            )  # [a1, r, a2] -> [a1, 1, a2]
+            ).float()  # [a1, r, a2] -> [a1, 1, a2]
             # print("weight dtype input_low=", weight.dtype)
             # print("input_low dtype input_low=", input_low.dtype)
             quantizer_spec.scale_shape = scale_shape

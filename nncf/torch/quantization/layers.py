@@ -908,6 +908,10 @@ class FQLoRA(torch.autograd.Function):
     def forward(ctx, W, group_shape, A, B, input_low, input_range, level_low, level_high, levels):
         original_shape = W.shape
 
+        W = W.float()
+        A = A.float()
+        B = B.float()
+
         input_ = W + B @ A
         input_ = input_.reshape(group_shape)  # NOTE: careful with what you reshape here!
 
@@ -946,10 +950,12 @@ class FQLoRA(torch.autograd.Function):
         ctx.group_shape = group_shape
 
         output = output.reshape(original_shape)
+        output = output.type(torch.bfloat16)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
+        grad_output = grad_output.float()
         A, B, input_, output, input_low, input_range = ctx.saved_tensors
 
         grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
@@ -969,13 +975,13 @@ class FQLoRA(torch.autograd.Function):
         err = (output - input_) * torch.reciprocal(input_range * range_sign)
         grad_output = grad_output.reshape(group_shape)
         grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
-        grad_range = sum_like(grad_range, input_range)
+        grad_range = sum_like(grad_range.float(), input_range)
 
         # NOTE: no gradient for weights
         # grad_input = grad_output * mask_in
 
         grad_low = grad_output * (mask_hi + mask_lo)
-        grad_low = sum_like(grad_low, input_low)
+        grad_low = sum_like(grad_low.float(), input_low)
         #      W,    group_shape,   A,      B,      input_low, input_range, level_low, level_high, levels
         # print(
         #     f"ilt={grad_low.dtype} il={grad_low.norm().item()}, ir={grad_range.norm().item()}"
@@ -994,7 +1000,7 @@ class AsymmetricQuantizer(BaseQuantizer):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__(qspec)
         self.input_low = CompressionParameter(
-            torch.zeros(self.scale_shape, dtype=torch.bfloat16),
+            torch.zeros(self.scale_shape, dtype=torch.float32),
             requires_grad=True,
             compression_lr_multiplier=qspec.compression_lr_multiplier,
         )
@@ -1002,7 +1008,7 @@ class AsymmetricQuantizer(BaseQuantizer):
             self,
             self._INPUT_RANGE_PARAM_STORAGE_ATTR,
             CompressionParameter(
-                torch.ones(self.scale_shape, dtype=torch.bfloat16),
+                torch.ones(self.scale_shape, dtype=torch.float32),
                 requires_grad=True,
                 compression_lr_multiplier=qspec.compression_lr_multiplier,
             ),
