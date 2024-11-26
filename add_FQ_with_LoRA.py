@@ -84,9 +84,9 @@ ROOT_MODEL_DIR = Path.home() / ("MODEL_DIR")
 
 # model_id = "facebook/opt-125m"
 # model_id = "TinyLlama/TinyLlama_v1.1"
-# model_id = "microsoft/Phi-3-mini-4k-instruct"
+model_id = "microsoft/Phi-3-mini-4k-instruct"
 # model_id = "microsoft/Phi-3.5-mini-instruct"
-model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
+# model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
 model_name = Path(model_id).name.replace(".", "_")
 
 MODEL_DIR = ROOT_MODEL_DIR / model_name
