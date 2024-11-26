@@ -84,9 +84,9 @@ ROOT_MODEL_DIR = Path.home() / ("MODEL_DIR")
 
 # model_id = "facebook/opt-125m"
 # model_id = "TinyLlama/TinyLlama_v1.1"
-model_id = "microsoft/Phi-3-mini-4k-instruct"
+# model_id = "microsoft/Phi-3-mini-4k-instruct"
 # model_id = "microsoft/Phi-3.5-mini-instruct"
-# model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
+model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
 model_name = Path(model_id).name.replace(".", "_")
 
 MODEL_DIR = ROOT_MODEL_DIR / model_name
@@ -147,7 +147,7 @@ print("23dj_IR=", torch.linalg.norm(layer.input_range.data).item())
 
 # generate_overfit(hf_model, tokenizer, "Quantized")
 # TODO: next experiment with the best params
-ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g64_hybrid_rand_quant100+"
+ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g64_hybrid_rand_quant100+_sqrtS"
 # ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank8"
 save_checkpoint(hf_model.model, ckpt_dir)
 model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")

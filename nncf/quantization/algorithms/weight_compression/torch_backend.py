@@ -220,9 +220,11 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         #     svd_residual = torch.transpose(svd_residual)  # [O, H] -> [H, O]
         U_full, S_full, V_full = torch.linalg.svd(svd_residual, full_matrices=False)
         U = U_full[:, :rank]  # [H, R]
-        S = torch.diag(S_full[:rank])  # [R, R]
+        S_sqrt = torch.sqrt(S_full)
+        S = torch.diag(S_sqrt[:rank])  # [R, R]
         V = V_full[:rank, :]  # [R, O]
         V = S @ V  # [R, O]
+        U = U @ S  # [H, R]
         return U, V
 
     def transform_model(
