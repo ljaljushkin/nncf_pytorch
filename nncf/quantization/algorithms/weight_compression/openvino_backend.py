@@ -51,6 +51,7 @@ from nncf.quantization.algorithms.weight_compression.config import WeightCompres
 from nncf.quantization.algorithms.weight_compression.lora_correction import LoraCorrectionAlgorithm
 from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight
 from nncf.tensor import Tensor
+from nncf.tensor import functions as fns
 from nncf.tensor.definitions import TensorDataType
 
 
@@ -226,7 +227,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         layer_scales: Optional[Tensor] = None,
         layer_zero_points: Optional[Tensor] = None,
         lora_correction_algo=None,
-        wc_params=None
+        wc_params=None,
     ):
         scale_dtype = ov.Type.f16
         if compression_config.mode == CompressWeightsMode.NF4:
@@ -249,11 +250,15 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         compressed_weight = compress_weight(weight, reduction_axes, compression_config, layer_scales, layer_zero_points)
 
         if lora_correction_algo and compression_config.mode == CompressWeightsMode.INT4_ASYM:
-            # NOTE: do lora correction
             A, B = lora_correction_algo.calculate_adapters(weight, compressed_weight, wc_params)
-            weight_to_compress = weight + B @ A
-            # quantize one more time W + B @ A
-            compressed_weight = compress_weight(weight_to_compress, reduction_axes, compression_config, layer_scales, layer_zero_points)
+            lora_w = B @ A
+            # qlora_w = quantize(lora_w, compressed_weight.scale, compressed_weight.zero_point)
+            qlora_w = compress_weight(lora_w, reduction_axes, compression_config, layer_scales, layer_zero_points)
+            compressed_weight.tensor = fns.clip(compressed_weight.tensor + qlora_w.tensor, 0, 15)
+            # weight_to_compress = weight + B @ A
+            # # quantize one more time W + B @ A
+            # compressed_weight = compress_weight(weight_to_compress, reduction_axes, compression_config, layer_scales,
+            #  layer_zero_points)
 
         compressed_const = opset.constant(compressed_weight.tensor.data, dtype=compression_dtype, name=const_node_name)
         converted_const = opset.convert(compressed_const, ov.Type.f16)
@@ -314,7 +319,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 None if precomputed_zero_points is None else precomputed_zero_points.get(wc_params.weight_name)
             )
 
-            mul, compressed_weight = self._create_compression_subgraph(
+            mul, _ = self._create_compression_subgraph(
                 weight=weight,
                 compression_config=wc_params.compression_config,
                 reduction_axes=wc_params.reduction_axes,
@@ -325,7 +330,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 layer_scales=layer_scales,
                 layer_zero_points=layer_zero_points,
                 lora_correction_algo=lora_correction_algo,
-                wc_params=wc_params
+                wc_params=wc_params,
             )
 
             mul_output = mul.output(0)
