@@ -225,6 +225,8 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         should_add_convert_node: bool,
         layer_scales: Optional[Tensor] = None,
         layer_zero_points: Optional[Tensor] = None,
+        lora_correction_algo=None,
+        wc_params=None
     ):
         scale_dtype = ov.Type.f16
         if compression_config.mode == CompressWeightsMode.NF4:
@@ -245,6 +247,13 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         original_shape = weight.shape
         compressed_weight = compress_weight(weight, reduction_axes, compression_config, layer_scales, layer_zero_points)
+
+        if lora_correction_algo and compression_config.mode == CompressWeightsMode.INT4_ASYM:
+            # NOTE: do lora correction
+            A, B = lora_correction_algo.calculate_adapters(weight, compressed_weight, wc_params)
+            weight_to_compress = weight + B @ A
+            # quantize one more time W + B @ A
+            compressed_weight = compress_weight(weight_to_compress, reduction_axes, compression_config, layer_scales, layer_zero_points)
 
         compressed_const = opset.constant(compressed_weight.tensor.data, dtype=compression_dtype, name=const_node_name)
         converted_const = opset.convert(compressed_const, ov.Type.f16)
@@ -304,6 +313,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             layer_zero_points = (
                 None if precomputed_zero_points is None else precomputed_zero_points.get(wc_params.weight_name)
             )
+
             mul, compressed_weight = self._create_compression_subgraph(
                 weight=weight,
                 compression_config=wc_params.compression_config,
@@ -314,15 +324,17 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 should_add_convert_node=should_add_convert_node,
                 layer_scales=layer_scales,
                 layer_zero_points=layer_zero_points,
+                lora_correction_algo=lora_correction_algo,
+                wc_params=wc_params
             )
 
             mul_output = mul.output(0)
             for target_input in const_node.output(0).get_target_inputs():
                 target_input.replace_source_output(mul_output)
 
-            if lora_correction_algo is not None and lora_correction_algo.is_applicable(wc_params):
-                adapters = lora_correction_algo.calculate_adapters(weight, compressed_weight, wc_params)
-                self.insert_adapters(wc_params, *adapters, int8_lora=lora_correction_algo.use_int8_adapters)
+            # if lora_correction_algo is not None and lora_correction_algo.is_applicable(wc_params):
+            #     adapters = lora_correction_algo.calculate_adapters(weight, compressed_weight, wc_params)
+            #     self.insert_adapters(wc_params, *adapters, int8_lora=lora_correction_algo.use_int8_adapters)
 
         # reset name_to_node_mapping
         self.name_to_node_mapping = None
