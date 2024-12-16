@@ -77,6 +77,7 @@ class PTQSpecStateNames:
     SCALE_SHAPE = "scale_shape"
     WEIGHT_SHAPE = "weight_shape"
     LORA_RANK = "lora_rank"
+    GROUP_SIZE = "group_size"
     LOGARITHM_SCALE = "logarithm_scale"
     IS_QUANTIZED_ON_EXPORT = "is_quantized_on_export"
     COMPRESSION_LR_MULTIPLIER = "compression_lr_multiplier"
@@ -94,11 +95,12 @@ class PTQuantizerSpec(QuantizerSpec):
         half_range: bool,
         scale_shape: Tuple[int, ...],
         weight_shape: Tuple[int, ...],
-        # lora_rank: int,
         logarithm_scale: bool,
         is_quantized_on_export: bool = False,
         compression_lr_multiplier: float = None,
         device: str = "cpu",
+        lora_rank: int = 256,
+        group_size: int = 64,
     ):
         """
         :param scale_shape: Shape of quantizer scale parameters
@@ -111,7 +113,8 @@ class PTQuantizerSpec(QuantizerSpec):
         self.per_channel = scale_shape != (1,)
         self.scale_shape = scale_shape
         self.weight_shape = weight_shape
-        # self.lora_rank = lora_rank
+        self.lora_rank = lora_rank
+        self.group_size = group_size
         self.logarithm_scale = logarithm_scale
         self.compression_lr_multiplier = compression_lr_multiplier
         self.is_quantized_on_export = is_quantized_on_export
@@ -125,11 +128,12 @@ class PTQuantizerSpec(QuantizerSpec):
         half_range: bool,
         scale_shape: Tuple[int],
         weight_shape: Tuple[int],
-        # lora_rank: int,
         device: str,
         logarithm_scale: bool,
         is_quantized_on_export: bool,
         compression_lr_multiplier: float,
+        lora_rank: int,
+        group_size: int,
     ) -> "PTQuantizerSpec":
         return cls(
             qconfig.num_bits,
@@ -139,11 +143,12 @@ class PTQuantizerSpec(QuantizerSpec):
             half_range,
             scale_shape,
             weight_shape,
-            # lora_rank,
             logarithm_scale,
             is_quantized_on_export,
             compression_lr_multiplier,
             device,
+            lora_rank,
+            group_size,
         )
 
     def __eq__(self, other):
@@ -164,7 +169,8 @@ class PTQuantizerSpec(QuantizerSpec):
             cls._state_names.HALF_RANGE: state["half_range"],
             cls._state_names.SCALE_SHAPE: state["scale_shape"],
             cls._state_names.WEIGHT_SHAPE: state["weight_shape"],
-            # cls._state_names.LORA_RANK: state["lora_rank"],
+            cls._state_names.LORA_RANK: state["lora_rank"],
+            cls._state_names.GROUP_SIZE: state["group_size"],
             cls._state_names.DEVICE: state["device"],
             cls._state_names.LOGARITHM_SCALE: state["logarithm_scale"],
             cls._state_names.IS_QUANTIZED_ON_EXPORT: state["is_quantized_on_export"],
@@ -181,7 +187,8 @@ class PTQuantizerSpec(QuantizerSpec):
             self._state_names.HALF_RANGE: self.half_range,
             self._state_names.SCALE_SHAPE: self.scale_shape,
             self._state_names.WEIGHT_SHAPE: self.weight_shape,
-            # cls._state_names.LORA_RANK: self.lora_rank,
+            self._state_names.LORA_RANK: self.lora_rank,
+            self._state_names.GROUP_SIZE: self.group_size,
             self._state_names.DEVICE: self.device,
             self._state_names.LOGARITHM_SCALE: self.logarithm_scale,
             self._state_names.IS_QUANTIZED_ON_EXPORT: self.is_quantized_on_export,
@@ -311,7 +318,8 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__()
         self._qspec = qspec
-        self.lora_rank = 256  # self._qspec.lora_rank
+        self.lora_rank = self._qspec.lora_rank
+        self.group_size = self._qspec.group_size
         self.device = self._qspec.device
         self._narrow_range = qspec.narrow_range
         self._signedness_to_force = qspec.signedness_to_force
@@ -1045,7 +1053,8 @@ class AsymmetricQuantizer(BaseQuantizer):
             )
         )
         out_features, in_features = self._qspec.weight_shape
-        group_size = 64
+        group_size = self.group_size
+        print('Create FQ with gs={} and lora_rank={}'.format(group_size, self.lora_rank))
         self._w_group_shape = [out_features, in_features // group_size, group_size]
         self._s_group_shape = [out_features, in_features // group_size, 1]
         self._s_flat_shape = [out_features * in_features // group_size, 1]
@@ -1098,20 +1107,20 @@ class AsymmetricQuantizer(BaseQuantizer):
         # TODO: is device should be aligned automatically?
         device = x.device
         self.to(device)
-        # input_range_safe = abs(self.input_range) + self.eps
-        # input_low, input_range = TuneRange.apply(self.input_low, input_range_safe, self.levels)
-        # fq_weight = FQLoRA.apply(
-        #     x,
-        #     self._group_shape,
-        #     self._lora_A,
-        #     self._lora_B,
-        #     input_low,
-        #     input_range,
-        #     self.level_low,
-        #     self.level_high,
-        #     self.levels,
-        # )
-        # return fq_weight
+        input_range_safe = abs(self.input_range) + self.eps
+        input_low, input_range = TuneRange.apply(self.input_low, input_range_safe, self.levels)
+        fq_weight = FQLoRA.apply(
+            x,
+            self._w_group_shape,
+            self._lora_A,
+            self._lora_B,
+            input_low,
+            input_range,
+            self.level_low,
+            self.level_high,
+            self.levels,
+        )
+        return fq_weight
 
         # NOTE: autograd impl
         # original_shape = x.shape
@@ -1137,22 +1146,22 @@ class AsymmetricQuantizer(BaseQuantizer):
         #     fq_weight = self._ref_quantize.forward(reshaped_weight, self.input_low, self.input_range, self.levels)
         #     fq_weight = fq_weight.reshape(self._qspec.weight_shape)
 
-        x = x + self._lora_B @ self._lora_A
-        x = x.reshape(self._w_flat_shape)
-        fq_weight = asymmetric_quantize(
-            x,
-            self.levels,
-            self.level_low,
-            self.level_high,
-            self.input_low,
-            self.input_range,
-            self.eps,
-            skip=execute_traced_op_as_identity,
-        )
-        fq_weight = fq_weight.reshape(self._qspec.weight_shape)
-        # if casted:
-        #     fq_weight = fq_weight.type(torch.bfloat16)
-        return fq_weight
+        # x = x + self._lora_B @ self._lora_A
+        # x = x.reshape(self._w_flat_shape)
+        # fq_weight = asymmetric_quantize(
+        #     x,
+        #     self.levels,
+        #     self.level_low,
+        #     self.level_high,
+        #     self.input_low,
+        #     self.input_range,
+        #     self.eps,
+        #     skip=execute_traced_op_as_identity,
+        # )
+        # fq_weight = fq_weight.reshape(self._qspec.weight_shape)
+        # # if casted:
+        # #     fq_weight = fq_weight.type(torch.bfloat16)
+        # return fq_weight
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
         return {}

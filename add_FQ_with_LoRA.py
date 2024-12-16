@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import random
 from pathlib import Path
 
@@ -59,12 +60,14 @@ def save_checkpoint(wrapped_model, ckpt_dir):
     wrapped_model = wrapped_model.cpu()
     nncf_state_dict = wrapped_model.nncf.state_dict()
     nncf_config = wrapped_model.nncf.get_config()
+    ckpt_path = ckpt_dir / "nncf_checkpoint.pth"
+    print(f'Saving ckpt to: {ckpt_path}')
     torch.save(
         {
             "nncf_state_dict": nncf_state_dict,
             "nncf_config": nncf_config,
         },
-        ckpt_dir / "nncf_checkpoint.pth",
+        ckpt_path,
     )
 
 
@@ -77,6 +80,11 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
+
+parser = argparse.ArgumentParser(add_help=True)
+# Model params
+parser.add_argument("-m", "--model_id")
+args = parser.parse_args()
 
 set_seed(42)
 
@@ -91,8 +99,9 @@ ROOT_MODEL_DIR = Path.home() / ("MODEL_DIR")
 # model_id = 'google/gemma-2-2b-it'
 # model_id = 'meta-llama/Meta-Llama-3-8B'
 # model_id = 'mistralai/Mistral-7B-v0.3'
-model_id = 'meta-llama/Llama-3.2-1B-Instruct'
+# model_id = 'meta-llama/Llama-3.2-1B-Instruct'
 # model_id = 'meta-llama/Llama-3.2-3B-Instruct'
+model_id = args.model_id
 
 model_name = Path(model_id).name.replace(".", "_")
 
@@ -156,7 +165,7 @@ nncf.compress_weights(
 
 # generate_overfit(hf_model, tokenizer, "Quantized")
 # TODO: next experiment with the best params
-ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g64_hybrid_rand_quant100+_sqrtS_kernel"
+ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g512_hybrid_rand_quant100+_sqrtS"
 # ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank8"
 ckpt_dir.mkdir(exist_ok=True, parents=True)
 save_checkpoint(hf_model.model, ckpt_dir)

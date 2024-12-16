@@ -262,17 +262,23 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # scale_shape = compressed_weight.scale.shape
             # print(weight_node.node_name, str(weight.device))
             weight_shape = list(weight.shape)
+            out_features, in_features = weight_shape
+            group_size = 576
+            if in_features % 512 == 0:
+                group_size = 512
+            lora_rank = 256
             quantizer_spec = PTQuantizerSpec.from_config(
                 quantizer_config,
                 narrow_range=False,
                 device=str(weight.device),
                 scale_shape=scale_shape,
                 weight_shape=weight_shape,
-                # lora_rank=32,
                 half_range=False,
                 logarithm_scale=False,
                 is_quantized_on_export=False,
                 compression_lr_multiplier=None,
+                lora_rank=lora_rank,
+                group_size=group_size,
             )
 
             # TODO: how to match negative scales in weight compression and
@@ -284,13 +290,11 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # quantizer.scale = torch.nn.Parameter((parameters.input_high.data - quantizer.eps).reshape(scale_shape))
 
             # NOTE: grouped case
-            out_features, in_features = quantizer_spec.weight_shape
-            group_size = 64
             group_reduction_axes = 2
             group_shape = [out_features, in_features // group_size, group_size]
             scale_shape = [out_features, in_features // group_size, 1]
-            _w_flat_shape = [out_features * in_features // group_size, group_size]
-            _s_flat_shape = [out_features * in_features // group_size, 1]
+            # _w_flat_shape = [out_features * in_features // group_size, group_size]
+            # _s_flat_shape = [out_features * in_features // group_size, 1]
 
             reshape_weight = weight.reshape(group_shape)
             # group_reduction_axes = wc_params.reduction_axes[0]
@@ -308,7 +312,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
             # quantizer._lora_B.to(dtype=weight.dtype)
             # TODO: with group-wise reshape is not needed
-            quantizer.input_low = torch.nn.Parameter(input_low.reshape(_s_flat_shape))
+            quantizer.input_low = torch.nn.Parameter(input_low.reshape(scale_shape))
             # quantizer.register_buffer('input_low', input_low)
             # print("weight before ", weight[:5, :5])
             # print("IL before ", quantizer.input_low[:5])
@@ -316,7 +320,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # Subtract eps from the input_range to make quantizer parameters equal to
             # original parameters on the forward call.
             # TODO: with group-wise reshape is not needed
-            quantizer.input_range = torch.nn.Parameter((input_range - quantizer.eps).reshape(_s_flat_shape))
+            quantizer.input_range = torch.nn.Parameter((input_range - quantizer.eps).reshape(scale_shape))
             # quantizer.register_buffer('_input_range_param_storage', input_range - quantizer.eps)
             quantizer.to(weight.device)
 
