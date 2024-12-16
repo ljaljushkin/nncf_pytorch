@@ -85,13 +85,13 @@ ROOT_MODEL_DIR = Path.home() / ("MODEL_DIR")
 # model_id = "facebook/opt-125m"
 # model_id = "TinyLlama/TinyLlama_v1.1"
 # model_id = "microsoft/Phi-3-mini-4k-instruct"
-model_id = "microsoft/Phi-3.5-mini-instruct"
+# model_id = "microsoft/Phi-3.5-mini-instruct"
 # model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
 # model_id = "Qwen/Qwen2.5-3B-Instruct"
 # model_id = 'google/gemma-2-2b-it'
-# model_id = 'meta-llama/Meta-Llama-3-8B-Instruct'
+# model_id = 'meta-llama/Meta-Llama-3-8B'
 # model_id = 'mistralai/Mistral-7B-v0.3'
-# model_id = 'meta-llama/Llama-3.2-1B-Instruct'
+model_id = 'meta-llama/Llama-3.2-1B-Instruct'
 # model_id = 'meta-llama/Llama-3.2-3B-Instruct'
 
 model_name = Path(model_id).name.replace(".", "_")
@@ -156,7 +156,7 @@ nncf.compress_weights(
 
 # generate_overfit(hf_model, tokenizer, "Quantized")
 # TODO: next experiment with the best params
-ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g-1_hybrid_rand_quant100+7_sqrtS"
+ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g64_hybrid_rand_quant100+_sqrtS"
 # ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank8"
 ckpt_dir.mkdir(exist_ok=True, parents=True)
 save_checkpoint(hf_model.model, ckpt_dir)
