@@ -88,8 +88,8 @@ class QuantizeAsymmetric(torch.autograd.Function):
             if input_.dtype == torch.bfloat16:
                 input_low = input_low.type(torch.bfloat16)
                 input_range = input_range.type(torch.bfloat16)
-                A = A.type(torch.bfloat16)
-                B = B.type(torch.bfloat16)
+                # A = A.type(torch.bfloat16)
+                # B = B.type(torch.bfloat16)
             # dtype = x.dtype
             # x = (self._lora_B @ self._lora_A + x).type(dtype)  # .detach()  # [O, R] * [R, H] + [O, H]
             input_ = input_ + B @ A

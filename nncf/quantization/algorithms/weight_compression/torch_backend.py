@@ -285,13 +285,14 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
             # NOTE: grouped case
             out_features, in_features = quantizer_spec.weight_shape
-            group_size = 64
-            group_reduction_axes = 2
-            group_shape = [out_features, in_features // group_size, group_size]
-            scale_shape = [out_features, in_features // group_size, 1]
-            reshape_weight = weight.reshape(group_shape)
-            # group_reduction_axes = wc_params.reduction_axes[0]
-            # reshape_weight = weight
+            # group_size = 64
+            # group_reduction_axes = 2
+            # group_shape = [out_features, in_features // group_size, group_size]
+            # scale_shape = [out_features, in_features // group_size, 1]
+            # reshape_weight = weight.reshape(group_shape)
+            group_reduction_axes = wc_params.reduction_axes[0]
+            group_shape = [out_features, in_features]
+            reshape_weight = weight
 
             # with torch.no_grad:
             input_low = torch.amin(reshape_weight, dim=group_reduction_axes, keepdim=True).float()

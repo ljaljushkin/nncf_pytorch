@@ -49,6 +49,7 @@ from nncf.torch.quantization.quantize_functions import decompress_asymmetric
 from nncf.torch.quantization.quantize_functions import decompress_symmetric
 from nncf.torch.quantization.quantize_functions import get_scale_zp_from_input_low_input_high
 from nncf.torch.quantization.quantize_functions import symmetric_quantize
+from nncf.torch.quantization.quantize_functions import asymmetric_quantize
 from nncf.torch.return_types import maybe_get_values_from_torch_return_type
 from nncf.torch.return_types import maybe_wrap_to_torch_return_type
 from nncf.torch.utils import get_flat_tensor_contents_string
@@ -1093,22 +1094,22 @@ class AsymmetricQuantizer(BaseQuantizer):
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
         # NOTE: Merge adapters to weight on each inference, quantize the sum afterwards
         # TODO: is device should be aligned automatically?
-        device = x.device
-        self.to(device)
-        input_range_safe = abs(self.input_range) + self.eps
-        input_low, input_range = TuneRange.apply(self.input_low, input_range_safe, self.levels)
-        fq_weight = FQLoRA.apply(
-            x,
-            self._group_shape,
-            self._lora_A,
-            self._lora_B,
-            input_low,
-            input_range,
-            self.level_low,
-            self.level_high,
-            self.levels,
-        )
-        return fq_weight
+        # device = x.device
+        # self.to(device)
+        # input_range_safe = abs(self.input_range) + self.eps
+        # input_low, input_range = TuneRange.apply(self.input_low, input_range_safe, self.levels)
+        # fq_weight = FQLoRA.apply(
+        #     x,
+        #     self._group_shape,
+        #     self._lora_A,
+        #     self._lora_B,
+        #     input_low,
+        #     input_range,
+        #     self.level_low,
+        #     self.level_high,
+        #     self.levels,
+        # )
+        # return fq_weight
 
         # NOTE: autograd impl
         # original_shape = x.shape
@@ -1135,21 +1136,21 @@ class AsymmetricQuantizer(BaseQuantizer):
         #     fq_weight = fq_weight.reshape(self._qspec.weight_shape)
 
         # TODO: GPU kernels don't support group quantization
-        # fq_weight = asymmetric_quantize(
-        #     x,
-        #     self.levels,
-        #     self.level_low,
-        #     self.level_high,
-        #     self.input_low,
-        #     self.input_range,
-        #     self.eps,
-        #     skip=execute_traced_op_as_identity,
-        #     A=self._lora_A,
-        #     B=self._lora_B,
-        # )
+        fq_weight = asymmetric_quantize(
+            x,
+            self.levels,
+            self.level_low,
+            self.level_high,
+            self.input_low,
+            self.input_range,
+            self.eps,
+            skip=execute_traced_op_as_identity,
+            A=self._lora_A,
+            B=self._lora_B,
+        )
         # if casted:
         #     fq_weight = fq_weight.type(torch.bfloat16)
-        # return fq_weight
+        return fq_weight
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
         return {}
