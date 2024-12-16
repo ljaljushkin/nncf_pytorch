@@ -77,7 +77,7 @@ FACTOR = 1  # 32 / math.sqrt(8)
 
 class QuantizeAsymmetric(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input_, input_low, input_range, level_low, level_high, levels, A, B):
+    def forward(ctx, input_, input_low, input_range, level_low, level_high, levels):
         if input_.is_cuda:
             if not input_.is_contiguous():
                 nncf_logger.debug("input_ is not contiguous!")
@@ -88,16 +88,16 @@ class QuantizeAsymmetric(torch.autograd.Function):
             if input_.dtype == torch.bfloat16:
                 input_low = input_low.type(torch.bfloat16)
                 input_range = input_range.type(torch.bfloat16)
-                A = A.type(torch.bfloat16)
-                B = B.type(torch.bfloat16)
+                # A = A.type(torch.bfloat16)
+                # B = B.type(torch.bfloat16)
             # dtype = x.dtype
             # x = (self._lora_B @ self._lora_A + x).type(dtype)  # .detach()  # [O, R] * [R, H] + [O, H]
-            input_ = input_ + B @ A
+            # input_ = input_ + B @ A
             output = QuantizedFunctionsCUDA.get("Quantize_forward")(input_, input_low, input_range, levels)
         else:
             output = QuantizedFunctionsCPU.get("Quantize_forward")(input_, input_low, input_range, levels)
 
-        ctx.save_for_backward(input_, input_low, input_range, A, B)
+        ctx.save_for_backward(input_, input_low, input_range)
         ctx.levels = levels
         ctx.level_low = level_low
         ctx.level_high = level_high
@@ -109,8 +109,8 @@ class QuantizeAsymmetric(torch.autograd.Function):
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
         grad_output = grad_outputs[0]
-        input_, input_low, input_range, A, B = ctx.saved_tensors
-        # input_, input_low, input_range, _, _ = ctx.saved_tensors
+        # input_, input_low, input_range, A, B = ctx.saved_tensors
+        input_, input_low, input_range = ctx.saved_tensors
         levels = ctx.levels
         level_low = ctx.level_low
         level_high = ctx.level_high
@@ -129,11 +129,12 @@ class QuantizeAsymmetric(torch.autograd.Function):
             )
 
         # grad_A = grad_B = None
-        grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
-        grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
+        # grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
+        # grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
         # print('grad_input_range=', grad_input_range[..., :5])
         # print('grad_input_low=', grad_input_low[..., :5])
-        return grad_input, grad_input_low, grad_input_range, None, None, None, grad_A, grad_B
+        # return grad_input, grad_input_low, grad_input_range, None, None, None, grad_A, grad_B
+        return grad_input, grad_input_low, grad_input_range, None, None, None
 
 
 def _quantize_autograd_to_range(input_, input_low, input_high, levels):
@@ -231,7 +232,9 @@ def asymmetric_quantize(
     #     input_range_safe,
     #     levels,
     # )
-    return QuantizeAsymmetric.apply(input_, input_low_tuned, input_range_tuned, level_low, level_high, levels, A, B)
+    return QuantizeAsymmetric.apply(
+        input_, input_low_tuned, input_range_tuned, level_low, level_high, levels
+    )  # , A, B)
 
     # ReferenceQuantize
     # def forward(

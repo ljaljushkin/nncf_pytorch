@@ -289,6 +289,9 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             group_reduction_axes = 2
             group_shape = [out_features, in_features // group_size, group_size]
             scale_shape = [out_features, in_features // group_size, 1]
+            _w_flat_shape = [out_features * in_features // group_size, group_size]
+            _s_flat_shape = [out_features * in_features // group_size, 1]
+
             reshape_weight = weight.reshape(group_shape)
             # group_reduction_axes = wc_params.reduction_axes[0]
             # reshape_weight = weight
@@ -305,7 +308,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
             # quantizer._lora_B.to(dtype=weight.dtype)
             # TODO: with group-wise reshape is not needed
-            quantizer.input_low = torch.nn.Parameter(input_low.reshape(scale_shape))
+            quantizer.input_low = torch.nn.Parameter(input_low.reshape(_s_flat_shape))
             # quantizer.register_buffer('input_low', input_low)
             # print("weight before ", weight[:5, :5])
             # print("IL before ", quantizer.input_low[:5])
@@ -313,7 +316,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # Subtract eps from the input_range to make quantizer parameters equal to
             # original parameters on the forward call.
             # TODO: with group-wise reshape is not needed
-            quantizer.input_range = torch.nn.Parameter((input_range - quantizer.eps).reshape(scale_shape))
+            quantizer.input_range = torch.nn.Parameter((input_range - quantizer.eps).reshape(_s_flat_shape))
             # quantizer.register_buffer('_input_range_param_storage', input_range - quantizer.eps)
             quantizer.to(weight.device)
 
