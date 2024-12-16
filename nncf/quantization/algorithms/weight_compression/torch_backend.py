@@ -303,7 +303,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             ).float()  # [a1, r, a2] -> [a1, 1, a2]
             # print("weight dtype input_low=", weight.dtype)
             # print("input_low dtype input_low=", input_low.dtype)
-            quantizer_spec.scale_shape = scale_shape
+            quantizer_spec.scale_shape = _s_flat_shape
             quantizer = AsymmetricQuantizer(quantizer_spec)
 
             # quantizer._lora_B.to(dtype=weight.dtype)
@@ -330,6 +330,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             # print(weight.dtype)
             print("quant noise before SVD={:.2f}".format(torch.linalg.norm(fq_weight - weight, ord="fro").item()))
             # svd_residual = (weight - fq_weight).type(torch.float32)
+            # group_shape = quantizer_spec.weight_shape
             svd_residual = (torch.rand(group_shape, dtype=weight.dtype).to(weight.device) / 100) * input_range / 15
             svd_residual = svd_residual.reshape(quantizer_spec.weight_shape)
             svd_residual = svd_residual.type(
@@ -340,6 +341,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             quantizer._lora_B = torch.nn.Parameter(B.type(dtype=weight.dtype))
             fq_weight = quantizer.quantize(weight)
             print("quant noise right after SVD={:.2f}".format(torch.linalg.norm(fq_weight - weight, ord="fro").item()))
+            print("shapes, W={}, A={}, scale={}".format(reshape_weight.shape, quantizer._lora_A.shape, input_low.shape))
             # reshape_weight = (weight + B @ A).reshape(group_shape)
             # input_low = torch.amin(reshape_weight, dim=group_reduction_axes, keepdim=True)
             # input_high = torch.amax(reshape_weight, dim=group_reduction_axes, keepdim=True)

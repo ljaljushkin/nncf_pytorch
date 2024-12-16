@@ -89,6 +89,7 @@ class QuantizedFunctionsCUDALoader(ExtensionLoader):
                 CUDA_EXT_SRC_LIST,
                 extra_include_paths=EXT_INCLUDE_DIRS,
                 build_directory=cls.get_build_dir(),
+                # extra_cuda_cflags=['-DDO_PROFILE=1, -DDO_PROFILE'],
                 verbose=False,
             )
         except ExtensionLoaderTimeoutException as e:

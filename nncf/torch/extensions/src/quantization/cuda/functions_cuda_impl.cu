@@ -301,6 +301,10 @@ at::Tensor q_cuda_forward(
     at::DeviceGuard guard(input.device());
     const auto quantized_elements_count = input.numel();
 
+    // Reshape input from [Cout, Cin] to [Cout * Cin // 64, 64]
+    auto original_shape = input.sizes().vec();
+    input = input.view({input.size(0) * input.size(1) / 64, 64});
+
     ScaleType scale_type = get_scale_type(input, input_low, input_range);
 
     uint64_t contiguous_elements_per_scale = 0;
@@ -334,7 +338,7 @@ at::Tensor q_cuda_forward(
               contiguous_elements_per_scale,
               scale_count);
         }));)
-
+    output = output.view(original_shape);
     return output;
 }
 
@@ -397,8 +401,10 @@ std::vector<at::Tensor> q_scale_per_weight_channel_cuda_backward(at::Tensor grad
     const auto scale_count = input_range.size(0);
     const auto elements_per_scale = input.numel() / scale_count;
 
+    auto original_shape = grad_output.sizes().vec();
+    grad_output = grad_output.view({grad_output.size(0) * grad_output.size(1) / 64, 64});
+    // std::cout << "Data type of grad_output: " << grad_output.scalar_type() << std::endl;
     auto grad_input = at::empty_like(grad_output);
-
     auto grad_input_low = at::empty(input_range.sizes(), grad_output.options());
     auto grad_input_range = at::empty(input_range.sizes(), grad_output.options());
 
@@ -429,7 +435,8 @@ std::vector<at::Tensor> q_scale_per_weight_channel_cuda_backward(at::Tensor grad
                   elements_per_scale);
             }));
     )
-
+    grad_input = grad_input.view(original_shape);
+    // return {grad_input, grad_input_low.to(at::kFloat), grad_input_range.to(at::kFloat)};
     return {grad_input, grad_input_low, grad_input_range};
 }
 
@@ -496,6 +503,10 @@ std::vector<at::Tensor> q_cuda_backward(
         int level_low,
         int level_high) {
     at::DeviceGuard guard(input.device());
+    // Reshape input from [Cout, Cin] to [Cout * Cin // 64, 64]
+    auto original_shape = input.sizes().vec();
+    input = input.view({input.size(0) * input.size(1) / 64, 64});
+
     ScaleType scale_type = get_scale_type(input, input_low, input_range);
 
     switch (scale_type)

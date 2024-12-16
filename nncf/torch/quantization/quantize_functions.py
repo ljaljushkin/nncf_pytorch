@@ -78,6 +78,7 @@ FACTOR = 1  # 32 / math.sqrt(8)
 class QuantizeAsymmetric(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_, input_low, input_range, level_low, level_high, levels):
+        torch.cuda.nvtx.range_push("forward")
         if input_.is_cuda:
             if not input_.is_contiguous():
                 nncf_logger.debug("input_ is not contiguous!")
@@ -85,11 +86,11 @@ class QuantizeAsymmetric(torch.autograd.Function):
 
             # Required to support both torch.amp.autocast and models that perform explicit type casting
             # inside their forward calls.
-            if input_.dtype == torch.bfloat16:
-                input_low = input_low.type(torch.bfloat16)
-                input_range = input_range.type(torch.bfloat16)
-                # A = A.type(torch.bfloat16)
-                # B = B.type(torch.bfloat16)
+            # if input_.dtype == torch.bfloat16:
+            # input_low = input_low.type(torch.bfloat16)
+            # input_range = input_range.type(torch.bfloat16)
+            # A = A.type(torch.bfloat16)
+            # B = B.type(torch.bfloat16)
             # dtype = x.dtype
             # x = (self._lora_B @ self._lora_A + x).type(dtype)  # .detach()  # [O, R] * [R, H] + [O, H]
             # input_ = input_ + B @ A
@@ -103,11 +104,12 @@ class QuantizeAsymmetric(torch.autograd.Function):
         ctx.level_high = level_high
 
         # print("quant noise={:.2f}".format(torch.linalg.norm(output - input_, ord="fro").item()))
-
+        torch.cuda.nvtx.range_pop()
         return output
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
+        torch.cuda.nvtx.range_push("backward")
         grad_output = grad_outputs[0]
         # input_, input_low, input_range, A, B = ctx.saved_tensors
         input_, input_low, input_range = ctx.saved_tensors
@@ -134,6 +136,7 @@ class QuantizeAsymmetric(torch.autograd.Function):
         # print('grad_input_range=', grad_input_range[..., :5])
         # print('grad_input_low=', grad_input_low[..., :5])
         # return grad_input, grad_input_low, grad_input_range, None, None, None, grad_A, grad_B
+        torch.cuda.nvtx.range_pop()
         return grad_input, grad_input_low, grad_input_range, None, None, None
 
 
@@ -222,8 +225,10 @@ def asymmetric_quantize(
 ):
     if skip:
         return input_
-    input_range_safe = abs(input_range) + eps
-    input_low_tuned, input_range_tuned = TuneRange.apply(input_low, input_range_safe, levels)
+    # input_range_safe = abs(input_range) + eps
+    # input_low_tuned, input_range_tuned = TuneRange.apply(input_low, input_range_safe, levels)
+    input_range_tuned = input_range
+    input_low_tuned = input_low
     # return ReferenceQuantize(backend_type=ReferenceBackendType.TORCH).forward(
     #     input_,
     #     # input_low_tuned,
