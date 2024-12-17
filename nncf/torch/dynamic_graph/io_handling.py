@@ -335,6 +335,7 @@ class InputInfoWrapManager:
                 # Default was None - cannot wrap as-is. Will wrap a dummy tensor as specified in
                 # input info - will preserve the call order of nncf_model_input nodes,
                 # and the post-hooks for the input node will execute. The result won't go anywhere, though.
+                # TODO: is something bad with this wrapping?
                 nncf_logger.info(f"Wrapping a dummy tensor for input {param_name}")
                 device = "cuda"
                 if self._module_ref_for_device is not None:
