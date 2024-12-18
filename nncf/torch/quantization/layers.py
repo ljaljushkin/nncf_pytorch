@@ -70,7 +70,6 @@ class QuantizerExportMode(Enum):
 class PTQSpecStateNames:
     NUM_BITS = "num_bits"
     MODE = "mode"
-    DEVICE = "device"
     SIGNED_TO_FORCE = "signedness_to_force"
     NARROW_RANGE = "narrow_range"
     HALF_RANGE = "half_range"
@@ -78,6 +77,7 @@ class PTQSpecStateNames:
     WEIGHT_SHAPE = "weight_shape"
     LORA_RANK = "lora_rank"
     GROUP_SIZE = "group_size"
+    MODULE_NAME = "module_name"
     LOGARITHM_SCALE = "logarithm_scale"
     IS_QUANTIZED_ON_EXPORT = "is_quantized_on_export"
     COMPRESSION_LR_MULTIPLIER = "compression_lr_multiplier"
@@ -98,9 +98,9 @@ class PTQuantizerSpec(QuantizerSpec):
         logarithm_scale: bool,
         is_quantized_on_export: bool = False,
         compression_lr_multiplier: float = None,
-        device: str = "cpu",
         lora_rank: int = 256,
         group_size: int = 64,
+        module_name: str = ''
     ):
         """
         :param scale_shape: Shape of quantizer scale parameters
@@ -115,10 +115,10 @@ class PTQuantizerSpec(QuantizerSpec):
         self.weight_shape = weight_shape
         self.lora_rank = lora_rank
         self.group_size = group_size
+        self.module_name = module_name
         self.logarithm_scale = logarithm_scale
         self.compression_lr_multiplier = compression_lr_multiplier
         self.is_quantized_on_export = is_quantized_on_export
-        self.device = device
 
     @classmethod
     def from_config(
@@ -128,12 +128,12 @@ class PTQuantizerSpec(QuantizerSpec):
         half_range: bool,
         scale_shape: Tuple[int],
         weight_shape: Tuple[int],
-        device: str,
         logarithm_scale: bool,
         is_quantized_on_export: bool,
         compression_lr_multiplier: float,
         lora_rank: int,
         group_size: int,
+        module_name: str,
     ) -> "PTQuantizerSpec":
         return cls(
             qconfig.num_bits,
@@ -146,9 +146,9 @@ class PTQuantizerSpec(QuantizerSpec):
             logarithm_scale,
             is_quantized_on_export,
             compression_lr_multiplier,
-            device,
             lora_rank,
             group_size,
+            module_name
         )
 
     def __eq__(self, other):
@@ -171,7 +171,7 @@ class PTQuantizerSpec(QuantizerSpec):
             cls._state_names.WEIGHT_SHAPE: state["weight_shape"],
             cls._state_names.LORA_RANK: state["lora_rank"],
             cls._state_names.GROUP_SIZE: state["group_size"],
-            cls._state_names.DEVICE: state["device"],
+            cls._state_names.MODULE_NAME: state["module_name"],
             cls._state_names.LOGARITHM_SCALE: state["logarithm_scale"],
             cls._state_names.IS_QUANTIZED_ON_EXPORT: state["is_quantized_on_export"],
             cls._state_names.COMPRESSION_LR_MULTIPLIER: state["compression_lr_multiplier"],
@@ -189,7 +189,7 @@ class PTQuantizerSpec(QuantizerSpec):
             self._state_names.WEIGHT_SHAPE: self.weight_shape,
             self._state_names.LORA_RANK: self.lora_rank,
             self._state_names.GROUP_SIZE: self.group_size,
-            self._state_names.DEVICE: self.device,
+            self._state_names.MODULE_NAME: self.module_name,
             self._state_names.LOGARITHM_SCALE: self.logarithm_scale,
             self._state_names.IS_QUANTIZED_ON_EXPORT: self.is_quantized_on_export,
             self._state_names.COMPRESSION_LR_MULTIPLIER: self.compression_lr_multiplier,
@@ -320,7 +320,7 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
         self._qspec = qspec
         self.lora_rank = self._qspec.lora_rank
         self.group_size = self._qspec.group_size
-        self.device = self._qspec.device
+        self.module_name = self._qspec.module_name
         self._narrow_range = qspec.narrow_range
         self._signedness_to_force = qspec.signedness_to_force
         self._is_using_log_scale_storage = qspec.logarithm_scale

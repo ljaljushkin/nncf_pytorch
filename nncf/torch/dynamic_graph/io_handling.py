@@ -322,11 +322,12 @@ class InputInfoWrapManager:
                 continue
 
             if param_name not in bound_model_params.arguments:
-                nncf_logger.warning(
-                    "A call to a compressed model's forward occurred without one of the arguments "
-                    "specified at the compressed model creation stage! Input compression may be incorrect. "
-                    "Trying to recover by wrapping the default value for the argument."
-                )
+                # TODO: why is it happening in lm_eval on wrapping HFLM?
+                # nncf_logger.warning(
+                #     "A call to a compressed model's forward occurred without one of the arguments "
+                #     "specified at the compressed model creation stage! Input compression may be incorrect. "
+                #     "Trying to recover by wrapping the default value for the argument."
+                # )
                 bound_model_params.apply_defaults()
 
             potential_tensor = bound_model_params.arguments[param_name]
