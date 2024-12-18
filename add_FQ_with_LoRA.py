@@ -9,6 +9,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from nncf.common.logging.logger import set_log_file
+import sys
+from contextlib import redirect_stderr
+from contextlib import redirect_stdout
 import argparse
 import random
 from pathlib import Path
@@ -26,32 +30,6 @@ def generate_overfit(pipeline, tokenizer, prefix=""):
         tokenizer("overfit", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
     )
     print("#" * 50 + f" {prefix}\n", tokenizer.decode(output[0]), "\n" + "#" * 150)
-
-
-def get_nb_trainable_parameters(module):
-    r"""
-    Returns the number of trainable parameters and number of all parameters in the model.
-    """
-    # note: same as PeftModel.get_nb_trainable_parameters
-    trainable_params = 0
-    all_param = 0
-    for _, param in module.named_parameters():
-        num_params = param.numel()
-        all_param += num_params
-        if param.requires_grad:
-            trainable_params += num_params
-
-    return trainable_params, all_param
-
-
-def print_trainable_parameters(module):
-    trainable_params, all_param = get_nb_trainable_parameters(module)
-
-    print(
-        f"trainable params: {trainable_params:,d} || "
-        f"all params: {all_param:,d} || "
-        f"trainable%: {100 * trainable_params / all_param:.4f}"
-    )
 
 
 def save_checkpoint(wrapped_model, ckpt_dir):
@@ -131,82 +109,31 @@ position_ids[attention_mask == 0] = 1
 
 dataset = [{"input_ids": input_ids, "attention_mask": attention_mask[:, :-1], "position_ids": position_ids[:, :-1]}]
 
+group_size = 512
+mode=nncf.CompressWeightsMode.INT4_SYM
+backup_mode=nncf.BackupMode.INT8_SYM
 
-model = hf_model.model
-nncf.compress_weights(
-    hf_model.model,
-    mode=nncf.CompressWeightsMode.INT8_ASYM,
-    ignored_scope=nncf.IgnoredScope(
-        # patterns=[
-        #     # #    #     # '^(?!model.decoder.layers\[11\]\.v_proj$).*'
-        #     # #    #             # '^(?!.*OPTDecoderLayer\[11\]/OPTAttention\[self_attn\]/NNCFLinear\[v_proj\]).*'
-        #     # #    #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
-        #     # #    #             # "^(?!.*OPTDecoderLayer\[5\]\/OPTAttention\[self_attn\]\/Linear\[v_proj\]\/l.*$).*"
-        #     # #    "^(?!.*LlamaModel\/ModuleList\[layers\]\/LlamaDecoderLayer\[21\].*$).*"
-        #     # #        # \/LlamaSdpaAttention\[self_attn\]\/Linear\[v_proj\].*$).*"
-        #     # # # OPTDecoderLayer[11]/OPTAttention[self_attn]/Linear[v_proj]/to_0
-        #     "^(?!.*Phi3DecoderLayer\[31\].*$).*"
-        # ]
-        patterns=[
-            # #     #     #             y# '.*_proj.*', '.*out_proj.*', '.*q_proj.*', '.*fc1.*',
-            # #     #     #             # '.*self_attn.*',
-            # #     #     #             '.*down_proj.*',
-            # #     #     #             '.*gate_proj.*', '.*up_proj.*',
-            ".*embed_tokens.*"
-        ]
-    ),
-    dataset=nncf.Dataset(dataset),
-)
-
-
-# layer = model._nncf.external_quantizers.FQ_LORA_for_node_layers_23_mlp_down_proj_weight
-# print("23dj_IL=", torch.linalg.norm(layer.input_low.data).item())
-# print("23dj_IR=", torch.linalg.norm(layer.input_range.data).item())
-
-# generate_overfit(hf_model, tokenizer, "Quantized")
-# TODO: next experiment with the best params
-ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank256_g512_hybrid_rand_quant100+_sqrtS"
-# ckpt_dir = MODEL_DIR / "FQ_4bit_no_embed_svd_rank8"
+emb_str = 'bf16' if backup_mode == nncf.BackupMode.NONE else str(backup_mode.value)
+ckpt_dir = MODEL_DIR / f"FQ_emb_head_{emb_str}_{mode.value}_rank256_gs{group_size}"
+print('Experiment name: ', ckpt_dir.name)
 ckpt_dir.mkdir(exist_ok=True, parents=True)
-save_checkpoint(hf_model.model, ckpt_dir)
-model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")
-exit()
 
-# for param in hf_model.parameters():
-#     param.requires_grad = False
-
-# param_to_train = []
-# for name, param in hf_model.named_parameters():
-#     if "lora" in name:  # or "11.self_attn.v_proj.weight" in name:  # or 'input' in name:
-#         param.requires_grad = True
-#         param_to_train.append(param)
-
-# num_grad = sum(map(lambda x: x.requires_grad, hf_model.parameters()))
-# num_lora = sum(map(lambda x: "lora" in x[0], hf_model.named_parameters()))
-# assert num_lora == num_grad, f"number of lora params != number of learnable params ({num_lora} vs {num_grad})"
-# print_trainable_parameters(model)
-
-# optimizer = torch.optim.Adam(hf_model.parameters(), lr=1e-4)
-# losses = []
-# for i in range(50):
-#     optimizer.zero_grad()
-#     loss = hf_model(input_ids=input_ids, labels=labels).loss
-#     losses.append(float(loss))
-#     # print(float(loss))
-#     loss.backward()
-#     optimizer.step()
-
-# # save_checkpoint(hf_model.model, MODEL_DIR / "FQ_4bit_emb32_overfit")
-# generate_overfit(hf_model, tokenizer, "Quantized + Tuned")
-
-# # Check that loss is decreasing
-# plt.plot(losses)
-# plt.title("Lora fine-tuning", fontsize=20)
-# plt.xlabel("Steps")
-# plt.ylabel("Loss")
-# plt.legend()
-# path = Path("loss.png").resolve()
-# plt.savefig(path)
-# print("Saving loss plot to:", path)
-
-# print(f"Peak memory usage: {torch.cuda.max_memory_allocated() * 1e-9:.2f} Gb")
+nncf_log_filename = ckpt_dir / "nncf_logger.log"
+set_log_file(nncf_log_filename)
+log_filename = ckpt_dir / 'compress.log'
+print('Log file: ', log_filename.resolve())
+print("NNCF log file: ", nncf_log_filename.resolve())
+sys.stdout.flush()
+with log_filename.open("w") as f, redirect_stdout(f), redirect_stderr(f):
+    model = hf_model
+    nncf.compress_weights(
+        model,
+        ratio=1,
+        group_size=group_size,
+        mode=mode,
+        backup_mode=backup_mode,
+        dataset=nncf.Dataset(dataset),
+    )
+    # generate_overfit(hf_model, tokenizer, "Quantized")
+    save_checkpoint(model, ckpt_dir)
+    model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")

@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from nncf.torch.dynamic_graph.patch_pytorch import register_operator
 from abc import ABC
 from abc import abstractmethod
 from enum import Enum
@@ -335,15 +336,16 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
         # ################################## LORA START ########################################
         if not self._qspec.weight_shape:
             nncf_logger.warning("Quantizing activation!")
-        elif len(self._qspec.weight_shape) != 2:
-            nncf_logger.warning(f"Not 2D weights are not supported for FQ: weight shapes={self._qspec.weight_shape}")
+        # TODO: support group-wise case properly
+        # elif len(self._qspec.weight_shape) != 2:
+        #     nncf_logger.warning(f"Not 2D weights are not supported for FQ: weight shapes={self._qspec.weight_shape}")
         elif self._qspec.weight_shape:
-            # TODO: transpose_b ?? torch layout is [O, I]
-            out_features, in_features = self._qspec.weight_shape
+            if len(self._qspec.weight_shape) == 2:
+                out_features, in_features = self._qspec.weight_shape
+            else:
+                out_features, in_gs, gs = self._qspec.weight_shape
+                in_features = in_gs * gs
 
-            # TODO: pass as a parameter for FQ
-            # self.lora_rank = 8
-            # own_device = get_model_device(self)
             self._lora_A = torch.nn.Parameter(
                 torch.ones((self.lora_rank, in_features), dtype=torch.bfloat16), requires_grad=True
             )
@@ -399,7 +401,6 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
                 self.hook.remove()
 
         self.load_listener = LoadStateListener(self)
-        # self.to(self.device)
 
     @property
     def level_low(self) -> int:
@@ -717,7 +718,7 @@ class SymmetricQuantizer(BaseQuantizer):
             self,
             self._SCALE_PARAM_STORAGE_ATTR,
             CompressionParameter(
-                torch.ones(self.scale_shape),
+                torch.ones(self.scale_shape, dtype=torch.float32),
                 requires_grad=True,
                 compression_lr_multiplier=qspec.compression_lr_multiplier,
             ),
@@ -794,9 +795,23 @@ class SymmetricQuantizer(BaseQuantizer):
         self.set_levels()
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
-        return symmetric_quantize(
-            x, self.levels, self.level_low, self.level_high, self.scale, self.eps, skip=execute_traced_op_as_identity
+        device = x.device
+        self.to(device)
+        fq_weight = sym_fq_lora(
+            x,
+            self._qspec.weight_shape,
+            self._lora_A,
+            self._lora_B,
+            self.scale,
+            self.level_low,
+            self.level_high,
+            self.levels,
+            self.eps
         )
+        return fq_weight
+        # return symmetric_quantize(
+        #     x, self.levels, self.level_low, self.level_high, self.scale, self.eps, skip=execute_traced_op_as_identity
+        # )
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
         return {self.SCALE_PARAM_NAME: self.scale.detach()}
@@ -908,18 +923,42 @@ class STERound(Function):
         grad_input = grad_output.clone()
         return grad_input
 
+def common_forward(input_, input_low, input_range, levels):
+    scale = (levels - 1) / input_range
+    output = input_.clip(min=input_low, max=input_low + input_range)
+    zero_point = (-input_low * scale).round()
+    output -= input_low
+    output *= scale
+    output -= zero_point
+    output = output.round()
+    output = output / scale
+    return output
 
-class FQLoRA(torch.autograd.Function):
-    def __init__(self):
-        super().__init__()
+def common_backward(input_, output, input_low, input_range, grad_output, group_shape, level_low, level_high):
+    mask_hi = input_ > (input_low + input_range)
+    mask_hi = mask_hi.type(input_.dtype)
+    mask_lo = input_ < input_low
+    mask_lo = mask_lo.type(input_.dtype)
 
+    mask_in = 1 - mask_hi - mask_lo
+    range_sign = torch.sign(input_range)
+    err = (output - input_) * torch.reciprocal(input_range * range_sign)
+    grad_output = grad_output.reshape(group_shape)
+    grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
+    grad_range = sum_like(grad_range, input_range)
+
+    # NOTE: no gradient for weights
+    # grad_input = grad_output * mask_in
+
+    grad_low = grad_output * (mask_hi + mask_lo)
+    grad_low = sum_like(grad_low, input_low)
+    return [grad_low, grad_range]
+
+class FQLoRA_asym(torch.autograd.Function):
     @staticmethod
     def forward(ctx, W, group_shape, A, B, input_low_, input_range_, level_low, level_high, levels):
         original_shape = W.shape
 
-        # W_ = W.float()
-        # A_ = A.float()
-        # B_ = B.float()
         input_low = input_low_.type(torch.bfloat16)
         input_range = input_range_.type(torch.bfloat16)
 
@@ -944,15 +983,7 @@ class FQLoRA(torch.autograd.Function):
         # output = output - zero_point
         # output = output.type(scale.dtype) * scale
 
-        scale = (levels - 1) / input_range
-
-        output = input_.clip(min=input_low, max=input_low + input_range)
-        zero_point = (-input_low * scale).round()
-        output -= input_low
-        output *= scale
-        output -= zero_point
-        output = output.round()
-        output = output / scale
+        output = common_forward(input_, input_low, input_range, levels)
 
         # Save tensors for backward pass
         ctx.save_for_backward(A, B, input_, output, input_low, input_range)
@@ -975,27 +1006,85 @@ class FQLoRA(torch.autograd.Function):
         level_high = ctx.level_high
         group_shape = ctx.group_shape
 
-        mask_hi = input_ > (input_low + input_range)
-        mask_hi = mask_hi.type(input_.dtype)
-        mask_lo = input_ < input_low
-        mask_lo = mask_lo.type(input_.dtype)
-
-        mask_in = 1 - mask_hi - mask_lo
-        range_sign = torch.sign(input_range)
-        err = (output - input_) * torch.reciprocal(input_range * range_sign)
-        grad_output = grad_output.reshape(group_shape)
-        grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
-        grad_range = sum_like(grad_range, input_range)
-
-        # NOTE: no gradient for weights
-        # grad_input = grad_output * mask_in
-
-        grad_low = grad_output * (mask_hi + mask_lo)
-        grad_low = sum_like(grad_low, input_low)
+        grad_low, grad_range = common_backward(input_, output, input_low, input_range, grad_output, group_shape, level_low, level_high)
 
         #      W,    group_shape,   A,      B,      input_low, input_range, level_low, level_high, levels
         return None, None, grad_A, grad_B, grad_low.float(), grad_range.float(), None, None, None
 
+class FQLoRA_sym(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, W, group_shape, A, B, scale, level_low, level_high, levels):
+        input_low = scale * (level_low / level_high)
+        input_range = scale - input_low
+
+        original_shape = W.shape
+
+        input_low = input_low.type(torch.bfloat16)
+        input_range = input_range.type(torch.bfloat16)
+
+        input_ = W + B @ A
+        input_ = input_.reshape(group_shape)  # NOTE: careful with what you reshape here!
+
+        output = common_forward(input_, input_low, input_range, levels)
+
+        # Save tensors for backward pass
+        ctx.save_for_backward(A, B, input_, output, input_low, input_range)
+
+        ctx.level_low = level_low
+        ctx.level_high = level_high
+        ctx.group_shape = group_shape
+
+        output = output.reshape(original_shape)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        A, B, input_, output, input_low, input_range = ctx.saved_tensors
+
+        grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
+        grad_B = grad_output @ A.t()  # Gradient of the loss w.r.t. B
+
+        level_low = ctx.level_low
+        level_high = ctx.level_high
+        group_shape = ctx.group_shape
+
+        _, grad_scale = common_backward(input_, output, input_low, input_range, grad_output, group_shape, level_low, level_high)
+
+        #      W,    group_shape,   A,      B,      input_low, input_range, level_low, level_high, levels
+        return None, None, grad_A, grad_B, grad_scale.float(), None, None, None
+
+
+@register_operator()
+def asym_fq_lora(x, group_shape, A, B, input_low_, input_range_, level_low, level_high, levels, eps):
+    input_range_safe = abs(input_range_) + eps
+    input_low, input_range = TuneRange.apply(input_low_, input_range_safe, levels)
+    fq_weight = FQLoRA_asym.apply(
+        x,
+        group_shape,
+        A,
+        B,
+        input_low,
+        input_range,
+        level_low,
+        level_high,
+        levels,
+    )
+    return fq_weight
+
+@register_operator()
+def sym_fq_lora(x, group_shape, A, B, scale, level_low, level_high, levels, eps):
+    scale_safe = abs(scale) + eps
+    fq_weight = FQLoRA_sym.apply(
+        x,
+        group_shape,
+        A,
+        B,
+        scale_safe,
+        level_low,
+        level_high,
+        levels,
+    )
+    return fq_weight
 
 @COMPRESSION_MODULES.register()
 @QUANTIZATION_MODULES.register(QuantizationMode.ASYMMETRIC)
@@ -1052,13 +1141,8 @@ class AsymmetricQuantizer(BaseQuantizer):
                 use_log_storage_in_module=self._is_using_log_scale_storage,
             )
         )
-        out_features, in_features = self._qspec.weight_shape
         group_size = self.group_size
         print('Create FQ with gs={} and lora_rank={}'.format(group_size, self.lora_rank))
-        self._w_group_shape = [out_features, in_features // group_size, group_size]
-        self._s_group_shape = [out_features, in_features // group_size, 1]
-        self._s_flat_shape = [out_features * in_features // group_size, 1]
-        self._w_flat_shape = [out_features * in_features // group_size, group_size]
         # self.to(self.device)
 
     @property
@@ -1107,18 +1191,17 @@ class AsymmetricQuantizer(BaseQuantizer):
         # TODO: is device should be aligned automatically?
         device = x.device
         self.to(device)
-        input_range_safe = abs(self.input_range) + self.eps
-        input_low, input_range = TuneRange.apply(self.input_low, input_range_safe, self.levels)
-        fq_weight = FQLoRA.apply(
+        fq_weight = asym_fq_lora(
             x,
-            self._w_group_shape,
+            self._qspec.weight_shape,
             self._lora_A,
             self._lora_B,
-            input_low,
-            input_range,
+            self.input_low,
+            self.input_range,
             self.level_low,
             self.level_high,
             self.levels,
+            self.eps
         )
         return fq_weight
 
