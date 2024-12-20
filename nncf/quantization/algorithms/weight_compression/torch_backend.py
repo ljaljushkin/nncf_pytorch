@@ -356,11 +356,23 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 # original parameters on the forward call.
                 quantizer.input_range = torch.nn.Parameter(input_range - quantizer.eps)
             else:
+                original_sym = False
                 quantizer.signed = bool(torch.any(input_low.data < 0))
-                quantizer.scale = torch.nn.Parameter(input_high.data - quantizer.eps)
                 quantizer.set_levels()
-                input_low = quantizer.scale * (quantizer.level_low / quantizer.level_high)
-                input_range = quantizer.scale - input_low
+                ll_lh = quantizer.level_low / quantizer.level_high
+                if original_sym:
+                    quantizer.scale = torch.nn.Parameter(input_high.data - quantizer.eps)
+                    input_low = quantizer.scale * ll_lh
+                    input_range = quantizer.scale - input_low
+                else:
+                    w_abs_min = torch.abs(input_low)
+                    w_max = input_high
+                    scale = torch.where(w_abs_min >= w_max, w_abs_min, -w_max)
+                    eps = quantizer.eps
+                    scale = quantizer.scale = torch.nn.Parameter(torch.where(torch.abs(scale) < eps, eps, scale))
+                    input_low = torch.where(scale < 0, scale, scale * ll_lh)
+                    input_range = torch.where(scale < 0, scale * ll_lh - input_low, scale - input_low)
+                    quantizer.scale = torch.nn.Parameter(torch.where(torch.abs(scale) < eps, eps, scale))
             quantizer.to(weight.device)
 
             if compression_config.num_bits == 4:
