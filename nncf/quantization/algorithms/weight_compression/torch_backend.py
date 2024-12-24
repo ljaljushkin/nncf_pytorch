@@ -356,7 +356,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 # original parameters on the forward call.
                 quantizer.input_range = torch.nn.Parameter(input_range - quantizer.eps)
             else:
-                original_sym = False
+                original_sym = True
                 quantizer.signed = bool(torch.any(input_low.data < 0))
                 quantizer.set_levels()
                 ll_lh = quantizer.level_low / quantizer.level_high

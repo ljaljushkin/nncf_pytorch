@@ -7,13 +7,18 @@ from transformers import (
     AutoTokenizer
 )
 from pathlib import Path
+import json
+import argparse
+from whowhatbench import TextEvaluator
 
 parser = argparse.ArgumentParser(add_help=True)
 # Model params
 parser.add_argument("-m", "--model_id")
-parser.add_argument("-m", "--nncf_ckpt_dir")
-parser.add_argument("-m", "--tmp_dir")
+parser.add_argument("-n", "--nncf_ckpt_dir")
 args = parser.parse_args()
+
+model_name = Path(args.model_id).name.replace('.', '_')
+MODEL_DIR=Path("/local_ssd2/nlyalyus/MODEL_DIR") / model_name
 
 tokenizer = AutoTokenizer.from_pretrained(
     args.model_id,
@@ -22,11 +27,26 @@ tokenizer = AutoTokenizer.from_pretrained(
 model = AutoModelForCausalLM.from_pretrained(
     args.model_id,
     trust_remote_code=True,
-    dtype=torch.bfloat16,
-)
+    torch_dtype=torch.bfloat16,
+).cuda()
+
+chat_template=[{"role": "user", "content": "input_text"}]
+wwb_ref = MODEL_DIR / "ref_qa.csv"
+wwb_eval = None
+if wwb_ref.exists():
+    print("Loading cached WWB reference answers from: ", wwb_ref.resolve())
+    wwb_eval = TextEvaluator(
+        tokenizer=tokenizer, gt_data=wwb_ref, test_data=str(wwb_ref), chat_template=chat_template
+    )
+else:
+    chat_template=[{"role": "user", "content": "input_text"}]
+    wwb_eval = TextEvaluator(
+        base_model=model, tokenizer=tokenizer, chat_template=chat_template, metrics=("similarity",)
+    )
+    wwb_eval.dump_gt(str(wwb_ref))
+
+
 nncf_ckpt_dir = Path(args.nncf_ckpt_dir)
-tmp_dir = Path(args.tmp_dir)
-tmp_dir.mkdir(exist_ok=True, parents=True)
 
 
 tokenized_text = tokenizer("chicken " * 10, return_tensors="pt")
@@ -51,14 +71,10 @@ model = load_from_config(
     example_input=dataset[0]
 )
 model.nncf.load_state_dict(nncf_ckpt["nncf_state_dict"])
+model.cuda()
 
-# NOTE: replace all FQ with LoRA adapters with FQ weights to accelerate evaluation
-strip_int8=True
-strip_int4=True
 for name, quantizer in model._nncf.external_quantizers.items():
-    # if quantizer.levels == 16 and not strip_int4 or quantizer.levels == 256 and not strip_int8:
-    #     continue
-    layer = get_module_by_name(quantizer.module_name, self.model)
+    layer = get_module_by_name(quantizer.module_name, model)
     FQ_W = quantizer.quantize(layer.weight)
     layer.weight = torch.nn.Parameter(FQ_W)
 model._nncf.external_quantizers = None
@@ -66,4 +82,10 @@ ctx = model._nncf.get_tracing_context()
 ctx.disable_tracing()
 ctx._post_hooks = {}
 ctx._pre_hooks = {}
-model.save_pretrained(tmp_dir)
+
+results_file = nncf_ckpt_dir / "results_wwb.json"
+all_metrics_per_question, all_metrics = wwb_eval.score(model)
+similarity = float(all_metrics["similarity"].iloc[0])
+results = {"results": {"WWB": {"similarity": similarity}}}
+print(json.dumps(results, indent=4))
+json.dump(results, open(results_file, "w"), indent=4)
