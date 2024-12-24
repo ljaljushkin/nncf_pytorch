@@ -14,13 +14,17 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import torch
 
 import nncf
+import nncf.torch.graph.operator_metatypes as om
 from nncf.common.graph.definitions import NNCFGraphNodeType
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNode
 from nncf.common.graph.operator_metatypes import CONST_NOOP_METATYPES
 from nncf.common.graph.operator_metatypes import OperatorMetatype
 from nncf.common.graph.transformations.commands import TargetType
+from nncf.common.graph.transformations.commands import TransformationPriority
 from nncf.common.graph.transformations.layout import TransformationLayout
+from nncf.common.quantization.structs import QuantizationScheme
+from nncf.common.quantization.structs import QuantizerConfig
 from nncf.common.tensor_statistics.statistics import WCTensorStatistic
 from nncf.experimental.common.tensor_statistics.collectors import MeanReducer
 from nncf.experimental.common.tensor_statistics.collectors import NoopAggregator
@@ -30,21 +34,20 @@ from nncf.parameters import CompressWeightsMode
 from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.lora_correction import LoraCorrectionAlgorithm
-from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight
 from nncf.tensor import Tensor
 from nncf.tensor.definitions import TensorDataType
-from nncf.torch.dynamic_graph.scope import Scope
-from nncf.torch.graph import operator_metatypes as om
+from nncf.torch.graph.graph import PTTargetPoint
+from nncf.torch.graph.transformations.commands import ExtraCompressionModuleType
 from nncf.torch.graph.transformations.commands import PTSharedFnInsertionCommand
-from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.model_graph_manager import find_const_node_in_constant_subgraph
 from nncf.torch.model_graph_manager import get_const_node
 from nncf.torch.model_graph_manager import get_module_by_name
 from nncf.torch.model_graph_manager import split_const_name
 from nncf.torch.model_transformer import PTModelTransformer
 from nncf.torch.nncf_network import NNCFNetwork
-from nncf.torch.quantization.layers import AsymmetricWeightsDecompressor
-from nncf.torch.quantization.layers import SymmetricWeightsDecompressor
+from nncf.torch.quantization.layers import QUANTIZATION_MODULES
+from nncf.torch.quantization.layers import AsymmetricQuantizer
+from nncf.torch.quantization.layers import PTQuantizerSpec
 
 
 class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
@@ -199,6 +202,18 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
     ) -> None:
         pass
 
+    @staticmethod
+    def init_lora_adapters(svd_residual, reduction_axes=None, rank=None):
+        # O stands for output dimension, H - input dimension or hidden size, R - rank.
+        U_full, S_full, V_full = torch.linalg.svd(svd_residual, full_matrices=False)
+        U = U_full[:, :rank]  # [H, R]
+        S_sqrt = torch.sqrt(S_full)
+        S = torch.diag(S_sqrt[:rank])  # [R, R]
+        V = V_full[:rank, :]  # [R, O]
+        V = S @ V  # [R, O]
+        U = U @ S  # [H, R]
+        return U, V
+
     def transform_model(
         self,
         model: NNCFNetwork,
@@ -209,15 +224,10 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         lora_correction_algo: LoraCorrectionAlgorithm = None,
     ) -> NNCFNetwork:
         transformation_layout = TransformationLayout()
-
         for wc_params in weight_compression_parameters:
             compression_config = wc_params.compression_config
-            if compression_config.mode not in [
-                CompressWeightsMode.INT8_ASYM,
-                CompressWeightsMode.INT8_SYM,
-                CompressWeightsMode.INT8,
-            ]:
-                raise ValueError(f"{compression_config.mode.value} is not supported.")
+            mode = compression_config.mode
+            print(f"Quantize {wc_params.weight_name} to {compression_config.mode.value}")
 
             weight_node = get_const_node(wc_params.node_with_weight, wc_params.weight_port_id, graph)
             weight_name = weight_node.layer_attributes.name
@@ -227,57 +237,116 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             if weight is None or not isinstance(weight, torch.nn.Parameter):
                 raise nncf.InternalError(f"Could not find a torch.nn.Parameter in the model by name {weight_name}.")
 
-            # calculates compressed weights and decompression parameters
-            compressed_weight = compress_weight(
-                Tensor(weight),
-                wc_params.reduction_axes,
-                compression_config,
-                None if precomputed_scales is None else precomputed_scales.get(wc_params.weight_name),
-                None if precomputed_zero_points is None else precomputed_zero_points.get(wc_params.weight_name),
+            orig_weight_shape = weight_shape = list(weight.shape)
+            scale_shape = weight_shape.copy()
+            scale_shape[wc_params.reduction_axes[0]] = 1
+
+            schema = QuantizationScheme.SYMMETRIC
+            if mode in [CompressWeightsMode.INT4_ASYM, CompressWeightsMode.INT8_ASYM]:
+                schema = QuantizationScheme.ASYMMETRIC
+
+            quantizer_config = QuantizerConfig(
+                num_bits=compression_config.num_bits,
+                mode=schema,
+                # TODO: extend for group-wise case
             )
-            compressed_weight.scale = compressed_weight.scale.astype(dtype=TensorDataType.float16)
 
-            # pack compressed tensor
-            if compression_config.mode == CompressWeightsMode.INT8_SYM:
-                dtype = TensorDataType.int8
+            lora_rank = 256
+            group_size = compression_config.group_size
+            out_features, in_features = weight_shape
+            group_reduction_axes = wc_params.reduction_axes[0]
+
+            if compression_config.num_bits == 4 and group_size > 0:
+                group_reduction_axes = 2
+                weight_shape = [out_features, in_features // group_size, group_size]
+                scale_shape = [out_features, in_features // group_size, 1]
+
+            reshaped_weight = weight.reshape(weight_shape)
+
+            # Group-wise:  Weight [a1, r, a2] -> Scale [a1, 1, a2]
+            # Per-channel: Weight [a1, a2]    -> Scale [a1, 1]
+            input_low = torch.amin(reshaped_weight, dim=group_reduction_axes, keepdim=True).float()
+            input_high = torch.amax(reshaped_weight, dim=group_reduction_axes, keepdim=True).float()
+
+            quantizer_spec = PTQuantizerSpec.from_config(
+                quantizer_config,
+                narrow_range=False,
+                scale_shape=scale_shape,
+                weight_shape=weight_shape,
+                half_range=False,
+                logarithm_scale=False,
+                is_quantized_on_export=False,
+                compression_lr_multiplier=None,
+                lora_rank=lora_rank,
+                group_size=group_size,
+                module_name=module_name,
+            )
+            quantizer_cls = QUANTIZATION_MODULES.get(quantizer_config.mode)
+            quantizer = quantizer_cls(quantizer_spec)
+
+            if isinstance(quantizer, AsymmetricQuantizer):
+                quantizer.input_low = torch.nn.Parameter(input_low)
+                input_range = input_high - input_low
+                # Subtract eps from the input_range to make quantizer parameters equal to
+                # original parameters on the forward call.
+                quantizer.input_range = torch.nn.Parameter(input_range - quantizer.eps)
             else:
-                dtype = TensorDataType.uint8
-            packed_tensor = compressed_weight.tensor.astype(dtype)
+                original_sym = True
+                quantizer.signed = bool(torch.any(input_low.data < 0))
+                quantizer.set_levels()
+                ll_lh = quantizer.level_low / quantizer.level_high
+                if original_sym:
+                    quantizer.scale = torch.nn.Parameter(input_high.data - quantizer.eps)
+                    input_low = quantizer.scale * ll_lh
+                    input_range = quantizer.scale - input_low
+                else:
+                    w_abs_min = torch.abs(input_low)
+                    w_max = input_high
+                    scale = torch.where(w_abs_min >= w_max, w_abs_min, -w_max)
+                    eps = quantizer.eps
+                    scale = quantizer.scale = torch.nn.Parameter(torch.where(torch.abs(scale) < eps, eps, scale))
+                    input_low = torch.where(scale < 0, scale, scale * ll_lh)
+                    input_range = torch.where(scale < 0, scale * ll_lh - input_low, scale - input_low)
+                    quantizer.scale = torch.nn.Parameter(torch.where(torch.abs(scale) < eps, eps, scale))
+            quantizer.to(weight.device)
 
-            # sets compressed tensor
-            compressed_parameter = torch.nn.Parameter(packed_tensor.data, requires_grad=False)
-            setattr(module, weight_attr_name, compressed_parameter)
+            if compression_config.num_bits == 4:
+                quantizer._lora_A = torch.nn.Parameter(quantizer._lora_A.type(dtype=weight.dtype))
+                quantizer._lora_B = torch.nn.Parameter(quantizer._lora_B.type(dtype=weight.dtype))
 
-            consumer_nodes = graph.get_next_nodes(weight_node)
-            if len(consumer_nodes) > 1:
-                for c_node in consumer_nodes:
-                    c_module = model.nncf.get_module_by_scope(Scope.from_str(c_node.layer_name))
-                    for name, param in c_module.named_parameters(recurse=False, remove_duplicate=False):
-                        if id(param) == id(weight):
-                            setattr(c_module, name, compressed_parameter)
-
-            # creates weight decompressor
-            if compression_config.mode == CompressWeightsMode.INT8_SYM:
-                decompressor = SymmetricWeightsDecompressor(compressed_weight.scale.data, result_dtype=weight.dtype)
-            else:
-                packed_zero_point = compressed_weight.zero_point.astype(dtype)
-                decompressor = AsymmetricWeightsDecompressor(
-                    compressed_weight.scale.data, packed_zero_point.data, result_dtype=weight.dtype
+                weight = reshaped_weight.reshape(orig_weight_shape)
+                fq_weight = quantizer.quantize(weight)
+                print("quant noise before SVD={:.2f}".format(torch.linalg.norm(fq_weight - weight, ord="fro").item()))
+                svd_residual = (torch.rand(weight_shape, dtype=weight.dtype).to(weight.device) / 100) * input_range / 15
+                svd_residual = svd_residual.reshape(orig_weight_shape)
+                svd_residual = svd_residual.type(
+                    torch.float32
+                )  # otherwise "svd_cuda_gesvdj" not implemented for 'BFloat16'
+                B, A = self.init_lora_adapters(svd_residual, rank=quantizer.lora_rank)
+                quantizer._lora_A = torch.nn.Parameter(A.type(dtype=weight.dtype))
+                quantizer._lora_B = torch.nn.Parameter(B.type(dtype=weight.dtype))
+                fq_weight = quantizer.quantize(weight)
+                print(
+                    "quant noise right after SVD={:.2f}".format(torch.linalg.norm(fq_weight - weight, ord="fro").item())
                 )
 
-            # registry weight decompression module in the model
-            decompressor_name = f"weights_decompressor_{weight_node.node_name.replace('.', '_')}"
+            node_name = weight_node.node_name
+            fq_node_name = wc_params.node_with_weight.node_name
+            # TODO: why not wc_params.weight_port_id)???
+            #  because post hook for constant??
+            target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, fq_node_name, input_port_id=1)
+            storage_key = "FQ_LORA_for_node_{}".format(node_name.replace(".", "_"))
 
-            # inserts the weight decompressor into the model as the post hook on the model weight
             transformation_layout.register(
                 PTSharedFnInsertionCommand(
-                    [PTTargetPoint(TargetType.OPERATOR_POST_HOOK, target_node_name=weight_node.node_name)],
-                    decompressor,
-                    decompressor_name,
+                    target_points=[target_point],
+                    fn=quantizer,
+                    op_unique_name=storage_key,
+                    compression_module_type=ExtraCompressionModuleType.EXTERNAL_QUANTIZER,
+                    priority=TransformationPriority.QUANTIZATION_PRIORITY,
                 )
             )
 
         # apply transformations
         transformed_model = PTModelTransformer(model).transform(transformation_layout)
-
         return transformed_model

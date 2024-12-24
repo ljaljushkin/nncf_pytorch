@@ -34,9 +34,9 @@ class QuantizeSymmetric(torch.autograd.Function):
 
             # Required to support both torch.amp.autocast and models that perform explicit type casting
             # inside their forward calls.
-            if input_.dtype == torch.float16:
-                input_low = input_low.type(torch.float16)
-                input_range = input_range.type(torch.float16)
+            if input_.dtype in [torch.bfloat16, torch.float16]:
+                input_low = input_low.type(input_.dtype)
+                input_range = input_range.type(input_.dtype)
             output = QuantizedFunctionsCUDA.get("Quantize_forward")(input_, input_low, input_range, levels)
         else:
             output = QuantizedFunctionsCPU.get("Quantize_forward")(input_, input_low, input_range, levels)
@@ -82,9 +82,9 @@ class QuantizeAsymmetric(torch.autograd.Function):
 
             # Required to support both torch.amp.autocast and models that perform explicit type casting
             # inside their forward calls.
-            if input_.dtype == torch.float16:
-                input_low = input_low.type(torch.float16)
-                input_range = input_range.type(torch.float16)
+            if input_.dtype in [torch.bfloat16, torch.float16]:
+                input_low = input_low.type(input_.dtype)
+                input_range = input_range.type(input_.dtype)
             output = QuantizedFunctionsCUDA.get("Quantize_forward")(input_, input_low, input_range, levels)
         else:
             output = QuantizedFunctionsCPU.get("Quantize_forward")(input_, input_low, input_range, levels)

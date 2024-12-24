@@ -322,11 +322,12 @@ class InputInfoWrapManager:
                 continue
 
             if param_name not in bound_model_params.arguments:
-                nncf_logger.warning(
-                    "A call to a compressed model's forward occurred without one of the arguments "
-                    "specified at the compressed model creation stage! Input compression may be incorrect. "
-                    "Trying to recover by wrapping the default value for the argument."
-                )
+                # TODO: why is it happening in lm_eval on wrapping HFLM?
+                # nncf_logger.warning(
+                #     "A call to a compressed model's forward occurred without one of the arguments "
+                #     "specified at the compressed model creation stage! Input compression may be incorrect. "
+                #     "Trying to recover by wrapping the default value for the argument."
+                # )
                 bound_model_params.apply_defaults()
 
             potential_tensor = bound_model_params.arguments[param_name]
@@ -335,7 +336,8 @@ class InputInfoWrapManager:
                 # Default was None - cannot wrap as-is. Will wrap a dummy tensor as specified in
                 # input info - will preserve the call order of nncf_model_input nodes,
                 # and the post-hooks for the input node will execute. The result won't go anywhere, though.
-                nncf_logger.info(f"Wrapping a dummy tensor for input {param_name}")
+                # TODO: is something bad with this wrapping?
+                # nncf_logger.info(f"Wrapping a dummy tensor for input {param_name}")
                 device = "cuda"
                 if self._module_ref_for_device is not None:
                     device = get_model_device(self._module_ref_for_device)
