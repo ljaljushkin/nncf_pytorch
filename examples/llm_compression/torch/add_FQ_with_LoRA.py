@@ -109,9 +109,9 @@ position_ids[attention_mask == 0] = 1
 
 dataset = [{"input_ids": input_ids, "attention_mask": attention_mask[:, :-1], "position_ids": position_ids[:, :-1]}]
 
-group_size = 64
-mode = nncf.CompressWeightsMode.INT4_ASYM
-backup_mode = nncf.BackupMode.INT8_ASYM
+group_size = -1
+mode = nncf.CompressWeightsMode.INT4_SYM
+backup_mode = nncf.BackupMode.INT8_SYM
 
 emb_str = "bf16" if backup_mode == nncf.BackupMode.NONE else str(backup_mode.value)
 ckpt_dir = MODEL_DIR / f"FQ_emb_head_{emb_str}_{mode.value}_rank256_gs{group_size}"
