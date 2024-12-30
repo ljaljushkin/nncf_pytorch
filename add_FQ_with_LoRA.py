@@ -71,8 +71,8 @@ ROOT_MODEL_DIR = Path.home() / ("MODEL_DIR")
 # model_id = "facebook/opt-125m"
 # model_id = "TinyLlama/TinyLlama_v1.1"
 # model_id = "microsoft/Phi-3-mini-4k-instruct"
-# model_id = "microsoft/Phi-3.5-mini-instruct"
-model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
+model_id = "microsoft/Phi-3.5-mini-instruct"
+# model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
 # model_id = "Qwen/Qwen2.5-3B-Instruct"
 # model_id = 'google/gemma-2-2b-it'
 # model_id = 'meta-llama/Meta-Llama-3-8B'
@@ -114,7 +114,7 @@ mode=nncf.CompressWeightsMode.INT4_SYM
 backup_mode=nncf.BackupMode.INT8_SYM
 
 emb_str = 'bf16' if backup_mode == nncf.BackupMode.NONE else str(backup_mode.value)
-ckpt_dir = MODEL_DIR / f"FQ_emb_head_{emb_str}_{mode.value}_rank256_gs{group_size}"
+ckpt_dir = MODEL_DIR / f"FQ_emb_head_{emb_str}_{mode.value}_rank256_gs{group_size}_real_ss"
 print('Experiment name: ', ckpt_dir.name)
 ckpt_dir.mkdir(exist_ok=True, parents=True)
 

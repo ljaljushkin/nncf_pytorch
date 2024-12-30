@@ -1016,8 +1016,8 @@ class FQLoRA_sym(torch.autograd.Function):
     def forward(ctx, W, group_shape, A, B, scale, level_low, level_high, levels):
         signed_scale = True
         ll_lh = level_low / level_high
-        if signed_scale:
-            input_low = torch.where(scale > 0, -scale, -level_high/level_low *scale) # s>0 [-s,-7/8s], s<0 [7/8s,-s]
+        if signed_scale and level_low != 0:
+            input_low = torch.where(scale > 0, -scale, -scale/ll_lh) # s>0 [-s,-7/8s], s<0 [7/8s,-s]
             input_range = torch.abs((2 + 1 / level_low) * scale) # 15/8s  or (2-1/8)s
             # input_low = torch.where(scale < 0, scale, scale * ll_lh)
             # input_range = torch.where(scale < 0, scale * ll_lh - input_low, scale - input_low)
@@ -1082,7 +1082,7 @@ def asym_fq_lora(x, group_shape, A, B, input_low_, input_range_, level_low, leve
 @register_operator()
 def sym_fq_lora(x, group_shape, A, B, scale, level_low, level_high, levels, eps):
     signed_scale = True
-    if signed_scale:
+    if signed_scale and level_low != 0:
         scale_safe = torch.where(torch.abs(scale) < eps, eps, scale)
     else:
         scale_safe = abs(scale) + eps
