@@ -72,7 +72,7 @@ model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
 # model_id = 'mistralai/Mistral-7B-v0.3'
 # model_id = 'meta-llama/Llama-3.2-1B-Instruct'
 # model_id = 'meta-llama/Llama-3.2-3B-Instruct'
-model_id = args.model_id
+# model_id = args.model_id
 
 model_name = Path(model_id).name.replace(".", "_")
 

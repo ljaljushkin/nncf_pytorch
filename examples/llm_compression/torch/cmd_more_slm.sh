@@ -30,30 +30,24 @@ MODEL_NAME="SmolLM-1_7B-Instruct"
 # --nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/FQ_emb_head_int8_asym_int4_asym_rank\${rank}_gs64 \
 
 tune_command_template="PYTHONIOENCODING=utf-8 python tune_fq_lora.py \
---nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/FQ_emb_head_int8_sym_int4_sym_rank256_gs-1 \
+--nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/FQ_emb_head_int8_sym_int4_sym_rank256_gs-1_ss \
 --base_model=$BASE_MODEL \
 --model_seqlen=\$model_seqlen \
---val_size=0   \
 --adam_beta1=0.90  \
 --adam_beta2=0.999  \
---early_stop=3 \
 --batch_size=\$batch_size \
 --microbatch_size=\$microbatch_size \
 --trust_remote_code  \
---keep_best_model \
 --nsamples=\$nsamples \
 --weight_decay=\$weight_decay \
 --dataset=\$dataset \
 --lr=\$lr \
---fq_lr=\${fq_lr} \
---num_blocks=\$num_blocks \
---frequency=\$frequency \
---lr_scale=\$lr_scale \
---warmup=\$warmup \
---dtype=bfloat16 \
+--fq_lr=\$fq_lr \
+--epochs=\$epochs \
 --finetune_dtype=bfloat16 \
 --device_map=auto \
---lm_eval_length=2048 \
+--eval_model_seqlen=2048 \
+--use_fast_tokenizer \
 --mlflow"
 
 # --qloss \
@@ -69,7 +63,6 @@ tune_command_template="PYTHONIOENCODING=utf-8 python tune_fq_lora.py \
 # DISTILLATION
 
 weight_decays=5e-4 #2e-4 1e-2) #(0 1e-5 1e-2)
-rank=256
 model_seqlen=1024
 batch_sizes=32 #(128 64) #32
 microbatch_size=2 #2 #2
@@ -77,10 +70,7 @@ list_nsamples=1024 #128
 dataset=wikitext2
 lrs=5e-4
 fq_lrs=5e-5
-lr_scale=0 # 1 2)
-num_blocks=32 # 8)
-frequencys=32 #2 #(8 16 32)
-warmup=0 #(6 16 32)
+list_epochs=32 #2 #(8 16 32)
 
 for batch_size in "${batch_sizes[@]}"
 do
@@ -92,9 +82,9 @@ do
             do
                 for nsamples in "${list_nsamples[@]}"
                 do
-                    for frequency in "${frequencys[@]}"
+                    for epochs in "${list_epochs[@]}"
                     do
-                        export rank model_seqlen batch_size microbatch_size nsamples weight_decay dataset lr fq_lr lr_scale num_blocks frequency warmup
+                        export model_seqlen batch_size microbatch_size nsamples weight_decay dataset lr fq_lr epochs
                         command=$(echo $tune_command_template | envsubst)
                         echo "Running: $command"
                         eval $command 2>&1 | tee -a "logs/tune_${MODEL_NAME}_$(date '+%Y-%m-%d_%H:%M:%S').log" # _$(date '+%Y-%m-%d_%H:%M:%S')

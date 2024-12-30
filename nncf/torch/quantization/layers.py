@@ -317,6 +317,9 @@ class PTQuantizerSetup(QuantizerSetupBase):
 
 
 class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
+    LORA_A_NAME = "lora_A"
+    LORA_B_NAME = "lora_B"
+
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__()
         self._qspec = qspec
@@ -352,6 +355,7 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             self._lora_B = torch.nn.Parameter(
                 torch.zeros((out_features, self.lora_rank), dtype=torch.bfloat16), requires_grad=True
             )
+        # ################################## LORA END ########################################
         OPTIONAL_PARAMETERS_REGISTRY.register("_num_bits")
 
         # These must be made buffers, since they impact the "forward" behaviour and the model can be used
@@ -408,9 +412,9 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
     def levels(self):
         return get_num_levels(self.level_low, self.level_high)
 
-    @abstractmethod
     def enable_gradients(self):
-        pass
+        self._lora_A.requires_grad = True
+        self._lora_B.requires_grad = True
 
     @abstractmethod
     def disable_gradients(self):
@@ -466,9 +470,11 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
     def reset_call_counter(self):
         self.call_count = 0
 
-    @abstractmethod
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
-        pass
+        return {
+            self.LORA_A_NAME: self._lora_A,
+            self.LORA_B_NAME: self._lora_B,
+        }
 
     def apply_minmax_init(self, min_values: torch.Tensor, max_values: torch.Tensor, log_module_name: str = None):
         """min_values and max_values must have the same shape as specified in self.scale_shape"""
@@ -759,6 +765,7 @@ class SymmetricQuantizer(BaseQuantizer):
             super().__setattr__(key, value)
 
     def enable_gradients(self):
+        super().enable_gradients()
         self._scale_param_storage.requires_grad = True
 
     def disable_gradients(self):
@@ -800,7 +807,9 @@ class SymmetricQuantizer(BaseQuantizer):
         # )
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
-        return {self.SCALE_PARAM_NAME: self.scale.detach()}
+        params = super().get_trainable_params()
+        params.update({self.SCALE_PARAM_NAME: self.scale})
+        return params
 
     def _apply_minmax_init(self, min_values, max_values, log_module_name: str = None):
         sign = torch.any(torch.lt(min_values, 0))
@@ -977,7 +986,7 @@ class FQLoRA_sym(torch.autograd.Function):
     def forward(ctx, W, group_shape, A, B, scale, level_low, level_high, levels):
         signed_scale = True
         ll_lh = level_low / level_high
-        if signed_scale:
+        if signed_scale and level_low != 0:
             # range: [-s, 7/8s] if s>0 else [7/8s,-s]
             input_low = torch.where(scale > 0, -scale, -scale / ll_lh)
             input_range = torch.abs((2 + 1 / level_low) * scale)  # 15/8s or (2-1/8)s
@@ -1045,7 +1054,7 @@ def asym_fq_lora(x, group_shape, A, B, input_low_, input_range_, level_low, leve
 @register_operator()
 def sym_fq_lora(x, group_shape, A, B, scale, level_low, level_high, levels, eps):
     signed_scale = True
-    if signed_scale:
+    if signed_scale and level_low != 0:
         scale_safe = torch.where(torch.abs(scale) < eps, eps, scale)
     else:
         scale_safe = abs(scale) + eps
@@ -1135,6 +1144,7 @@ class AsymmetricQuantizer(BaseQuantizer):
             super().__setattr__(key, value)
 
     def enable_gradients(self):
+        super().enable_gradients()
         self.input_low.requires_grad = True
         self._input_range_param_storage.requires_grad = True
 
@@ -1178,10 +1188,14 @@ class AsymmetricQuantizer(BaseQuantizer):
         return fq_weight
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
-        return {
-            self.INPUT_LOW_PARAM_NAME: self.input_low.detach(),
-            self.INPUT_RANGE_PARAM_NAME: self.input_range.detach(),
-        }
+        params = super().get_trainable_params()
+        params.update(
+            {
+                self.INPUT_LOW_PARAM_NAME: self.input_low,
+                self.INPUT_RANGE_PARAM_NAME: self.input_range,
+            }
+        )
+        return params
 
     def _apply_minmax_init(self, min_values, max_values, log_module_name: str = None):
         ranges = max_values - min_values
