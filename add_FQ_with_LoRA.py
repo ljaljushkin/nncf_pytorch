@@ -72,14 +72,14 @@ ROOT_MODEL_DIR = Path.home() / ("MODEL_DIR")
 # model_id = "TinyLlama/TinyLlama_v1.1"
 # model_id = "microsoft/Phi-3-mini-4k-instruct"
 # model_id = "microsoft/Phi-3.5-mini-instruct"
-# model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
+model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
 # model_id = "Qwen/Qwen2.5-3B-Instruct"
 # model_id = 'google/gemma-2-2b-it'
 # model_id = 'meta-llama/Meta-Llama-3-8B'
 # model_id = 'mistralai/Mistral-7B-v0.3'
 # model_id = 'meta-llama/Llama-3.2-1B-Instruct'
 # model_id = 'meta-llama/Llama-3.2-3B-Instruct'
-model_id = args.model_id
+# model_id = args.model_id
 
 model_name = Path(model_id).name.replace(".", "_")
 
@@ -109,7 +109,7 @@ position_ids[attention_mask == 0] = 1
 
 dataset = [{"input_ids": input_ids, "attention_mask": attention_mask[:, :-1], "position_ids": position_ids[:, :-1]}]
 
-group_size = 512
+group_size = -1
 mode=nncf.CompressWeightsMode.INT4_SYM
 backup_mode=nncf.BackupMode.INT8_SYM
 
