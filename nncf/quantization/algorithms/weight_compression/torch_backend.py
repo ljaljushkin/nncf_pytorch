@@ -301,8 +301,9 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     scale = torch.where(w_abs_min >= w_max, w_abs_min, -w_max)
                     eps = quantizer.eps
                     scale = quantizer.scale = torch.nn.Parameter(torch.where(torch.abs(scale) < eps, eps, scale))
-                    input_low = torch.where(scale < 0, scale, scale * ll_lh)
-                    input_range = torch.where(scale < 0, scale * ll_lh - input_low, scale - input_low)
+                    # range: [-s, 7/8s] if s>0 else [7/8s,-s]
+                    input_low = torch.where(scale > 0, -scale, -scale / ll_lh)
+                    input_range = torch.abs((2 + 1 / quantizer.level_low) * scale)  # 15/8s or (2-1/8)s
                     quantizer.scale = torch.nn.Parameter(torch.where(torch.abs(scale) < eps, eps, scale))
                 else:
                     quantizer.scale = torch.nn.Parameter(input_high.data - quantizer.eps)

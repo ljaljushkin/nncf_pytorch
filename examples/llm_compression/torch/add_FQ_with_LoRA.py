@@ -25,13 +25,6 @@ import nncf
 from nncf.common.logging.logger import set_log_file
 
 
-def generate_overfit(pipeline, tokenizer, prefix=""):
-    output = pipeline.generate(
-        tokenizer("overfit", return_tensors="pt")["input_ids"].cuda(), min_new_tokens=32, max_new_tokens=32
-    )
-    print("#" * 50 + f" {prefix}\n", tokenizer.decode(output[0]), "\n" + "#" * 150)
-
-
 def save_checkpoint(wrapped_model, ckpt_dir):
     if not ckpt_dir.exists():
         ckpt_dir.mkdir()
@@ -72,7 +65,7 @@ ROOT_MODEL_DIR = Path.home() / ("MODEL_DIR")
 # model_id = "TinyLlama/TinyLlama_v1.1"
 # model_id = "microsoft/Phi-3-mini-4k-instruct"
 # model_id = "microsoft/Phi-3.5-mini-instruct"
-# model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
+model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
 # model_id = "Qwen/Qwen2.5-3B-Instruct"
 # model_id = 'google/gemma-2-2b-it'
 # model_id = 'meta-llama/Meta-Llama-3-8B'
@@ -96,7 +89,6 @@ hf_model = AutoModelForCausalLM.from_pretrained(
 )
 # print(hf_model)
 tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-# generate_overfit(hf_model, tokenizer, "FP32")
 
 # We'll teach the model to repeatedly say "overfit".
 tokenized_text = tokenizer("overfit " * 10, return_tensors="pt")
@@ -114,7 +106,7 @@ mode = nncf.CompressWeightsMode.INT4_SYM
 backup_mode = nncf.BackupMode.INT8_SYM
 
 emb_str = "bf16" if backup_mode == nncf.BackupMode.NONE else str(backup_mode.value)
-ckpt_dir = MODEL_DIR / f"FQ_emb_head_{emb_str}_{mode.value}_rank256_gs{group_size}"
+ckpt_dir = MODEL_DIR / f"FQ_emb_head_{emb_str}_{mode.value}_rank256_gs{group_size}_ss"
 print("Experiment name: ", ckpt_dir.name)
 ckpt_dir.mkdir(exist_ok=True, parents=True)
 
@@ -134,6 +126,5 @@ with log_filename.open("w") as f, redirect_stdout(f), redirect_stderr(f):
         backup_mode=backup_mode,
         dataset=nncf.Dataset(dataset),
     )
-    # generate_overfit(hf_model, tokenizer, "Quantized")
     save_checkpoint(model, ckpt_dir)
     model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")

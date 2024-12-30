@@ -978,9 +978,9 @@ class FQLoRA_sym(torch.autograd.Function):
         signed_scale = True
         ll_lh = level_low / level_high
         if signed_scale:
-            # TODO: too slow?
-            input_low = torch.where(scale < 0, scale, scale * ll_lh)
-            input_range = torch.where(scale < 0, scale * ll_lh - input_low, scale - input_low)
+            # range: [-s, 7/8s] if s>0 else [7/8s,-s]
+            input_low = torch.where(scale > 0, -scale, -scale / ll_lh)
+            input_range = torch.abs((2 + 1 / level_low) * scale)  # 15/8s or (2-1/8)s
         else:
             input_low = scale * ll_lh
             input_range = scale - input_low
