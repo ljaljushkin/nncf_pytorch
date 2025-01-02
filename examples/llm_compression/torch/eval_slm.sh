@@ -57,6 +57,7 @@ echo "The process ID: $pid, log file: $LOG_FILE"
 # pid=$!
 # echo "The process ID: $pid, log file: $LOG_FILE"
 
+# # pip install whowhatbench@git+https://github.com/andreyanufr/openvino.genai.git@837294cb21a9bb408faa346ddde287ea748ee22c#subdirectory=tools/who_what_benchmark
 # cd ../nncf
 # TASK="WWB"
 # LOG_FILE=$NNCF_CKPT_DIR/"${MODEL_NAME}_${TASK}.log"

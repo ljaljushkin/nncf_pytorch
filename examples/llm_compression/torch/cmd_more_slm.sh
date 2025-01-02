@@ -30,11 +30,11 @@ MODEL_NAME="SmolLM-1_7B-Instruct"
 # --nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/FQ_emb_head_int8_asym_int4_asym_rank\${rank}_gs64 \
 
 tune_command_template="PYTHONIOENCODING=utf-8 python tune_fq_lora.py \
---nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/FQ_emb_head_int8_sym_int4_sym_rank256_gs-1_ss \
+--nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/FQ_emb_head_int8_sym_int4_sym_rank256_gs-1_ss_new \
 --base_model=$BASE_MODEL \
 --model_seqlen=\$model_seqlen \
---adam_beta1=0.90  \
---adam_beta2=0.999  \
+--adam_beta1=0.90 \
+--adam_beta2=0.999 \
 --batch_size=\$batch_size \
 --microbatch_size=\$microbatch_size \
 --trust_remote_code  \
@@ -47,20 +47,11 @@ tune_command_template="PYTHONIOENCODING=utf-8 python tune_fq_lora.py \
 --finetune_dtype=bfloat16 \
 --device_map=auto \
 --eval_model_seqlen=2048 \
---use_fast_tokenizer \
 --mlflow"
 
-# --qloss \
-# --device_map=auto \
-# --exp_name=slm_const_lr2e-04_fqlr1e-03_wd1e-03_rand100+_qloss_n1024_r1"
-# --print_every_steps=1"
-# --print_every_steps=1 \
-# --exp_name=debug \
-# Why is the convergence better for FQ with finetune_dtype=float32 and bfloat16 weights
-# --amp"
-# ALPACA
-# "--wandb_project=trainer_tune"
-# DISTILLATION
+# --print_every_steps 1"
+# --use_fast_tokenizer"
+
 
 weight_decays=5e-4 #2e-4 1e-2) #(0 1e-5 1e-2)
 model_seqlen=1024
@@ -96,15 +87,3 @@ do
         done
     done
 done
-
-# eval_command_template='lm_eval --model=hf --model_args=pretrained=microsoft/Phi-3-mini-4k-instruct,trust_remote_code=True,nncf_ckpt_dir=$nncf_ckpt_dir --tasks=wikitext'
-# overfit experiments
-# command_template='python finetune.py --base_model=microsoft/Phi-3-mini-4k-instruct --nncf_ckpt_dir=/home/nlyaly/MODEL_DIR/Phi-3-mini-4k-instruct/FQ_4bit_31layer_svd_debug --model_seqlen=$model_seqlen --val_size=0   --adam_beta1=0.90  --adam_beta2=0.999  --early_stop=3 --batch_size=$batch_size  --microbatch_size=$microbatch_size --trust_remote_code  --keep_best_model --nsamples=$nsamples --dtype=auto --weight_decay=$weight_decay --device_map=auto --amp --dataset=$dataset --lr=$lr --num_blocks=$num_blocks --frequency=$frequency --lr_scale=$lr_scale --epochs 5 --exp_name debug --print_every_steps=1'
-
-
-# seq_len 4096
-# python finetune.py  --base_model=microsoft/Phi-3-mini-4k-instruct  --nncf_ckpt_dir=/home/nlyaly/MODEL_DIR/Phi-3-mini-4k-instruct/FQ_4bit_31layer_svd/ --model_seqlen=4096 --val_size=0   --adam_beta1=0.90  --adam_beta2=0.999  --early_stop=3 --batch_size=4  --microbatch_size=2 --trust_remote_code  --keep_best_model --nsamples=128 --skip_first_eval --dtype=auto --device_map=auto --amp --dataset=wikitext2 --wandb --lr=1e-4 --epochs 5
-
-
-#############################################################################    WWB    ###################################
-# pip install whowhatbench@git+https://github.com/andreyanufr/openvino.genai.git@837294cb21a9bb408faa346ddde287ea748ee22c#subdirectory=tools/who_what_benchmark

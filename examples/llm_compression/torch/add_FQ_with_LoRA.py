@@ -106,7 +106,7 @@ mode = nncf.CompressWeightsMode.INT4_SYM
 backup_mode = nncf.BackupMode.INT8_SYM
 
 emb_str = "bf16" if backup_mode == nncf.BackupMode.NONE else str(backup_mode.value)
-ckpt_dir = MODEL_DIR / f"FQ_emb_head_{emb_str}_{mode.value}_rank256_gs{group_size}_ss"
+ckpt_dir = MODEL_DIR / f"FQ_emb_head_{emb_str}_{mode.value}_rank256_gs{group_size}_ss_new"
 print("Experiment name: ", ckpt_dir.name)
 ckpt_dir.mkdir(exist_ok=True, parents=True)
 

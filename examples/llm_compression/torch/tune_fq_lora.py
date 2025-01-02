@@ -37,6 +37,17 @@ from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 
 
+def generate_overfit(pipeline, tokenizer, device, prefix=""):
+    messages = [
+        {"role": "system", "content": "You can answer only with overfit word."},
+        {"role": "user", "content": "What is the capital of France?"},
+    ]
+    input_text = tokenizer.apply_chat_template(messages, tokenize=False)
+    inputs = tokenizer.encode(input_text, return_tensors="pt").to(device)
+    outputs = pipeline.generate(inputs, min_new_tokens=32, max_new_tokens=32, do_sample=False)
+    print("#" * 50 + f" {prefix}\n", tokenizer.decode(outputs[0]), "\n" + "#" * 150)
+
+
 def maybe_get_0th_element(x: Union[Any, Sequence[Any]]) -> Any:
     """
     Return first element if input is Sequence, otherwise return input
@@ -263,11 +274,12 @@ def get_orig_hiddens(model, train_dataloader, model_seqlen, dataset, cache_dir):
     TRAIN_HIDDENS_PATH = cache_dir / Path(f"seqlen{model_seqlen}_nsamples{len(train_dataloader)}_{dataset}.pth")
     if TRAIN_HIDDENS_PATH.exists():
         print("Load cached hiddens from: ", TRAIN_HIDDENS_PATH.resolve())
-        orig_train_hiddens = torch.load(TRAIN_HIDDENS_PATH)
+        orig_hiddens = torch.load(TRAIN_HIDDENS_PATH)
     else:
-        orig_train_hiddens = cache_hiddens(model, train_dataloader)
-        torch.save(orig_train_hiddens, TRAIN_HIDDENS_PATH)
+        orig_hiddens = cache_hiddens(model, train_dataloader)
+        torch.save(orig_hiddens, TRAIN_HIDDENS_PATH)
         print("Save cached hiddens to: ", TRAIN_HIDDENS_PATH.resolve())
+    return orig_hiddens
 
 
 def kl_div(student_hiddens, teacher_hiddens):
@@ -287,13 +299,14 @@ def set_trainable(model, lora_lr, fq_lr, weight_decay):
     scales_to_train = []
     adapters_to_train = []
     for quantizer in model._nncf.external_quantizers.values():
-        quantizer.enable_gradients()
-        params = quantizer.get_trainable_params()
-        for name, param in params.items():
-            if name in [quantizer.LORA_A_NAME, quantizer.LORA_B_NAME]:
-                adapters_to_train.append(param)
-            else:
-                scales_to_train.append(param)
+        if quantizer.num_bits == 4:
+            quantizer.enable_gradients()
+            params = quantizer.get_trainable_params()
+            for name, param in params.items():
+                if name in [quantizer.LORA_A_NAME, quantizer.LORA_B_NAME]:
+                    adapters_to_train.append(param)
+                else:
+                    scales_to_train.append(param)
 
     for name, param in model.named_parameters():
         if param.requires_grad:
@@ -335,6 +348,7 @@ def finetune(
 
     args.microbatch_size = args.microbatch_size or args.batch_size
     grad_accumulation_steps = args.batch_size // args.microbatch_size
+    print("grad_accumulation_steps=", grad_accumulation_steps)
     num_samples = len(train_loader)
     epoch_samples = num_samples - num_samples % args.microbatch_size
     microbatches_per_epoch = epoch_samples // args.microbatch_size
@@ -356,10 +370,11 @@ def finetune(
             ("best_step", 0),
         ]
     )
+    layer = model_to_tune._nncf.external_quantizers.FQ_LORA_for_node_model_layers_13_mlp_down_proj_weight
     for epoch in range(args.epochs):
         # train loop
         param_to_train = set_trainable(model_to_tune, lora_lr=args.lr, fq_lr=args.fq_lr, weight_decay=args.weight_decay)
-        opt = torch.optim.AdamW(param_to_train, betas=(args.adam_beta1, args.adam_beta2))
+        opt = torch.optim.AdamW(param_to_train, lr=args.lr, betas=(args.adam_beta1, args.adam_beta2))
         model_to_tune.train()
 
         # prepare batch indices
@@ -392,6 +407,15 @@ def finetune(
 
             (loss / grad_accumulation_steps).backward()
 
+            if layer._lora_A.grad is not None:
+                metadata["23dj_gA"] = torch.linalg.norm(layer._lora_A.grad.data).item()
+                metadata["23dj_gB"] = torch.linalg.norm(layer._lora_B.grad.data).item()
+            if hasattr(layer, "input_low") and layer.input_low.grad is not None:
+                metadata["23dj_gIL"] = torch.linalg.norm(layer.input_low.grad.data).item()
+                metadata["23dj_gIR"] = torch.linalg.norm(layer.input_range.grad.data).item()
+            if hasattr(layer, "scale") and layer.scale.grad is not None:
+                metadata["23dj_gS"] = torch.linalg.norm(layer.scale.grad.data).item()
+
             if metadata["grad_steps_accumulated"] == grad_accumulation_steps:
                 metadata["lr"] = get_lr(opt)
                 opt.step()
@@ -400,7 +424,15 @@ def finetune(
                 metadata["grad_steps_accumulated"] = 0
                 metadata["total_optimizer_steps"] += 1
                 metadata["aggregated_loss"] = metadata["loss_numerator"] / metadata["loss_denominator"]
-                metadata["loss_denominator"] = 0
+                metadata["loss_numerator"] = metadata["loss_denominator"] = 0
+
+                metadata["23dj_A"] = torch.linalg.norm(layer._lora_A.data).item()
+                metadata["23dj_B"] = torch.linalg.norm(layer._lora_B.data).item()
+                if hasattr(layer, "input_low"):
+                    metadata["23dj_IL"] = torch.linalg.norm(layer.input_low.data).item()
+                    metadata["23dj_IR"] = torch.linalg.norm(layer.input_range.data).item()
+                else:
+                    metadata["23dj_S"] = torch.linalg.norm(layer.scale.data).item()
 
             if (
                 args.print_every_steps
@@ -410,7 +442,8 @@ def finetune(
                 print(
                     f"epoch {metadata['current_epoch']}\t",
                     f"\t| total updates = {metadata['total_optimizer_steps']}",
-                    f"\tloss = {metadata['aggregated_kl_loss']:.9f}",
+                    f"\tloss = {metadata['aggregated_loss']:.9f}",
+                    f"\tlr = {metadata['lr']:.9f}",
                 )
 
             if args.mlflow:
@@ -420,6 +453,16 @@ def finetune(
                     "lm_eval_word_ppl_no_init",
                     "best_eval_perplexity",
                     "current_epoch",
+                    "23dj_A",
+                    "23dj_gA",
+                    "23dj_B",
+                    "23dj_gB",
+                    "23dj_S",
+                    "23dj_gS",
+                    "23dj_IL",
+                    "23dj_gIL",
+                    "23dj_IR",
+                    "23dj_gIR",
                 ]
                 log_data = OrderedDict(filter(lambda pair: pair[0] in names_to_log, metadata.items()))
                 mlflow.log_metrics(log_data, step=metadata["total_microbatches"])
@@ -519,7 +562,7 @@ def get_argument_parser():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=10,
+        default=32,
         help="Maximum number of epochs",
     )
     parser.add_argument(
@@ -570,6 +613,7 @@ def get_argument_parser():
     parser.add_argument(
         "--use_fast_tokenizer",
         action="store_true",
+        default=False,
         help="Whether to use fast tokenizer.",
     )
     parser.add_argument(
@@ -607,10 +651,10 @@ def main(argv):
             mlflow.set_experiment("Tune FQLoRA")
 
         init_ppl = None
-        # init_ppl = eval_on_wikitext(
-        # args.base_model, Path(args.nncf_ckpt_dir), args.eval_model_seqlen, args.finetune_dtype
-        # )
-        # print("word ppl for int4 init", init_ppl)
+        init_ppl = eval_on_wikitext(
+            args.base_model, Path(args.nncf_ckpt_dir), args.eval_model_seqlen, args.finetune_dtype
+        )
+        print("word ppl for int4 init", init_ppl)
 
         # get data
         train_dataloader = get_loaders(
