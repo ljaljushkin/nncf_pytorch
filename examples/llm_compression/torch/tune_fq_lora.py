@@ -291,7 +291,6 @@ def kl_div(student_hiddens, teacher_hiddens):
         reduction="batchmean",
     )
 
-
 def set_trainable(model, lora_lr, fq_lr, weight_decay):
     for param in model.parameters():
         param.requires_grad = False
@@ -371,13 +370,11 @@ def finetune(
         ]
     )
     layer = model_to_tune._nncf.external_quantizers.FQ_LORA_for_node_model_layers_13_mlp_down_proj_weight
-    for epoch in range(args.epochs):
-        # train loop
-        param_to_train = set_trainable(model_to_tune, lora_lr=args.lr, fq_lr=args.fq_lr, weight_decay=args.weight_decay)
-        opt = torch.optim.AdamW(param_to_train, lr=args.lr, betas=(args.adam_beta1, args.adam_beta2))
-        model_to_tune.train()
+    param_to_train = set_trainable(model_to_tune, lora_lr=args.lr, fq_lr=args.fq_lr, weight_decay=args.weight_decay)
+    opt = torch.optim.AdamW(param_to_train, lr=args.lr, betas=(args.adam_beta1, args.adam_beta2))
+    model_to_tune.train()
 
-        # prepare batch indices
+    for epoch in range(args.epochs):
         batch_indices_epoch = torch.randperm(num_samples)[:epoch_samples].chunk(microbatches_per_epoch)
 
         for batch_indices in tqdm(batch_indices_epoch, desc=f"Train epoch {epoch}", leave=False):
@@ -677,15 +674,18 @@ def main(argv):
             orig_model = orig_model.to(device)
         lm_head = deepcopy(orig_model.lm_head)
 
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.base_model, use_fast=args.use_fast_tokenizer, trust_remote_code=True
+        )
+        # train_dataloader = [tokenizer("overfit", return_tensors="pt")["input_ids"]]
+
         # cache logits
         CACHE_DIR = MODEL_DIR / "hiddens_cache"
         CACHE_DIR.mkdir(exist_ok=True, parents=True)
         orig_hiddens = get_orig_hiddens(orig_model, train_dataloader, args.model_seqlen, args.dataset, CACHE_DIR)
 
         # Load model with FQ and LoRA adapters
-        tokenizer = AutoTokenizer.from_pretrained(
-            args.base_model, use_fast=args.use_fast_tokenizer, trust_remote_code=True
-        )
+
         quant_model = load_nncf_quantized_model(args.nncf_ckpt_dir, orig_model, tokenizer)
         print("NNCF model device=", quant_model.device)
         if not args.device_map:

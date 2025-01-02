@@ -30,7 +30,7 @@ MODEL_NAME="SmolLM-1_7B-Instruct"
 # --nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/FQ_emb_head_int8_asym_int4_asym_rank\${rank}_gs64 \
 
 tune_command_template="PYTHONIOENCODING=utf-8 python tune_fq_lora.py \
---nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/FQ_emb_head_int8_sym_int4_sym_rank256_gs-1_ss_new \
+--nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/FQ_emb_head_int8_sym_int4_sym_rank256_gs512_demo \
 --base_model=$BASE_MODEL \
 --model_seqlen=\$model_seqlen \
 --adam_beta1=0.90 \

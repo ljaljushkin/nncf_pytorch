@@ -1118,7 +1118,7 @@ class AsymmetricQuantizer(BaseQuantizer):
                 use_log_storage_in_module=self._is_using_log_scale_storage,
             )
         )
-        print("Create FQ with gs={} and lora_rank={}".format(self.group_size, self.lora_rank))
+        # print("Create FQ with gs={} and lora_rank={}".format(self.group_size, self.lora_rank))
 
     @property
     def input_range(self):
