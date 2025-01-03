@@ -291,6 +291,7 @@ def kl_div(student_hiddens, teacher_hiddens):
         reduction="batchmean",
     )
 
+
 def set_trainable(model, lora_lr, fq_lr, weight_decay):
     for param in model.parameters():
         param.requires_grad = False
@@ -677,7 +678,6 @@ def main(argv):
         tokenizer = AutoTokenizer.from_pretrained(
             args.base_model, use_fast=args.use_fast_tokenizer, trust_remote_code=True
         )
-        # train_dataloader = [tokenizer("overfit", return_tensors="pt")["input_ids"]]
 
         # cache logits
         CACHE_DIR = MODEL_DIR / "hiddens_cache"
@@ -685,7 +685,6 @@ def main(argv):
         orig_hiddens = get_orig_hiddens(orig_model, train_dataloader, args.model_seqlen, args.dataset, CACHE_DIR)
 
         # Load model with FQ and LoRA adapters
-
         quant_model = load_nncf_quantized_model(args.nncf_ckpt_dir, orig_model, tokenizer)
         print("NNCF model device=", quant_model.device)
         if not args.device_map:

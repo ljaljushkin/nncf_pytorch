@@ -24,6 +24,10 @@ from transformers import AutoTokenizer
 import nncf
 from nncf.common.logging.logger import set_log_file
 
+GROUP_SIZE = 64
+MODE = nncf.CompressWeightsMode.INT4_ASYM
+BACKUP_MODE = nncf.BackupMode.INT8_ASYM  # NONE #INT8_SYM
+
 
 def save_checkpoint(wrapped_model, ckpt_dir):
     if not ckpt_dir.exists():
@@ -55,25 +59,13 @@ def set_seed(seed):
 parser = argparse.ArgumentParser(add_help=True)
 # Model params
 parser.add_argument("-m", "--model_id")
+parser.add_argument("-s", "--save_dir", default=None)
 args = parser.parse_args()
+model_id = args.model_id
 
 set_seed(42)
 
 ROOT_MODEL_DIR = Path.home() / ("MODEL_DIR")
-
-# model_id = "facebook/opt-125m"
-# model_id = "TinyLlama/TinyLlama_v1.1"
-# model_id = "microsoft/Phi-3-mini-4k-instruct"
-# model_id = "microsoft/Phi-3.5-mini-instruct"
-# model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
-# model_id = "Qwen/Qwen2.5-3B-Instruct"
-# model_id = 'google/gemma-2-2b-it'
-# model_id = 'meta-llama/Meta-Llama-3-8B'
-# model_id = 'mistralai/Mistral-7B-v0.3'
-# model_id = 'meta-llama/Llama-3.2-1B-Instruct'
-# model_id = 'meta-llama/Llama-3.2-3B-Instruct'
-model_id = 'meta-llama/Meta-Llama-3-8B-Instruct'
-# model_id = args.model_id
 
 model_name = Path(model_id).name.replace(".", "_")
 
@@ -83,18 +75,16 @@ assert MODEL_DIR.exists()
 
 hf_model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype=torch.bfloat16,  # torch.float32, # "auto",  # torch.float32,  # "auto",
+    torch_dtype=torch.bfloat16,
     device_map="auto",
     low_cpu_mem_usage=True,
     trust_remote_code=True,
 )
-# print(hf_model)
 tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
-# We'll teach the model to repeatedly say "overfit".
-tokenized_text = tokenizer("overfit " * 10, return_tensors="pt")
-labels = tokenized_text["input_ids"].cuda()  # to("cuda:0")
-attention_mask = tokenized_text["attention_mask"].cuda()  # to("cuda:0")
+tokenized_text = tokenizer("example", return_tensors="pt")
+labels = tokenized_text["input_ids"].cuda()
+attention_mask = tokenized_text["attention_mask"].cuda()
 input_ids = labels[:, :-1]
 labels = labels[:, 1:]
 position_ids = torch.cumsum(attention_mask, axis=1) - 1
@@ -102,12 +92,9 @@ position_ids[attention_mask == 0] = 1
 
 dataset = [{"input_ids": input_ids, "attention_mask": attention_mask[:, :-1], "position_ids": position_ids[:, :-1]}]
 
-group_size = 64
-mode = nncf.CompressWeightsMode.INT4_ASYM
-backup_mode = nncf.BackupMode.NONE #INT8_SYM
-
-emb_str = "bf16" if backup_mode == nncf.BackupMode.NONE else str(backup_mode.value)
-ckpt_dir = MODEL_DIR / f"FQ_emb_head_{emb_str}_{mode.value}_rank256_gs{group_size}_demo"
+emb_str = "bf16" if BACKUP_MODE == nncf.BackupMode.NONE else str(BACKUP_MODE.value)
+save_dir = args.save_dir if args.save_dir else f"FQ_emb_head_{emb_str}_{MODE.value}_rank256_gs{GROUP_SIZE}_demo"
+ckpt_dir = MODEL_DIR / save_dir
 print("Experiment name: ", ckpt_dir.name)
 ckpt_dir.mkdir(exist_ok=True, parents=True)
 
@@ -122,9 +109,9 @@ with log_filename.open("w") as f, redirect_stdout(f), redirect_stderr(f):
     nncf.compress_weights(
         model,
         ratio=1,
-        group_size=group_size,
-        mode=mode,
-        backup_mode=backup_mode,
+        group_size=GROUP_SIZE,
+        mode=MODE,
+        backup_mode=BACKUP_MODE,
         dataset=nncf.Dataset(dataset),
     )
     save_checkpoint(model, ckpt_dir)
