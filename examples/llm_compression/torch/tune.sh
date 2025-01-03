@@ -4,6 +4,13 @@ set -e
 
 mkdir -p $HOME/MODEL_DIR
 
+# rm -rf env
+# python3.11 -m venv env
+. env/bin/activate
+# pip install -U pip
+# pip install -r requirements.txt
+# pip install ../../../
+
 # BASE_MODEL="microsoft/Phi-3-mini-4k-instruct"
 # MODEL_NAME="Phi-3-mini-4k-instruct"
 
@@ -94,4 +101,5 @@ do
     done
 done
 
-PYTHONIOENCODING=utf-8 ./eval.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_DIR $MAX_LENGTH
+unset CUDA_VISIBLE_DEVICES
+PYTHONIOENCODING=utf-8 ./eval.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_NAME $MAX_LENGTH

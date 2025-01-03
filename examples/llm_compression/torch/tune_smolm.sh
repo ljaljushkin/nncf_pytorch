@@ -1,12 +1,19 @@
 #!/bin/bash
+set -e
+
 mkdir -p $HOME/MODEL_DIR
+
+# rm -rf env
+# python3.11 -m venv env
+. env/bin/activate
+# pip install -U pip
+# pip install -r requirements.txt
+# pip install ../../../
 
 BASE_MODEL="HuggingFaceTB/SmolLM-1.7B-Instruct"
 MODEL_NAME="SmolLM-1_7B-Instruct"
 MAX_LENGTH=2048
 
-# INIT_DIR="FQ_emb_head_int8_sym_int4_sym_rank256_gs-1_demo"
-# INIT_DIR="FQ_emb_head_int8_sym_int4_sym_rank256_gs512_demo"
 INIT_DIR="FQ_emb_head_int8_asym_int4_asym_rank256_gs64_demo"
 EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04_tune_all"
 python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
@@ -41,7 +48,7 @@ list_nsamples=1024 #128
 dataset=wikitext2
 lrs=5e-4
 fq_lrs=5e-5
-list_epochs=32 #2 #(8 16 32)
+list_epochs=32 #32 #2 #(8 16 32)
 
 for batch_size in "${batch_sizes[@]}"
 do
@@ -67,4 +74,5 @@ do
     done
 done
 
-PYTHONIOENCODING=utf-8 ./eval_slm.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_DIR $MAX_LENGTH
+unset CUDA_VISIBLE_DEVICES
+PYTHONIOENCODING=utf-8 ./eval_slm.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_NAME $MAX_LENGTH

@@ -1,10 +1,12 @@
--c ../../../../constraints.txt
-torch
-datasets
-pprint
+# -c ../../../constraints.txt
+torch==2.4.0
+datasets==3.1.0
 mlflow
 tqdm
 numpy>=1.26.4
 transformers>=4.46.3
-lm_eval@git+https://github.com/ljaljushkin/lm-evaluation-harness.git@57dc936219b1f7e060f89f827b0587393dedb00a
+# for evaluation on wikitext and other benchmarks
+lm_eval@git+https://github.com/ljaljushkin/lm-evaluation-harness.git@56de0f141018673ede40d7b0e9fbdcb8a3fb306c
+# [Optional] for evaluation on WhoWhatBenchmark
 whowhatbench@git+https://github.com/andreyanufr/openvino.genai.git@837294cb21a9bb408faa346ddde287ea748ee22c#subdirectory=tools/who_what_benchmark
+openvino.genai==2024.5.0.0

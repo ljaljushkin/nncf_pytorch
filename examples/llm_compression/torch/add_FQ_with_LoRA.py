@@ -82,7 +82,7 @@ hf_model = AutoModelForCausalLM.from_pretrained(
 )
 tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
-tokenized_text = tokenizer("example", return_tensors="pt")
+tokenized_text = tokenizer("example" * 10, return_tensors="pt")
 labels = tokenized_text["input_ids"].cuda()
 attention_mask = tokenized_text["attention_mask"].cuda()
 input_ids = labels[:, :-1]
