@@ -2,14 +2,23 @@
 
 set -e
 
-mkdir -p $HOME/MODEL_DIR
 
+printf '##################################\n'
+printf '########  Installing environment\n'
+printf '##################################\n'
+
+mkdir -p $HOME/MODEL_DIR
 # rm -rf env
 # python3.11 -m venv env
-. env/bin/activate
+# . env/bin/activate
 # pip install -U pip
 # pip install -r requirements.txt
 # pip install ../../../
+
+
+printf '##################################\n'
+printf '########  Create NNCF checkpoint with 4bit FQ+LoRA \n'
+printf '##################################\n'
 
 # BASE_MODEL="microsoft/Phi-3-mini-4k-instruct"
 # MODEL_NAME="Phi-3-mini-4k-instruct"
@@ -32,9 +41,6 @@ mkdir -p $HOME/MODEL_DIR
 # BASE_MODEL="meta-llama/Llama-3.2-3B-Instruct"
 # MODEL_NAME="Llama-3_2-3B-Instruct"
 
-# BASE_MODEL="meta-llama/Meta-Llama-3-8B-Instruct"
-# MODEL_NAME="Meta-Llama-3-8B-Instruct"
-
 # INIT_DIR="FQ_emb_head_int8_sym_int4_sym_rank256_gs-1_demo"
 # INIT_DIR="FQ_emb_head_int8_sym_int4_sym_rank256_gs512_demo"
 
@@ -45,6 +51,10 @@ INIT_DIR="FQ_emb_head_int8_asym_int4_asym_rank256_gs64_demo"
 EXP_NAME="Phi-3_lr5e-04_fqlr5e-05_wd5e-04_tune_all"
 PYTHONIOENCODING=utf-8 python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
 
+
+printf '##################################\n'
+printf '########  Quantization-aware tuning of lora adapters and quantization scales \n'
+printf '##################################\n'
 
 tune_command_template="PYTHONIOENCODING=utf-8 python tune_fq_lora.py \
 --nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/$INIT_DIR \
@@ -100,6 +110,11 @@ do
         done
     done
 done
+
+
+printf '##################################\n'
+printf '########  Evaluation of the best checkpoint'
+printf '##################################\n'
 
 unset CUDA_VISIBLE_DEVICES
 PYTHONIOENCODING=utf-8 ./eval.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_NAME $MAX_LENGTH

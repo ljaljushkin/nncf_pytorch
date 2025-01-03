@@ -679,7 +679,7 @@ def main(argv):
             args.base_model, use_fast=args.use_fast_tokenizer, trust_remote_code=True
         )
 
-        # cache logits
+        # cache logits to not store original model, except the last layer.
         CACHE_DIR = MODEL_DIR / "hiddens_cache"
         CACHE_DIR.mkdir(exist_ok=True, parents=True)
         orig_hiddens = get_orig_hiddens(orig_model, train_dataloader, args.model_seqlen, args.dataset, CACHE_DIR)

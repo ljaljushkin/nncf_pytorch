@@ -66,7 +66,7 @@ position_ids[attention_mask == 0] = 1
 dataset = [
     {"input_ids": input_ids[:, :-1], "attention_mask": attention_mask[:, :-1], "position_ids": position_ids[:, :-1]}
 ]
-nncf_ckpt = torch.load(nncf_ckpt_dir / "nncf_checkpoint.pth", map_location='cpu')
+nncf_ckpt = torch.load(nncf_ckpt_dir / "nncf_checkpoint.pth", map_location="cpu")
 # NOTE: assume that the whole hf_model=AutoModelForCausalLM(...) was passed to NNCF for compression
 # TODO: won't work with accelerator, the model is not supposed to be overriden? see @property model in HFLM
 model = load_from_config(model, nncf_ckpt["nncf_config"], example_input=dataset[0])
