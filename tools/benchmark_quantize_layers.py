@@ -13,6 +13,7 @@ import sys
 from dataclasses import asdict
 from dataclasses import dataclass
 from enum import Enum
+from functools import partial
 from itertools import product
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -34,12 +35,12 @@ from tools.benchmark import run_wall
 from tools.benchmark import run_worker
 
 TIME_SCALES = {"ms": 1000}
-NBITS = 8
+NBITS = 4
 GPU_RUNS_LOW_BATCH = 10000
-GPU_RUNS_HIGH_BATCH = 100
+GPU_RUNS_HIGH_BATCH = 1000
 CPU_RUNS = 100
 LOW_BATCH_INPUT_SIZE = [2, 96, 64, 64]
-HIGH_BATCH_INPUT_SIZE = [128, 96, 64, 64]
+HIGH_BATCH_INPUT_SIZE = [8192 * 32, 64]  # [128, 96, 64, 64]
 
 
 class BatchMode(Enum):
@@ -75,32 +76,32 @@ class GranularityType(Enum):
     PER_CHANNEL = "per_channel"
 
 
-TEST_TENSOR_TYPES: List[TensorType] = [TensorType.WEIGHTS, TensorType.ACTIVATIONS]
-TEST_GRANULARITY: List[GranularityType] = [GranularityType.PER_TENSOR, GranularityType.PER_CHANNEL]
-TEST_SYMMETRIC: List[bool] = [True, False]
-TEST_DEVICES: List[torch.device] = [torch.device("cuda"), torch.device("cpu")]
+TEST_TENSOR_TYPES: List[TensorType] = [TensorType.WEIGHTS]  # , TensorType.ACTIVATIONS]
+TEST_GRANULARITY: List[GranularityType] = [GranularityType.PER_CHANNEL]  # , GranularityType.PER_TENSOR]
+TEST_SYMMETRIC: List[bool] = [False]  # , True]
+TEST_DEVICES: List[torch.device] = [torch.device("cuda")]  # , torch.device("cpu")]
 
 TEST_BATCHES: List[BatchDescriptor] = [
-    BatchDescriptor(
-        mode=BatchMode.LOW,
-        input_size=LOW_BATCH_INPUT_SIZE,
-        num_runs={torch.device("cuda"): GPU_RUNS_LOW_BATCH, torch.device("cpu"): CPU_RUNS},
-    ),
+    # BatchDescriptor(
+    #     mode=BatchMode.LOW,
+    #     input_size=LOW_BATCH_INPUT_SIZE,
+    #     num_runs={torch.device("cuda"): GPU_RUNS_LOW_BATCH, torch.device("cpu"): CPU_RUNS},
+    # ),
     BatchDescriptor(
         mode=BatchMode.HIGH,
         input_size=HIGH_BATCH_INPUT_SIZE,
         num_runs={torch.device("cuda"): GPU_RUNS_HIGH_BATCH, torch.device("cpu"): CPU_RUNS},
     ),
 ]
-TEST_DTYPES: List[torch.dtype] = [torch.float, torch.half]
+TEST_DTYPES: List[torch.dtype] = [torch.float]  # , torch.half]
 TEST_EXEC_TYPES: List[ExecutionType] = [
     ExecutionType.REGULAR,
-    ExecutionType.DISTRIBUTED_DATA_PARALLEL,
-    ExecutionType.DATA_PARALLEL,
+    # ExecutionType.DISTRIBUTED_DATA_PARALLEL,
+    # ExecutionType.DATA_PARALLEL,
 ]
-TEST_NARROW_RANGE: List[bool] = [False, True]
-TEST_TIMING_MODE: List[TimingMode] = [TimingMode.WALL, TimingMode.KERNEL]
-TEST_REFERENCE: List[bool] = [False, True]
+TEST_NARROW_RANGE: List[bool] = [False]  # , True]
+TEST_TIMING_MODE: List[TimingMode] = [TimingMode.WALL]  # TimingMode.KERNEL,
+TEST_REFERENCE: List[bool] = [False, True]  # , False]
 
 
 @dataclass
@@ -164,8 +165,18 @@ class DefaultedPTQuantizerSpec(PTQuantizerSpec):
         narrow_range: bool = False,
         half_range: bool = False,
         logarithm_scale: bool = None,
+        is_fq_lora: bool = False,
     ):
-        super().__init__(num_bits, mode, signedness_to_force, narrow_range, half_range, scale_shape, logarithm_scale)
+        super().__init__(
+            num_bits,
+            mode,
+            signedness_to_force,
+            narrow_range,
+            half_range,
+            scale_shape,
+            logarithm_scale,
+            is_fq_lora=is_fq_lora,
+        )
 
 
 RQ = ReferenceQuantize(backend_type=ReferenceBackendType.TORCH)
@@ -180,7 +191,9 @@ def get_module(params_struct: ParamStruct) -> BaseQuantizer:
     ]
     if params_struct.granularity == GranularityType.PER_CHANNEL:
         scale_shape = get_per_channel_scale_shape(input_shape, is_weights=is_weights)
-    specs = DefaultedPTQuantizerSpec(scale_shape=scale_shape, narrow_range=params_struct.narrow_range, num_bits=NBITS)
+    specs = DefaultedPTQuantizerSpec(
+        scale_shape=scale_shape, narrow_range=params_struct.narrow_range, num_bits=NBITS, is_fq_lora=param_struct.ref
+    )
 
     module_cls = SymmetricQuantizer if params_struct.symmetric else AsymmetricQuantizer
     m = module_cls(specs)
@@ -203,7 +216,7 @@ if __name__ == "__main__":
         param_struct: ParamStruct
         print(param_struct)
         module = get_module(param_struct)
-        call_fn = run_wall if param_struct.timing_mode == TimingMode.WALL else run_profile
+        call_fn = run_wall if param_struct.timing_mode == TimingMode.WALL else partial(run_profile, forward_only=True)
         num_runs = param_struct.batch.num_runs[param_struct.device]
 
         input_size = param_struct.batch.input_size

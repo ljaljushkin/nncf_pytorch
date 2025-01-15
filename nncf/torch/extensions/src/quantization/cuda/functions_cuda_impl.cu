@@ -403,7 +403,7 @@ std::vector<at::Tensor> q_scale_per_weight_channel_cuda_backward(at::Tensor grad
     auto grad_input_range = at::empty(input_range.sizes(), grad_output.options());
 
     auto accum_options = get_accum_options(grad_output.options());
-    dim3 grid_size = get_2d_grid_size_for_per_channel(scale_count);
+    dim3 grid_size = get_2d_grid_size_for_per_channel(scale_count, elements_per_scale);
     auto dev_tmp_range = at::zeros({grid_size.x, grid_size.y}, accum_options);
     auto dev_tmp_low = at::zeros({grid_size.x, grid_size.y}, accum_options);
     auto dev_last_block_counter_range = at::zeros({grid_size.x, 1},  at::device(grad_output.options().device()).dtype(at::kInt));
@@ -411,7 +411,7 @@ std::vector<at::Tensor> q_scale_per_weight_channel_cuda_backward(at::Tensor grad
 
     PROFILE(DISPATCH_TENSOR_DATA_TYPES(input.scalar_type(), "q_single_scale_cuda_backward", ([&] {
               using scalar_accum_t = ACCUM_TYPE_FOR(scalar_t);
-              q_scale_per_weight_channel_cuda_backward_kernel<scalar_t, scalar_accum_t><<<grid_size, CUDA_MAX_NUM_THREADS_PER_BLOCK, 0, at::cuda::getCurrentCUDAStream()>>>(
+              q_scale_per_weight_channel_cuda_backward_kernel<scalar_t, scalar_accum_t><<<grid_size, elements_per_scale, 0, at::cuda::getCurrentCUDAStream()>>>(
                   grad_input.data_ptr<scalar_t>(),
                   grad_input_low.data_ptr<scalar_t>(),
                   grad_input_range.data_ptr<scalar_t>(),
@@ -453,7 +453,7 @@ std::vector<at::Tensor> q_scale_per_activation_channel_cuda_backward(at::Tensor 
     auto grad_input_range = at::empty(input_range.sizes(), grad_output.options());
 
     auto accum_options = get_accum_options(grad_output.options());
-    dim3 grid_size = get_2d_grid_size_for_per_channel(scale_count);
+    dim3 grid_size = get_2d_grid_size_for_per_channel(scale_count, total_elements_per_scale);
     auto dev_tmp_range = at::zeros({grid_size.x, grid_size.y}, accum_options);
     auto dev_tmp_low = at::zeros({grid_size.x, grid_size.y}, accum_options);
     auto dev_last_block_counter_range = at::zeros({grid_size.x, 1},  at::device(grad_output.options().device()).dtype(at::kInt));

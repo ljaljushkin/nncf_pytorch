@@ -34,11 +34,14 @@ def run_wall(layer, input_size_, device, runs, is_print=True, dtype=torch.float)
     warmup(layer, input_, 100)
 
     torch.cuda.synchronize()
+    torch.cuda.cudart().cudaProfilerStart()
     start = time.time()
-    for _ in range(runs):
+    for i in range(runs):
+        torch.cuda.nvtx.range_push("iteration{}".format(i))
         layer.zero_grad()
         new_i = layer(input_)
         new_i[0].sum().backward()
+        torch.cuda.nvtx.range_pop()
     torch.cuda.synchronize()
     elapsed = time.time() - start
 
@@ -51,16 +54,19 @@ def run_wall(layer, input_size_, device, runs, is_print=True, dtype=torch.float)
 
 
 def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torch.float) -> Dict[str, float]:
+    torch.cuda.set_sync_debug_mode(0)
     input_ = torch.randn(input_size_, device=torch.device(device), dtype=dtype)
 
     # Force CUDA initialization & warm up
     warmup(layer, input_, 100, forward_only)
+    torch.cuda.cudart().cudaProfilerStart()
 
     forward_min = math.inf
     forward_time = 0
     backward_min = math.inf
     backward_time = 0
-    for _ in range(runs):
+    for i in range(runs):
+        torch.cuda.nvtx.range_push("iteration{}".format(i))
         layer.zero_grad()
 
         torch.cuda.synchronize()
