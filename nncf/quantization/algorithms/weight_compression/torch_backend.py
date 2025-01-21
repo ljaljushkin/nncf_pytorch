@@ -255,13 +255,20 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             group_size = compression_config.group_size
             out_features, in_features = weight_shape
             group_reduction_axes = wc_params.reduction_axes[0]
-
+            # for per-channel
+            # weight_group_shape = weight_shape
             if compression_config.num_bits == 4 and group_size > 0:
                 group_reduction_axes = 2
-                weight_shape = [out_features, in_features // group_size, group_size]
-                scale_shape = [out_features, in_features // group_size, 1]
+                torch_impl = True
+                weight_group_shape = [out_features, in_features // group_size, group_size]
+                scale_group_shape = [out_features, in_features // group_size, 1]
+                scale_flat_shape = [out_features * in_features // group_size, 1]
+                if torch_impl:
+                    scale_shape = scale_group_shape
+                else:
+                    scale_shape = scale_flat_shape
 
-            reshaped_weight = weight.reshape(weight_shape)
+            reshaped_weight = weight.reshape(weight_group_shape)
 
             # Group-wise:  Weight [a1, r, a2] -> Scale [a1, 1, a2]
             # Per-channel: Weight [a1, a2]    -> Scale [a1, 1]
@@ -272,7 +279,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 quantizer_config,
                 narrow_range=False,
                 scale_shape=scale_shape,
-                weight_shape=weight_shape,
+                weight_shape=weight_group_shape,
                 half_range=False,
                 logarithm_scale=False,
                 is_quantized_on_export=False,
@@ -285,11 +292,11 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             quantizer = quantizer_cls(quantizer_spec)
 
             if isinstance(quantizer, AsymmetricQuantizer):
-                quantizer.input_low = torch.nn.Parameter(input_low)
+                quantizer.input_low = torch.nn.Parameter(input_low.reshape(scale_shape))
                 input_range = input_high - input_low
                 # Subtract eps from the input_range to make quantizer parameters equal to
                 # original parameters on the forward call.
-                quantizer.input_range = torch.nn.Parameter(input_range - quantizer.eps)
+                quantizer.input_range = torch.nn.Parameter(input_range.reshape(scale_shape) - quantizer.eps)
             else:
                 signed_scale = True
                 quantizer.signed = bool(torch.any(input_low.data < 0))
@@ -318,7 +325,9 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 weight = reshaped_weight.reshape(orig_weight_shape)
                 fq_weight = quantizer.quantize(weight)
                 print("quant noise before SVD={:.2f}".format(torch.linalg.norm(fq_weight - weight, ord="fro").item()))
-                svd_residual = (torch.rand(weight_shape, dtype=weight.dtype).to(weight.device) / 100) * input_range / 15
+                svd_residual = (
+                    (torch.rand(weight_group_shape, dtype=weight.dtype).to(weight.device) / 100) * input_range / 15
+                )
                 svd_residual = svd_residual.reshape(orig_weight_shape)
                 svd_residual = svd_residual.type(
                     torch.float32

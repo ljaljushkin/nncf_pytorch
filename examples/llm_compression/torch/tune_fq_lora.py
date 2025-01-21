@@ -379,10 +379,15 @@ def finetune(
         batch_indices_epoch = torch.randperm(num_samples)[:epoch_samples].chunk(microbatches_per_epoch)
 
         for batch_indices in tqdm(batch_indices_epoch, desc=f"Train epoch {epoch}", leave=False):
+            # torch.cuda.nvtx.range_push("iteration{}".format(metadata["total_microbatches"]))
             batch_indices = batch_indices.tolist()
             metadata["microbatches_since_epoch_start"] += 1
             metadata["total_microbatches"] += 1
-
+            # if metadata["total_microbatches"] == 10:
+            #     torch.cuda.synchronize()
+            #     torch.cuda.cudart().cudaProfilerStart()
+            # if metadata["total_microbatches"] == 20:
+            #     exit()
             inputs = _extract_into_tensor(train_loader, batch_indices, device=device)
             with torch.no_grad():
                 targets = lm_head(_extract_into_tensor(orig_hiddens, batch_indices, device=device, dtype=torch_dtype))
@@ -464,7 +469,7 @@ def finetune(
                 ]
                 log_data = OrderedDict(filter(lambda pair: pair[0] in names_to_log, metadata.items()))
                 mlflow.log_metrics(log_data, step=metadata["total_microbatches"])
-
+            # torch.cuda.nvtx.range_pop()
         save_checkpoint(model_to_tune, last_dir, ckpt_name)
         word_ppl = eval_on_wikitext(args.base_model, last_dir, args.eval_model_seqlen, args.finetune_dtype)
         print(word_ppl)
@@ -641,7 +646,7 @@ def main(argv):
     ckpt_dir = Path(args.nncf_ckpt_dir) / exp_name
     ckpt_dir.mkdir(exist_ok=True, parents=True)
     log_filename = ckpt_dir / "tune.log"
-    print("Log file: ", log_filename.resolve())
+    print("Log file: ", log_filename)
     sys.stdout.flush()
     with log_filename.open("w") as f, redirect_stdout(f), redirect_stderr(f):
         pprint.pprint(vars(args))

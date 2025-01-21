@@ -9,11 +9,11 @@ printf '##################################\n'
 
 mkdir -p $HOME/MODEL_DIR
 # rm -rf env
-# python3.11 -m venv env
-# . env/bin/activate
+# python3.9 -m venv env
+. env/bin/activate
 # pip install -U pip
 # pip install -r requirements.txt
-# pip install ../../../
+pip install ../../../
 
 
 printf '##################################\n'
@@ -47,16 +47,16 @@ printf '##################################\n'
 BASE_MODEL="microsoft/Phi-3.5-mini-instruct"
 MODEL_NAME="Phi-3_5-mini-instruct"
 MAX_LENGTH=4096
-INIT_DIR="FQ_emb_head_int8_asym_int4_asym_rank256_gs64_demo"
-EXP_NAME="Phi-3_lr5e-04_fqlr5e-05_wd5e-04_tune_all"
-PYTHONIOENCODING=utf-8 python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
+INIT_DIR="FQ_emb_head_bf16_int4_asym_rank256_gs-1_demo"
+EXP_NAME="Phi-3_lr5e-04_fqlr5e-05_wd5e-04_tune_all_old_kernel"
+python add_FQ_with_LoRA.py -m $[[BASE_MODEL -s $INIT_DIR
 
 
 printf '##################################\n'
 printf '########  Quantization-aware tuning of lora adapters and quantization scales \n'
 printf '##################################\n'
 
-tune_command_template="PYTHONIOENCODING=utf-8 python tune_fq_lora.py \
+tune_command_template="python tune_fq_lora.py \
 --nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/$INIT_DIR \
 --base_model=$BASE_MODEL \
 --model_seqlen=\$model_seqlen \
@@ -85,7 +85,7 @@ list_nsamples=1024 #128
 dataset=wikitext2
 lrs=1e-4
 fq_lrs=1e-5
-list_epochs=32 #2 #(8 16 32)
+list_epochs=1 #2 #(8 16 32)
 
 for batch_size in "${batch_sizes[@]}"
 do
@@ -116,5 +116,5 @@ printf '##################################\n'
 printf '########  Evaluation of the best checkpoint'
 printf '##################################\n'
 
-unset CUDA_VISIBLE_DEVICES
-PYTHONIOENCODING=utf-8 ./eval.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_NAME $MAX_LENGTH
+# unset CUDA_VISIBLE_DEVICES
+# PYTHONIOENCODING=utf-8 ./eval.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_NAME $MAX_LENGTH

@@ -42,11 +42,10 @@ from nncf.torch.graph.transformations.commands import TargetType
 from nncf.torch.layer_utils import COMPRESSION_MODULES
 from nncf.torch.layer_utils import CompressionParameter
 from nncf.torch.layer_utils import StatefullModuleInterface
-
-# from nncf.torch.quantization.quantize_functions import asymmetric_quantize
 from nncf.torch.quantization.quantize_functions import ExportQuantizeToFakeQuantize
 from nncf.torch.quantization.quantize_functions import ExportQuantizeToONNXQuantDequant
 from nncf.torch.quantization.quantize_functions import TuneRange
+from nncf.torch.quantization.quantize_functions import asymmetric_quantize
 from nncf.torch.quantization.quantize_functions import decompress_asymmetric
 from nncf.torch.quantization.quantize_functions import decompress_symmetric
 from nncf.torch.quantization.quantize_functions import get_scale_zp_from_input_low_input_high
@@ -343,12 +342,10 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
         # elif len(self._qspec.weight_shape) != 2:
         #     nncf_logger.warning(f"Not 2D weights are not supported for FQ: weight shapes={self._qspec.weight_shape}")
         else:
-            if len(self._qspec.weight_shape) == 2:
-                out_features, in_features = self._qspec.weight_shape
-            else:
-                out_features, in_gs, gs = self._qspec.weight_shape
-                in_features = in_gs * gs
-
+            # out_features, in_features = self._qspec.weight_shape
+            out_features, in_gs, group_size = self._qspec.weight_shape
+            in_features = in_gs * group_size
+            self._flat_shape = [out_features * in_gs, group_size]
             self._lora_A = torch.nn.Parameter(
                 torch.ones((self.lora_rank, in_features), dtype=torch.bfloat16), requires_grad=True
             )
@@ -927,27 +924,32 @@ def common_backward(input_, output, input_low, input_range, grad_output, group_s
     mask_in = 1 - mask_hi - mask_lo
     range_sign = torch.sign(input_range)
     err = (output - input_) * torch.reciprocal(input_range * range_sign)
+    orig_shape = grad_output.shape
     grad_output = grad_output.reshape(group_shape)
     grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
     grad_range = sum_like(grad_range, input_range)
 
     # NOTE: no gradient for weights
-    # grad_input = grad_output * mask_in
+    grad_input = (grad_output * mask_in).reshape(orig_shape)
 
     grad_low = grad_output * (mask_hi + mask_lo)
     grad_low = sum_like(grad_low, input_low)
-    return [grad_low, grad_range]
+    return [grad_input, grad_low, grad_range]
 
 
 class FQLoRA_asym(torch.autograd.Function):
     @staticmethod
     def forward(ctx, W, group_shape, A, B, input_low_, input_range_, level_low, level_high, levels):
+        # torch.cuda.nvtx.range_push("forward_torch")
         original_shape = W.shape
 
         input_low = input_low_.type(torch.bfloat16)
         input_range = input_range_.type(torch.bfloat16)
 
         input_ = W + B @ A
+        # print('X weight:' ,torch.linalg.norm(input_).item())
+        # print('IL:' ,torch.linalg.norm(input_low).item())
+        # print('IR:' ,torch.linalg.norm(input_range).item())
         input_ = input_.reshape(group_shape)  # NOTE: careful with what you reshape here!
 
         output = common_forward(input_, input_low, input_range, levels)
@@ -960,10 +962,13 @@ class FQLoRA_asym(torch.autograd.Function):
         ctx.group_shape = group_shape
 
         output = output.reshape(original_shape)
+        # print('FQ weight:' ,torch.linalg.norm(output).item())
+        # torch.cuda.nvtx.range_pop()
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
+        # torch.cuda.nvtx.range_push("backward_torch")
         A, B, input_, output, input_low, input_range = ctx.saved_tensors
 
         grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
@@ -973,12 +978,12 @@ class FQLoRA_asym(torch.autograd.Function):
         level_high = ctx.level_high
         group_shape = ctx.group_shape
 
-        grad_low, grad_range = common_backward(
+        grad_input, grad_low, grad_range = common_backward(
             input_, output, input_low, input_range, grad_output, group_shape, level_low, level_high
         )
-
+        # torch.cuda.nvtx.range_pop()
         #      W,    group_shape,   A,      B,      input_low, input_range, level_low, level_high, levels
-        return None, None, grad_A, grad_B, grad_low.float(), grad_range.float(), None, None, None
+        return grad_input, None, grad_A, grad_B, grad_low.float(), grad_range.float(), None, None, None
 
 
 class FQLoRA_sym(torch.autograd.Function):
@@ -1025,18 +1030,21 @@ class FQLoRA_sym(torch.autograd.Function):
         level_high = ctx.level_high
         group_shape = ctx.group_shape
 
-        _, grad_scale = common_backward(
+        grad_input, grad_scale = common_backward(
             input_, output, input_low, input_range, grad_output, group_shape, level_low, level_high
         )
 
         #      W,    group_shape,   A,      B,      input_low, input_range, level_low, level_high, levels
-        return None, None, grad_A, grad_B, grad_scale.float(), None, None, None
+        return grad_input, None, grad_A, grad_B, grad_scale.float(), None, None, None
 
 
 @register_operator()
 def asym_fq_lora(x, group_shape, A, B, input_low_, input_range_, level_low, level_high, levels, eps):
+    # print('Torch impl')
     input_range_safe = abs(input_range_) + eps
     input_low, input_range = TuneRange.apply(input_low_, input_range_safe, levels)
+    # print('IL after tune:' ,torch.linalg.norm(input_low.data).item())
+    # print('IR after tune:' ,torch.linalg.norm(input_range.data).item())
     fq_weight = FQLoRA_asym.apply(
         x,
         group_shape,
@@ -1161,30 +1169,40 @@ class AsymmetricQuantizer(BaseQuantizer):
         self.level_low, self.level_high = calculate_asymmetric_level_ranges(self.num_bits - scaled_num_bits)
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
-        # return asymmetric_quantize(
-        #     x,
-        #     self.levels,
-        #     self.level_low,
-        #     self.level_high,
-        #     self.input_low,
-        #     self.input_range,
-        #     self.eps,
-        #     skip=execute_traced_op_as_identity,
-        # )
+        # torch.cuda.nvtx.range_push("quantize")
+        torch_impl = True
         device = x.device
         self.to(device)
-        fq_weight = asym_fq_lora(
-            x,
-            self._qspec.weight_shape,
-            self._lora_A,
-            self._lora_B,
-            self.input_low,
-            self.input_range,
-            self.level_low,
-            self.level_high,
-            self.levels,
-            self.eps,
-        )
+        if torch_impl:
+            fq_weight = asym_fq_lora(
+                x,
+                self._qspec.weight_shape,
+                self._lora_A,
+                self._lora_B,
+                self.input_low,
+                self.input_range,
+                self.level_low,
+                self.level_high,
+                self.levels,
+                self.eps,
+            )
+        else:
+            original_shape = x.shape
+            if self.num_bits == 4:
+                x = x + self._lora_B @ self._lora_A
+                x = x.reshape(self._flat_shape)
+            fq_weight = asymmetric_quantize(
+                x,
+                self.levels,
+                self.level_low,
+                self.level_high,
+                self.input_low,
+                self.input_range,
+                self.eps,
+                skip=execute_traced_op_as_identity,
+            )
+            fq_weight = fq_weight.reshape(original_shape)
+        # torch.cuda.nvtx.range_pop()
         return fq_weight
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:

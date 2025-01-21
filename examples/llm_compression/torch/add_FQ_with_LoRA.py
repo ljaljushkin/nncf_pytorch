@@ -26,7 +26,7 @@ from nncf.common.logging.logger import set_log_file
 
 GROUP_SIZE = 64
 MODE = nncf.CompressWeightsMode.INT4_ASYM
-BACKUP_MODE = nncf.BackupMode.INT8_ASYM  # NONE #INT8_SYM
+BACKUP_MODE = nncf.BackupMode.NONE  # NONE #INT8_SYM
 
 
 def save_checkpoint(wrapped_model, ckpt_dir):
@@ -101,8 +101,8 @@ ckpt_dir.mkdir(exist_ok=True, parents=True)
 nncf_log_filename = ckpt_dir / "nncf_logger.log"
 set_log_file(nncf_log_filename)
 log_filename = ckpt_dir / "compress.log"
-print("Log file: ", log_filename.resolve())
-print("NNCF log file: ", nncf_log_filename.resolve())
+print("Log file: ", log_filename)
+print("NNCF log file: ", nncf_log_filename)
 sys.stdout.flush()
 with log_filename.open("w") as f, redirect_stdout(f), redirect_stderr(f):
     model = hf_model
