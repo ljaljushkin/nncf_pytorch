@@ -37,7 +37,7 @@ from tools.benchmark import run_worker
 TIME_SCALES = {"ms": 1000}
 NBITS = 4
 GPU_RUNS_LOW_BATCH = 10000
-GPU_RUNS_HIGH_BATCH = 1000
+GPU_RUNS_HIGH_BATCH = 2
 CPU_RUNS = 100
 LOW_BATCH_INPUT_SIZE = [2, 96, 64, 64]
 HIGH_BATCH_INPUT_SIZE = [8192 * 32, 64]  # [128, 96, 64, 64]
@@ -100,8 +100,8 @@ TEST_EXEC_TYPES: List[ExecutionType] = [
     # ExecutionType.DATA_PARALLEL,
 ]
 TEST_NARROW_RANGE: List[bool] = [False]  # , True]
-TEST_TIMING_MODE: List[TimingMode] = [TimingMode.WALL]  # TimingMode.KERNEL,
-TEST_REFERENCE: List[bool] = [False, True]  # , False]
+TEST_TIMING_MODE: List[TimingMode] = [TimingMode.KERNEL]  # , TimingMode.WALL]
+TEST_REFERENCE: List[bool] = [False]  # , True]  # , False]
 
 
 @dataclass

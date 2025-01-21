@@ -177,9 +177,10 @@ __global__ void q_scale_per_weight_channel_cuda_backward_kernel(
     const uint16_t tidx = threadIdx.x;
     const uint32_t scale_idx = blockIdx.x;
     const uint32_t per_scale_block_idx = blockIdx.y;
-
+    // elements_per_scale?
     const uint64_t per_scale_tidx = per_scale_block_idx * CUDA_MAX_NUM_THREADS_PER_BLOCK + tidx;
     const uint32_t total_blocks_per_scale = gridDim.y;
+    // elements_per_scale?
     const uint64_t total_threads_per_scale = total_blocks_per_scale * CUDA_MAX_NUM_THREADS_PER_BLOCK;
 
     // Applying scale data offsets
@@ -211,6 +212,7 @@ __global__ void q_scale_per_weight_channel_cuda_backward_kernel(
         per_thread_grad_sum_low += val_grad_input_low;
     }
 
+    // elements_per_scale? but should be const, not variable
     __shared__ scalar_accum_t  sh_grad_range[CUDA_MAX_NUM_THREADS_PER_BLOCK];
     __shared__ scalar_accum_t  sh_grad_low[CUDA_MAX_NUM_THREADS_PER_BLOCK];
     reduce_with_shared_memory<scalar_t, scalar_accum_t>(sh_grad_range, per_thread_grad_sum_range, tidx, per_scale_block_idx, dev_tmp_range, dev_last_block_counter_range, grad_input_range, total_blocks_per_scale);
@@ -396,6 +398,7 @@ std::vector<at::Tensor> q_scale_per_weight_channel_cuda_backward(at::Tensor grad
     at::DeviceGuard guard(input.device());
     const auto scale_count = input_range.size(0);
     const auto elements_per_scale = input.numel() / scale_count;
+    // std::cout << "elements_per_scale: " << elements_per_scale << std::endl;
 
     auto grad_input = at::empty_like(grad_output);
 
@@ -411,6 +414,7 @@ std::vector<at::Tensor> q_scale_per_weight_channel_cuda_backward(at::Tensor grad
 
     PROFILE(DISPATCH_TENSOR_DATA_TYPES(input.scalar_type(), "q_single_scale_cuda_backward", ([&] {
               using scalar_accum_t = ACCUM_TYPE_FOR(scalar_t);
+              // elements_per_scale?
               q_scale_per_weight_channel_cuda_backward_kernel<scalar_t, scalar_accum_t><<<grid_size, elements_per_scale, 0, at::cuda::getCurrentCUDAStream()>>>(
                   grad_input.data_ptr<scalar_t>(),
                   grad_input_low.data_ptr<scalar_t>(),
