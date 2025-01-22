@@ -5,16 +5,16 @@ printf '##################################\n'
 printf '########  Installing environment\n'
 printf '##################################\n'
 
-ENV_NAME="env_torch"
-# ENV_NAME="env"
+# ENV_NAME="env_torch"
+ENV_NAME="env"
 
 mkdir -p $HOME/MODEL_DIR
 
-rm -rf $ENV_NAME
-python3.9 -m venv $ENV_NAME
+# rm -rf $ENV_NAME
+# python3.9 -m venv $ENV_NAME
 . $ENV_NAME/bin/activate
-pip install -U pip
-pip install -r requirements.txt
+# pip install -U pip
+# pip install -r requirements.txt
 pip install ../../../
 
 printf '##################################\n'
@@ -25,10 +25,10 @@ BASE_MODEL="HuggingFaceTB/SmolLM-1.7B-Instruct"
 MODEL_NAME="SmolLM-1_7B-Instruct"
 MAX_LENGTH=2048
 
-INIT_DIR="FQ_emb_head_bf16_int4_asym_rank256_gs64_demo"
-EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04_tune_all_torch"
-# INIT_DIR="FQ_emb_head_bf16_int4_asym_rank256_gs64_demo_flat"
-# EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04_tune_all_torch_kernel_old"
+# INIT_DIR="FQ_emb_head_bf16_int4_asym_rank256_gs64_demo"
+# EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04_tune_all_torch"
+INIT_DIR="FQ_emb_head_bf16_int4_asym_rank256_gs64_demo_flat"
+EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04_tune_all_torch_kernel_tinb_64"
 # python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
 
 
@@ -58,21 +58,21 @@ python tune_fq_lora.py \
 --lr=\$lr \
 --fq_lr=\$fq_lr \
 --epochs=\$epochs \
---finetune_dtype=bfloat16 \
+--finetune_dtype=float32 \
 --device_map=auto \
 --eval_model_seqlen=$MAX_LENGTH \
---exp_name $EXP_NAME \
---mlflow"
+--exp_name $EXP_NAME"
+# --mlflow"
 
 weight_decays=5e-4 #2e-4 1e-2) #(0 1e-5 1e-2)
 model_seqlen=1024
-batch_sizes=32 #(128 64) #32
+batch_sizes=4 #(128 64) #32
 microbatch_size=2 #2 #2
 list_nsamples=1024 #128
 dataset=wikitext2
 lrs=5e-4
 fq_lrs=5e-5
-list_epochs=32 #2 #(8 16 32)
+list_epochs=1 #2 #(8 16 32)
 
 for batch_size in "${batch_sizes[@]}"
 do
@@ -103,5 +103,5 @@ printf '##################################\n'
 printf '########  Evaluation of the best checkpoint'
 printf '##################################\n'
 
-unset CUDA_VISIBLE_DEVICES
-PYTHONIOENCODING=utf-8 ./eval_slm.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_NAME $MAX_LENGTH
+# unset CUDA_VISIBLE_DEVICES
+# PYTHONIOENCODING=utf-8 ./eval_slm.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_NAME $MAX_LENGTH

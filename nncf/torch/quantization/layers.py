@@ -347,10 +347,10 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             in_features = in_gs * group_size
             self._flat_shape = [out_features * in_gs, group_size]
             self._lora_A = torch.nn.Parameter(
-                torch.ones((self.lora_rank, in_features), dtype=torch.bfloat16), requires_grad=True
+                torch.ones((self.lora_rank, in_features), dtype=torch.float32), requires_grad=True
             )
             self._lora_B = torch.nn.Parameter(
-                torch.zeros((out_features, self.lora_rank), dtype=torch.bfloat16), requires_grad=True
+                torch.zeros((out_features, self.lora_rank), dtype=torch.float32), requires_grad=True
             )
         # ################################## LORA END ########################################
         OPTIONAL_PARAMETERS_REGISTRY.register("_num_bits")
@@ -1170,7 +1170,7 @@ class AsymmetricQuantizer(BaseQuantizer):
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
         # torch.cuda.nvtx.range_push("quantize")
-        torch_impl = True
+        torch_impl = False
         device = x.device
         self.to(device)
         if torch_impl:

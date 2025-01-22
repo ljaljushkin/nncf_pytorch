@@ -34,7 +34,7 @@ __device__ void sum_warp(scalar_accum_t* sharr) {
 
 template <typename scalar_accum_t, ENABLE_ONLY_FOR_NONREDUCED_FP_TYPES(scalar_accum_t)>
 __device__ inline void gather_warp_execution_results(scalar_accum_t* sharr, const uint16_t tidx) {
-    sharr[tidx] = tidx * CUDA_WARP_SIZE < CUDA_MAX_NUM_THREADS_PER_BLOCK ? sharr[tidx * CUDA_WARP_SIZE] : static_cast<scalar_accum_t>(0.0);
+    sharr[tidx] = tidx * CUDA_WARP_SIZE < CUDA_MAX_NUM_THREADS_PER_BLOCK__64 ? sharr[tidx * CUDA_WARP_SIZE] : static_cast<scalar_accum_t>(0.0);
 }
 
 
@@ -49,7 +49,7 @@ __device__ void reduce_in_block_using_warp_sums(scalar_accum_t* __restrict__ sh_
     sum_warp(sh_mem + (tidx & ~(CUDA_WARP_SIZE - 1)));
 
     __syncthreads();
-    if (tidx < CUDA_MAX_WARPS_PER_BLOCK) {
+    if (tidx < CUDA_MAX_WARPS_PER_BLOCK__64) {
         // Do warp reduction again - because currently CUDA_MAX_WARPS_PER_BLOCK == CUDA_WARP_SIZE, this
         // will lead to the 0-th element of the shared memory containing the entire per-block sum
         gather_warp_execution_results(sh_mem, tidx);

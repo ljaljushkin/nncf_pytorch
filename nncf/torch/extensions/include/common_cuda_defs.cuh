@@ -14,8 +14,9 @@ const uint32_t CUDA_WARP_SIZE = 32;
 const uint32_t CUDA_TARGET_NUM_THREADS_PER_SM = 2048; // Will decide upon a number of threads per block and blocks per grid based on the workload to hit this target
 const uint32_t CUDA_TARGET_SM_COUNT = 72; // RTX 2080 Ti
 const uint32_t CUDA_MAX_NUM_THREADS_PER_BLOCK = 1024; // Maximum for all CUDA compute capabilities up to 8.0
-// const uint32_t CUDA_MAX_NUM_THREADS_PER_BLOCK_BW = 64; // Maximum for all CUDA compute capabilities up to 8.0
+const uint32_t CUDA_MAX_NUM_THREADS_PER_BLOCK__64 = 64; // Maximum for all CUDA compute capabilities up to 8.0
 const uint16_t CUDA_MAX_WARPS_PER_BLOCK = CUDA_MAX_NUM_THREADS_PER_BLOCK / CUDA_WARP_SIZE;
+const uint16_t CUDA_MAX_WARPS_PER_BLOCK__64 = CUDA_MAX_NUM_THREADS_PER_BLOCK__64 / CUDA_WARP_SIZE;
 const uint32_t CUDA_BLOCKS_PER_GRID_FOR_UNIFORM_ELTWISE = CUDA_TARGET_SM_COUNT * CUDA_TARGET_NUM_THREADS_PER_SM / CUDA_MAX_NUM_THREADS_PER_BLOCK;
 const uint16_t CUDA_MAX_GRID_SIZE_Y = 65535;
 

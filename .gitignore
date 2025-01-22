@@ -141,3 +141,5 @@ nncf-tests.xml
 
 # MLFlow logs
 mlruns
+env_torch
+*.nsys-rep

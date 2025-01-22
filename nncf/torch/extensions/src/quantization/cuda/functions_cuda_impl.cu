@@ -178,9 +178,9 @@ __global__ void q_scale_per_weight_channel_cuda_backward_kernel(
     const uint32_t scale_idx = blockIdx.x;
     const uint32_t per_scale_block_idx = blockIdx.y;
 
-    const uint64_t per_scale_tidx = per_scale_block_idx * CUDA_MAX_NUM_THREADS_PER_BLOCK + tidx;
+    const uint64_t per_scale_tidx = per_scale_block_idx * CUDA_MAX_NUM_THREADS_PER_BLOCK__64 + tidx;
     const uint32_t total_blocks_per_scale = gridDim.y;
-    const uint64_t total_threads_per_scale = total_blocks_per_scale * CUDA_MAX_NUM_THREADS_PER_BLOCK;
+    const uint64_t total_threads_per_scale = total_blocks_per_scale * CUDA_MAX_NUM_THREADS_PER_BLOCK__64;
 
     // Applying scale data offsets
     input_low += scale_idx;
@@ -211,8 +211,8 @@ __global__ void q_scale_per_weight_channel_cuda_backward_kernel(
         per_thread_grad_sum_low += val_grad_input_low;
     }
 
-    __shared__ scalar_accum_t  sh_grad_range[CUDA_MAX_NUM_THREADS_PER_BLOCK];
-    __shared__ scalar_accum_t  sh_grad_low[CUDA_MAX_NUM_THREADS_PER_BLOCK];
+    __shared__ scalar_accum_t  sh_grad_range[CUDA_MAX_NUM_THREADS_PER_BLOCK__64];
+    __shared__ scalar_accum_t  sh_grad_low[CUDA_MAX_NUM_THREADS_PER_BLOCK__64];
     reduce_with_shared_memory<scalar_t, scalar_accum_t>(sh_grad_range, per_thread_grad_sum_range, tidx, per_scale_block_idx, dev_tmp_range, dev_last_block_counter_range, grad_input_range, total_blocks_per_scale);
     reduce_with_shared_memory<scalar_t, scalar_accum_t>(sh_grad_low, per_thread_grad_sum_low, tidx, per_scale_block_idx, dev_tmp_low, dev_last_block_counter_low, grad_input_low, total_blocks_per_scale);
 }
@@ -404,6 +404,7 @@ std::vector<at::Tensor> q_scale_per_weight_channel_cuda_backward(at::Tensor grad
 
     auto accum_options = get_accum_options(grad_output.options());
     dim3 grid_size = get_2d_grid_size_for_per_channel(scale_count, elements_per_scale);
+    std::cout << "grid size=" << grid_size.x << "x" << grid_size.y << ", elements_per_scale=" << elements_per_scale << ", scale count="<< scale_count << std::endl;
     auto dev_tmp_range = at::zeros({grid_size.x, grid_size.y}, accum_options);
     auto dev_tmp_low = at::zeros({grid_size.x, grid_size.y}, accum_options);
     auto dev_last_block_counter_range = at::zeros({grid_size.x, 1},  at::device(grad_output.options().device()).dtype(at::kInt));
@@ -411,7 +412,7 @@ std::vector<at::Tensor> q_scale_per_weight_channel_cuda_backward(at::Tensor grad
 
     PROFILE(DISPATCH_TENSOR_DATA_TYPES(input.scalar_type(), "q_single_scale_cuda_backward", ([&] {
               using scalar_accum_t = ACCUM_TYPE_FOR(scalar_t);
-              q_scale_per_weight_channel_cuda_backward_kernel<scalar_t, scalar_accum_t><<<grid_size, CUDA_MAX_NUM_THREADS_PER_BLOCK, 0, at::cuda::getCurrentCUDAStream()>>>(
+              q_scale_per_weight_channel_cuda_backward_kernel<scalar_t, scalar_accum_t><<<grid_size, CUDA_MAX_NUM_THREADS_PER_BLOCK__64, 0, at::cuda::getCurrentCUDAStream()>>>(
             //   q_scale_per_weight_channel_cuda_backward_kernel<scalar_t, scalar_accum_t><<<grid_size, elements_per_scale, 0, at::cuda::getCurrentCUDAStream()>>>(
                   grad_input.data_ptr<scalar_t>(),
                   grad_input_low.data_ptr<scalar_t>(),
@@ -499,18 +500,18 @@ std::vector<at::Tensor> q_cuda_backward(
     at::DeviceGuard guard(input.device());
     ScaleType scale_type = get_scale_type(input, input_low, input_range);
 
-    switch (scale_type)
-    {
-        case ScaleType::PER_ACTIVATION_CHANNEL:
-            return q_scale_per_activation_channel_cuda_backward(
-                grad_output,
-                input,
-                input_low,
-                input_range,
-                levels,
-                level_low,
-                level_high);
-        case ScaleType::PER_WEIGHT_CHANNEL:
+    // switch (scale_type)
+    // {
+    //     case ScaleType::PER_ACTIVATION_CHANNEL:
+    //         return q_scale_per_activation_channel_cuda_backward(
+    //             grad_output,
+    //             input,
+    //             input_low,
+    //             input_range,
+    //             levels,
+    //             level_low,
+    //             level_high);
+    //     case ScaleType::PER_WEIGHT_CHANNEL:
             return q_scale_per_weight_channel_cuda_backward(
                 grad_output,
                 input,
@@ -519,15 +520,15 @@ std::vector<at::Tensor> q_cuda_backward(
                 levels,
                 level_low,
                 level_high);
-        case ScaleType::SINGLE_SCALE:
-        default:
-            return q_single_scale_cuda_backward(
-                grad_output,
-                input,
-                input_low,
-                input_range,
-                levels,
-                level_low,
-                level_high);
-    };
+        // case ScaleType::SINGLE_SCALE:
+        // default:
+        //     return q_single_scale_cuda_backward(
+        //         grad_output,
+        //         input,
+        //         input_low,
+        //         input_range,
+        //         levels,
+        //         level_low,
+        //         level_high);
+    // };
 }

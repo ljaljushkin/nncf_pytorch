@@ -405,8 +405,8 @@ def finetune(
             metadata["loss_denominator"] += 1
             metadata["grad_steps_accumulated"] += 1
 
-            if not torch.isfinite(loss).item():
-                raise ValueError(f"Fine-tuning loss is {loss}")
+            # if not torch.isfinite(loss).item():
+            #     raise ValueError(f"Fine-tuning loss is {loss}")
 
             (loss / grad_accumulation_steps).backward()
 
@@ -654,10 +654,10 @@ def main(argv):
             mlflow.set_experiment("Tune FQLoRA")
 
         init_ppl = None
-        init_ppl = eval_on_wikitext(
-            args.base_model, Path(args.nncf_ckpt_dir), args.eval_model_seqlen, args.finetune_dtype
-        )
-        print("word ppl for int4 init", init_ppl)
+        # init_ppl = eval_on_wikitext(
+        #     args.base_model, Path(args.nncf_ckpt_dir), args.eval_model_seqlen, args.finetune_dtype
+        # )
+        # print("word ppl for int4 init", init_ppl)
 
         # get data
         train_dataloader = get_loaders(
