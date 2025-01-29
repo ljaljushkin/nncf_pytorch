@@ -115,9 +115,9 @@ class QuantizeAsymmetric(torch.autograd.Function):
         level_low = ctx.level_low
         level_high = ctx.level_high
 
-        w_orig_shape = grad_output.shape
-        w_flat_shape = ctx.w_flat_shape
-        grad_output = grad_output.reshape(w_flat_shape)
+        # w_orig_shape = grad_output.shape
+        # w_flat_shape = ctx.w_flat_shape
+        # grad_output = grad_output.reshape(w_flat_shape)
         if grad_output.is_cuda:
             if not grad_output.is_contiguous():
                 nncf_logger.debug("grad_output is not contiguous!")
@@ -131,7 +131,7 @@ class QuantizeAsymmetric(torch.autograd.Function):
                 grad_output, input_, input_low, input_range, levels, level_low, level_high, True
             )
         # TODO: Check tuning time without reshape!!!
-        grad_input.reshape(w_orig_shape)
+        # grad_input.reshape(w_orig_shape)
         # torch.cuda.nvtx.range_pop()
         return grad_input, grad_input_low.float(), grad_input_range.float(), None, None, None
 

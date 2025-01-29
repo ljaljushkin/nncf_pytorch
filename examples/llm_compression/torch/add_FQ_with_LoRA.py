@@ -24,7 +24,7 @@ from transformers import AutoTokenizer
 import nncf
 from nncf.common.logging.logger import set_log_file
 
-GROUP_SIZE = 64
+GROUP_SIZE = -1
 MODE = nncf.CompressWeightsMode.INT4_ASYM
 BACKUP_MODE = nncf.BackupMode.NONE  # NONE #INT8_SYM
 
@@ -75,7 +75,7 @@ assert MODEL_DIR.exists()
 
 hf_model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype=torch.bfloat16,
+    torch_dtype=torch.float32,
     device_map="auto",
     low_cpu_mem_usage=True,
     trust_remote_code=True,

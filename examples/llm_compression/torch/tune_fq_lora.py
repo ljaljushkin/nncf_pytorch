@@ -185,7 +185,7 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
 
 
-def eval_on_wikitext(model_id, ckpt_dir, eval_model_seqlen=4096, dtype="bfloat16"):
+def eval_on_wikitext(model_id, ckpt_dir, eval_model_seqlen=4096, dtype="float32"):
     result_path = ckpt_dir / "results.json"
     cmd = (
         f"lm_eval --model=hf --model_args=pretrained={model_id},"

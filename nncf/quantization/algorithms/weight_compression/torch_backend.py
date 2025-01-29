@@ -253,20 +253,20 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
             lora_rank = 256
             group_size = compression_config.group_size
-            out_features, in_features = weight_shape
+            # out_features, in_features = weight_shape
             group_reduction_axes = wc_params.reduction_axes[0]
             # for per-channel
-            # weight_group_shape = weight_shape
-            if compression_config.num_bits == 4 and group_size > 0:
-                group_reduction_axes = 2
-                torch_impl = True
-                weight_group_shape = [out_features, in_features // group_size, group_size]
-                scale_group_shape = [out_features, in_features // group_size, 1]
-                scale_flat_shape = [out_features * in_features // group_size, 1]
-                if torch_impl:
-                    scale_shape = scale_group_shape
-                else:
-                    scale_shape = scale_flat_shape
+            weight_group_shape = weight_shape
+            # if compression_config.num_bits == 4 and group_size > 0:
+            #     group_reduction_axes = 2
+            #     torch_impl = False
+            #     weight_group_shape = [out_features, in_features // group_size, group_size]
+            #     scale_group_shape = [out_features, in_features // group_size, 1]
+            #     scale_flat_shape = [out_features * in_features // group_size, 1]
+            #     if torch_impl:
+            #         scale_shape = scale_group_shape
+            #     else:
+            #         scale_shape = scale_flat_shape
 
             reshaped_weight = weight.reshape(weight_group_shape)
 

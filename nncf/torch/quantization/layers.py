@@ -342,10 +342,10 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
         # elif len(self._qspec.weight_shape) != 2:
         #     nncf_logger.warning(f"Not 2D weights are not supported for FQ: weight shapes={self._qspec.weight_shape}")
         else:
-            # out_features, in_features = self._qspec.weight_shape
-            out_features, in_gs, group_size = self._qspec.weight_shape
-            in_features = in_gs * group_size
-            self._flat_shape = [out_features * in_gs, group_size]
+            out_features, in_features = self._qspec.weight_shape
+            # out_features, in_gs, group_size = self._qspec.weight_shape
+            # in_features = in_gs * group_size
+            # self._flat_shape = [out_features * in_gs, group_size]
             self._lora_A = torch.nn.Parameter(
                 torch.ones((self.lora_rank, in_features), dtype=torch.float32), requires_grad=True
             )
@@ -1187,10 +1187,10 @@ class AsymmetricQuantizer(BaseQuantizer):
                 self.eps,
             )
         else:
-            original_shape = x.shape
+            # original_shape = x.shape
             if self.num_bits == 4:
                 x = x + self._lora_B @ self._lora_A
-                x = x.reshape(self._flat_shape)
+                # x = x.reshape(self._flat_shape)
             fq_weight = asymmetric_quantize(
                 x,
                 self.levels,
@@ -1201,7 +1201,7 @@ class AsymmetricQuantizer(BaseQuantizer):
                 self.eps,
                 skip=execute_traced_op_as_identity,
             )
-            fq_weight = fq_weight.reshape(original_shape)
+            # fq_weight = fq_weight.reshape(original_shape)
         # torch.cuda.nvtx.range_pop()
         return fq_weight
 
