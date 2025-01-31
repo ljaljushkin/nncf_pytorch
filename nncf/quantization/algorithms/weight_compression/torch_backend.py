@@ -267,7 +267,9 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                     scale_shape = scale_group_shape
                 else:
                     scale_shape = scale_flat_shape
-
+            else:
+                weight_group_shape = weight_shape
+                group_size = -1
             reshaped_weight = weight.reshape(weight_group_shape)
 
             # Group-wise:  Weight [a1, r, a2] -> Scale [a1, 1, a2]

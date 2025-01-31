@@ -185,7 +185,7 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
 
 
-def eval_on_wikitext(model_id, ckpt_dir, eval_model_seqlen=4096, dtype="bfloat16"):
+def eval_on_wikitext(model_id, ckpt_dir, file_handle, eval_model_seqlen=4096, dtype="bfloat16"):
     result_path = ckpt_dir / "results.json"
     cmd = (
         f"lm_eval --model=hf --model_args=pretrained={model_id},"
@@ -194,12 +194,22 @@ def eval_on_wikitext(model_id, ckpt_dir, eval_model_seqlen=4096, dtype="bfloat16
         f"--tasks=wikitext --output_path={result_path}"
     )
     sys.stdout.flush()
-    subprocess.run(cmd.split(" "))
+    subprocess.run(cmd.split(" "), stdout=file_handle, stderr=file_handle)
     with result_path.open("r") as f:
         print("Parsing lm-eval results from file: ", result_path)
         j = json.load(f)
         return j["results"]["wikitext"]["word_perplexity,none"]
 
+def wwb_eval(model_id, ckpt_dir, file_handle):
+    cmd = f"python wwb_eval.py -m={model_id} -n={ckpt_dir}"
+    sys.stdout.flush()
+    subprocess.run(cmd.split(" "), stdout=file_handle, stderr=file_handle)
+
+    result_path = ckpt_dir / "results_wwb.json"
+    with open(result_path, "r") as f:
+        print("Parsing wwb-eval results from file: ", result_path)
+        results = json.load(f)
+        return results["results"]["WWB"]["similarity"]
 
 def save_checkpoint(wrapped_model, ckpt_dir, ckpt_name="nncf_checkpoint.pth"):
     if not ckpt_dir.exists():
@@ -331,13 +341,17 @@ def finetune(
     orig_hiddens,
     args,
     device,
+    file_handle,
     ckpt_dir=None,
     lm_head=None,
     init_ppl=None,
+    init_smlr=None,
 ):
     torch_dtype = getattr(torch, args.finetune_dtype)
     if init_ppl is None:
         init_ppl = float("inf")
+    if init_smlr is None:
+        init_smlr = float("inf")
     ckpt_name = "nncf_checkpoint.pth"
     last_dir = ckpt_dir / "last_ckpt"
     last_dir.mkdir(exist_ok=True, parents=True)
@@ -357,6 +371,8 @@ def finetune(
         [
             ("lm_eval_word_ppl", init_ppl),
             ("lm_eval_word_ppl_no_init", float("inf")),
+            ("wwb_similarity", init_smlr),
+            ("wwb_similarity_no_init", float("inf")),
             ("perplexity_wikitext2", float("inf")),
             ("aggregated_loss", float("nan")),
             ("current_epoch", 0),
@@ -454,6 +470,8 @@ def finetune(
                     "aggregated_loss",
                     "lm_eval_word_ppl",
                     "lm_eval_word_ppl_no_init",
+                    "wwb_similarity",
+                    "wwb_similarity_no_init",
                     "best_eval_perplexity",
                     "current_epoch",
                     "23dj_A",
@@ -471,9 +489,12 @@ def finetune(
                 mlflow.log_metrics(log_data, step=metadata["total_microbatches"])
             # torch.cuda.nvtx.range_pop()
         save_checkpoint(model_to_tune, last_dir, ckpt_name)
-        word_ppl = eval_on_wikitext(args.base_model, last_dir, args.eval_model_seqlen, args.finetune_dtype)
+        word_ppl = eval_on_wikitext(args.base_model, last_dir, file_handle, args.eval_model_seqlen, args.finetune_dtype)
         print(word_ppl)
+        smlr = wwb_eval(args.base_model, last_dir, file_handle)
+        print(smlr)
         metadata["lm_eval_word_ppl_no_init"] = metadata["lm_eval_word_ppl"] = word_ppl
+        metadata["wwb_similarity_no_init"] = metadata["wwb_similarity"] = smlr
         if word_ppl < metadata["best_eval_perplexity"]:
             print(f"New best lm_eval word perplexity = {word_ppl:.4f}")
             metadata["best_eval_perplexity"] = word_ppl
@@ -653,11 +674,13 @@ def main(argv):
         if args.mlflow:
             mlflow.set_experiment("Tune FQLoRA")
 
-        init_ppl = None
+        init_ppl, init_smrl = None, None
+        init_smlr = wwb_eval(args.base_model, Path(args.nncf_ckpt_dir), f)
+        print("similarity for int4 init=", init_smlr)
         init_ppl = eval_on_wikitext(
-            args.base_model, Path(args.nncf_ckpt_dir), args.eval_model_seqlen, args.finetune_dtype
+            args.base_model, Path(args.nncf_ckpt_dir), f, args.eval_model_seqlen, args.finetune_dtype
         )
-        print("word ppl for int4 init", init_ppl)
+        print("word ppl for int4 init=", init_ppl)
 
         # get data
         train_dataloader = get_loaders(
@@ -708,6 +731,8 @@ def main(argv):
                     ckpt_dir=ckpt_dir,
                     lm_head=lm_head,
                     init_ppl=init_ppl,
+                    init_smlr=init_smlr,
+                    file_handle=f
                 )
             finally:
                 print_memory_stats()

@@ -342,10 +342,12 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
         # elif len(self._qspec.weight_shape) != 2:
         #     nncf_logger.warning(f"Not 2D weights are not supported for FQ: weight shapes={self._qspec.weight_shape}")
         else:
-            # out_features, in_features = self._qspec.weight_shape
-            out_features, in_gs, group_size = self._qspec.weight_shape
-            in_features = in_gs * group_size
-            self._flat_shape = [out_features * in_gs, group_size]
+            if self.group_size == -1:
+                out_features, in_features = self._qspec.weight_shape
+            else:
+                out_features, in_gs, group_size = self._qspec.weight_shape
+                in_features = in_gs * group_size
+                self._flat_shape = [out_features * in_gs, group_size]
             self._lora_A = torch.nn.Parameter(
                 torch.ones((self.lora_rank, in_features), dtype=torch.bfloat16), requires_grad=True
             )

@@ -6,16 +6,15 @@ printf '########  Installing environment\n'
 printf '##################################\n'
 
 ENV_NAME="env_torch"
-# ENV_NAME="env"
 
 mkdir -p $HOME/MODEL_DIR
 
-rm -rf $ENV_NAME
-python3.9 -m venv $ENV_NAME
+# rm -rf $ENV_NAME
+# python3.11 -m venv $ENV_NAME
 . $ENV_NAME/bin/activate
-pip install -U pip
-pip install -r requirements.txt
-pip install ../../../
+# pip install -U pip
+# pip install -r requirements.txt
+# pip install ../../../
 
 printf '##################################\n'
 printf '########  Create NNCF checkpoint with 4bit FQ+LoRA \n'
@@ -27,8 +26,6 @@ MAX_LENGTH=2048
 
 INIT_DIR="FQ_emb_head_bf16_int4_asym_rank256_gs64_demo"
 EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04_tune_all_torch"
-# INIT_DIR="FQ_emb_head_bf16_int4_asym_rank256_gs64_demo_flat"
-# EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04_tune_all_torch_kernel_old"
 # python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
 
 

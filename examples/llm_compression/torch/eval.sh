@@ -1,3 +1,17 @@
+printf '##################################\n'
+printf '########  Installing environment\n'
+printf '##################################\n'
+
+ENV_NAME="env_torch"
+
+mkdir -p $HOME/MODEL_DIR
+# rm -rf $ENV_NAME
+# python3.9 -m venv $ENV_NAME
+. $ENV_NAME/bin/activate
+# pip install -U pip
+# pip install -r requirements.txt
+pip install ../../../
+
 MODEL_DIR="$HOME/MODEL_DIR"
 
 # BASE_MODEL="microsoft/Phi-3-mini-4k-instruct"
@@ -24,10 +38,10 @@ MODEL_DIR="$HOME/MODEL_DIR"
 # BASE_MODEL="meta-llama/Meta-Llama-3-8B-Instruct"
 # MODEL_NAME="Meta-Llama-3-8B-Instruct"
 
-BASE_MODEL=${1:-"microsoft/Phi-3.5-mini-instruct"}
-MODEL_NAME=${2:-"Phi-3_5-mini-instruct"}
-INIT_DIR=${3:-"FQ_emb_head_int8_asym_int4_asym_rank256_gs64_demo"}
-EXP_DIR=${4:-"Phi-3_lr5e-04_fqlr5e-05_wd5e-04_tune_all"}
+BASE_MODEL=${1:-"deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"}
+MODEL_NAME=${2:-"DeepSeek-R1-Distill-Qwen-1_5B"}
+INIT_DIR=${3:-"FQ_emb_head_int8_asym_int4_asym_rank256_gs32_demo"}
+EXP_DIR=${4:-"DS_Qwen_lr1e-04_fqlr1e-05_wd1e-04"}
 MAX_LENGTH=${5:-4096}
 
 echo $@
@@ -35,12 +49,13 @@ NNCF_CKPT_DIR=$MODEL_DIR/$MODEL_NAME/$INIT_DIR/$EXP_DIR
 printf "NNCF_CKPT_DIR=$NNCF_CKPT_DIR\n"
 
 
-TASK="wikitext"
-LOG_FILE=$NNCF_CKPT_DIR/"${MODEL_NAME}_${TASK}.log"
-OUTPUT_PATH=$NNCF_CKPT_DIR/"results_$TASK.json"
-CUDA_VISIBLE_DEVICES=5 PYTHONIOENCODING=utf-8 lm_eval --model=hf --model_args=pretrained=$BASE_MODEL,nncf_ckpt_dir=$NNCF_CKPT_DIR,trust_remote_code=True,dtype=bfloat16,max_length=$MAX_LENGTH --output_path=$OUTPUT_PATH --tasks=$TASK > $LOG_FILE 2>&1  &
-pid=$!
-echo "The process ID: $pid, log file: $LOG_FILE"
+# TASK="wikitext"
+# LOG_FILE=$NNCF_CKPT_DIR/"${MODEL_NAME}_${TASK}.log"
+# OUTPUT_PATH=$NNCF_CKPT_DIR/"results_$TASK.json"
+# # nncf_ckpt_dir=$NNCF_CKPT_DIR
+# CUDA_VISIBLE_DEVICES=7 PYTHONIOENCODING=utf-8 lm_eval --model=hf --model_args=pretrained=$BASE_MODEL,trust_remote_code=True,dtype=bfloat16,max_length=$MAX_LENGTH --output_path=$OUTPUT_PATH --tasks=$TASK > $LOG_FILE 2>&1  &
+# pid=$!
+# echo "The process ID: $pid, log file: $LOG_FILE"
 
 # TASK="gsm8k"
 # OUTPUT_PATH=$NNCF_CKPT_DIR/"results_$TASK.json"
@@ -78,11 +93,9 @@ echo "The process ID: $pid, log file: $LOG_FILE"
 # echo "The process ID: $pid, log file: $LOG_FILE"
 
 # # pip install whowhatbench@git+https://github.com/andreyanufr/openvino.genai.git@837294cb21a9bb408faa346ddde287ea748ee22c#subdirectory=tools/who_what_benchmark
-cd ../nncf
 TASK="WWB"
 LOG_FILE=$NNCF_CKPT_DIR/"${MODEL_NAME}_${TASK}.log"
 OUTPUT_PATH=$NNCF_CKPT_DIR/"results_$TASK.json"
-CUDA_VISIBLE_DEVICES=5 PYTHONIOENCODING=utf-8 python wwb_eval.py -m=$BASE_MODEL -n=$NNCF_CKPT_DIR > $LOG_FILE 2>&1  &
+CUDA_VISIBLE_DEVICES=3 PYTHONIOENCODING=utf-8 python wwb_eval.py -m=$BASE_MODEL -n=$NNCF_CKPT_DIR > $LOG_FILE 2>&1  &
 pid=$!
 echo "The process ID: $pid, log file: $LOG_FILE"
-cd -

@@ -52,7 +52,7 @@ MODEL_NAME="DeepSeek-R1-Distill-Qwen-1_5B"
 
 MAX_LENGTH=4096
 INIT_DIR="FQ_emb_head_int8_asym_int4_asym_rank256_gs32_demo"
-EXP_NAME="DS_Qwen_lr1e-04_fqlr1e-05_wd1e-04"
+EXP_NAME="DS_Qwen_lr5e-04_fqlr5e-05_wd5e-04"
 # python add_FQ_with_LoRA.py -m $BASE_MODEL #-s $INIT_DIR
 
 
@@ -81,14 +81,14 @@ tune_command_template="python tune_fq_lora.py \
 --exp_name $EXP_NAME \
 --mlflow"
 
-weight_decays=1e-4 #2e-4 1e-2) #(0 1e-5 1e-2)
+weight_decays=5e-4 #2e-4 1e-2) #(0 1e-5 1e-2)
 model_seqlen=1024
 batch_sizes=32 #(128 64) #32
 microbatch_size=2 #2 #2
 list_nsamples=1024 #128
 dataset=wikitext2
-lrs=1e-4
-fq_lrs=1e-5
+lrs=5e-4
+fq_lrs=5e-5
 list_epochs=32 #2 #(8 16 32)
 
 for batch_size in "${batch_sizes[@]}"
