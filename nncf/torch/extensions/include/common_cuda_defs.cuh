@@ -14,6 +14,7 @@ const uint32_t CUDA_WARP_SIZE = 32;
 const uint32_t CUDA_TARGET_NUM_THREADS_PER_SM = 2048; // Will decide upon a number of threads per block and blocks per grid based on the workload to hit this target
 const uint32_t CUDA_TARGET_SM_COUNT = 72; // RTX 2080 Ti
 const uint32_t CUDA_MAX_NUM_THREADS_PER_BLOCK = 1024; // Maximum for all CUDA compute capabilities up to 8.0
+// const uint32_t CUDA_MAX_NUM_THREADS_PER_BLOCK_BW = 64; // Maximum for all CUDA compute capabilities up to 8.0
 const uint16_t CUDA_MAX_WARPS_PER_BLOCK = CUDA_MAX_NUM_THREADS_PER_BLOCK / CUDA_WARP_SIZE;
 const uint32_t CUDA_BLOCKS_PER_GRID_FOR_UNIFORM_ELTWISE = CUDA_TARGET_SM_COUNT * CUDA_TARGET_NUM_THREADS_PER_SM / CUDA_MAX_NUM_THREADS_PER_BLOCK;
 const uint16_t CUDA_MAX_GRID_SIZE_Y = 65535;
@@ -36,16 +37,21 @@ inline I align(I num, I alignment)
     return (num & ~(alignment - 1)) + alignment;
 }
 
-inline dim3 get_2d_grid_size_for_per_channel(const uint32_t scale_count)
+inline dim3 get_2d_grid_size_for_per_channel(const uint32_t scale_count, const uint32_t elements_per_scale)
 {
+    // TODO: unify with per-channel and per-tensor logic.
     // X will correspond to scale count, Y will be determined in order to hit the thread-per-SM target
     uint32_t grid_size_x = scale_count;
-    uint32_t available_threads_per_scale = static_cast<uint32_t>((CUDA_TARGET_SM_COUNT * CUDA_TARGET_NUM_THREADS_PER_SM + 0.0) / grid_size_x);
-    uint32_t available_warps_per_scale = align(available_threads_per_scale, CUDA_WARP_SIZE) / CUDA_WARP_SIZE;
-    uint32_t blocks_per_scale = std::max(1U, available_warps_per_scale / static_cast<uint32_t>(CUDA_MAX_WARPS_PER_BLOCK));
+    uint32_t available_threads_per_scale = elements_per_scale; // std::max(1U, static_cast<uint32_t>((CUDA_TARGET_SM_COUNT * CUDA_TARGET_NUM_THREADS_PER_SM + 0.0) / grid_size_x));
+    uint32_t blocks_per_scale = 1;
+    // uint32_t available_threads_per_scale = static_cast<uint32_t>((CUDA_TARGET_SM_COUNT * CUDA_TARGET_NUM_THREADS_PER_SM + 0.0) / grid_size_x);
+    // ??? TODO: should it elements_per_scale or elements_per_scale +1 or -1 ???
+    // uint32_t available_warps_per_scale = align(available_threads_per_scale, CUDA_WARP_SIZE) / CUDA_WARP_SIZE;
+    // uint32_t blocks_per_scale = std::max(1U, available_warps_per_scale / static_cast<uint32_t>(CUDA_MAX_WARPS_PER_BLOCK));
     uint16_t grid_size_y = std::min(blocks_per_scale, static_cast<uint32_t>(CUDA_MAX_GRID_SIZE_Y));
-
+    // std::cout << "grid_size_y: " << grid_size_y << std::endl;
     return dim3(grid_size_x, grid_size_y);
+
 }
 
 

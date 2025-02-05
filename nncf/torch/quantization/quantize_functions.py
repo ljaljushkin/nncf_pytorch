@@ -37,9 +37,9 @@ class QuantizeSymmetric(torch.autograd.Function):
 
             # Required to support both torch.amp.autocast and models that perform explicit type casting
             # inside their forward calls.
-            if input_.dtype == torch.float16:
-                input_low = input_low.type(torch.float16)
-                input_range = input_range.type(torch.float16)
+            if input_.dtype in [torch.bfloat16, torch.float16]:
+                input_low = input_low.type(input_.dtype)
+                input_range = input_range.type(input_.dtype)
             output = QuantizedFunctionsCUDA.get("Quantize_forward")(input_, input_low, input_range, levels)
         else:
             output = QuantizedFunctionsCPU.get("Quantize_forward")(input_, input_low, input_range, levels)
@@ -78,6 +78,8 @@ class QuantizeSymmetric(torch.autograd.Function):
 class QuantizeAsymmetric(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_, input_low, input_range, level_low, level_high, levels):
+        # torch.cuda.nvtx.range_push("forward_kernel")
+        ctx.w_flat_shape = input_.shape
         if input_.is_cuda:
             if not input_.is_contiguous():
                 nncf_logger.debug("input_ is not contiguous!")
@@ -85,9 +87,16 @@ class QuantizeAsymmetric(torch.autograd.Function):
 
             # Required to support both torch.amp.autocast and models that perform explicit type casting
             # inside their forward calls.
-            if input_.dtype == torch.float16:
-                input_low = input_low.type(torch.float16)
-                input_range = input_range.type(torch.float16)
+            if input_.dtype in [torch.bfloat16, torch.float16]:
+                input_low = input_low.type(input_.dtype)
+                input_range = input_range.type(input_.dtype)
+                # print('IL after tune:' ,torch.linalg.norm(input_low.data).item())
+                # print('IR after tune:' ,torch.linalg.norm(input_range.data).item())
+            # print('X weight:' ,torch.linalg.norm(input_).item())
+
+            # input_ = input_ + B @ A
+            # input_ = input_.reshape(group_shape)
+
             output = QuantizedFunctionsCUDA.get("Quantize_forward")(input_, input_low, input_range, levels)
         else:
             output = QuantizedFunctionsCPU.get("Quantize_forward")(input_, input_low, input_range, levels)
@@ -96,17 +105,22 @@ class QuantizeAsymmetric(torch.autograd.Function):
         ctx.levels = levels
         ctx.level_low = level_low
         ctx.level_high = level_high
-
+        # print('FQ weight:' ,torch.linalg.norm(output).item())
+        # torch.cuda.nvtx.range_pop()
         return output
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
+        # torch.cuda.nvtx.range_push("backward_kernel")
         grad_output = grad_outputs[0]
         input_, input_low, input_range = ctx.saved_tensors
         levels = ctx.levels
         level_low = ctx.level_low
         level_high = ctx.level_high
 
+        w_orig_shape = grad_output.shape
+        w_flat_shape = ctx.w_flat_shape
+        grad_output = grad_output.reshape(w_flat_shape)
         if grad_output.is_cuda:
             if not grad_output.is_contiguous():
                 nncf_logger.debug("grad_output is not contiguous!")
@@ -119,8 +133,10 @@ class QuantizeAsymmetric(torch.autograd.Function):
             grad_input, grad_input_low, grad_input_range = QuantizedFunctionsCPU.get("Quantize_backward")(
                 grad_output, input_, input_low, input_range, levels, level_low, level_high, True
             )
-
-        return grad_input, grad_input_low, grad_input_range, None, None, None
+        # TODO: Check tuning time without reshape!!!
+        grad_input.reshape(w_orig_shape)
+        # torch.cuda.nvtx.range_pop()
+        return grad_input, grad_input_low.float(), grad_input_range.float(), None, None, None
 
 
 def _quantize_autograd_to_range(input_, input_low, input_high, levels):
