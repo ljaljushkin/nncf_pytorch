@@ -13,7 +13,7 @@ from nncf.torch.model_graph_manager import split_const_name
 from nncf.torch.model_transformer import PTModelTransformer
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.quantization.layers import AsymmetricQuantizer
-from nncf.torch.quantization.layers import INT4AsymmetricWeightsDecompressor
+from nncf.torch.quantization.layers import INT4AsymmetricWeightsDecompressor, INT8AsymmetricWeightsDecompressor
 from nncf.torch.quantization.quantize_functions import TuneRange
 
 def strip_tuned_lora_model(model: NNCFNetwork) -> NNCFNetwork:
@@ -44,8 +44,7 @@ def strip_tuned_lora_model(model: NNCFNetwork) -> NNCFNetwork:
                 raise nncf.InternalError(f"Could not find a torch.nn.Parameter in the model by name {weight_name}.")
 
             input_ = w + quantizer_module._lora_B @ quantizer_module._lora_A
-            input_ = input_.reshape(quantizer_module._group_shape)  # NOTE: careful with what you reshape here!
-
+            input_ = input_.reshape(quantizer_module._qspec.weight_shape)
             scale = (quantizer_module.levels - 1) / input_range
             output = input_.clip(min=input_low, max=input_low + input_range)
             output -= input_low
@@ -62,13 +61,20 @@ def strip_tuned_lora_model(model: NNCFNetwork) -> NNCFNetwork:
             original_shape = w.shape
             compressor_scale = 1 / scale
 
-            decompressor = INT4AsymmetricWeightsDecompressor(
-                scale=compressor_scale,
-                zero_point=zero_point.to(torch.uint8),
-                compressed_weight_shape=output.shape,
-                result_shape=original_shape,
-                result_dtype=w.dtype,
-            )
+            if quantizer_module.num_bits == 8:
+                decompressor = INT8AsymmetricWeightsDecompressor(
+                    scale=compressor_scale,
+                    zero_point=zero_point.to(torch.uint8),
+                    result_dtype=w.dtype
+                )
+            else:
+                decompressor = INT4AsymmetricWeightsDecompressor(
+                    scale=compressor_scale,
+                    zero_point=zero_point.to(torch.uint8),
+                    compressed_weight_shape=output.shape,
+                    result_shape=original_shape,
+                    result_dtype=w.dtype,
+                )
 
             packed_tensor = decompressor.pack_weight(output.to(torch.uint8))
 

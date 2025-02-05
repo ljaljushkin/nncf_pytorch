@@ -91,7 +91,10 @@ def get_model(model_path, dtype="auto", device_map=None, attn_implementation=Non
 def get_wikitext2(nsamples, seqlen, tokenizer, eval_mode=False):
     if not eval_mode:
         traindata = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
-        trainenc = tokenizer("\n\n".join(traindata["text"]), return_tensors="pt")
+        limit = nsamples * seqlen // 4 # ~1k for 128 samples with seqlen=32 to be aligned with optimum
+        text = "".join([" \n" if s == "" else s for s in traindata["text"][:limit]])
+        trainenc = tokenizer(text, return_tensors="pt")
+        # trainenc = tokenizer("\n\n".join(text), return_tensors="pt")
         print(type(trainenc), trainenc)
         trainloader = []
         for _ in range(nsamples):
