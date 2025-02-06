@@ -37,25 +37,24 @@ MODEL_DIR="$HOME/MODEL_DIR"
 
 # BASE_MODEL="meta-llama/Meta-Llama-3-8B-Instruct"
 # MODEL_NAME="Meta-Llama-3-8B-Instruct"
-
 BASE_MODEL=${1:-"deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"}
 MODEL_NAME=${2:-"DeepSeek-R1-Distill-Qwen-1_5B"}
-INIT_DIR=${3:-"FQ_emb_head_int8_asym_int8_asym_rank256_gs-1_demo"}
-EXP_DIR=${4:-"DS_Qwen_lr1e-04_fqlr1e-05_wd1e-04"}
+INIT_DIR=${3:-"FQ_emb_head_int8_asym_int4_asym_rank256_gs32_se"}
+EXP_DIR=${4:-"DS_Qwen_lr5e-04_fqlr5e-05_wd5e-04"}
 MAX_LENGTH=${5:-4096}
 
 echo $@
-NNCF_CKPT_DIR=$MODEL_DIR/$MODEL_NAME/$INIT_DIR/$EXP_DIR
+NNCF_CKPT_DIR=$MODEL_DIR/$MODEL_NAME/$INIT_DIR/$EXP_DIR/best_wwb_ckpt
 printf "NNCF_CKPT_DIR=$NNCF_CKPT_DIR\n"
 
 
-TASK="wikitext"
-LOG_FILE=$NNCF_CKPT_DIR/"${MODEL_NAME}_${TASK}.log"
-OUTPUT_PATH=$NNCF_CKPT_DIR/"results_$TASK.json"
-nncf_ckpt_dir=$NNCF_CKPT_DIR
-CUDA_VISIBLE_DEVICES=7 PYTHONIOENCODING=utf-8 lm_eval --model=hf --model_args=pretrained=$BASE_MODEL,trust_remote_code=True,nncf_ckpt_dir=$NNCF_CKPT_DIR,dtype=bfloat16,max_length=$MAX_LENGTH --output_path=$OUTPUT_PATH --tasks=$TASK > $LOG_FILE 2>&1  &
-pid=$!
-echo "The process ID: $pid, log file: $LOG_FILE"
+# TASK="wikitext"
+# LOG_FILE=$NNCF_CKPT_DIR/"${MODEL_NAME}_${TASK}.log"
+# OUTPUT_PATH=$NNCF_CKPT_DIR/"results_$TASK.json"
+# nncf_ckpt_dir=$NNCF_CKPT_DIR
+# CUDA_VISIBLE_DEVICES=7 PYTHONIOENCODING=utf-8 lm_eval --model=hf --model_args=pretrained=$BASE_MODEL,trust_remote_code=True,nncf_ckpt_dir=$NNCF_CKPT_DIR,dtype=bfloat16,max_length=$MAX_LENGTH --output_path=$OUTPUT_PATH --tasks=$TASK > $LOG_FILE 2>&1  &
+# pid=$!
+# echo "The process ID: $pid, log file: $LOG_FILE"
 
 # TASK="gsm8k"
 # OUTPUT_PATH=$NNCF_CKPT_DIR/"results_$TASK.json"

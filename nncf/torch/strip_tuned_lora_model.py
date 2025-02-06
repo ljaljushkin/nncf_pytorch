@@ -30,6 +30,8 @@ def strip_tuned_lora_model(model: NNCFNetwork) -> NNCFNetwork:
             input_low, input_range = TuneRange.apply(
                 quantizer_module.input_low, input_range_safe, quantizer_module.levels
             )
+            # TODO: bfloat16 calculation in training. should take dtype somwhere.
+            # input_low, input_range = quantizer_module.input_low, quantizer_module.input_range
             assert len(command.target_points) == 1
             tp = command.target_points[0]
 

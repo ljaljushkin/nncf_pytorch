@@ -76,7 +76,7 @@ model = load_from_config(model, nncf_ckpt["nncf_config"], example_input=dataset[
 model.nncf.load_state_dict(nncf_ckpt["nncf_state_dict"])
 model.cuda()
 
-float_strip = True
+float_strip = False
 if float_strip:
     for name, quantizer in model._nncf.external_quantizers.items():
         layer = get_module_by_name(quantizer.module_name, model)
@@ -90,10 +90,10 @@ if float_strip:
 else:
     from nncf.torch.strip_tuned_lora_model import strip_tuned_lora_model
     model = strip_tuned_lora_model(model)
-    ov_dir = nncf_ckpt_dir / 'exported'
-    ov_dir.mkdir(exist_ok=True, parents=True)
-    model = model.cpu()  # cuda:0 vs cpu on embedding
-    export_from_model(model, ov_dir, stateful=False, compression_option="bf16")
+    # ov_dir = nncf_ckpt_dir / 'exported'
+    # ov_dir.mkdir(exist_ok=True, parents=True)
+    # model = model.cpu()  # cuda:0 vs cpu on embedding
+    # export_from_model(model, ov_dir, stateful=False, compression_option="bf16")
 
 results_file = nncf_ckpt_dir / "results_wwb_chat.json"
 all_metrics_per_question, all_metrics = wwb_eval.score(model)
