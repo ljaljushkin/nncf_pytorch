@@ -546,8 +546,6 @@ def compress_weights(
             raise nncf.ValidationError(msg)
         else:
             example_input = next(iter(dataset.get_inference_data()))
-            print('param device', next(iter(model.parameters())).device)
-            print('input device', example_input.device)
             model = wrap_model(model, example_input=example_input, trace_parameters=True)
         if mode in (CompressWeightsMode.INT8, CompressWeightsMode.INT8_ASYM, CompressWeightsMode.INT8_SYM):
             dataset = None  # data-aware methods don't support INT8 modes
