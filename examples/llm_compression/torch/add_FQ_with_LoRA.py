@@ -12,23 +12,21 @@
 import argparse
 import random
 import sys
-from contextlib import redirect_stderr
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import numpy as np
-import torch
-from transformers import AutoModelForCausalLM
-from transformers import AutoTokenizer
-
-import nncf
-from nncf.common.logging.logger import set_log_file
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from tune_fq_lora_chat import get_loaders
 
-GROUP_SIZE = 32
+import nncf
+import torch
+from nncf.common.logging.logger import set_log_file
+
+GROUP_SIZE = 64
 MODE = nncf.CompressWeightsMode.INT4_ASYM
 BACKUP_MODE = nncf.BackupMode.INT8_ASYM
-SCALE_ESTIMATION = True
+SCALE_ESTIMATION = False
 
 def save_checkpoint(wrapped_model, ckpt_dir):
     if not ckpt_dir.exists():

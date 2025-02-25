@@ -14,7 +14,7 @@ mkdir -p $HOME/MODEL_DIR
 . $ENV_NAME/bin/activate
 # pip install -U pip
 # pip install -r requirements.txt
-# pip install ../../../
+pip install -e ../../../
 
 printf '##################################\n'
 printf '########  Create NNCF checkpoint with 4bit FQ+LoRA \n'
@@ -24,9 +24,9 @@ BASE_MODEL="HuggingFaceTB/SmolLM-1.7B-Instruct"
 MODEL_NAME="SmolLM-1_7B-Instruct"
 MAX_LENGTH=2048
 
-INIT_DIR="FQ_emb_head_bf16_int4_asym_rank256_gs64_demo"
-EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04_tune_all_torch"
-# python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
+INIT_DIR="FQ_emb_head_int8_int4_asym_rank256_gs64_test"
+EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04"
+python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
 
 
 printf '##################################\n'
@@ -101,4 +101,4 @@ printf '########  Evaluation of the best checkpoint'
 printf '##################################\n'
 
 unset CUDA_VISIBLE_DEVICES
-PYTHONIOENCODING=utf-8 ./eval_slm.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_NAME $MAX_LENGTH
+# PYTHONIOENCODING=utf-8 ./eval_slm.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_NAME $MAX_LENGTH
