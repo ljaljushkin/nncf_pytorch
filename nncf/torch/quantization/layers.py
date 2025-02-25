@@ -79,9 +79,6 @@ class PTQSpecStateNames:
     NARROW_RANGE = "narrow_range"
     HALF_RANGE = "half_range"
     SCALE_SHAPE = "scale_shape"
-    WEIGHT_SHAPE = "weight_shape"
-    LORA_RANK = "lora_rank"
-    GROUP_SIZE = "group_size"
     MODULE_NAME = "module_name"
     LOGARITHM_SCALE = "logarithm_scale"
     IS_QUANTIZED_ON_EXPORT = "is_quantized_on_export"
@@ -99,12 +96,9 @@ class PTQuantizerSpec(QuantizerSpec):
         narrow_range: bool,
         half_range: bool,
         scale_shape: Tuple[int, ...],
-        weight_shape: Tuple[int, ...],
         logarithm_scale: bool,
         is_quantized_on_export: bool = False,
         compression_lr_multiplier: Optional[float] = None,
-        lora_rank: int = 256,
-        group_size: int = 64,
         module_name: str = "",
     ):
         """
@@ -117,9 +111,6 @@ class PTQuantizerSpec(QuantizerSpec):
         super().__init__(num_bits, mode, signedness_to_force, narrow_range, half_range)
         self.per_channel = scale_shape != (1,)
         self.scale_shape = scale_shape
-        self.weight_shape = weight_shape
-        self.lora_rank = lora_rank
-        self.group_size = group_size
         self.module_name = module_name
         self.logarithm_scale = logarithm_scale
         self.compression_lr_multiplier = compression_lr_multiplier
@@ -132,12 +123,9 @@ class PTQuantizerSpec(QuantizerSpec):
         narrow_range: bool,
         half_range: bool,
         scale_shape: Tuple[int, ...],
-        weight_shape: Tuple[int],
         logarithm_scale: bool,
         is_quantized_on_export: bool,
         compression_lr_multiplier: Optional[float],
-        lora_rank: int,
-        group_size: int,
         module_name: str,
     ) -> "PTQuantizerSpec":
         return cls(
@@ -147,12 +135,9 @@ class PTQuantizerSpec(QuantizerSpec):
             narrow_range,
             half_range,
             scale_shape,
-            weight_shape,
             logarithm_scale,
             is_quantized_on_export,
             compression_lr_multiplier,
-            lora_rank,
-            group_size,
             module_name,
         )
 
@@ -173,7 +158,6 @@ class PTQuantizerSpec(QuantizerSpec):
             cls._state_names.NARROW_RANGE: state["narrow_range"],
             cls._state_names.HALF_RANGE: state["half_range"],
             cls._state_names.SCALE_SHAPE: state["scale_shape"],
-            cls._state_names.WEIGHT_SHAPE: state["weight_shape"],
             cls._state_names.LORA_RANK: state["lora_rank"],
             cls._state_names.GROUP_SIZE: state["group_size"],
             cls._state_names.MODULE_NAME: state["module_name"],
@@ -318,16 +302,58 @@ class PTQuantizerSetup(QuantizerSetupBase):
     def add_quantization_point(self, qp_id: QuantizationPointId, qp: PTQuantizationPoint):
         self.quantization_points[qp_id] = qp
 
+class PTLQSpecStateNames:
+    LORA_RANK = "lora_rank"
+    REDUCTION_AXES = "reduction_axes"
+    GROUP_SIZE = "group_size"
+    WEIGHT_SHAPE = "weight_shape"
 
-class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
+class PTLoRAQuantizerSpec(PTQuantizerSpec):
+    _state_names = PTLQSpecStateNames
+
+    def __init__(
+        self,
+        lora_rank: int,
+        redustion_axes: Tuple[int],
+        group_size: int,
+        weight_shape: List[int],
+
+        num_bits: int,
+        mode: QuantizationMode,
+        signedness_to_force: Optional[bool],
+        narrow_range: bool,
+        half_range: bool,
+        scale_shape: Tuple[int, ...],
+        logarithm_scale: bool,
+        is_quantized_on_export: bool = False,
+        compression_lr_multiplier: Optional[float] = None,
+        module_name: str = "",
+    ):
+    super().__init__(num_bits, mode, signedness_to_force, narrow_range, half_range, scale_shape,
+                logarithm_scale, is_quantized_on_export, compression_lr_multiplier, module_name)
+
+
+class LoraMixin:
     LORA_A_NAME = "lora_A"
     LORA_B_NAME = "lora_B"
 
+    # TODO: is it possible to use lora spec only here?
+    # TODO: e2e test - 1 epoch of 1.7B and WWB?
+    # TODO: more granular test for quantizer - check that float32 gradient, internal calculations in fp16 of bf16
+    # TODO: extend kernel test for LoRA. initialize lora somehow and check that it produces exactly the same as reference??
+    def __init__(self, lora_spec: PTLoRAQuantizerSpec):
+
+        channel_size = weight_shape[reduction_axes]
+
+        num_groups_per_channel = channel_size // group_size
+        shape = list(weight.shape)  # [a1, r, a2] - "r" refers to number of channels along reduction axis
+        shape[reduction_axes : reduction_axes + 1] = (num_groups_per_channel, group_size)
+        reshaped_weight = weight.reshape(shape)
+
+class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__()
         self._qspec = qspec
-        self.lora_rank = self._qspec.lora_rank
-        self.group_size = self._qspec.group_size
         self.module_name = self._qspec.module_name
         self._narrow_range = qspec.narrow_range
         self._signedness_to_force = qspec.signedness_to_force
