@@ -14,7 +14,7 @@ mkdir -p $HOME/MODEL_DIR
 . $ENV_NAME/bin/activate
 # pip install -U pip
 # pip install -r requirements.txt
-pip install -e ../../../
+# pip install -e ../../../
 
 printf '##################################\n'
 printf '########  Create NNCF checkpoint with 4bit FQ+LoRA \n'
@@ -26,7 +26,7 @@ MAX_LENGTH=2048
 
 INIT_DIR="FQ_emb_head_int8_int4_asym_rank256_gs64_test"
 EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04"
-python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
+# python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
 
 
 printf '##################################\n'
@@ -40,7 +40,7 @@ printf '##################################\n'
 # nsys profile -w true -t cuda,nvtx,osrt,cudnn,cublas -s cpu --capture-range=cudaProfilerApi --capture-range-end=stop --cudabacktrace=true -x true \
 # -o kernel_1024_threads_in_block --force-overwrite true \
 tune_command_template="PYTHONIOENCODING=utf-8 \
-python tune_fq_lora.py \
+python tune_fq_lora_chat.py \
 --nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/$INIT_DIR \
 --base_model=$BASE_MODEL \
 --model_seqlen=\$model_seqlen \
@@ -69,7 +69,7 @@ list_nsamples=1024 #128
 dataset=wikitext2
 lrs=5e-4
 fq_lrs=5e-5
-list_epochs=32 #2 #(8 16 32)
+list_epochs=1 #2 #(8 16 32)
 
 for batch_size in "${batch_sizes[@]}"
 do

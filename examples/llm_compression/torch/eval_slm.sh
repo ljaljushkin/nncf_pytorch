@@ -10,12 +10,12 @@ echo $@
 NNCF_CKPT_DIR=$MODEL_DIR/$MODEL_NAME/$INIT_DIR/$EXP_DIR
 printf "NNCF_CKPT_DIR=$NNCF_CKPT_DIR\n"
 
-TASK="wikitext"
-LOG_FILE=$NNCF_CKPT_DIR/"${MODEL_NAME}_${TASK}.log"
-OUTPUT_PATH=$NNCF_CKPT_DIR/"results_$TASK.json"
-CUDA_VISIBLE_DEVICES=1 PYTHONIOENCODING=utf-8 lm_eval --model=hf --model_args=pretrained=$BASE_MODEL,nncf_ckpt_dir=$NNCF_CKPT_DIR,trust_remote_code=True,dtype=bfloat16,max_length=$MAX_LENGTH --output_path=$OUTPUT_PATH --tasks=$TASK > $LOG_FILE 2>&1  &
-pid=$!
-echo "The process ID: $pid, log file: $LOG_FILE"
+# TASK="wikitext"
+# LOG_FILE=$NNCF_CKPT_DIR/"${MODEL_NAME}_${TASK}.log"
+# OUTPUT_PATH=$NNCF_CKPT_DIR/"results_$TASK.json"
+# CUDA_VISIBLE_DEVICES=1 PYTHONIOENCODING=utf-8 lm_eval --model=hf --model_args=pretrained=$BASE_MODEL,nncf_ckpt_dir=$NNCF_CKPT_DIR,trust_remote_code=True,dtype=bfloat16,max_length=$MAX_LENGTH --output_path=$OUTPUT_PATH --tasks=$TASK > $LOG_FILE 2>&1  &
+# pid=$!
+# echo "The process ID: $pid, log file: $LOG_FILE"
 
 # TASK="arc_challenge"
 # LOG_FILE=$NNCF_CKPT_DIR/"${MODEL_NAME}_${TASK}.log"
@@ -45,3 +45,15 @@ echo "The process ID: $pid, log file: $LOG_FILE"
 # CUDA_VISIBLE_DEVICES=2 PYTHONIOENCODING=utf-8 python wwb_eval.py -m=$BASE_MODEL -n=$NNCF_CKPT_DIR > $LOG_FILE 2>&1  &
 # pid=$!
 # echo "The process ID: $pid, log file: $LOG_FILE"
+
+######## TARGET
+# CUDA_VISIBLE_DEVICES=0 \
+# wwb \
+# --base-model HuggingFaceTB/SmolLM-1.7B-Instruct \
+# --gt-data ~/MODEL_DIR/SmolLM-1_7B-Instruct/wwb_torch_ref_chat.csv \
+# --model-type text \
+# --hf \
+# --language en \
+# --chat-template \
+# --device cuda:0
+

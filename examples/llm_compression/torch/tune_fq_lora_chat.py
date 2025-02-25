@@ -18,23 +18,20 @@ import shutil
 import subprocess
 import sys
 from collections import OrderedDict
-from contextlib import redirect_stderr
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence, Union
 
 import mlflow
 import numpy as np
-import torch
-import torch.nn.functional as F
 import transformers
 from datasets import load_dataset
-from tqdm import tqdm
-from tqdm import trange
-from transformers import AutoConfig
-from transformers import AutoModelForCausalLM
-from transformers import AutoTokenizer
+from tqdm import tqdm, trange
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+import torch
+import torch.nn.functional as F
 
 
 def generate_overfit(pipeline, tokenizer, device, prefix=""):
@@ -91,7 +88,7 @@ def get_model(model_path, dtype="auto", device_map=None, attn_implementation=Non
 def get_wikitext2(nsamples, seqlen, tokenizer, eval_mode=False):
     if not eval_mode:
         traindata = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
-        limit = nsamples * seqlen // 4 # ~1k for 128 samples with seqlen=32 to be aligned with optimum
+        limit = nsamples * seqlen // 4  # ~1k for 128 samples with seqlen=32 to be aligned with optimum
         text = "".join([" \n" if s == "" else s for s in traindata["text"][:limit]])
         trainenc = tokenizer(text, return_tensors="pt")
         # trainenc = tokenizer("\n\n".join(text), return_tensors="pt")
@@ -203,16 +200,18 @@ def eval_on_wikitext(model_id, ckpt_dir, file_handle, eval_model_seqlen=4096, dt
         j = json.load(f)
         return j["results"]["wikitext"]["word_perplexity,none"]
 
+
 def wwb_eval(model_id, ckpt_dir, file_handle):
     cmd = f"python wwb_eval_chat.py -m={model_id} -n={ckpt_dir}"
     sys.stdout.flush()
     subprocess.run(cmd.split(" "), stdout=file_handle, stderr=file_handle)
 
     result_path = ckpt_dir / "results_wwb_chat.json"
-    with open(result_path, "r") as f:
+    with open(result_path) as f:
         print("Parsing wwb-eval results from file: ", result_path)
         results = json.load(f)
         return results["results"]["WWB"]["similarity"]
+
 
 def save_checkpoint(wrapped_model, ckpt_dir, ckpt_name="nncf_checkpoint.pth"):
     if not ckpt_dir.exists():
@@ -388,7 +387,7 @@ def finetune(
             ("loss_denominator", 0),
             ("grad_steps_accumulated", 0),
             ("best_eval_perplexity", float("inf")),
-            ("best_similarity", float("inf")),
+            ("best_similarity", init_smlr),
             ("best_step", 0),
         ]
     )
@@ -524,8 +523,8 @@ def finetune(
 
 
 def print_memory_stats():
-    print(f"GPU max memory allocated: {torch.cuda.max_memory_allocated() / 2 ** 30:.2f} GB.")
-    print(f"GPU max memory reserved: {torch.cuda.max_memory_reserved() / 2 ** 30:.2f} GB.")
+    print(f"GPU max memory allocated: {torch.cuda.max_memory_allocated() / 2**30:.2f} GB.")
+    print(f"GPU max memory reserved: {torch.cuda.max_memory_reserved() / 2**30:.2f} GB.")
 
 
 def get_argument_parser():
@@ -641,8 +640,7 @@ def get_argument_parser():
         "--seed",
         type=int,
         default=42,
-        help="Seed for calibration data and initialization. "
-        "Note that the main training is not strictly deterministic.",
+        help="Seed for calibration data and initialization. Note that the main training is not strictly deterministic.",
     )
     parser.add_argument(
         "--device_map",
@@ -749,7 +747,7 @@ def main(argv):
                     lm_head=lm_head,
                     init_ppl=init_ppl,
                     init_smlr=init_smlr,
-                    file_handle=f
+                    file_handle=f,
                 )
             finally:
                 print_memory_stats()

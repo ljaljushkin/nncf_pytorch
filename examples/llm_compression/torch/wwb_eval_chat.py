@@ -14,11 +14,10 @@ import json
 from pathlib import Path
 
 from optimum.exporters.openvino.convert import export_from_model
-import torch
-from transformers import AutoModelForCausalLM
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from whowhatbench import TextEvaluator
 
+import torch
 from nncf.torch import load_from_config
 from nncf.torch.model_graph_manager import get_module_by_name
 
@@ -29,7 +28,7 @@ parser.add_argument("-n", "--nncf_ckpt_dir")
 args = parser.parse_args()
 
 model_name = Path(args.model_id).name.replace(".", "_")
-MODEL_DIR = Path.home() / "MODEL_DIR" / model_name
+model_dir = Path.home() / "MODEL_DIR" / model_name
 
 tokenizer = AutoTokenizer.from_pretrained(
     args.model_id,
@@ -38,23 +37,24 @@ tokenizer = AutoTokenizer.from_pretrained(
 model = AutoModelForCausalLM.from_pretrained(
     args.model_id,
     trust_remote_code=True,
-    torch_dtype=torch.bfloat16, # TODO: doesn't work with strip
+    torch_dtype=torch.bfloat16,  # TODO: doesn't work with strip
     #   attn_output = torch.nn.functional.scaled_dot_product_attention(
     #   RuntimeError: Expected query, key, and value to have the same dtype, but got query.dtype: c10::BFloat16 key.dtype: float and value.dtype: float instead.
 ).cuda()
 
-chat_template = [{"role": "user", "content": "input_text"}]
-wwb_ref = MODEL_DIR / "ref_qa_chat.csv"
-wwb_eval = None
-if wwb_ref.exists():
-    print("Loading cached WWB reference answers from: ", wwb_ref.resolve())
-    wwb_eval = TextEvaluator(tokenizer=tokenizer, gt_data=wwb_ref, test_data=str(wwb_ref), chat_template=chat_template)
-else:
-    chat_template = [{"role": "user", "content": "input_text"}]
-    wwb_eval = TextEvaluator(
-        base_model=model, tokenizer=tokenizer, chat_template=chat_template, metrics=("similarity",)
-    )
-    wwb_eval.dump_gt(str(wwb_ref))
+# chat_template = [{"role": "user", "content": "input_text"}]
+wwb_ref = model_dir / "wwb_torch_ref_chat.csv"
+# wwb_eval = None
+# if wwb_ref.exists():
+#     print("Loading cached WWB reference answers from: ", wwb_ref.resolve())
+wwb_eval = TextEvaluator(
+    tokenizer=tokenizer, gt_data=wwb_ref, test_data=str(wwb_ref), use_chat_template=True, language='en'
+)
+# else:
+# wwb_eval = TextEvaluator(
+#     base_model=model, tokenizer=tokenizer, use_chat_template=True, metrics=("similarity",), language='en'
+# )
+# wwb_eval.dump_gt(str(wwb_ref))
 
 
 nncf_ckpt_dir = Path(args.nncf_ckpt_dir)
@@ -76,7 +76,7 @@ model = load_from_config(model, nncf_ckpt["nncf_config"], example_input=dataset[
 model.nncf.load_state_dict(nncf_ckpt["nncf_state_dict"])
 model.cuda()
 
-float_strip = False
+float_strip = True
 if float_strip:
     for name, quantizer in model._nncf.external_quantizers.items():
         layer = get_module_by_name(quantizer.module_name, model)
