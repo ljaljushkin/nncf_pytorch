@@ -9,59 +9,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from enum import Enum
 from functools import partial
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from torch import distributed
-from torch import nn
+from torch import distributed, nn
 from torch._C import DisableTorchFunction
 
 import nncf
 from nncf.common.graph import NNCFNodeName
 from nncf.common.logging import nncf_logger
-from nncf.common.quantization.quantizer_setup import QuantizationPointId
-from nncf.common.quantization.quantizer_setup import QuantizerSetupBase
-from nncf.common.quantization.quantizers import calculate_asymmetric_level_ranges
-from nncf.common.quantization.quantizers import calculate_symmetric_level_ranges
-from nncf.common.quantization.quantizers import get_num_levels
+from nncf.common.quantization.quantizer_setup import QuantizationPointId, QuantizerSetupBase
+from nncf.common.quantization.quantizers import (
+    calculate_asymmetric_level_ranges,
+    calculate_symmetric_level_ranges,
+    get_num_levels,
+)
 from nncf.common.quantization.structs import QuantizationScheme as QuantizationMode
-from nncf.common.quantization.structs import QuantizerConfig
-from nncf.common.quantization.structs import QuantizerSpec
+from nncf.common.quantization.structs import QuantizerConfig, QuantizerSpec
 from nncf.common.utils.debug import is_debug
 from nncf.common.utils.registry import Registry
 from nncf.torch.checkpoint_loading import OPTIONAL_PARAMETERS_REGISTRY
 from nncf.torch.dynamic_graph.context import no_nncf_trace
 from nncf.torch.dynamic_graph.patch_pytorch import register_operator
 from nncf.torch.functions import clamp
-from nncf.torch.graph.transformations.commands import PTTargetPoint
-from nncf.torch.graph.transformations.commands import TargetType
-from nncf.torch.layer_utils import COMPRESSION_MODULES
-from nncf.torch.layer_utils import CompressionParameter
-from nncf.torch.layer_utils import StatefullModuleInterface
-from nncf.torch.quantization.quantize_functions import ExportQuantizeToFakeQuantize
-from nncf.torch.quantization.quantize_functions import ExportQuantizeToONNXQuantDequant
-from nncf.torch.quantization.quantize_functions import TuneRange
-from nncf.torch.quantization.quantize_functions import asymmetric_quantize
-from nncf.torch.quantization.quantize_functions import decompress_asymmetric
-from nncf.torch.quantization.quantize_functions import decompress_symmetric
-from nncf.torch.quantization.quantize_functions import get_scale_zp_from_input_low_input_high
-from nncf.torch.quantization.quantize_functions import pack_int4
-from nncf.torch.quantization.quantize_functions import pack_uint4
-from nncf.torch.quantization.quantize_functions import symmetric_quantize
-from nncf.torch.quantization.quantize_functions import unpack_int4
-from nncf.torch.quantization.quantize_functions import unpack_uint4
-from nncf.torch.return_types import maybe_get_values_from_torch_return_type
-from nncf.torch.return_types import maybe_wrap_to_torch_return_type
-from nncf.torch.utils import get_flat_tensor_contents_string
-from nncf.torch.utils import get_model_device
-from nncf.torch.utils import is_tracing_state
-from nncf.torch.utils import no_jit_trace
-from nncf.torch.utils import sum_like
+from nncf.torch.graph.transformations.commands import PTTargetPoint, TargetType
+from nncf.torch.layer_utils import COMPRESSION_MODULES, CompressionParameter, StatefullModuleInterface
+from nncf.torch.quantization.quantize_functions import (
+    ExportQuantizeToFakeQuantize,
+    ExportQuantizeToONNXQuantDequant,
+    TuneRange,
+    asymmetric_quantize,
+    decompress_asymmetric,
+    decompress_symmetric,
+    get_scale_zp_from_input_low_input_high,
+    pack_int4,
+    pack_uint4,
+    symmetric_quantize,
+    unpack_int4,
+    unpack_uint4,
+)
+from nncf.torch.return_types import maybe_get_values_from_torch_return_type, maybe_wrap_to_torch_return_type
+from nncf.torch.utils import get_flat_tensor_contents_string, get_model_device, is_tracing_state, no_jit_trace, sum_like
 
 QUANTIZATION_MODULES = Registry("quantization_modules")
 INITIALIZABLE_MODULES = Registry("initializable_modules")
@@ -73,7 +65,7 @@ class QuantizerExportMode(Enum):
 
 
 class PTQuantizerSpec(QuantizerSpec):
-    _args = [
+    _arg_names = [
         "num_bits",
         "mode",
         "signedness_to_force",
@@ -149,15 +141,19 @@ class PTQuantizerSpec(QuantizerSpec):
 
         :param state: Output of `get_state()` method.
         """
-        kwargs = {arg: state[arg] for arg in cls._args}
+        kwargs = {arg: state[arg] for arg in cls.get_arg_names()}
         return cls(**kwargs)
 
     def get_state(self):
-        return {arg: getattr(self, arg) for arg in self._args}
+        return {arg: getattr(self, arg) for arg in self.get_arg_names()}
+
+    @classmethod
+    def get_arg_names(cls):
+        return cls._arg_names
 
 
 class PTLoRAQuantizerSpec(PTQuantizerSpec):
-    _vars = ["lora_rank", "orig_weight_shape", "weight_shape"]
+    _arg_names = ["lora_rank", "orig_weight_shape", "weight_shape"]
 
     def __init__(
         self,
@@ -192,13 +188,8 @@ class PTLoRAQuantizerSpec(PTQuantizerSpec):
         self.weight_shape = weight_shape
 
     @classmethod
-    def from_state(cls, state: Dict[str, Any]) -> "PTLoRAQuantizerSpec":
-        return cls(**state)
-
-    def get_state(self):
-        state = super(PTQuantizerSpec, self).get_state()
-        state.update({arg: getattr(self, arg) for arg in self._args})
-        return state
+    def get_arg_names(cls):
+        return super()._arg_names + cls._arg_names
 
 
 class PTQPointStateNames:
@@ -393,8 +384,7 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
         return get_num_levels(self.level_low, self.level_high)
 
     def enable_gradients(self):
-        self._lora_A.requires_grad = True
-        self._lora_B.requires_grad = True
+        pass
 
     @abstractmethod
     def disable_gradients(self):
@@ -772,20 +762,6 @@ class SymmetricQuantizer(BaseQuantizer):
         self.set_levels()
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
-        # device = x.device
-        # self.to(device)
-        # fq_weight = sym_fq_lora(
-        #     x,
-        #     self._qspec.weight_shape,
-        #     self._lora_A,
-        #     self._lora_B,
-        #     self.scale,
-        #     self.level_low,
-        #     self.level_high,
-        #     self.levels,
-        #     self.eps,
-        # )
-        # return fq_weight
         return symmetric_quantize(
             x, self.levels, self.level_low, self.level_high, self.scale, self.eps, skip=execute_traced_op_as_identity
         )
@@ -1269,18 +1245,19 @@ class LoraMixin:
         self._lora_A.requires_grad = False
         self._lora_B.requires_grad = False
 
-    def get_trainable_params(self) -> Dict[str, torch.Tensor]:
+    def get_adapters(self) -> Dict[str, torch.Tensor]:
         return {
-            self.LORA_A_NAME: self._lora_A,
-            self.LORA_B_NAME: self._lora_B,
+            self.LORA_A_PARAM_NAME: self._lora_A,
+            self.LORA_B_PARAM_NAME: self._lora_B,
         }
 
 
+@COMPRESSION_MODULES.register()
 @QUANTIZATION_MODULES.register(QuantizationMode.ASYMMETRIC_LORA)
 class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
     def __init__(self, qspec: PTLoRAQuantizerSpec):
-        super(AsymmetricQuantizer, self).__init__(qspec)
-        super().__init__(qspec.lora_rank, qspec.orig_weight_shape, qspec.weight_shape)
+        super().__init__(qspec)
+        LoraMixin.__init__(self, qspec.lora_rank, qspec.orig_weight_shape, qspec.weight_shape)
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
         device = x.device
@@ -1300,16 +1277,62 @@ class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
 
     def enable_gradients(self) -> Dict[str, torch.Tensor]:
         super().enable_gradients()
-        super(AsymmetricQuantizer, self).enable_gradients()
+        LoraMixin.enable_gradients(self)
 
     def disable_gradients(self) -> Dict[str, torch.Tensor]:
         super().disable_gradients()
-        super(AsymmetricQuantizer, self).disable_gradients()
+        LoraMixin.disable_gradients(self)
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
         params = super().get_trainable_params()
-        params.update(super(AsymmetricQuantizer, self).get_trainable_params())
+        params.update(LoraMixin.get_adapters(self))
         return params
+
+    @classmethod
+    def from_config(cls, state) -> "AsymmetricLoraQuantizer":
+        qspec = PTLoRAQuantizerSpec.from_state(state)
+        return cls(qspec)
+
+
+@COMPRESSION_MODULES.register()
+@QUANTIZATION_MODULES.register(QuantizationMode.SYMMETRIC_LORA)
+class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
+    def __init__(self, qspec: PTLoRAQuantizerSpec):
+        super().__init__(qspec)
+        LoraMixin.__init__(self, qspec.lora_rank, qspec.orig_weight_shape, qspec.weight_shape)
+
+    def quantize(self, x, execute_traced_op_as_identity: bool = False):
+        device = x.device
+        self.to(device)
+        return sym_fq_lora(
+            x,
+            self._qspec.weight_shape,
+            self._lora_A,
+            self._lora_B,
+            self.scale,
+            self.level_low,
+            self.level_high,
+            self.levels,
+            self.eps,
+        )
+
+    def enable_gradients(self) -> Dict[str, torch.Tensor]:
+        super().enable_gradients()
+        LoraMixin.enable_gradients(self)
+
+    def disable_gradients(self) -> Dict[str, torch.Tensor]:
+        super().disable_gradients()
+        LoraMixin.disable_gradients(self)
+
+    def get_trainable_params(self) -> Dict[str, torch.Tensor]:
+        params = super().get_trainable_params()
+        params.update(LoraMixin.get_adapters(self))
+        return params
+
+    @classmethod
+    def from_config(cls, state) -> "SymmetricLoraQuantizer":
+        qspec = PTLoRAQuantizerSpec.from_state(state)
+        return cls(qspec)
 
 
 def get_per_channel_scale_shape(input_shape, is_weights, channel_idx: Optional[int] = None) -> List[int]:

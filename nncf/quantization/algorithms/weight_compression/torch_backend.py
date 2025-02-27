@@ -16,30 +16,33 @@ import torch
 import nncf
 import nncf.torch.graph.operator_metatypes as om
 from nncf.common.graph.definitions import NNCFGraphNodeType
-from nncf.common.graph.graph import NNCFGraph
-from nncf.common.graph.graph import NNCFNode
-from nncf.common.graph.operator_metatypes import CONST_NOOP_METATYPES
-from nncf.common.graph.operator_metatypes import OperatorMetatype
-from nncf.common.graph.transformations.commands import TargetType
-from nncf.common.graph.transformations.commands import TransformationPriority
+from nncf.common.graph.graph import NNCFGraph, NNCFNode
+from nncf.common.graph.operator_metatypes import CONST_NOOP_METATYPES, OperatorMetatype
+from nncf.common.graph.transformations.commands import TargetType, TransformationPriority
 from nncf.common.graph.transformations.layout import TransformationLayout
 from nncf.common.quantization.structs import QuantizationScheme
 from nncf.common.tensor_statistics.statistic_point import StatisticPoint
-from nncf.experimental.common.tensor_statistics.collectors import MaxVarianceReducer
-from nncf.experimental.common.tensor_statistics.collectors import MeanAbsMaxReducer
-from nncf.experimental.common.tensor_statistics.collectors import MeanAggregator
-from nncf.experimental.common.tensor_statistics.collectors import MeanReducer
-from nncf.experimental.common.tensor_statistics.collectors import MeanVarianceReducer
-from nncf.experimental.common.tensor_statistics.collectors import NoopAggregator
-from nncf.experimental.common.tensor_statistics.collectors import ShapeReducer
-from nncf.experimental.common.tensor_statistics.collectors import TensorCollector
-from nncf.experimental.common.tensor_statistics.statistics import MaxVarianceTensorStatistic
-from nncf.experimental.common.tensor_statistics.statistics import MeanMagnitudeTensorStatistic
-from nncf.experimental.common.tensor_statistics.statistics import MeanVarianceTensorStatistic
-from nncf.experimental.common.tensor_statistics.statistics import WCTensorStatistic
+from nncf.experimental.common.tensor_statistics.collectors import (
+    MaxVarianceReducer,
+    MeanAbsMaxReducer,
+    MeanAggregator,
+    MeanReducer,
+    MeanVarianceReducer,
+    NoopAggregator,
+    ShapeReducer,
+    TensorCollector,
+)
+from nncf.experimental.common.tensor_statistics.statistics import (
+    MaxVarianceTensorStatistic,
+    MeanMagnitudeTensorStatistic,
+    MeanVarianceTensorStatistic,
+    WCTensorStatistic,
+)
 from nncf.parameters import CompressWeightsMode
-from nncf.quantization.algorithms.weight_compression.backend import MixedPrecisionAlgoBackend
-from nncf.quantization.algorithms.weight_compression.backend import WeightCompressionAlgoBackend
+from nncf.quantization.algorithms.weight_compression.backend import (
+    MixedPrecisionAlgoBackend,
+    WeightCompressionAlgoBackend,
+)
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.lora_correction import LoraCorrectionAlgorithm
 from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight
@@ -47,22 +50,25 @@ from nncf.tensor import Tensor
 from nncf.tensor.definitions import TensorDataType
 from nncf.torch.dynamic_graph.scope import Scope
 from nncf.torch.graph.graph import PTTargetPoint
-from nncf.torch.graph.transformations.commands import ExtraCompressionModuleType
-from nncf.torch.graph.transformations.commands import PTSharedFnInsertionCommand
-from nncf.torch.model_graph_manager import find_const_node_in_constant_subgraph
-from nncf.torch.model_graph_manager import get_const_data
-from nncf.torch.model_graph_manager import get_const_node
-from nncf.torch.model_graph_manager import get_module_by_name
-from nncf.torch.model_graph_manager import split_const_name
+from nncf.torch.graph.transformations.commands import ExtraCompressionModuleType, PTSharedFnInsertionCommand
+from nncf.torch.model_graph_manager import (
+    find_const_node_in_constant_subgraph,
+    get_const_data,
+    get_const_node,
+    get_module_by_name,
+    split_const_name,
+)
 from nncf.torch.model_transformer import PTModelTransformer
 from nncf.torch.nncf_network import NNCFNetwork
-from nncf.torch.quantization.layers import QUANTIZATION_MODULES
-from nncf.torch.quantization.layers import AsymmetricQuantizer
-from nncf.torch.quantization.layers import INT4AsymmetricWeightsDecompressor
-from nncf.torch.quantization.layers import INT4SymmetricWeightsDecompressor
-from nncf.torch.quantization.layers import INT8AsymmetricWeightsDecompressor
-from nncf.torch.quantization.layers import INT8SymmetricWeightsDecompressor
-from nncf.torch.quantization.layers import PTLoRAQuantizerSpec
+from nncf.torch.quantization.layers import (
+    QUANTIZATION_MODULES,
+    AsymmetricQuantizer,
+    INT4AsymmetricWeightsDecompressor,
+    INT4SymmetricWeightsDecompressor,
+    INT8AsymmetricWeightsDecompressor,
+    INT8SymmetricWeightsDecompressor,
+    PTLoRAQuantizerSpec,
+)
 
 
 class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
@@ -253,9 +259,9 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         scale_shape = weight_shape.copy()
         scale_shape[wc_params.reduction_axes[0]] = 1
 
-        schema = QuantizationScheme.SYMMETRIC
+        schema = QuantizationScheme.SYMMETRIC_LORA
         if compression_config.mode in [CompressWeightsMode.INT4_ASYM, CompressWeightsMode.INT8_ASYM]:
-            schema = QuantizationScheme.ASYMMETRIC
+            schema = QuantizationScheme.ASYMMETRIC_LORA
 
         lora_rank = 256
         group_size = compression_config.group_size
@@ -263,14 +269,9 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         group_reduction_axes = wc_params.reduction_axes[0]
         if compression_config.num_bits == 4 and group_size > 0:
             group_reduction_axes = 2
-            torch_impl = True
             weight_shape = [out_features, in_features // group_size, group_size]
             scale_group_shape = [out_features, in_features // group_size, 1]
-            scale_flat_shape = [out_features * in_features // group_size, 1]
-            if torch_impl:
-                scale_shape = scale_group_shape
-            else:
-                scale_shape = scale_flat_shape
+            scale_shape = scale_group_shape
 
         reshaped_weight = weight.reshape(weight_shape)
         precomputed_scale = precomputed_scales.get(wc_params.weight_name)
@@ -283,12 +284,11 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         else:
             # Group-wise:  Weight [a1, r, a2] -> Scale [a1, 1, a2]
             # Per-channel: Weight [a1, a2]    -> Scale [a1, 1]
-            input_low = torch.amin(weight_shape, dim=group_reduction_axes, keepdim=True).float()
-            input_high = torch.amax(weight_shape, dim=group_reduction_axes, keepdim=True).float()
+            input_low = torch.amin(reshaped_weight, dim=group_reduction_axes, keepdim=True).float()
+            input_high = torch.amax(reshaped_weight, dim=group_reduction_axes, keepdim=True).float()
             input_range = input_high - input_low
 
         module_name, _ = split_const_name(weight_name)
-        # TODO: compression_format.FQ and group_size != -1 not supported, only per-channel for int8
         quantizer_spec = PTLoRAQuantizerSpec(
             lora_rank=lora_rank,
             orig_weight_shape=orig_weight_shape,
@@ -306,7 +306,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         quantizer_cls = QUANTIZATION_MODULES.get(schema)
         quantizer = quantizer_cls(quantizer_spec)
 
-        if isinstance(quantizer, AsymmetricQuantizer):
+        if schema == QuantizationScheme.ASYMMETRIC_LORA:
             quantizer.input_low = torch.nn.Parameter(input_low.reshape(scale_shape))
             # Subtract eps from the input_range to make quantizer parameters equal to
             # original parameters on the forward call.
@@ -449,6 +449,10 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
     ) -> NNCFNetwork:
         # TODO: pass somehow?
         fq_lora = True
+        # TODO: support compression format
+        # TODO: compression_format.FQ
+        #   doesn't work for group_size != -1
+        #   only per-channel, need to remove specifics, affects PTQ
         transformation_layout = TransformationLayout()
         for wc_params in weight_compression_parameters:
             compression_config = wc_params.compression_config
