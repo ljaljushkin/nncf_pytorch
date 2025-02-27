@@ -72,11 +72,10 @@ class PTQuantizerSpec(QuantizerSpec):
         "narrow_range",
         "half_range",
         "scale_shape",
+        "weight_shape",
         "logarithm_scale",
         "is_quantized_on_export",
         "compression_lr_multiplier",
-        # TODO: to delete after re-implementing float strip
-        "module_name",
     ]
 
     def __init__(
@@ -87,10 +86,10 @@ class PTQuantizerSpec(QuantizerSpec):
         narrow_range: bool,
         half_range: bool,
         scale_shape: Tuple[int, ...],
+        weight_shape: Tuple[int, ...],
         logarithm_scale: bool,
         is_quantized_on_export: bool = False,
         compression_lr_multiplier: Optional[float] = None,
-        module_name: str = "",
     ):
         """
         :param scale_shape: Shape of quantizer scale parameters
@@ -102,7 +101,7 @@ class PTQuantizerSpec(QuantizerSpec):
         super().__init__(num_bits, mode, signedness_to_force, narrow_range, half_range)
         self.per_channel = scale_shape != (1,)
         self.scale_shape = scale_shape
-        self.module_name = module_name
+        self.weight_shape = weight_shape
         self.logarithm_scale = logarithm_scale
         self.compression_lr_multiplier = compression_lr_multiplier
         self.is_quantized_on_export = is_quantized_on_export
@@ -114,10 +113,10 @@ class PTQuantizerSpec(QuantizerSpec):
         narrow_range: bool,
         half_range: bool,
         scale_shape: Tuple[int, ...],
+        weight_shape: Tuple[int, ...],
         logarithm_scale: bool,
         is_quantized_on_export: bool,
         compression_lr_multiplier: Optional[float],
-        module_name: str,
     ) -> "PTQuantizerSpec":
         return cls(
             qconfig.num_bits,
@@ -126,10 +125,10 @@ class PTQuantizerSpec(QuantizerSpec):
             narrow_range,
             half_range,
             scale_shape,
+            weight_shape,
             logarithm_scale,
             is_quantized_on_export,
             compression_lr_multiplier,
-            module_name,
         )
 
     def __eq__(self, other):
@@ -153,44 +152,29 @@ class PTQuantizerSpec(QuantizerSpec):
         return cls._arg_names
 
 
-class PTLoRAQuantizerSpec(PTQuantizerSpec):
-    _arg_names = ["lora_rank", "orig_weight_shape", "weight_shape"]
+class PTLoraSpec:
+    _arg_names = ["lora_rank", "orig_weight_shape"]
 
     def __init__(
         self,
         lora_rank: int,
         orig_weight_shape: List[int],
-        weight_shape: List[int],
-        num_bits: int,
-        mode: QuantizationMode,
-        signedness_to_force: Optional[bool],
-        narrow_range: bool,
-        half_range: bool,
-        scale_shape: Tuple[int, ...],
-        logarithm_scale: bool,
-        is_quantized_on_export: bool = False,
-        compression_lr_multiplier: Optional[float] = None,
-        module_name: str = "",
     ):
-        super().__init__(
-            num_bits,
-            mode,
-            signedness_to_force,
-            narrow_range,
-            half_range,
-            scale_shape,
-            logarithm_scale,
-            is_quantized_on_export,
-            compression_lr_multiplier,
-            module_name,
-        )
         self.lora_rank = lora_rank
         self.orig_weight_shape = orig_weight_shape
-        self.weight_shape = weight_shape
 
     @classmethod
-    def get_arg_names(cls):
-        return super()._arg_names + cls._arg_names
+    def from_state(cls, state: Dict[str, Any]) -> "PTLoraSpec":
+        """
+        Creates the object from its state.
+
+        :param state: Output of `get_state()` method.
+        """
+        kwargs = {arg: state[arg] for arg in cls._arg_names}
+        return cls(**kwargs)
+
+    def get_state(self):
+        return {arg: getattr(self, arg) for arg in self._arg_names}
 
 
 class PTQPointStateNames:
@@ -315,7 +299,6 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__()
         self._qspec = qspec
-        self.module_name = self._qspec.module_name
         self._narrow_range = qspec.narrow_range
         self._signedness_to_force = qspec.signedness_to_force
         self._is_using_log_scale_storage = qspec.logarithm_scale
@@ -1216,15 +1199,16 @@ class LoraMixin:
     # TODO: more granular test for quantizer - check that float32 gradient, internal calculations in fp16 of bf16
     # TODO: extend kernel test for LoRA. initialize lora somehow and check it produces exactly the same as reference??
     # TODO: check asym/sym, group/channel
-    def __init__(self, lora_rank: int, orig_weight_shape: List[int], weight_shape: List[int]):
-        self.lora_rank = lora_rank
-        self.weight_shape = weight_shape
-        out_features, in_features = orig_weight_shape
+    def __init__(self, lspec: PTLoraSpec):
+        self._lspec = lspec
+        out_features, in_features = lspec.orig_weight_shape
         self._lora_A = torch.nn.Parameter(
-            torch.ones((self.lora_rank, in_features), dtype=torch.bfloat16), requires_grad=True
+            # TODO: what if training in float16?
+            torch.ones((lspec.lora_rank, in_features), dtype=torch.bfloat16),
+            requires_grad=True,
         )
         self._lora_B = torch.nn.Parameter(
-            torch.zeros((out_features, self.lora_rank), dtype=torch.bfloat16), requires_grad=True
+            torch.zeros((out_features, lspec.lora_rank), dtype=torch.bfloat16), requires_grad=True
         )
 
     def enable_gradients(self):
@@ -1246,16 +1230,18 @@ class LoraMixin:
 @COMPRESSION_MODULES.register()
 @QUANTIZATION_MODULES.register(QuantizationMode.ASYMMETRIC_LORA)
 class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
-    def __init__(self, qspec: PTLoRAQuantizerSpec):
+    _arg_names = ["qspec", "lspeq"]
+
+    def __init__(self, qspec: PTQuantizerSpec, lspec: PTLoraSpec):
         super().__init__(qspec)
-        LoraMixin.__init__(self, qspec.lora_rank, qspec.orig_weight_shape, qspec.weight_shape)
+        LoraMixin.__init__(self, lspec)
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
         device = x.device
         self.to(device)
         return asym_fq_lora(
             x,
-            self.weight_shape,
+            self._qspec.weight_shape,
             self._lora_A,
             self._lora_B,
             self.input_low,
@@ -1279,18 +1265,22 @@ class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
         params.update(LoraMixin.get_adapters(self))
         return params
 
+    def get_config(self):
+        return {"qspec": super().get_config(), "lspec": self._lspec.get_state()}
+
     @classmethod
     def from_config(cls, state) -> "AsymmetricLoraQuantizer":
-        qspec = PTLoRAQuantizerSpec.from_state(state)
-        return cls(qspec)
+        qspec = PTQuantizerSpec.from_state(state["qspec"])
+        lspec = PTLoraSpec.from_state(state["lspec"])
+        return cls(qspec, lspec)
 
 
 @COMPRESSION_MODULES.register()
 @QUANTIZATION_MODULES.register(QuantizationMode.SYMMETRIC_LORA)
 class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
-    def __init__(self, qspec: PTLoRAQuantizerSpec):
+    def __init__(self, qspec: PTQuantizerSpec, lspec: PTLoraSpec):
         super().__init__(qspec)
-        LoraMixin.__init__(self, qspec.lora_rank, qspec.orig_weight_shape, qspec.weight_shape)
+        LoraMixin.__init__(self, lspec)
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
         device = x.device
@@ -1320,10 +1310,14 @@ class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
         params.update(LoraMixin.get_adapters(self))
         return params
 
+    def get_config(self):
+        return {"qspec": super().get_config(), "lspec": self._lspec.get_state()}
+
     @classmethod
     def from_config(cls, state) -> "SymmetricLoraQuantizer":
-        qspec = PTLoRAQuantizerSpec.from_state(state)
-        return cls(qspec)
+        qspec = PTQuantizerSpec.from_state(state["qspec"])
+        lspec = PTLoraSpec.from_state(state["lspec"])
+        return cls(qspec, lspec)
 
 
 def get_per_channel_scale_shape(input_shape, is_weights, channel_idx: Optional[int] = None) -> List[int]:

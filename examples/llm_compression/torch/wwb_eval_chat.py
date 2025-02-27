@@ -13,15 +13,13 @@ import argparse
 import json
 from pathlib import Path
 
-import torch
-
 # from optimum.exporters.openvino.convert import export_from_model
-from transformers import AutoModelForCausalLM
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from whowhatbench import TextEvaluator
 
+import torch
 from nncf.torch import load_from_config
-from nncf.torch.model_graph_manager import get_module_by_name
+from nncf.torch.model_graph_manager import get_const_node, get_module_by_name, split_const_name
 
 parser = argparse.ArgumentParser(add_help=True)
 # Model params
@@ -81,10 +79,25 @@ model.cuda()
 
 float_strip = True
 if float_strip:
-    for name, quantizer in model._nncf.external_quantizers.items():
-        layer = get_module_by_name(quantizer.module_name, model)
-        FQ_W = quantizer.quantize(layer.weight)
-        layer.weight = torch.nn.Parameter(FQ_W)
+    layout = model.nncf.transformation_layout()
+    model = model.nncf.get_clean_shallow_copy()
+    graph = model.nncf.get_graph()
+    t = layout.transformations
+    for command in t:
+        quantizer = command.fn
+        tp = command.target_points[0]
+        node_with_weight = graph.get_node_by_name(tp.target_node_name)
+        weight_node = get_const_node(node_with_weight, tp.input_port_id, graph)
+        weight_name = weight_node.layer_attributes.name
+        module_name, weight_attr_name = split_const_name(weight_name)
+        layer = get_module_by_name(module_name, model)
+        weight = getattr(layer, weight_attr_name)
+        fq_weight = quantizer.quantize(layer.weight)
+        setattr(layer, weight_attr_name, torch.nn.Parameter(fq_weight))
+    # for name, quantizer in model._nncf.external_quantizers.items():
+    #     layer = get_module_by_name(quantizer.module_name, model)
+    #     FQ_W = quantizer.quantize(layer.weight)
+    #     layer.weight = torch.nn.Parameter(FQ_W)
     model._nncf.external_quantizers = None
     ctx = model._nncf.get_tracing_context()
     ctx.disable_tracing()

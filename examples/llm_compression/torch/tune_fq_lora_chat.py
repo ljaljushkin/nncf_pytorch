@@ -394,7 +394,7 @@ def finetune(
             ("best_step", 0),
         ]
     )
-    layer = model_to_tune._nncf.external_quantizers.FQ_LORA_for_node_model_layers_13_mlp_down_proj_weight
+    layer = model_to_tune._nncf.external_quantizers.FQ_LORA_model_layers_13_mlp_down_proj_weight
     param_to_train = set_trainable(model_to_tune, lora_lr=args.lr, fq_lr=args.fq_lr, weight_decay=args.weight_decay)
     opt = torch.optim.AdamW(param_to_train, lr=args.lr, betas=(args.adam_beta1, args.adam_beta2))
     model_to_tune.train()
