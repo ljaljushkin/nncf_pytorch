@@ -1,4 +1,4 @@
-# Copyright (c) 2024 Intel Corporation
+# Copyright (c) 2025 Intel Corporation
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -12,21 +12,24 @@
 import argparse
 import random
 import sys
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stderr
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import numpy as np
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+from transformers import AutoModelForCausalLM
+from transformers import AutoTokenizer
 from tune_fq_lora_chat import get_loaders
 
 import nncf
-import torch
 from nncf.common.logging.logger import set_log_file
 
 GROUP_SIZE = 64
 MODE = nncf.CompressWeightsMode.INT4_ASYM
 BACKUP_MODE = nncf.BackupMode.INT8_ASYM
 SCALE_ESTIMATION = False
+
 
 def save_checkpoint(wrapped_model, ckpt_dir):
     if not ckpt_dir.exists():
@@ -57,8 +60,8 @@ def set_seed(seed):
 
 parser = argparse.ArgumentParser(add_help=True)
 # Model params
-parser.add_argument("-m", "--model_id", required=False, default='deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B')
-parser.add_argument("-s", "--save_dir", required=False, default='FQ_emb_head_int8_asym_int4_asym_rank256_gs32_se')
+parser.add_argument("-m", "--model_id", required=False, default="deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B")
+parser.add_argument("-s", "--save_dir", required=False, default="FQ_emb_head_int8_asym_int4_asym_rank256_gs32_se")
 args = parser.parse_args()
 model_id = args.model_id
 
@@ -84,7 +87,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
 if SCALE_ESTIMATION:
     dataset = get_loaders(
-        'wikitext2',
+        "wikitext2",
         nsamples=128,
         seed=42,
         model_path=model_id,
@@ -92,7 +95,7 @@ if SCALE_ESTIMATION:
         use_fast_tokenizer=False,
         trust_remote_code=True,
     )
-    dataset = list(map(lambda x: x.to('cuda'), dataset))
+    dataset = list(map(lambda x: x.to("cuda"), dataset))
 else:
     tokenized_text = tokenizer("example" * 10, return_tensors="pt")
     labels = tokenized_text["input_ids"].cuda()

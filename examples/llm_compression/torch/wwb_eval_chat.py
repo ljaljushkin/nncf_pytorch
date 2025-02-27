@@ -1,4 +1,4 @@
-# Copyright (c) 2024 Intel Corporation
+# Copyright (c) 2025 Intel Corporation
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -13,11 +13,13 @@ import argparse
 import json
 from pathlib import Path
 
-from optimum.exporters.openvino.convert import export_from_model
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+
+# from optimum.exporters.openvino.convert import export_from_model
+from transformers import AutoModelForCausalLM
+from transformers import AutoTokenizer
 from whowhatbench import TextEvaluator
 
-import torch
 from nncf.torch import load_from_config
 from nncf.torch.model_graph_manager import get_module_by_name
 
@@ -39,7 +41,8 @@ model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True,
     torch_dtype=torch.bfloat16,  # TODO: doesn't work with strip
     #   attn_output = torch.nn.functional.scaled_dot_product_attention(
-    #   RuntimeError: Expected query, key, and value to have the same dtype, but got query.dtype: c10::BFloat16 key.dtype: float and value.dtype: float instead.
+    #   RuntimeError: Expected query, key, and value to have the same dtype, but got query.dtype:
+    #  c10::BFloat16 key.dtype: float and value.dtype: float instead.
 ).cuda()
 
 # chat_template = [{"role": "user", "content": "input_text"}]
@@ -48,7 +51,7 @@ wwb_ref = model_dir / "wwb_torch_ref_chat.csv"
 # if wwb_ref.exists():
 #     print("Loading cached WWB reference answers from: ", wwb_ref.resolve())
 wwb_eval = TextEvaluator(
-    tokenizer=tokenizer, gt_data=wwb_ref, test_data=str(wwb_ref), use_chat_template=True, language='en'
+    tokenizer=tokenizer, gt_data=wwb_ref, test_data=str(wwb_ref), use_chat_template=True, language="en"
 )
 # else:
 # wwb_eval = TextEvaluator(
@@ -87,13 +90,14 @@ if float_strip:
     ctx.disable_tracing()
     ctx._post_hooks = {}
     ctx._pre_hooks = {}
-else:
-    from nncf.torch.strip_tuned_lora_model import strip_tuned_lora_model
-    model = strip_tuned_lora_model(model)
-    # ov_dir = nncf_ckpt_dir / 'exported'
-    # ov_dir.mkdir(exist_ok=True, parents=True)
-    # model = model.cpu()  # cuda:0 vs cpu on embedding
-    # export_from_model(model, ov_dir, stateful=False, compression_option="bf16")
+# else:
+# from nncf.torch.strip_tuned_lora_model import strip_tuned_lora_model
+
+# model = strip_tuned_lora_model(model)
+# ov_dir = nncf_ckpt_dir / 'exported'
+# ov_dir.mkdir(exist_ok=True, parents=True)
+# model = model.cpu()  # cuda:0 vs cpu on embedding
+# export_from_model(model, ov_dir, stateful=False, compression_option="bf16")
 
 results_file = nncf_ckpt_dir / "results_wwb_chat.json"
 all_metrics_per_question, all_metrics = wwb_eval.score(model)

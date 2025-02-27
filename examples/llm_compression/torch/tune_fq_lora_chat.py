@@ -1,4 +1,4 @@
-# Copyright (c) 2024 Intel Corporation
+# Copyright (c) 2025 Intel Corporation
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -18,20 +18,23 @@ import shutil
 import subprocess
 import sys
 from collections import OrderedDict
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stderr
+from contextlib import redirect_stdout
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence, Union
 
 import mlflow
 import numpy as np
-import transformers
-from datasets import load_dataset
-from tqdm import tqdm, trange
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-
 import torch
 import torch.nn.functional as F
+import transformers
+from datasets import load_dataset
+from tqdm import tqdm
+from tqdm import trange
+from transformers import AutoConfig
+from transformers import AutoModelForCausalLM
+from transformers import AutoTokenizer
 
 
 def generate_overfit(pipeline, tokenizer, device, prefix=""):
@@ -151,10 +154,11 @@ def get_loaders(
         try:
             data = torch.load(name)[:nsamples]
         except FileNotFoundError:
-            raise FileNotFoundError(
-                f"Failed to load custom data from {name}.",
-                "Check data path or use one of [c4, wikitext2, ptb, pajama, none]",
+            err_msg = (
+                f"Failed to load custom data from {name}. "
+                "Check data path or use one of [c4, wikitext2, ptb, pajama, none]"
             )
+            raise FileNotFoundError(err_msg)
     else:
         tokenizer = AutoTokenizer.from_pretrained(
             model_path, use_fast=use_fast_tokenizer, trust_remote_code=trust_remote_code
@@ -163,10 +167,11 @@ def get_loaders(
         if name.lower() == "wikitext2":
             data = get_wikitext2(nsamples, seqlen, tokenizer, eval_mode=eval_mode)
         else:
-            raise ValueError(
-                f"Failed to load data from {name}.",
+            err_msg = (
+                f"Failed to load data from {name}. "
                 "Check dataset name or path or use one of [c4, wikitext2, ptb, pajama, none]",
             )
+            raise ValueError(err_msg)
 
     if hasattr(data, "input_ids"):
         data = data.input_ids
@@ -433,7 +438,8 @@ def finetune(
             metadata["grad_steps_accumulated"] += 1
 
             if not torch.isfinite(loss).item():
-                raise ValueError(f"Fine-tuning loss is {loss}")
+                err = f"Fine-tuning loss is {loss}"
+                raise ValueError(err)
 
             (loss / grad_accumulation_steps).backward()
 

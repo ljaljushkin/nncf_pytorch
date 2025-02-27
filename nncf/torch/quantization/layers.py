@@ -72,24 +72,19 @@ class QuantizerExportMode(Enum):
     ONNX_QUANTIZE_DEQUANTIZE_PAIRS = "quantize_dequantize"
 
 
-class PTQSpecStateNames:
-    NUM_BITS = "num_bits"
-    MODE = "mode"
-    SIGNED_TO_FORCE = "signedness_to_force"
-    NARROW_RANGE = "narrow_range"
-    HALF_RANGE = "half_range"
-    SCALE_SHAPE = "scale_shape"
-    WEIGHT_SHAPE = "weight_shape"
-    LORA_RANK = "lora_rank"
-    GROUP_SIZE = "group_size"
-    MODULE_NAME = "module_name"
-    LOGARITHM_SCALE = "logarithm_scale"
-    IS_QUANTIZED_ON_EXPORT = "is_quantized_on_export"
-    COMPRESSION_LR_MULTIPLIER = "compression_lr_multiplier"
-
-
 class PTQuantizerSpec(QuantizerSpec):
-    _state_names = PTQSpecStateNames
+    _args = [
+        "num_bits",
+        "mode",
+        "signedness_to_force",
+        "narrow_range",
+        "half_range",
+        "scale_shape",
+        "logarithm_scale",
+        "is_quantized_on_export",
+        "compression_lr_multiplier",
+        "module_name",
+    ]
 
     def __init__(
         self,
@@ -99,12 +94,9 @@ class PTQuantizerSpec(QuantizerSpec):
         narrow_range: bool,
         half_range: bool,
         scale_shape: Tuple[int, ...],
-        weight_shape: Tuple[int, ...],
         logarithm_scale: bool,
         is_quantized_on_export: bool = False,
         compression_lr_multiplier: Optional[float] = None,
-        lora_rank: int = 256,
-        group_size: int = 64,
         module_name: str = "",
     ):
         """
@@ -117,9 +109,6 @@ class PTQuantizerSpec(QuantizerSpec):
         super().__init__(num_bits, mode, signedness_to_force, narrow_range, half_range)
         self.per_channel = scale_shape != (1,)
         self.scale_shape = scale_shape
-        self.weight_shape = weight_shape
-        self.lora_rank = lora_rank
-        self.group_size = group_size
         self.module_name = module_name
         self.logarithm_scale = logarithm_scale
         self.compression_lr_multiplier = compression_lr_multiplier
@@ -132,12 +121,9 @@ class PTQuantizerSpec(QuantizerSpec):
         narrow_range: bool,
         half_range: bool,
         scale_shape: Tuple[int, ...],
-        weight_shape: Tuple[int],
         logarithm_scale: bool,
         is_quantized_on_export: bool,
         compression_lr_multiplier: Optional[float],
-        lora_rank: int,
-        group_size: int,
         module_name: str,
     ) -> "PTQuantizerSpec":
         return cls(
@@ -147,12 +133,9 @@ class PTQuantizerSpec(QuantizerSpec):
             narrow_range,
             half_range,
             scale_shape,
-            weight_shape,
             logarithm_scale,
             is_quantized_on_export,
             compression_lr_multiplier,
-            lora_rank,
-            group_size,
             module_name,
         )
 
@@ -160,45 +143,62 @@ class PTQuantizerSpec(QuantizerSpec):
         return self.__dict__ == other.__dict__
 
     @classmethod
-    def from_state(cls, state: Dict[str, Any]) -> "PTQuantizationPoint":
+    def from_state(cls, state: Dict[str, Any]) -> "PTQuantizerSpec":
         """
         Creates the object from its state.
 
         :param state: Output of `get_state()` method.
         """
-        kwargs = {
-            cls._state_names.NUM_BITS: state["num_bits"],
-            cls._state_names.MODE: state["mode"],
-            cls._state_names.SIGNED_TO_FORCE: state["signedness_to_force"],
-            cls._state_names.NARROW_RANGE: state["narrow_range"],
-            cls._state_names.HALF_RANGE: state["half_range"],
-            cls._state_names.SCALE_SHAPE: state["scale_shape"],
-            cls._state_names.WEIGHT_SHAPE: state["weight_shape"],
-            cls._state_names.LORA_RANK: state["lora_rank"],
-            cls._state_names.GROUP_SIZE: state["group_size"],
-            cls._state_names.MODULE_NAME: state["module_name"],
-            cls._state_names.LOGARITHM_SCALE: state["logarithm_scale"],
-            cls._state_names.IS_QUANTIZED_ON_EXPORT: state["is_quantized_on_export"],
-            cls._state_names.COMPRESSION_LR_MULTIPLIER: state["compression_lr_multiplier"],
-        }
+        kwargs = {arg: state[arg] for arg in cls._args}
         return cls(**kwargs)
 
     def get_state(self):
-        return {
-            self._state_names.NUM_BITS: self.num_bits,
-            self._state_names.MODE: self.mode,
-            self._state_names.SIGNED_TO_FORCE: self.signedness_to_force,
-            self._state_names.NARROW_RANGE: self.narrow_range,
-            self._state_names.HALF_RANGE: self.half_range,
-            self._state_names.SCALE_SHAPE: self.scale_shape,
-            self._state_names.WEIGHT_SHAPE: self.weight_shape,
-            self._state_names.LORA_RANK: self.lora_rank,
-            self._state_names.GROUP_SIZE: self.group_size,
-            self._state_names.MODULE_NAME: self.module_name,
-            self._state_names.LOGARITHM_SCALE: self.logarithm_scale,
-            self._state_names.IS_QUANTIZED_ON_EXPORT: self.is_quantized_on_export,
-            self._state_names.COMPRESSION_LR_MULTIPLIER: self.compression_lr_multiplier,
-        }
+        return {arg: getattr(self, arg) for arg in self._args}
+
+
+class PTLoRAQuantizerSpec(PTQuantizerSpec):
+    _vars = ["lora_rank", "orig_weight_shape", "weight_shape"]
+
+    def __init__(
+        self,
+        lora_rank: int,
+        orig_weight_shape: List[int],
+        weight_shape: List[int],
+        num_bits: int,
+        mode: QuantizationMode,
+        signedness_to_force: Optional[bool],
+        narrow_range: bool,
+        half_range: bool,
+        scale_shape: Tuple[int, ...],
+        logarithm_scale: bool,
+        is_quantized_on_export: bool = False,
+        compression_lr_multiplier: Optional[float] = None,
+        module_name: str = "",
+    ):
+        super().__init__(
+            num_bits,
+            mode,
+            signedness_to_force,
+            narrow_range,
+            half_range,
+            scale_shape,
+            logarithm_scale,
+            is_quantized_on_export,
+            compression_lr_multiplier,
+            module_name,
+        )
+        self.lora_rank = lora_rank
+        self.orig_weight_shape = orig_weight_shape
+        self.weight_shape = weight_shape
+
+    @classmethod
+    def from_state(cls, state: Dict[str, Any]) -> "PTLoRAQuantizerSpec":
+        return cls(**state)
+
+    def get_state(self):
+        state = super(PTQuantizerSpec, self).get_state()
+        state.update({arg: getattr(self, arg) for arg in self._args})
+        return state
 
 
 class PTQPointStateNames:
@@ -320,14 +320,9 @@ class PTQuantizerSetup(QuantizerSetupBase):
 
 
 class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
-    LORA_A_NAME = "lora_A"
-    LORA_B_NAME = "lora_B"
-
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__()
         self._qspec = qspec
-        self.lora_rank = self._qspec.lora_rank
-        self.group_size = self._qspec.group_size
         self.module_name = self._qspec.module_name
         self._narrow_range = qspec.narrow_range
         self._signedness_to_force = qspec.signedness_to_force
@@ -339,26 +334,6 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
             requires_grad=False,
             compression_lr_multiplier=qspec.compression_lr_multiplier,
         )
-        # ################################## LORA START ########################################
-        if not self._qspec.weight_shape:
-            nncf_logger.warning("Quantizing activation!")
-        # TODO: support group-wise and LoRA adappters as subclass
-        # elif len(self._qspec.weight_shape) != 2:
-        #     nncf_logger.warning(f"Not 2D weights are not supported for FQ: weight shapes={self._qspec.weight_shape}")
-        else:
-            if self.group_size == -1:
-                out_features, in_features = self._qspec.weight_shape
-            else:
-                out_features, in_gs, group_size = self._qspec.weight_shape
-                in_features = in_gs * group_size
-                self._flat_shape = [out_features * in_gs, group_size]
-            self._lora_A = torch.nn.Parameter(
-                torch.ones((self.lora_rank, in_features), dtype=torch.bfloat16), requires_grad=True
-            )
-            self._lora_B = torch.nn.Parameter(
-                torch.zeros((out_features, self.lora_rank), dtype=torch.bfloat16), requires_grad=True
-            )
-        # ################################## LORA END ########################################
         OPTIONAL_PARAMETERS_REGISTRY.register("_num_bits")
 
         # These must be made buffers, since they impact the "forward" behaviour and the model can be used
@@ -477,10 +452,7 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
         self.call_count = 0
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
-        return {
-            self.LORA_A_NAME: self._lora_A,
-            self.LORA_B_NAME: self._lora_B,
-        }
+        return {}
 
     def apply_minmax_init(self, min_values: torch.Tensor, max_values: torch.Tensor, log_module_name: str = None):
         """min_values and max_values must have the same shape as specified in self.scale_shape"""
@@ -800,28 +772,26 @@ class SymmetricQuantizer(BaseQuantizer):
         self.set_levels()
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
-        device = x.device
-        self.to(device)
-        fq_weight = sym_fq_lora(
-            x,
-            self._qspec.weight_shape,
-            self._lora_A,
-            self._lora_B,
-            self.scale,
-            self.level_low,
-            self.level_high,
-            self.levels,
-            self.eps,
-        )
-        return fq_weight
-        # return symmetric_quantize(
-        #     x, self.levels, self.level_low, self.level_high, self.scale, self.eps, skip=execute_traced_op_as_identity
+        # device = x.device
+        # self.to(device)
+        # fq_weight = sym_fq_lora(
+        #     x,
+        #     self._qspec.weight_shape,
+        #     self._lora_A,
+        #     self._lora_B,
+        #     self.scale,
+        #     self.level_low,
+        #     self.level_high,
+        #     self.levels,
+        #     self.eps,
         # )
+        # return fq_weight
+        return symmetric_quantize(
+            x, self.levels, self.level_low, self.level_high, self.scale, self.eps, skip=execute_traced_op_as_identity
+        )
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
-        params = super().get_trainable_params()
-        params.update({self.SCALE_PARAM_NAME: self.scale})
-        return params
+        return {self.SCALE_PARAM_NAME: self.scale}
 
     def _apply_minmax_init(self, min_values, max_values, log_module_name: str = None):
         sign = torch.any(torch.lt(min_values, 0))
@@ -955,16 +925,12 @@ def common_backward(input_, output, input_low, input_range, grad_output, group_s
 class FQLoRA_asym(torch.autograd.Function):
     @staticmethod
     def forward(ctx, W, group_shape, A, B, input_low_, input_range_, level_low, level_high, levels):
-        # torch.cuda.nvtx.range_push("forward_torch")
         original_shape = W.shape
 
         input_low = input_low_.type(torch.bfloat16)
         input_range = input_range_.type(torch.bfloat16)
 
         input_ = W + B @ A
-        # print('X weight:' ,torch.linalg.norm(input_).item())
-        # print('IL:' ,torch.linalg.norm(input_low).item())
-        # print('IR:' ,torch.linalg.norm(input_range).item())
         input_ = input_.reshape(group_shape)  # NOTE: careful with what you reshape here!
 
         output = common_forward(input_, input_low, input_range, levels)
@@ -977,13 +943,10 @@ class FQLoRA_asym(torch.autograd.Function):
         ctx.group_shape = group_shape
 
         output = output.reshape(original_shape)
-        # print('FQ weight:' ,torch.linalg.norm(output).item())
-        # torch.cuda.nvtx.range_pop()
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
-        # torch.cuda.nvtx.range_push("backward_torch")
         A, B, input_, output, input_low, input_range = ctx.saved_tensors
 
         grad_A = B.t() @ grad_output  # Gradient of the loss w.r.t. A
@@ -996,7 +959,6 @@ class FQLoRA_asym(torch.autograd.Function):
         grad_input, grad_low, grad_range = common_backward(
             input_, output, input_low, input_range, grad_output, group_shape, level_low, level_high
         )
-        # torch.cuda.nvtx.range_pop()
         #      W,    group_shape,   A,      B,      input_low, input_range, level_low, level_high, levels
         return grad_input, None, grad_A, grad_B, grad_low.float(), grad_range.float(), None, None, None
 
@@ -1055,11 +1017,8 @@ class FQLoRA_sym(torch.autograd.Function):
 
 @register_operator()
 def asym_fq_lora(x, group_shape, A, B, input_low_, input_range_, level_low, level_high, levels, eps):
-    # print('Torch impl')
     input_range_safe = abs(input_range_) + eps
     input_low, input_range = TuneRange.apply(input_low_, input_range_safe, levels)
-    # print('IL after tune:' ,torch.linalg.norm(input_low.data).item())
-    # print('IR after tune:' ,torch.linalg.norm(input_range.data).item())
     fq_weight = FQLoRA_asym.apply(
         x,
         group_shape,
@@ -1105,15 +1064,13 @@ class AsymmetricQuantizer(BaseQuantizer):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__(qspec)
         self.input_low = CompressionParameter(
-            torch.zeros(self.scale_shape, dtype=torch.float32),
-            requires_grad=True,
-            compression_lr_multiplier=qspec.compression_lr_multiplier,
+            torch.zeros(self.scale_shape), requires_grad=True, compression_lr_multiplier=qspec.compression_lr_multiplier
         )
         setattr(
             self,
             self._INPUT_RANGE_PARAM_STORAGE_ATTR,
             CompressionParameter(
-                torch.ones(self.scale_shape, dtype=torch.float32),
+                torch.ones(self.scale_shape),
                 requires_grad=True,
                 compression_lr_multiplier=qspec.compression_lr_multiplier,
             ),
@@ -1141,7 +1098,6 @@ class AsymmetricQuantizer(BaseQuantizer):
                 use_log_storage_in_module=self._is_using_log_scale_storage,
             )
         )
-        # print("Create FQ with gs={} and lora_rank={}".format(self.group_size, self.lora_rank))
 
     @property
     def input_range(self):
@@ -1167,7 +1123,6 @@ class AsymmetricQuantizer(BaseQuantizer):
             super().__setattr__(key, value)
 
     def enable_gradients(self):
-        super().enable_gradients()
         self.input_low.requires_grad = True
         self._input_range_param_storage.requires_grad = True
 
@@ -1184,51 +1139,22 @@ class AsymmetricQuantizer(BaseQuantizer):
         self.level_low, self.level_high = calculate_asymmetric_level_ranges(self.num_bits - scaled_num_bits)
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
-        # torch.cuda.nvtx.range_push("quantize")
-        torch_impl = True
-        device = x.device
-        self.to(device)
-        if torch_impl:
-            fq_weight = asym_fq_lora(
-                x,
-                self._qspec.weight_shape,
-                self._lora_A,
-                self._lora_B,
-                self.input_low,
-                self.input_range,
-                self.level_low,
-                self.level_high,
-                self.levels,
-                self.eps,
-            )
-        else:
-            original_shape = x.shape
-            if self.num_bits == 4:
-                x = x + self._lora_B @ self._lora_A
-                x = x.reshape(self._flat_shape)
-            fq_weight = asymmetric_quantize(
-                x,
-                self.levels,
-                self.level_low,
-                self.level_high,
-                self.input_low,
-                self.input_range,
-                self.eps,
-                skip=execute_traced_op_as_identity,
-            )
-            fq_weight = fq_weight.reshape(original_shape)
-        # torch.cuda.nvtx.range_pop()
-        return fq_weight
+        return asymmetric_quantize(
+            x,
+            self.levels,
+            self.level_low,
+            self.level_high,
+            self.input_low,
+            self.input_range,
+            self.eps,
+            skip=execute_traced_op_as_identity,
+        )
 
     def get_trainable_params(self) -> Dict[str, torch.Tensor]:
-        params = super().get_trainable_params()
-        params.update(
-            {
-                self.INPUT_LOW_PARAM_NAME: self.input_low,
-                self.INPUT_RANGE_PARAM_NAME: self.input_range,
-            }
-        )
-        return params
+        return {
+            self.INPUT_LOW_PARAM_NAME: self.input_low,
+            self.INPUT_RANGE_PARAM_NAME: self.input_range,
+        }
 
     def _apply_minmax_init(self, min_values, max_values, log_module_name: str = None):
         ranges = max_values - min_values
@@ -1313,6 +1239,77 @@ class AsymmetricQuantizer(BaseQuantizer):
             signedness_to_force=self.signed,
             per_channel=self.per_channel,
         )
+
+
+class LoraMixin:
+    LORA_A_PARAM_NAME = "lora_A"
+    LORA_B_PARAM_NAME = "lora_B"
+
+    # TODO: e2e test - 1 epoch of 1.7B and WWB?
+    # TODO: more granular test for quantizer - check that float32 gradient, internal calculations in fp16 of bf16
+    # TODO: extend kernel test for LoRA. initialize lora somehow and check it produces exactly the same as reference??
+    # TODO: check asym/sym, group/channel
+    def __init__(self, lora_rank: int, orig_weight_shape: List[int], weight_shape: List[int]):
+        self.lora_rank = lora_rank
+        self.weight_shape = weight_shape
+        out_features, in_features = orig_weight_shape
+        self._lora_A = torch.nn.Parameter(
+            torch.ones((self.lora_rank, in_features), dtype=torch.bfloat16), requires_grad=True
+        )
+        self._lora_B = torch.nn.Parameter(
+            torch.zeros((out_features, self.lora_rank), dtype=torch.bfloat16), requires_grad=True
+        )
+
+    def enable_gradients(self):
+        self._lora_A.requires_grad = True
+        self._lora_B.requires_grad = True
+
+    @abstractmethod
+    def disable_gradients(self):
+        self._lora_A.requires_grad = False
+        self._lora_B.requires_grad = False
+
+    def get_trainable_params(self) -> Dict[str, torch.Tensor]:
+        return {
+            self.LORA_A_NAME: self._lora_A,
+            self.LORA_B_NAME: self._lora_B,
+        }
+
+
+@QUANTIZATION_MODULES.register(QuantizationMode.ASYMMETRIC_LORA)
+class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
+    def __init__(self, qspec: PTLoRAQuantizerSpec):
+        super(AsymmetricQuantizer, self).__init__(qspec)
+        super().__init__(qspec.lora_rank, qspec.orig_weight_shape, qspec.weight_shape)
+
+    def quantize(self, x, execute_traced_op_as_identity: bool = False):
+        device = x.device
+        self.to(device)
+        return asym_fq_lora(
+            x,
+            self.weight_shape,
+            self._lora_A,
+            self._lora_B,
+            self.input_low,
+            self.input_range,
+            self.level_low,
+            self.level_high,
+            self.levels,
+            self.eps,
+        )
+
+    def enable_gradients(self) -> Dict[str, torch.Tensor]:
+        super().enable_gradients()
+        super(AsymmetricQuantizer, self).enable_gradients()
+
+    def disable_gradients(self) -> Dict[str, torch.Tensor]:
+        super().disable_gradients()
+        super(AsymmetricQuantizer, self).disable_gradients()
+
+    def get_trainable_params(self) -> Dict[str, torch.Tensor]:
+        params = super().get_trainable_params()
+        params.update(super(AsymmetricQuantizer, self).get_trainable_params())
+        return params
 
 
 def get_per_channel_scale_shape(input_shape, is_weights, channel_idx: Optional[int] = None) -> List[int]:
