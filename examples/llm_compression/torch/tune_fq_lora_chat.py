@@ -694,12 +694,12 @@ def main(argv):
             mlflow.set_experiment("Tune FQLoRA")
 
         init_ppl, init_smlr = None, None
-        # init_smlr = wwb_eval(args.base_model, Path(args.nncf_ckpt_dir), f)
-        # print("similarity for int4 init=", init_smlr)
-        # init_ppl = eval_on_wikitext(
-        #     args.base_model, Path(args.nncf_ckpt_dir), f, args.eval_model_seqlen, args.finetune_dtype
-        # )
-        # print("word ppl for int4 init=", init_ppl)
+        init_smlr = wwb_eval(args.base_model, Path(args.nncf_ckpt_dir), f)
+        print("similarity for int4 init=", init_smlr)
+        init_ppl = eval_on_wikitext(
+            args.base_model, Path(args.nncf_ckpt_dir), f, args.eval_model_seqlen, args.finetune_dtype
+        )
+        print("word ppl for int4 init=", init_ppl)
 
         # get data
         train_dataloader = get_loaders(

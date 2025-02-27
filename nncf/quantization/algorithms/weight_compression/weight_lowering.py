@@ -22,8 +22,7 @@ from nncf.quantization.algorithms.weight_compression.config import WeightCompres
 from nncf.quantization.fake_quantize import calculate_scale_zero_point
 from nncf.tensor import Tensor
 from nncf.tensor import functions as fns
-from nncf.tensor.definitions import TensorBackend
-from nncf.tensor.definitions import TensorDataType
+from nncf.tensor.definitions import TensorBackend, TensorDataType
 
 ReductionAxes = Union[int, Tuple[int, ...]]
 
@@ -149,13 +148,13 @@ def calculate_signed_scale(weight: Tensor, reduction_axes: ReductionAxes, num_bi
     :param num_bits: number of bits in compression.
     :return: Scale tensor.
     """
-    level_high = 2 ** (num_bits - 1)
+    factor = 2 ** (num_bits - 1)
 
     w_abs_min = fns.abs(fns.min(weight, axis=reduction_axes, keepdims=True))
     w_max = fns.max(weight, axis=reduction_axes, keepdims=True)
 
     scale = fns.where(w_abs_min >= w_max, w_abs_min, -w_max)
-    scale /= level_high
+    scale /= factor
 
     eps = fns.finfo(scale).eps
     scale = fns.where(fns.abs(scale) < eps, eps, scale)

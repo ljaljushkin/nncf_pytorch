@@ -75,6 +75,7 @@ class PTQuantizerSpec(QuantizerSpec):
         "logarithm_scale",
         "is_quantized_on_export",
         "compression_lr_multiplier",
+        # TODO: to delete after re-implementing float strip
         "module_name",
     ]
 
@@ -942,15 +943,10 @@ class FQLoRA_asym(torch.autograd.Function):
 class FQLoRA_sym(torch.autograd.Function):
     @staticmethod
     def forward(ctx, W, group_shape, A, B, scale, level_low, level_high, levels):
-        signed_scale = True
         ll_lh = level_low / level_high
-        if signed_scale and level_low != 0:
-            # range: [-s, 7/8s] if s>0 else [7/8s,-s]
-            input_low = torch.where(scale > 0, -scale, -scale / ll_lh)
-            input_range = torch.abs((2 + 1 / level_low) * scale)  # 15/8s or (2-1/8)s
-        else:
-            input_low = scale * ll_lh
-            input_range = scale - input_low
+        # range: [-s, 7/8s] if s>0 else [7/8s,-s]
+        input_low = torch.where(scale > 0, -scale, -scale / ll_lh)
+        input_range = torch.abs((2 + 1 / level_low) * scale)  # 15/8s or (2-1/8)s
 
         original_shape = W.shape
 
@@ -993,7 +989,7 @@ class FQLoRA_sym(torch.autograd.Function):
 
 @register_operator()
 def asym_fq_lora(x, group_shape, A, B, input_low_, input_range_, level_low, level_high, levels, eps):
-    input_range_safe = abs(input_range_) + eps
+    input_range_safe = torch.where(torch.abs(input_range_) < eps, eps, input_range_)
     input_low, input_range = TuneRange.apply(input_low_, input_range_safe, levels)
     fq_weight = FQLoRA_asym.apply(
         x,
@@ -1011,12 +1007,7 @@ def asym_fq_lora(x, group_shape, A, B, input_low_, input_range_, level_low, leve
 
 @register_operator()
 def sym_fq_lora(x, group_shape, A, B, scale, level_low, level_high, levels, eps):
-    signed_scale = True
-    if signed_scale and level_low != 0:
-        scale_safe = torch.where(torch.abs(scale) < eps, eps, scale)
-    else:
-        scale_safe = abs(scale) + eps
-
+    scale_safe = torch.where(torch.abs(scale) < eps, eps, scale)
     fq_weight = FQLoRA_sym.apply(
         x,
         group_shape,

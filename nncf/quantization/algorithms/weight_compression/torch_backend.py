@@ -45,7 +45,7 @@ from nncf.quantization.algorithms.weight_compression.backend import (
 )
 from nncf.quantization.algorithms.weight_compression.config import WeightCompressionParameters
 from nncf.quantization.algorithms.weight_compression.lora_correction import LoraCorrectionAlgorithm
-from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight
+from nncf.quantization.algorithms.weight_compression.weight_lowering import compress_weight, do_int_dequantization
 from nncf.tensor import Tensor
 from nncf.tensor.definitions import TensorDataType
 from nncf.torch.dynamic_graph.scope import Scope
@@ -222,7 +222,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         pass
 
     @staticmethod
-    def init_lora_adapters(svd_residual, reduction_axes=None, rank=None):
+    def init_lora_adapters(svd_residual, rank=None):
         # O stands for output dimension, H - input dimension or hidden size, R - rank.
         U_full, S_full, V_full = torch.linalg.svd(svd_residual, full_matrices=False)
         U = U_full[:, :rank]  # [H, R]
@@ -244,50 +244,32 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         return filter_func
 
+    # TODO: reduce number of params
     @staticmethod
     def add_fq_lora_transformation(
+        compressed_weight,
         transformation_layout,
-        weight,
         wc_params,
         compression_config,
-        precomputed_scales,
-        precomputed_zero_points,
+        orig_weight_shape,
         weight_name,
         weight_node,
     ):
-        orig_weight_shape = weight_shape = list(weight.shape)
-        scale_shape = weight_shape.copy()
-        scale_shape[wc_params.reduction_axes[0]] = 1
-
-        schema = QuantizationScheme.SYMMETRIC_LORA
-        if compression_config.mode in [CompressWeightsMode.INT4_ASYM, CompressWeightsMode.INT8_ASYM]:
-            schema = QuantizationScheme.ASYMMETRIC_LORA
+        mode_vs_schema_map = {
+            CompressWeightsMode.INT4_ASYM: QuantizationScheme.ASYMMETRIC_LORA,
+            CompressWeightsMode.INT4_SYM: QuantizationScheme.SYMMETRIC_LORA,
+            CompressWeightsMode.INT8_ASYM: QuantizationScheme.ASYMMETRIC,
+            CompressWeightsMode.INT8_SYM: QuantizationScheme.SYMMETRIC,
+        }
+        schema = mode_vs_schema_map[compression_config.mode]
 
         lora_rank = 256
-        group_size = compression_config.group_size
-        out_features, in_features = orig_weight_shape
-        group_reduction_axes = wc_params.reduction_axes[0]
-        if compression_config.num_bits == 4 and group_size > 0:
-            group_reduction_axes = 2
-            weight_shape = [out_features, in_features // group_size, group_size]
-            scale_group_shape = [out_features, in_features // group_size, 1]
-            scale_shape = scale_group_shape
+        device = compressed_weight.tensor.data.device
+        scale = compressed_weight.scale.data
+        zero_point = compressed_weight.zero_point.data
+        weight_shape = compressed_weight.tensor.shape
 
-        reshaped_weight = weight.reshape(weight_shape)
-        precomputed_scale = precomputed_scales.get(wc_params.weight_name)
-        precomputed_zp = precomputed_zero_points.get(wc_params.weight_name)
-        if precomputed_scale is not None and compression_config.num_bits == 4:
-            # zp = round(-il / s)
-            # s =  input_range / (levels - 1)
-            input_low = (-precomputed_zp * precomputed_scale).data.float()
-            input_range = (precomputed_scale * 15).data.float()
-        else:
-            # Group-wise:  Weight [a1, r, a2] -> Scale [a1, 1, a2]
-            # Per-channel: Weight [a1, a2]    -> Scale [a1, 1]
-            input_low = torch.amin(reshaped_weight, dim=group_reduction_axes, keepdim=True).float()
-            input_high = torch.amax(reshaped_weight, dim=group_reduction_axes, keepdim=True).float()
-            input_range = input_high - input_low
-
+        # TODO: remove module_name! use for FLOAT strip: layer = get_module_by_name(quantizer.module_name, model)
         module_name, _ = split_const_name(weight_name)
         quantizer_spec = PTLoRAQuantizerSpec(
             lora_rank=lora_rank,
@@ -298,64 +280,35 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             signedness_to_force=True,
             narrow_range=False,
             half_range=False,
-            scale_shape=scale_shape,
+            scale_shape=scale.shape,
             logarithm_scale=False,
             module_name=module_name,
         )
 
         quantizer_cls = QUANTIZATION_MODULES.get(schema)
         quantizer = quantizer_cls(quantizer_spec)
+        levels = quantizer.levels
 
-        if schema == QuantizationScheme.ASYMMETRIC_LORA:
-            quantizer.input_low = torch.nn.Parameter(input_low.reshape(scale_shape))
-            # Subtract eps from the input_range to make quantizer parameters equal to
-            # original parameters on the forward call.
-            quantizer.input_range = torch.nn.Parameter(input_range.reshape(scale_shape) - quantizer.eps)
+        if schema in [QuantizationScheme.ASYMMETRIC_LORA, QuantizationScheme.ASYMMETRIC]:
+            dtype = quantizer.input_low.dtype
+            # NOTE: loose some accuracy, because of invertion of round
+            input_low = -zero_point * scale
+            input_range = scale * (levels - 1)
+            quantizer.input_low = torch.nn.Parameter(input_low.type(dtype))
+            quantizer.input_range = torch.nn.Parameter(input_range.type(dtype))
         else:
-            signed_scale = True
-            quantizer.signed = bool(torch.any(input_low.data < 0))
-            quantizer.set_levels()
-            ll_lh = quantizer.level_low / quantizer.level_high
-            if signed_scale:
-                w_abs_min = torch.abs(input_low)
-                w_max = input_high
-                scale = torch.where(w_abs_min >= w_max, w_abs_min, -w_max)
-                eps = quantizer.eps
-                scale = quantizer.scale = torch.nn.Parameter(torch.where(torch.abs(scale) < eps, eps, scale))
-                # range: [-s, 7/8s] if s>0 else [7/8s,-s]
-                input_low = torch.where(scale > 0, -scale, -scale / ll_lh)
-                input_range = torch.abs((2 + 1 / quantizer.level_low) * scale)  # 15/8s or (2-1/8)s
-                quantizer.scale = torch.nn.Parameter(torch.where(torch.abs(scale) < eps, eps, scale))
-            else:
-                quantizer.scale = torch.nn.Parameter(input_high.data - quantizer.eps)
-                input_low = quantizer.scale * ll_lh
-                input_range = quantizer.scale - input_low
-        quantizer.to(weight.device)
+            scale = scale.type(quantizer.scale.dtype)
+            quantizer.scale = torch.nn.Parameter(scale * levels / 2)
 
-        if compression_config.num_bits == 4:
-            quantizer._lora_A = torch.nn.Parameter(quantizer._lora_A.type(dtype=weight.dtype))
-            quantizer._lora_B = torch.nn.Parameter(quantizer._lora_B.type(dtype=weight.dtype))
 
-            weight = reshaped_weight.reshape(orig_weight_shape)
-            fq_weight = quantizer.quantize(weight)
-            print("quant noise before SVD={:.2f}".format(torch.linalg.norm(fq_weight - weight, ord="fro").item()))
-            svd_residual = (torch.rand(weight_shape, dtype=weight.dtype).to(weight.device) / 100) * input_range / 15
-            svd_residual = svd_residual.reshape(orig_weight_shape)
-            svd_residual = svd_residual.type(
-                torch.float32
-            )  # otherwise "svd_cuda_gesvdj" not implemented for 'BFloat16'
-            B, A = PTWeightCompressionAlgoBackend.init_lora_adapters(svd_residual, rank=quantizer.lora_rank)
-            quantizer._lora_A = torch.nn.Parameter(A.type(dtype=weight.dtype))
-            quantizer._lora_B = torch.nn.Parameter(B.type(dtype=weight.dtype))
-            fq_weight = quantizer.quantize(weight)
-            print("quant noise right after SVD={:.2f}".format(torch.linalg.norm(fq_weight - weight, ord="fro").item()))
 
         node_name = weight_node.node_name
         fq_node_name = wc_params.node_with_weight.node_name
         # TODO: why not wc_params.weight_port_id)???
-        #  because post hook for constant??
+        # TODO: why input_port_id=1 because post hook for constant??
         target_point = PTTargetPoint(TargetType.OPERATION_WITH_WEIGHTS, fq_node_name, input_port_id=1)
-        storage_key = "FQ_LORA_for_node_{}".format(node_name.replace(".", "_"))
+        print(f'wc_params.weight_port_id={wc_params.weight_port_id}')
+        storage_key = "FQ_LORA_{}".format(node_name.replace(".", "_"))
 
         transformation_layout.register(
             PTSharedFnInsertionCommand(
@@ -484,12 +437,11 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             if fq_lora:
                 # TODO: reuse compression params
                 self.add_fq_lora_transformation(
+                    compressed_weight,
                     transformation_layout,
-                    weight,
                     wc_params,
                     compression_config,
-                    precomputed_scales,
-                    precomputed_zero_points,
+                    weight.shape,
                     weight_name,
                     weight_node,
                 )
