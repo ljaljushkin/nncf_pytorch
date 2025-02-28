@@ -438,7 +438,7 @@ def power(a: Tensor, exponent: Union[Tensor, float]) -> Tensor:
     """
     Takes the power of each element in input with exponent and returns a tensor with the result.
     Exponent can be either a single float number or a broadcastable Tensor. In case exponent is
-    a brodcastable tensor, the exponent is being broadcasted and the return tensor contains
+    a broadcastable tensor, the exponent is being broadcasted and the return tensor contains
     the power of each element in input with exponent elementwise.
 
     :param a: Input data.
@@ -935,8 +935,11 @@ def tensor(
 @tensor_guard
 def as_numpy_tensor(a: Tensor) -> Tensor:
     """
-    Change backend of the tensor to numpy. Leads to data copying when tensor data type is bf16, u4 or i4. Otherwise,
-    there is no data copying.
+    Convert tensor to numpy.
+    In certain cases, this conversion may involve data copying, depending on the
+    data type or device. Specifically:
+      - OV: if tensors data type is bf16, u4 or i4.
+      - PT: if tensors on the GPU or data type is not supported on Numpy.
 
     :param a: Tensor to change backend for.
     :return: Tensor in numpy backend.

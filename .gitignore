@@ -127,7 +127,9 @@ examples/**/statistics
 examples/**/runs
 examples/**/results
 examples/**/metrics.json
+examples/**/mlruns
 datasets/**
+
 
 # Tests
 tests/**/runs/**
@@ -136,6 +138,4 @@ open_model_zoo/
 nncf-tests.xml
 compressed_graph.dot
 original_graph.dot
-# MLFlow logs
-mlruns
-env*
+tests/post_training/**/*memory_logs

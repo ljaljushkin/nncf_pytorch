@@ -398,7 +398,7 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
     def forward(self, x: Union[torch.Tensor, tuple]):
         """
         Method that unwraps return types if it is needed
-        before acutal quantization forward impl
+        before actual quantization forward impl
         """
         x_unwrapped = maybe_get_values_from_torch_return_type(x)
         result = self._forward_impl(x_unwrapped)
@@ -461,9 +461,11 @@ class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
 
     @abstractmethod
     def set_levels(self):
-        """Must set the self._level_low and self._level_high buffers according to the current quantizer state
+        """
+        Must set the self._level_low and self._level_high buffers according to the current quantizer state
         and type, and called whenever the state of the quantizer is updated in a way that affects the effective level
-        ranges."""
+        ranges.
+        """
 
     @property
     def is_half_range(self):
