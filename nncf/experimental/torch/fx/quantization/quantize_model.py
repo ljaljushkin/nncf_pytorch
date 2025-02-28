@@ -31,6 +31,7 @@ from nncf.experimental.torch.fx.transformations import apply_quantization_transf
 from nncf.experimental.torch.fx.transformations import compress_post_quantize_transformation
 from nncf.experimental.torch.fx.transformations import fq_weights_transformation
 from nncf.parameters import BackupMode
+from nncf.parameters import CompressionFormat
 from nncf.parameters import CompressWeightsMode
 from nncf.parameters import ModelType
 from nncf.parameters import QuantizationMode
@@ -132,6 +133,7 @@ def compress_weights_impl(
     gptq: bool,
     lora_correction: bool,
     backup_mode: BackupMode,
+    compression_format: CompressionFormat,
     advanced_parameters: Optional[AdvancedCompressionParameters] = None,
 ) -> torch.fx.GraphModule:
     """
@@ -150,6 +152,7 @@ def compress_weights_impl(
         gptq,
         lora_correction,
         backup_mode,
+        compression_format,
         advanced_parameters,
     )
     graph = NNCFGraphFactory.create(model)

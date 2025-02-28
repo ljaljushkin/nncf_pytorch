@@ -1,0 +1,14 @@
+# -c ../../../constraints.txt
+torch==2.4.0
+datasets==3.1.0
+mlflow
+tqdm
+numpy>=1.26.4
+transformers>=4.46.3
+# for evaluation on wikitext and other benchmarks
+lm_eval@git+https://github.com/ljaljushkin/lm-evaluation-harness.git@4eed2d84cc30a36aa41b0a1ef8481e69b333add8
+# for evaluation on WhoWhatBenchmark with chat template
+# whowhatbench@git+https://github.com/ljaljushkin/openvino.genai.git@bab575259dcb917e7dacb0b260ee5bcae199d860#subdirectory=tools/who_what_benchmark
+# TODO: need a small fix for launching on cuda
+whowhatbench@git+https://github.com/openvinotoolkit/openvino.genai.git@2025.0.0.0#subdirectory=tools/who_what_benchmark
+# openvino.genai==2024.5.0.0
