@@ -18,20 +18,23 @@ import shutil
 import subprocess
 import sys
 from collections import OrderedDict
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stderr
+from contextlib import redirect_stdout
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence, Union
 
 import mlflow
 import numpy as np
-import transformers
-from datasets import load_dataset
-from tqdm import tqdm, trange
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-
 import torch
 import torch.nn.functional as F
+import transformers
+from datasets import load_dataset
+from tqdm import tqdm
+from tqdm import trange
+from transformers import AutoConfig
+from transformers import AutoModelForCausalLM
+from transformers import AutoTokenizer
 
 
 def generate_overfit(pipeline, tokenizer, device, prefix=""):
@@ -694,12 +697,12 @@ def main(argv):
             mlflow.set_experiment("Tune FQLoRA")
 
         init_ppl, init_smlr = None, None
-        # init_smlr = wwb_eval(args.base_model, Path(args.nncf_ckpt_dir), f)
-        # print("similarity for int4 init=", init_smlr)
-        # init_ppl = eval_on_wikitext(
-        #     args.base_model, Path(args.nncf_ckpt_dir), f, args.eval_model_seqlen, args.finetune_dtype
-        # )
-        # print("word ppl for int4 init=", init_ppl)
+        init_smlr = wwb_eval(args.base_model, Path(args.nncf_ckpt_dir), f)
+        print("similarity for int4 init=", init_smlr)
+        init_ppl = eval_on_wikitext(
+            args.base_model, Path(args.nncf_ckpt_dir), f, args.eval_model_seqlen, args.finetune_dtype
+        )
+        print("word ppl for int4 init=", init_ppl)
 
         # get data
         train_dataloader = get_loaders(

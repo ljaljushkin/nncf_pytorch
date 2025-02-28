@@ -13,13 +13,17 @@ import argparse
 import json
 from pathlib import Path
 
+import torch
+
 # from optimum.exporters.openvino.convert import export_from_model
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM
+from transformers import AutoTokenizer
 from whowhatbench import TextEvaluator
 
-import torch
 from nncf.torch import load_from_config
-from nncf.torch.model_graph_manager import get_const_node, get_module_by_name, split_const_name
+from nncf.torch.model_graph_manager import get_const_node
+from nncf.torch.model_graph_manager import get_module_by_name
+from nncf.torch.model_graph_manager import split_const_name
 
 parser = argparse.ArgumentParser(add_help=True)
 # Model params

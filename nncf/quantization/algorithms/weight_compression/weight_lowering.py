@@ -22,7 +22,8 @@ from nncf.quantization.algorithms.weight_compression.config import WeightCompres
 from nncf.quantization.fake_quantize import calculate_scale_zero_point
 from nncf.tensor import Tensor
 from nncf.tensor import functions as fns
-from nncf.tensor.definitions import TensorBackend, TensorDataType
+from nncf.tensor.definitions import TensorBackend
+from nncf.tensor.definitions import TensorDataType
 
 ReductionAxes = Union[int, Tuple[int, ...]]
 

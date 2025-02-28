@@ -11,15 +11,17 @@
 from typing import Any
 
 import torch
-from torch.overrides import handle_torch_function, has_torch_function_unary
+from torch.overrides import handle_torch_function
+from torch.overrides import has_torch_function_unary
 
 from nncf.common.logging import nncf_logger
 from nncf.errors import ValidationError
 from nncf.torch.dynamic_graph.patch_pytorch import register_operator
-from nncf.torch.functions import STRound, clamp
-from nncf.torch.quantization.extensions import QuantizedFunctionsCPU, QuantizedFunctionsCUDA
-from nncf.torch.utils import add_domain
+from nncf.torch.quantization.extensions import QuantizedFunctionsCPU
+from nncf.torch.quantization.extensions import QuantizedFunctionsCUDA
 from nncf.torch.quantization.reference import ReferenceQuantizedFunctions as RQ
+from nncf.torch.utils import add_domain
+
 
 class QuantizeSymmetric(torch.autograd.Function):
     @staticmethod
@@ -119,12 +121,14 @@ class QuantizeAsymmetric(torch.autograd.Function):
             )
         return grad_input, grad_input_low, grad_input_range, None, None, None
 
+
 class QuantizeSymmetricTorch(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_, input_shape, scale, level_low, level_high, levels):
         # range: [-scale, 7/8 * scale] if scale > 0 else [7/8 * scale, -scale]
         input_low = torch.where(scale > 0, -scale, -scale / level_low * level_high)
-        input_range = torch.abs((2 + 1 / level_low) * scale)  # 15/8s or (2-1/8)s
+        # 15/8 * scale or (2-1/8) * scale
+        input_range = torch.abs((2 + 1 / level_low) * scale)
 
         if input_.dtype in [torch.bfloat16, torch.float16]:
             input_low = input_low.type(input_.dtype)
@@ -164,12 +168,13 @@ class QuantizeSymmetricTorch(torch.autograd.Function):
         # input, input_shape, scale, level_low, level_high, levels
         return grad_input, None, grad_scale, None, None, None
 
+
 class QuantizeAsymmetricTorch(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_, input_shape, input_low_, input_range_, level_low, level_high, levels):
         if input_.dtype in [torch.bfloat16, torch.float16]:
-            input_low = input_low.type(input_.dtype)
-            input_range = input_range.type(input_.dtype)
+            input_low = input_low_.type(input_.dtype)
+            input_range = input_range_.type(input_.dtype)
 
         original_shape = input_.shape
         input_ = input_.reshape(input_shape)
@@ -203,8 +208,9 @@ class QuantizeAsymmetricTorch(torch.autograd.Function):
         grad_input = grad_input.reshape(orig_shape)
         grad_low = grad_low.float()
         grad_range = grad_range.float()
-        # input, input_low, input_range, level_low, level_high, levels
-        return grad_input, grad_low, grad_range, None, None, None
+        # input, input_size, input_low, input_range, level_low, level_high, levels
+        return grad_input, None, grad_low, grad_range, None, None, None
+
 
 class ExportQuantizeToFakeQuantize(torch.autograd.Function):
     @staticmethod
@@ -290,13 +296,18 @@ def asymmetric_quantize(input_, levels, level_low, level_high, input_low, input_
     input_low_tuned, input_range_tuned = TuneRange.apply(input_low, input_range_safe, levels)
     return QuantizeAsymmetric.apply(input_, input_low_tuned, input_range_tuned, level_low, level_high, levels)
 
+
 @register_operator()
-def asymmetric_quantize_lora(input_, input_shape, A, B, input_low_, input_range_, level_low, level_high, levels, eps, skip: bool = False):
+def asymmetric_quantize_lora(
+    input_, input_shape, A, B, input_low_, input_range_, level_low, level_high, levels, eps, skip: bool = False
+):
+    if skip:
+        return input_
     input_range_safe = torch.where(torch.abs(input_range_) < eps, eps, input_range_)
     input_low, input_range = TuneRange.apply(input_low_, input_range_safe, levels)
-    x = x + B @ A
-    return QuantizeAsymmetricLora.apply(
-        x,
+    input_ = input_ + B @ A
+    return QuantizeAsymmetricTorch.apply(
+        input_,
         input_shape,
         input_low,
         input_range,
@@ -305,12 +316,15 @@ def asymmetric_quantize_lora(input_, input_shape, A, B, input_low_, input_range_
         levels,
     )
 
+
 @register_operator()
-def symmetric_quantize_lora(input_, input_shape, A, B, scale, level_low, level_high, levels, eps):
+def symmetric_quantize_lora(input_, input_shape, A, B, scale, level_low, level_high, levels, eps, skip: bool = False):
+    if skip:
+        return input_
     scale_safe = torch.where(torch.abs(scale) < eps, eps, scale)
-    x = x + B @ A
-    return QuantizeSymmetricLora.apply(
-        x,
+    input_ = input_ + B @ A
+    return QuantizeSymmetricTorch.apply(
+        input_,
         input_shape,
         scale_safe,
         level_low,
