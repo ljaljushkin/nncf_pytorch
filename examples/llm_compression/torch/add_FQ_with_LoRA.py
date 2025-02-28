@@ -17,12 +17,12 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 import numpy as np
-import torch
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 from tune_fq_lora_chat import get_loaders
 
 import nncf
+import torch
 from nncf.common.logging.logger import set_log_file
 
 GROUP_SIZE = 64

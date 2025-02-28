@@ -15,12 +15,12 @@ from enum import auto
 from pathlib import Path
 
 import numpy as np
-import torch
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 from whowhatbench import TextEvaluator
 
 import nncf
+import torch
 from nncf.torch import load_from_config
 from nncf.torch.model_graph_manager import get_module_by_name
 

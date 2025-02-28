@@ -26,8 +26,6 @@ from typing import Any, Iterable, List, Sequence, Union
 
 import mlflow
 import numpy as np
-import torch
-import torch.nn.functional as F
 import transformers
 from datasets import load_dataset
 from tqdm import tqdm
@@ -35,6 +33,9 @@ from tqdm import trange
 from transformers import AutoConfig
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
+
+import torch
+import torch.nn.functional as F
 
 
 def generate_overfit(pipeline, tokenizer, device, prefix=""):

@@ -52,9 +52,9 @@ from nncf.tensor import Tensor
 from nncf.tensor.definitions import TensorDataType
 from nncf.torch.dynamic_graph.scope import Scope
 from nncf.torch.graph.graph import PTTargetPoint
-from nncf.torch.graph.transformations.commands import ExtraCompressionModuleType
 from nncf.torch.graph.operator_metatypes import PTMulMetatype
 from nncf.torch.graph.pattern_operations import ATOMIC_ACTIVATIONS_OPERATIONS
+from nncf.torch.graph.transformations.commands import ExtraCompressionModuleType
 from nncf.torch.graph.transformations.commands import PTSharedFnInsertionCommand
 from nncf.torch.model_graph_manager import find_const_node_in_constant_subgraph
 from nncf.torch.model_graph_manager import get_const_data
@@ -222,18 +222,6 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         self, wc_params: WeightCompressionParameters, lora_A: Tensor, lora_B: Tensor, int8_lora: bool
     ) -> None:
         raise NotImplementedError()
-
-    @staticmethod
-    def init_lora_adapters(svd_residual, rank=None):
-        # O stands for output dimension, H - input dimension or hidden size, R - rank.
-        U_full, S_full, V_full = torch.linalg.svd(svd_residual, full_matrices=False)
-        U = U_full[:, :rank]  # [H, R]
-        S_sqrt = torch.sqrt(S_full)
-        S = torch.diag(S_sqrt[:rank])  # [R, R]
-        V = V_full[:rank, :]  # [R, O]
-        V = S @ V  # [R, O]
-        U = U @ S  # [H, R]
-        return U, V
 
     @staticmethod
     def init_lora_adapters(svd_residual, rank=None):
