@@ -129,7 +129,7 @@ with log_filename.open("w") as f, redirect_stdout(f), redirect_stderr(f):
         backup_mode=BACKUP_MODE,
         scale_estimation=SCALE_ESTIMATION,
         dataset=nncf.Dataset(dataset),
-        compression_format=nncf.CompressionFormat.FQ_LORA
+        compression_format=nncf.CompressionFormat.FQ_LORA,
     )
     save_checkpoint(model, ckpt_dir)
     model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")
