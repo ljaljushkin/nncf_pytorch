@@ -279,13 +279,12 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             narrow_range=False,
             half_range=False,
             scale_shape=scale.shape,
-            weight_shape=weight_shape,
             logarithm_scale=False,
         )
 
         quantizer_cls = QUANTIZATION_MODULES.get(schema)
         if schema in [QuantizationScheme.ASYMMETRIC_LORA, QuantizationScheme.SYMMETRIC_LORA]:
-            lora_spec = PTLoraSpec(lora_rank=lora_rank, orig_weight_shape=orig_weight_shape)
+            lora_spec = PTLoraSpec(lora_rank=lora_rank, orig_weight_shape=orig_weight_shape, weight_shape=weight_shape)
             quantizer = quantizer_cls(quantizer_spec, lora_spec)
             # TODO: re-evaluate for all types: float32, float16, bfloat16
             lora_dtype = quantizer._lora_A.dtype
