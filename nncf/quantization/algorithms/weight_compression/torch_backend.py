@@ -247,12 +247,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         return filter_func
 
     @staticmethod
-    def get_fq_insertion_command(
-        compressed_weight,
-        wc_params,
-        orig_weight_shape,
-        compression_format,
-    ):
+    def get_fq_insertion_command(compressed_weight, wc_params, orig_weight_shape, compression_format):
         compression_config = wc_params.compression_config
         mode_vs_schema_map = {
             CompressWeightsMode.INT4_ASYM: QuantizationScheme.ASYMMETRIC_LORA,
@@ -303,7 +298,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             input_low = -zero_point * scale
             input_range = scale * (levels - 1)
             quantizer.input_low = torch.nn.Parameter(input_low.type(dtype))
-            quantizer.input_range = torch.nn.Parameter(input_range.type(dtype))
+            quantizer.input_range = torch.nn.Parameter(input_range.type(dtype) - quantizer.eps)
         else:
             scale = scale.type(quantizer.scale.dtype)
             quantizer.scale = torch.nn.Parameter(scale * levels / 2)

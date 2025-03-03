@@ -202,7 +202,7 @@ class QuantizeAsymmetricTorch(torch.autograd.Function):
 
         output = RQ.Quantize_forward(input_, input_low, input_range, levels)
         grad_input, grad_low, grad_range = RQ.Quantize_backward(
-            input_, output, input_low, input_range, grad_output, level_low, level_high
+            grad_output, input_, input_low, input_range, output, level_low, level_high
         )
 
         grad_input = grad_input.reshape(orig_shape)
@@ -303,7 +303,7 @@ def asymmetric_quantize_lora(
 ):
     if skip:
         return input_
-    input_range_safe = torch.where(torch.abs(input_range_) < eps, eps, input_range_)
+    input_range_safe = abs(input_range_) + eps
     input_low, input_range = TuneRange.apply(input_low_, input_range_safe, levels)
     input_ = input_ + B @ A
     return QuantizeAsymmetricTorch.apply(
