@@ -47,13 +47,13 @@ printf "NNCF_CKPT_DIR=$NNCF_CKPT_DIR\n"
 # echo "The process ID: $pid, log file: $LOG_FILE"
 
 ######## TARGET
-# CUDA_VISIBLE_DEVICES=0 \
-# wwb \
-# --base-model HuggingFaceTB/SmolLM-1.7B-Instruct \
-# --gt-data ~/MODEL_DIR/SmolLM-1_7B-Instruct/wwb_torch_ref_chat.csv \
-# --model-type text \
-# --hf \
-# --language en \
-# --chat-template \
-# --device cuda:0
+CUDA_VISIBLE_DEVICES=0 \
+wwb \
+--base-model microsoft/Phi-3.5-mini-instruct \
+--gt-data ~/MODEL_DIR/Phi-3_5-mini-instruct/wwb_torch_ref_chat.csv \
+--model-type text \
+--hf \
+--language en \
+--chat-template \
+--device cuda:0
 

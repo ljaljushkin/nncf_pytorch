@@ -25,11 +25,12 @@ import nncf
 import torch
 from nncf.common.logging.logger import set_log_file
 
-GROUP_SIZE = 64
+GROUP_SIZE = -1
 MODE = nncf.CompressWeightsMode.INT4_SYM
 BACKUP_MODE = nncf.BackupMode.INT8_SYM
-SCALE_ESTIMATION = True
-compression_kwargs = dict(scale_estimation=True, awq=True)
+compression_kwargs = dict(
+    # scale_estimation=True, awq=True
+)
 
 def save_checkpoint(wrapped_model, ckpt_dir):
     if not ckpt_dir.exists():
@@ -85,7 +86,7 @@ hf_model = AutoModelForCausalLM.from_pretrained(
 hf_model = hf_model.cuda()
 tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
-if SCALE_ESTIMATION:
+if compression_kwargs:
     dataset = get_loaders(
         "wikitext2",
         nsamples=128,

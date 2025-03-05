@@ -1,5 +1,7 @@
 #!/bin/bash
+
 set -e
+
 
 printf '##################################\n'
 printf '########  Installing environment\n'
@@ -7,8 +9,7 @@ printf '##################################\n'
 
 ENV_NAME="env_torch_ref"
 
-mkdir -p $HOME/MODEL_DIR
-
+# mkdir -p $HOME/MODEL_DIR
 # rm -rf $ENV_NAME
 # python3.11 -m venv $ENV_NAME
 . $ENV_NAME/bin/activate
@@ -16,16 +17,42 @@ mkdir -p $HOME/MODEL_DIR
 # pip install -r requirements.txt
 # pip install -e ../../../
 
+
 printf '##################################\n'
 printf '########  Create NNCF checkpoint with 4bit FQ+LoRA \n'
 printf '##################################\n'
 
-BASE_MODEL="HuggingFaceTB/SmolLM-1.7B-Instruct"
-MODEL_NAME="SmolLM-1_7B-Instruct"
-MAX_LENGTH=2048
+# BASE_MODEL="microsoft/Phi-3-mini-4k-instruct"
+# MODEL_NAME="Phi-3-mini-4k-instruct"
 
-INIT_DIR="FQ_emb_head_int8_int4_asym_rank256_gs64_se_awq_test"
-EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04"
+# BASE_MODEL="Qwen/Qwen2.5-3B-Instruct"
+# MODEL_NAME="Qwen2_5-3B-Instruct"
+
+# BASE_MODEL="google/gemma-2-2b-it"
+# MODEL_NAME="gemma-2-2b-it"
+
+# BASE_MODEL="meta-llama/Meta-Llama-3-8B-Instruct"
+# MODEL_NAME="Meta-Llama-3-8B-Instruct"
+
+# BASE_MODEL="mistralai/Mistral-7B-v0.3"
+# MODEL_NAME="Mistral-7B-v0_3"
+
+# BASE_MODEL="meta-llama/Llama-3.2-1B-Instruct"
+# MODEL_NAME="Llama-3_2-1B-Instruct"
+
+# BASE_MODEL="meta-llama/Llama-3.2-3B-Instruct"
+# MODEL_NAME="Llama-3_2-3B-Instruct"
+
+BASE_MODEL="microsoft/Phi-3.5-mini-instruct"
+MODEL_NAME="Phi-3_5-mini-instruct"
+
+# BASE_MODEL="deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+# MODEL_NAME="DeepSeek-R1-Distill-Qwen-1_5B"
+
+
+MAX_LENGTH=4096
+INIT_DIR="FQ_emb_head_int8_int4_sym_rank256_gs-1_test"
+EXP_NAME="DS_Phi_lr5e-04_fqlr5e-05_wd5e-04"
 python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
 
 
@@ -33,19 +60,12 @@ printf '##################################\n'
 printf '########  Quantization-aware tuning of lora adapters and quantization scales \n'
 printf '##################################\n'
 
-# Nsight Compute Profiler
-# sudo -HE PYTHONPATH=/home/nlyaly/projects/nncf2 /usr/local/cuda-12.4/bin/ncu -k q_scale_per_weight_channel_cuda_backward_kernel --set full -f -o bw_kernel_tinb_1024 /home/nlyaly/env/nncf2-py/bin/python tools/benchmark_quantize_layers.py
-
-# Nsight System Profiler
-# nsys profile -w true -t cuda,nvtx,osrt,cudnn,cublas -s cpu --capture-range=cudaProfilerApi --capture-range-end=stop --cudabacktrace=true -x true \
-# -o kernel_1024_threads_in_block --force-overwrite true \
-tune_command_template="PYTHONIOENCODING=utf-8 \
-python tune_fq_lora_chat.py \
+tune_command_template="python tune_fq_lora_chat.py \
 --nncf_ckpt_dir=$HOME/MODEL_DIR/$MODEL_NAME/$INIT_DIR \
 --base_model=$BASE_MODEL \
 --model_seqlen=\$model_seqlen \
---adam_beta1=0.90 \
---adam_beta2=0.999 \
+--adam_beta1=0.90  \
+--adam_beta2=0.999  \
 --batch_size=\$batch_size \
 --microbatch_size=\$microbatch_size \
 --trust_remote_code  \
@@ -53,7 +73,7 @@ python tune_fq_lora_chat.py \
 --weight_decay=\$weight_decay \
 --dataset=\$dataset \
 --lr=\$lr \
---fq_lr=\$fq_lr \
+--fq_lr=\${fq_lr} \
 --epochs=\$epochs \
 --finetune_dtype=bfloat16 \
 --device_map=auto \
@@ -85,9 +105,9 @@ do
                     do
                         export model_seqlen batch_size microbatch_size nsamples weight_decay dataset lr fq_lr epochs
                         command=$(echo $tune_command_template | envsubst)
-                        echo "Running: $command"
                         mkdir -p logs
-                        eval $command 2>&1 | tee -a "logs/tune_${MODEL_NAME}_$(date '+%Y-%m-%d_%H:%M:%S').log" # _$(date '+%Y-%m-%d_%H:%M:%S')
+                        echo "Running: $command"
+                        eval $command 2>&1 | tee -a "logs/tune_${MODEL_NAME}_$(date '+%Y-%m-%d_%H:%M:%S').log"
                     done
                 done
             done
@@ -100,5 +120,5 @@ printf '##################################\n'
 printf '########  Evaluation of the best checkpoint'
 printf '##################################\n'
 
-unset CUDA_VISIBLE_DEVICES
-# PYTHONIOENCODING=utf-8 ./eval_slm.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_NAME $MAX_LENGTH
+# unset CUDA_VISIBLE_DEVICES
+PYTHONIOENCODING=utf-8 ./eval.sh $BASE_MODEL $MODEL_NAME $INIT_DIR $EXP_NAME $MAX_LENGTH

@@ -7,15 +7,15 @@ printf '##################################\n'
 printf '########  Installing environment\n'
 printf '##################################\n'
 
-ENV_NAME="env"
+ENV_NAME="env_torch_ref"
 
-mkdir -p $HOME/MODEL_DIR
-rm -rf $ENV_NAME
-python3.11 -m venv $ENV_NAME
+# mkdir -p $HOME/MODEL_DIR
+# rm -rf $ENV_NAME
+# python3.11 -m venv $ENV_NAME
 . $ENV_NAME/bin/activate
-pip install -U pip
-pip install -r requirements.txt
-pip install -e ../../../
+# pip install -U pip
+# pip install -r requirements.txt
+# pip install -e ../../../
 
 
 printf '##################################\n'
@@ -43,17 +43,17 @@ printf '##################################\n'
 # BASE_MODEL="meta-llama/Llama-3.2-3B-Instruct"
 # MODEL_NAME="Llama-3_2-3B-Instruct"
 
-# BASE_MODEL="microsoft/Phi-3-mini-4k-instruct"
-# MODEL_NAME="Phi-3-mini-4k-instruct"
+BASE_MODEL="microsoft/Phi-3.5-mini-instruct"
+MODEL_NAME="Phi-3_5-mini-instruct"
 
-BASE_MODEL="deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-MODEL_NAME="DeepSeek-R1-Distill-Qwen-1_5B"
+# BASE_MODEL="deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+# MODEL_NAME="DeepSeek-R1-Distill-Qwen-1_5B"
 
 
 MAX_LENGTH=4096
-INIT_DIR="FQ_emb_head_int8_asym_int4_asym_rank256_gs32_se"
-EXP_NAME="DS_Qwen_lr5e-04_fqlr5e-05_wd5e-04"
-python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
+INIT_DIR="FQ_emb_head_int8_int4_asym_rank256_gs64_test"
+EXP_NAME="DS_Phi_lr5e-04_fqlr5e-05_wd5e-04"
+# python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
 
 
 printf '##################################\n'
