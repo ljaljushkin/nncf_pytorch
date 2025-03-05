@@ -264,7 +264,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         lora_rank = 256
         device = compressed_weight.tensor.data.device
         scale = compressed_weight.scale.data
-        zero_point = compressed_weight.zero_point.data
+
         weight_shape = compressed_weight.tensor.shape
 
         quantizer_spec = PTQuantizerSpec(
@@ -293,6 +293,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
         levels = quantizer.levels
         if schema in [QuantizationScheme.ASYMMETRIC_LORA, QuantizationScheme.ASYMMETRIC]:
+            zero_point = compressed_weight.zero_point.data
             dtype = quantizer.input_low.dtype
             # NOTE: loose some accuracy, because of invertion of round
             input_low = -zero_point * scale

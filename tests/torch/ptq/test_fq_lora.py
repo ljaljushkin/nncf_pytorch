@@ -47,6 +47,7 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="cuda",
     low_cpu_mem_usage=True,
 )
+print(model)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 overfit_prompt = "overfit"
 # message = [{"role": "user", "content": overfit_prompt}]
@@ -77,16 +78,15 @@ model = nncf.compress_weights(
     dataset=nncf.Dataset(dataset),
     compression_format=nncf.CompressionFormat.FQ_LORA,
     ignored_scope=nncf.IgnoredScope(
-        patterns=[r"^(?!.*OPTDecoderLayer\[5\]/OPTAttention\[self_attn\]/Linear\[v_proj\]/l.*$).*$"]
+        patterns=[r"^(?!.*OPTDecoderLayer\[5\]/OPTSdpaAttention\[self_attn\]/Linear\[v_proj\]/l.*$).*$"]
     ),
 )
 
 # TODO: should do inside, for training pipeline.
 for param in model.parameters():
     param.requires_grad = False
-for quantizer in model._nncf.external_quantizers.values():
-    if quantizer.num_bits == 4:
-        quantizer.enable_gradients()
+quantizer = next(iter(model._nncf.external_quantizers.values()))
+quantizer.enable_gradients()
 for name, param in model.named_parameters():
     if param.requires_grad:
         print("Tune: ", name)
