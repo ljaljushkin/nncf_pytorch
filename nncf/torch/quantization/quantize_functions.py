@@ -160,7 +160,7 @@ class QuantizeSymmetricTorch(torch.autograd.Function):
 
         output = RQ.Quantize_forward(input_, input_low, input_range, levels)
         grad_input, grad_scale, _ = RQ.Quantize_backward(
-            input_, output, input_low, input_range, grad_output, level_low, level_high
+            grad_output, input_, input_low, input_range, output, level_low, level_high
         )
 
         grad_input = grad_input.reshape(orig_shape)
