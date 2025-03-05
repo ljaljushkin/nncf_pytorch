@@ -432,6 +432,9 @@ def finetune(
                 # slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
                 # logits = self.lm_head(hidden_states[:, slice_indices, :])
 
+            # TODO: pass all arguments, not input_ids only! tranform_fn or collate_fn?
+            # INFO:nncf:Wrapping a dummy tensor for input attention_mask
+            # INFO:nncf:Wrapping a dummy tensor for input position_ids
             outputs = model_to_tune(inputs).logits
             loss = kl_div(outputs, targets.to(device=outputs.device, dtype=torch_dtype))
 

@@ -24,7 +24,7 @@ BASE_MODEL="HuggingFaceTB/SmolLM-1.7B-Instruct"
 MODEL_NAME="SmolLM-1_7B-Instruct"
 MAX_LENGTH=2048
 
-INIT_DIR="FQ_emb_head_int8_int4_asym_rank256_gs64_test"
+INIT_DIR="FQ_emb_head_int8_int4_sym_rank256_gs64_se_awq_test"
 EXP_NAME="SmolL_lr5e-04_fqlr5e-05_wd5e-04"
 python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
 

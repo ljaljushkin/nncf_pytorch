@@ -26,10 +26,10 @@ import torch
 from nncf.common.logging.logger import set_log_file
 
 GROUP_SIZE = 64
-MODE = nncf.CompressWeightsMode.INT4_ASYM
-BACKUP_MODE = nncf.BackupMode.INT8_ASYM
-SCALE_ESTIMATION = False
-
+MODE = nncf.CompressWeightsMode.INT4_SYM
+BACKUP_MODE = nncf.BackupMode.INT8_SYM
+SCALE_ESTIMATION = True
+compression_kwargs = dict(scale_estimation=True, awq=True)
 
 def save_checkpoint(wrapped_model, ckpt_dir):
     if not ckpt_dir.exists():
@@ -126,10 +126,11 @@ with log_filename.open("w") as f, redirect_stdout(f), redirect_stderr(f):
         ratio=1,
         group_size=GROUP_SIZE,
         mode=MODE,
+        subset_size=1,
         backup_mode=BACKUP_MODE,
-        scale_estimation=SCALE_ESTIMATION,
         dataset=nncf.Dataset(dataset),
         compression_format=nncf.CompressionFormat.FQ_LORA,
+        **compression_kwargs
     )
     save_checkpoint(model, ckpt_dir)
     model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")
