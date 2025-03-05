@@ -26,8 +26,8 @@ import torch
 from nncf.common.logging.logger import set_log_file
 
 GROUP_SIZE = 64
-MODE = nncf.CompressWeightsMode.INT4_ASYM
-BACKUP_MODE = nncf.BackupMode.INT8_ASYM
+MODE = nncf.CompressWeightsMode.INT4_SYM
+BACKUP_MODE = nncf.BackupMode.INT8_SYM
 SCALE_ESTIMATION = False
 
 
