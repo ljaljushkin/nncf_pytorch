@@ -1043,13 +1043,12 @@ class AsymmetricQuantizer(BaseQuantizer):
 
 
 class LoraMixin:
-    LORA_A_PARAM_NAME = "lora_A"
-    LORA_B_PARAM_NAME = "lora_B"
+    LORA_A_PARAM_NAME = "_lora_A"
+    LORA_B_PARAM_NAME = "_lora_B"
 
     def __init__(self, lspec: PTLoraSpec):
         self._lspec = lspec
         out_features, in_features = lspec.orig_weight_shape
-        # TODO: what if training in float16?
         self._lora_A = torch.nn.Parameter(torch.ones((lspec.lora_rank, in_features), dtype=torch.bfloat16))
         self._lora_B = torch.nn.Parameter(torch.zeros((out_features, lspec.lora_rank), dtype=torch.bfloat16))
 
