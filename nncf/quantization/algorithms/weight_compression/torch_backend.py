@@ -430,6 +430,9 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 command = self.get_fq_insertion_command(compressed_weight, wc_params, weight.shape, compression_format)
             transformation_layout.register(command)
 
+        # To have FQ's with requires_grad=True only
+        model.requires_grad_(False)
+
         # apply transformations
         transformed_model = PTModelTransformer(model).transform(transformation_layout)
         return transformed_model

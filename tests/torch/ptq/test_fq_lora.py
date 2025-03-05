@@ -9,122 +9,72 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import random
-from collections import defaultdict
-
-import matplotlib.pyplot as plt
-import numpy as np
+import pytest
 import torch
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 
 import nncf
+from nncf.torch.quantization.layers import AsymmetricQuantizer as AQ
+from nncf.torch.quantization.layers import LoraMixin
+from nncf.torch.quantization.layers import SymmetricQuantizer as SQ
 
 
-def set_seed(seed):
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU.
-    np.random.seed(seed)  # Numpy module.
-    random.seed(seed)  # Python random module.
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-
-
-set_seed(0)
-GROUP_SIZE = 64
-MODE = nncf.CompressWeightsMode.INT4_ASYM
-BACKUP_MODE = nncf.BackupMode.INT8_ASYM
-SCALE_ESTIMATION = False
-
-model_id = "facebook/opt-125m"
-# model_id = "HuggingFaceTB/SmolLM-1.7B-Instruct"
-# model_id = "hf-internal-testing/tiny-random-OPTForCausalLM"
-
-model = AutoModelForCausalLM.from_pretrained(
-    model_id,
-    torch_dtype=torch.bfloat16,
-    device_map="cuda",
-    low_cpu_mem_usage=True,
+@pytest.mark.parametrize(
+    "compression_kwargs",
+    (dict(scale_estimation=True, awq=True), dict(scale_estimation=False, awq=False)),
+    ids=["se_awq", "data_free"],
 )
-print(model)
-tokenizer = AutoTokenizer.from_pretrained(model_id)
-overfit_prompt = "overfit"
-# message = [{"role": "user", "content": overfit_prompt}]
-# inputs = tokenizer.apply_chat_template(message, add_generation_prompt=True, return_tensors="pt").cuda()
-inputs = tokenizer(overfit_prompt, return_tensors="pt").to("cuda")
-labels = inputs["input_ids"].cuda()
-attention_mask = inputs["attention_mask"].cuda()
-input_ids = labels[:, :-1]
-labels = labels[:, 1:]
-position_ids = torch.cumsum(attention_mask, axis=1).cuda() - 1
-position_ids[attention_mask == 0] = 1
-dataset = [
-    {"input_ids": input_ids, "attention_mask": attention_mask[:, :-1]}
-]  # , "position_ids": position_ids[:, :-1]}]
-# dataset = [inputs]
-
-output = model.generate(**inputs, do_sample=False)  # , min_new_tokens=128, max_new_tokens=128)
-print("#" * 50 + " Before\n", tokenizer.decode(output[0], skip_special_tokens=True), "\n" + "#" * 150)
-
-model = nncf.compress_weights(
-    model,
-    ratio=1,
-    group_size=GROUP_SIZE,
-    mode=MODE,
-    all_layers=True,
-    backup_mode=BACKUP_MODE,
-    scale_estimation=SCALE_ESTIMATION,
-    dataset=nncf.Dataset(dataset),
-    compression_format=nncf.CompressionFormat.FQ_LORA,
-    ignored_scope=nncf.IgnoredScope(
-        patterns=[r"^(?!.*OPTDecoderLayer\[5\]/OPTSdpaAttention\[self_attn\]/Linear\[v_proj\]/l.*$).*$"]
+@pytest.mark.parametrize(
+    "mode, backup_mode",
+    (
+        (nncf.CompressWeightsMode.INT4_ASYM, nncf.CompressWeightsMode.INT8_ASYM),
+        (nncf.CompressWeightsMode.INT4_SYM, nncf.CompressWeightsMode.INT8_SYM),
     ),
+    ids=["asym", "sym"],
 )
+def test_fq_lora_tuning(mode, backup_mode, compression_kwargs, _seed):
+    model_id = "facebook/opt-125m"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map=device)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    inputs = tokenizer("overfit " * 10, return_tensors="pt").to(device)
 
-# TODO: should do inside, for training pipeline.
-for param in model.parameters():
-    param.requires_grad = False
-quantizer = next(iter(model._nncf.external_quantizers.values()))
-quantizer.enable_gradients()
-for name, param in model.named_parameters():
-    if param.requires_grad:
-        print("Tune: ", name)
+    except_lm_head_and_5th_vproj = (
+        r"^(?!.*(OPTDecoderLayer\[5\]/OPTSdpaAttention\[self_attn\]/Linear\[v_proj\]/l|lm_head).*$).*$"
+    )
+    model = nncf.compress_weights(
+        model,
+        group_size=64,
+        mode=mode,
+        backup_mode=backup_mode,
+        dataset=nncf.Dataset([dict(inputs)]),
+        compression_format=nncf.CompressionFormat.FQ_LORA,
+        ignored_scope=nncf.IgnoredScope(patterns=[except_lm_head_and_5th_vproj]),
+        **compression_kwargs,
+    )
 
+    expected_names = {LoraMixin.LORA_A_PARAM_NAME, LoraMixin.LORA_B_PARAM_NAME}
+    if mode == nncf.CompressWeightsMode.INT4_ASYM:
+        expected_names.update([AQ.INPUT_LOW_PARAM_NAME, AQ._INPUT_RANGE_PARAM_STORAGE_ATTR])
+    else:
+        expected_names.add(SQ._SCALE_PARAM_STORAGE_ATTR)
+    actual_names = {name.split(".")[-1] for name, param in model.named_parameters() if param.requires_grad}
+    assert actual_names == expected_names
 
-# We'll teach the model to repeatedly say "overfit".
-labels = tokenizer("overfit " * 10, return_tensors="pt")["input_ids"].to("cuda:0")
-input_ids = labels[:, :-1]
-labels = labels[:, 1:]
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
+    model_kwargs = dict(
+        input_ids=inputs["input_ids"][:, :-1],
+        attention_mask=inputs["attention_mask"][:, :-1],
+        labels=inputs["input_ids"][:, 1:],
+    )
+    for i in range(5):
+        optimizer.zero_grad()
+        loss = model(**model_kwargs).loss
+        if i == 0:
+            first_loss = float(loss)
+        loss.backward()
+        optimizer.step()
 
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-1)
-
-dumps = defaultdict(list)
-
-for i in range(10):
-    optimizer.zero_grad()
-    loss = model(input_ids=input_ids, labels=labels).loss
-    dumps["_lora_A"].append(torch.linalg.norm(quantizer._lora_A.data).item())
-    dumps["_lora_B"].append(torch.linalg.norm(quantizer._lora_B.data).item())
-    dumps["input_low"].append(torch.linalg.norm(quantizer.input_low.data).item())
-    dumps["input_range"].append(torch.linalg.norm(quantizer.input_range.data).item())
-    dumps["losses"].append(float(loss))
-    if i == 0:
-        print(dumps)
-    loss.backward()
-    optimizer.step()
-
-# Check that loss is decreasing
-for name, values in dumps.items():
-    plt.plot(values)
-    plt.title(name, fontsize=20)
-    plt.xlabel("Steps")
-    plt.ylabel("value")
-    plt.legend()
-    plt.show()
-    plt.close()
-
-# Check the output of tuned model
-output = tokenizer.decode(model.generate(**inputs, do_sample=False)[0], skip_special_tokens=True)
-print("#" * 50 + " After\n", output, "\n" + "#" * 150)
-print(f"Peak memory usage: {torch.cuda.max_memory_allocated() * 1e-9:.2f} Gb")
+    assert first_loss > 8
+    assert float(loss) < 1
