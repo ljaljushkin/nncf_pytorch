@@ -25,11 +25,11 @@ import nncf
 import torch
 from nncf.common.logging.logger import set_log_file
 
-GROUP_SIZE = -1
-MODE = nncf.CompressWeightsMode.INT4_SYM
-BACKUP_MODE = nncf.BackupMode.INT8_SYM
+GROUP_SIZE = 64
+MODE = nncf.CompressWeightsMode.INT4_ASYM
+BACKUP_MODE = nncf.BackupMode.INT8_ASYM
 compression_kwargs = dict(
-    # scale_estimation=True, awq=True
+    scale_estimation=True, awq=True
 )
 
 def save_checkpoint(wrapped_model, ckpt_dir):

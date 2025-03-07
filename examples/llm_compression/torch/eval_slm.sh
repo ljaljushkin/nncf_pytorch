@@ -1,14 +1,14 @@
-MODEL_DIR="$HOME/MODEL_DIR"
+# MODEL_DIR="$HOME/MODEL_DIR"
 
-BASE_MODEL=${1:-"HuggingFaceTB/SmolLM-1.7B-Instruct"}
-MODEL_NAME=${2:-"SmolLM-1_7B-Instruct"}
-INIT_DIR=${3:-"FQ_emb_head_bf16_int4_asym_rank256_gs64_demo"}
-EXP_DIR=${4:-"SmolL_lr5e-04_fqlr5e-05_wd5e-04_tune_all"}
-MAX_LENGTH=${5:-2048}
+# BASE_MODEL=${1:-"HuggingFaceTB/SmolLM-1.7B-Instruct"}
+# MODEL_NAME=${2:-"SmolLM-1_7B-Instruct"}
+# INIT_DIR=${3:-"FQ_emb_head_bf16_int4_asym_rank256_gs64_demo"}
+# EXP_DIR=${4:-"SmolL_lr5e-04_fqlr5e-05_wd5e-04_tune_all"}
+# MAX_LENGTH=${5:-2048}
 
-echo $@
-NNCF_CKPT_DIR=$MODEL_DIR/$MODEL_NAME/$INIT_DIR/$EXP_DIR
-printf "NNCF_CKPT_DIR=$NNCF_CKPT_DIR\n"
+# echo $@
+# NNCF_CKPT_DIR=$MODEL_DIR/$MODEL_NAME/$INIT_DIR/$EXP_DIR
+# printf "NNCF_CKPT_DIR=$NNCF_CKPT_DIR\n"
 
 # TASK="wikitext"
 # LOG_FILE=$NNCF_CKPT_DIR/"${MODEL_NAME}_${TASK}.log"
@@ -49,11 +49,10 @@ printf "NNCF_CKPT_DIR=$NNCF_CKPT_DIR\n"
 ######## TARGET
 CUDA_VISIBLE_DEVICES=0 \
 wwb \
---base-model microsoft/Phi-3.5-mini-instruct \
---gt-data ~/MODEL_DIR/Phi-3_5-mini-instruct/wwb_torch_ref_chat.csv \
+--base-model meta-llama/Meta-Llama-3-8B \
+--gt-data ~/MODEL_DIR/Meta-Llama-3-8B/wwb_torch_ref_no_chat.csv \
 --model-type text \
 --hf \
 --language en \
---chat-template \
 --device cuda:0
-
+# --chat-template \
