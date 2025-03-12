@@ -1126,7 +1126,11 @@ class INT8AsymmetricWeightsDecompressor(BaseWeightsDecompressor):
 
     def forward(self, x) -> torch.Tensor:
         result = decompress_asymmetric(x, self._scale, self._zero_point)
-        result = result.type(dtype=self.result_dtype) if self.result_dtype is not None else result
+        if is_tracing_state():
+            result = result.type(dtype=torch.float32)
+        else:
+            result = result.type(dtype=self.result_dtype) if self.result_dtype is not None else result
+        print("Decompressor dtype=", result.dtype)
         return result
 
 
@@ -1156,7 +1160,11 @@ class INT8SymmetricWeightsDecompressor(BaseWeightsDecompressor):
 
     def forward(self, x) -> torch.Tensor:
         result = decompress_symmetric(x, self._scale)
-        result = result.type(dtype=self.result_dtype) if self.result_dtype is not None else result
+        if is_tracing_state():
+            result = result.type(dtype=torch.float32)
+        else:
+            result = result.type(dtype=self.result_dtype) if self.result_dtype is not None else result
+        print("Decompressor dtype=", result.dtype)
         return result
 
 
@@ -1205,7 +1213,11 @@ class INT4AsymmetricWeightsDecompressor(BaseWeightsDecompressor):
 
         result = decompress_asymmetric(x, self._scale, zero_point)
         result = result.reshape(self.result_shape) if self.result_shape is not None else result
-        result = result.type(dtype=self.result_dtype) if self.result_dtype is not None else result
+        if is_tracing_state():
+            result = result.type(dtype=torch.float32)
+        else:
+            result = result.type(dtype=self.result_dtype) if self.result_dtype is not None else result
+        print("Decompressor dtype=", result.dtype)
         return result
 
 
@@ -1249,5 +1261,9 @@ class INT4SymmetricWeightsDecompressor(BaseWeightsDecompressor):
 
         result = decompress_symmetric(x, self._scale)
         result = result.reshape(self.result_shape) if self.result_shape is not None else result
-        result = result.type(dtype=self.result_dtype) if self.result_dtype is not None else result
+        if is_tracing_state():
+            result = result.type(dtype=torch.float32)
+        else:
+            result = result.type(dtype=self.result_dtype) if self.result_dtype is not None else result
+        print("Decompressor dtype=", result.dtype)
         return result
