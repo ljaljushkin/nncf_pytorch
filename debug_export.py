@@ -18,20 +18,10 @@ from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 
 import nncf
-from nncf.torch.quantization.layers import BaseWeightsDecompressor
 
 model_id = "tinyllama/tinyllama-1.1b-step-50k-105b"
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 inputs = tokenizer("dummy", return_tensors="pt").to("cuda")
-
-
-def hack_nncf(model):
-    model_layout = model.nncf.transformation_layout()
-    transformations = model_layout.transformations
-    for command in transformations:
-        decompressor = command.fn
-        if isinstance(decompressor, BaseWeightsDecompressor):
-            decompressor.result_dtype = torch.float32
 
 
 for torch_dtype in [torch.float16, torch.bfloat16]:
@@ -54,7 +44,6 @@ for torch_dtype in [torch.float16, torch.bfloat16]:
     if export_dir.exists():
         shutil.rmtree(export_dir)
 
-    hack_nncf(model)
     export_from_model(
         model.cpu(),
         export_dir,

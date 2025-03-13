@@ -1096,10 +1096,10 @@ class BaseWeightsDecompressor(nn.Module, ABC):
 
 
 def process_result_dtype(result, result_dtype):
-    # if torch.jit.is_tracing():
-    #     result = result.type(dtype=torch.float32)
-    # else:
-    result = result.type(dtype=result_dtype) if result_dtype is not None else result
+    if torch.jit.is_tracing() or is_tracing_state():
+        result = result.type(dtype=torch.float32)
+    else:
+        result = result.type(dtype=result_dtype) if result_dtype is not None else result
     print("Decompressor dtype=", result.dtype)
     return result
 
