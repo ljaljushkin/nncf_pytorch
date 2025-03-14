@@ -18,15 +18,11 @@ import shutil
 import subprocess
 import sys
 from collections import OrderedDict
-from contextlib import redirect_stderr
-from contextlib import redirect_stdout
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence, Union
 
-import mlflow
 import numpy as np
-import transformers
 from datasets import load_dataset
 from tqdm import tqdm
 from tqdm import trange
@@ -36,17 +32,7 @@ from transformers import AutoTokenizer
 
 import torch
 import torch.nn.functional as F
-
-
-def generate_overfit(pipeline, tokenizer, device, prefix=""):
-    messages = [
-        {"role": "system", "content": "You can answer only with overfit word."},
-        {"role": "user", "content": "What is the capital of France?"},
-    ]
-    input_text = tokenizer.apply_chat_template(messages, tokenize=False)
-    inputs = tokenizer.encode(input_text, return_tensors="pt").to(device)
-    outputs = pipeline.generate(inputs, min_new_tokens=32, max_new_tokens=32, do_sample=False)
-    print("#" * 50 + f" {prefix}\n", tokenizer.decode(outputs[0]), "\n" + "#" * 150)
+from torch.utils.tensorboard import SummaryWriter
 
 
 def maybe_get_0th_element(x: Union[Any, Sequence[Any]]) -> Any:
@@ -63,18 +49,13 @@ def _extract_into_tensor(tensor_list: List[torch.Tensor], indices: Iterable[int]
     return torch.cat(extracted_items, dim=0).to(device=device, dtype=dtype)
 
 
-def get_model(model_path, dtype="auto", device_map=None, attn_implementation=None, trust_remote_code=False):
+def get_model(model_path, dtype="auto", device_map=None, trust_remote_code=False):
     if dtype == "auto":
         dtype = (
             AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote_code).torch_dtype or "auto"
         )  # force transformers 4.29.2 to follow the same rules as 4.30.x
     else:
         dtype = getattr(torch, dtype)
-
-    model_kwargs = {}
-    # this argument is avaialbe only for transformers >= 4.38.0
-    if transformers.__version__ >= "4.38.0":
-        model_kwargs["attn_implementation"] = attn_implementation
 
     model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=model_path,
@@ -373,7 +354,6 @@ def finetune(
 
     args.microbatch_size = args.microbatch_size or args.batch_size
     grad_accumulation_steps = args.batch_size // args.microbatch_size
-    print("grad_accumulation_steps=", grad_accumulation_steps)
     num_samples = len(train_loader)
     epoch_samples = num_samples - num_samples % args.microbatch_size
     microbatches_per_epoch = epoch_samples // args.microbatch_size
@@ -381,24 +361,17 @@ def finetune(
     metadata = OrderedDict(
         [
             ("lm_eval_word_ppl", init_ppl),
-            ("lm_eval_word_ppl_no_init", float("inf")),
             ("wwb_similarity", init_smlr),
-            ("wwb_similarity_no_init", float("inf")),
-            ("perplexity_wikitext2", float("inf")),
-            ("aggregated_loss", float("nan")),
-            ("current_epoch", 0),
-            ("microbatches_since_epoch_start", 0),
-            ("total_microbatches", 0),
-            ("total_optimizer_steps", 0),
-            ("loss_numerator", 0),
-            ("loss_denominator", 0),
-            ("grad_steps_accumulated", 0),
-            ("best_eval_perplexity", float("inf")),
-            ("best_similarity", init_smlr),
-            ("best_step", 0),
         ]
     )
-    layer = model_to_tune._nncf.external_quantizers.FQ_LORA_model_layers_13_mlp_down_proj_weight
+    aggregated_loss = float("nan")
+    loss_numerator = 0
+    loss_denominator = 0
+    best_word_ppl = float("inf")
+    best_similarity = init_smlr
+    grad_steps = 0
+    total_microbatches = 0
+    total_optimizer_steps = 0
     param_to_train = set_trainable(model_to_tune, lora_lr=args.lr, fq_lr=args.fq_lr, weight_decay=args.weight_decay)
     opt = torch.optim.AdamW(param_to_train, lr=args.lr, betas=(args.adam_beta1, args.adam_beta2))
     model_to_tune.train()
@@ -407,15 +380,8 @@ def finetune(
         batch_indices_epoch = torch.randperm(num_samples)[:epoch_samples].chunk(microbatches_per_epoch)
 
         for batch_indices in tqdm(batch_indices_epoch, desc=f"Train epoch {epoch}", leave=False):
-            # torch.cuda.nvtx.range_push("iteration{}".format(metadata["total_microbatches"]))
             batch_indices = batch_indices.tolist()
-            metadata["microbatches_since_epoch_start"] += 1
-            metadata["total_microbatches"] += 1
-            # if metadata["total_microbatches"] == 10:
-            #     torch.cuda.synchronize()
-            #     torch.cuda.cudart().cudaProfilerStart()
-            # if metadata["total_microbatches"] == 20:
-            #     exit()
+            total_microbatches += 1
             inputs = _extract_into_tensor(train_loader, batch_indices, device=device)
             with torch.no_grad():
                 targets = lm_head(_extract_into_tensor(orig_hiddens, batch_indices, device=device, dtype=torch_dtype))
@@ -425,12 +391,6 @@ def finetune(
                         targets = targets / fls
                         targets = torch.tanh(targets)
                         targets = targets * fls
-                # NOTE: DeepSeek-Qwen
-                # https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen2/modeling_qwen2.py
-                # hidden_states = outputs[0]
-                # # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
-                # slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-                # logits = self.lm_head(hidden_states[:, slice_indices, :])
 
             # TODO: pass all arguments, not input_ids only! tranform_fn or collate_fn?
             # INFO:nncf:Wrapping a dummy tensor for input attention_mask
@@ -438,9 +398,9 @@ def finetune(
             outputs = model_to_tune(inputs).logits
             loss = kl_div(outputs, targets.to(device=outputs.device, dtype=torch_dtype))
 
-            metadata["loss_numerator"] += loss.item()
-            metadata["loss_denominator"] += 1
-            metadata["grad_steps_accumulated"] += 1
+            loss_numerator += loss.item()
+            loss_denominator += 1
+            grad_steps += 1
 
             if not torch.isfinite(loss).item():
                 err = f"Fine-tuning loss is {loss}"
@@ -448,89 +408,44 @@ def finetune(
 
             (loss / grad_accumulation_steps).backward()
 
-            if layer._lora_A.grad is not None:
-                metadata["23dj_gA"] = torch.linalg.norm(layer._lora_A.grad.data).item()
-                metadata["23dj_gB"] = torch.linalg.norm(layer._lora_B.grad.data).item()
-            if hasattr(layer, "input_low") and layer.input_low.grad is not None:
-                metadata["23dj_gIL"] = torch.linalg.norm(layer.input_low.grad.data).item()
-                metadata["23dj_gIR"] = torch.linalg.norm(layer.input_range.grad.data).item()
-            if hasattr(layer, "scale") and layer.scale.grad is not None:
-                metadata["23dj_gS"] = torch.linalg.norm(layer.scale.grad.data).item()
-
-            if metadata["grad_steps_accumulated"] == grad_accumulation_steps:
+            if grad_steps == grad_accumulation_steps:
                 metadata["lr"] = get_lr(opt)
                 opt.step()
                 opt.zero_grad()
                 # reset accumulated step and loss
-                metadata["grad_steps_accumulated"] = 0
-                metadata["total_optimizer_steps"] += 1
-                metadata["aggregated_loss"] = metadata["loss_numerator"] / metadata["loss_denominator"]
-                metadata["loss_numerator"] = metadata["loss_denominator"] = 0
+                grad_steps = 0
+                total_optimizer_steps += 1
+                aggregated_loss = loss_numerator / loss_denominator
+                loss_numerator = loss_denominator = 0
 
-                metadata["23dj_A"] = torch.linalg.norm(layer._lora_A.data).item()
-                metadata["23dj_B"] = torch.linalg.norm(layer._lora_B.data).item()
-                if hasattr(layer, "input_low"):
-                    metadata["23dj_IL"] = torch.linalg.norm(layer.input_low.data).item()
-                    metadata["23dj_IR"] = torch.linalg.norm(layer.input_range.data).item()
-                else:
-                    metadata["23dj_S"] = torch.linalg.norm(layer.scale.data).item()
-
-            if (
-                args.print_every_steps
-                and metadata["total_optimizer_steps"] % args.print_every_steps == 0
-                and metadata["grad_steps_accumulated"] == 0
-            ):
+            if args.print_every_steps and total_microbatches % args.print_every_steps == 0:
                 print(
-                    f"epoch {metadata['current_epoch']}\t",
-                    f"\t| total updates = {metadata['total_optimizer_steps']}",
-                    f"\tloss = {metadata['aggregated_loss']:.9f}",
-                    f"\tlr = {metadata['lr']:.9f}",
+                    f"epoch {epoch}\t",
+                    f"\t| total microbatches = {total_microbatches}",
+                    f"\tloss = {aggregated_loss:.9f}",
+                    f"\tlr = {lr:.9f}",
                 )
 
-            if args.mlflow:
-                names_to_log = [
-                    "aggregated_loss",
-                    "lm_eval_word_ppl",
-                    "lm_eval_word_ppl_no_init",
-                    "wwb_similarity",
-                    "wwb_similarity_no_init",
-                    "best_eval_perplexity",
-                    "best_similarity",
-                    "current_epoch",
-                    "23dj_A",
-                    "23dj_gA",
-                    "23dj_B",
-                    "23dj_gB",
-                    "23dj_S",
-                    "23dj_gS",
-                    "23dj_IL",
-                    "23dj_gIL",
-                    "23dj_IR",
-                    "23dj_gIR",
-                ]
-                log_data = OrderedDict(filter(lambda pair: pair[0] in names_to_log, metadata.items()))
-                mlflow.log_metrics(log_data, step=metadata["total_microbatches"])
-            # torch.cuda.nvtx.range_pop()
+            tb.add_scalar("loss", loss, total_microbatches)
+
         save_checkpoint(model_to_tune, last_dir, ckpt_name)
         word_ppl = eval_on_wikitext(args.base_model, last_dir, file_handle, args.eval_model_seqlen, args.finetune_dtype)
         print(word_ppl)
         smlr = wwb_eval(args.base_model, last_dir, file_handle)
         print(smlr)
-        metadata["lm_eval_word_ppl_no_init"] = metadata["lm_eval_word_ppl"] = word_ppl
-        metadata["wwb_similarity_no_init"] = metadata["wwb_similarity"] = smlr
-        if word_ppl < metadata["best_eval_perplexity"]:
+        tb.add_scalar("word_ppl", word_ppl, total_microbatches)
+        tb.add_scalar("similarity", smlr, total_microbatches)
+
+        if word_ppl < best_word_ppl:
             print(f"New best lm_eval word perplexity = {word_ppl:.4f}")
-            metadata["best_eval_perplexity"] = word_ppl
-            metadata["best_step"] = metadata["total_optimizer_steps"]
+            best_word_ppl = word_ppl
             shutil.copy(last_dir / ckpt_name, ckpt_dir / ckpt_name)
             shutil.copy(last_dir / "results.json", ckpt_dir / "results.json")
-        if smlr > metadata["best_similarity"]:
+        if smlr > best_similarity:
             print(f"New best wwb similarity = {smlr:.4f}")
-            metadata["best_similarity"] = smlr
+            best_similarity = smlr
             shutil.copy(last_dir / ckpt_name, best_wwb_dir / ckpt_name)
             shutil.copy(last_dir / "results_wwb_chat.json", best_wwb_dir / "results_wwb_chat.json")
-        metadata["microbatches_since_epoch_start"] = 0
-        metadata["current_epoch"] += 1
 
 
 def print_memory_stats():
@@ -678,97 +593,76 @@ def main(argv):
     parser = get_argument_parser()
     args = parser.parse_args(argv)
 
+    tb = SummaryWriter(args.log_dir, "QAT with absorbable LoRA")
+
     assert torch.cuda.is_available()
     set_seed(args.seed)
     model_name = Path(args.base_model).name.replace(".", "_")
-    ROOT_MODEL_DIR = (Path.home() / ("MODEL_DIR")).resolve()
-    assert ROOT_MODEL_DIR.exists()
-    MODEL_DIR = ROOT_MODEL_DIR / model_name
-    MODEL_DIR.mkdir(exist_ok=True, parents=True)
-    exp_name = (
-        args.exp_name
-        if args.exp_name
-        else f"{model_name[:5]}_lr{args.lr:.0e}_fqlr{args.fq_lr:.0e}_wd{args.weight_decay:.0e}_tune_all"
-    )
     ckpt_dir = Path(args.nncf_ckpt_dir) / exp_name
     ckpt_dir.mkdir(exist_ok=True, parents=True)
-    log_filename = ckpt_dir / "tune.log"
-    print("Log file: ", log_filename)
-    sys.stdout.flush()
-    with log_filename.open("w") as f, redirect_stdout(f), redirect_stderr(f):
-        pprint.pprint(vars(args))
-        if args.mlflow:
-            mlflow.set_experiment("Tune FQLoRA")
+    pprint.pprint(vars(args))
 
-        init_ppl, init_smlr = None, None
-        init_smlr = wwb_eval(args.base_model, Path(args.nncf_ckpt_dir), f)
-        print("similarity for int4 init=", init_smlr)
-        init_ppl = eval_on_wikitext(
-            args.base_model, Path(args.nncf_ckpt_dir), f, args.eval_model_seqlen, args.finetune_dtype
+    init_ppl, init_smlr = None, None
+    init_smlr = wwb_eval(args.base_model, Path(args.nncf_ckpt_dir), f)
+    print("similarity for int4 init=", init_smlr)
+    init_ppl = eval_on_wikitext(
+        args.base_model, Path(args.nncf_ckpt_dir), f, args.eval_model_seqlen, args.finetune_dtype
+    )
+    print("word ppl for int4 init=", init_ppl)
+
+    # TODO: consider optimum.gptq??
+    # get data
+    train_dataloader = get_loaders(
+        args.dataset,
+        nsamples=args.nsamples,
+        seed=args.seed,
+        model_path=args.base_model,
+        seqlen=args.model_seqlen,
+        use_fast_tokenizer=args.use_fast_tokenizer,
+        trust_remote_code=args.trust_remote_code,
+        model_id=args.base_model,
+    )
+
+    # create original model
+    orig_model = get_model(
+        args.base_model, args.finetune_dtype, args.device_map, trust_remote_code=args.trust_remote_code
+    )
+    device = "cuda"
+    if not args.device_map:
+        orig_model = orig_model.to(device)
+    lm_head = deepcopy(orig_model.lm_head)
+
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model, use_fast=args.use_fast_tokenizer, trust_remote_code=True)
+
+    # cache logits to not store original model, except the last layer.
+    CACHE_DIR = MODEL_DIR / "hiddens_cache"
+    CACHE_DIR.mkdir(exist_ok=True, parents=True)
+    orig_hiddens = get_orig_hiddens(orig_model, train_dataloader, args.model_seqlen, args.dataset, CACHE_DIR)
+
+    # Load model with FQ and LoRA adapters
+    quant_model = load_nncf_quantized_model(args.nncf_ckpt_dir, orig_model, tokenizer)
+    print("NNCF model device=", quant_model.device)
+    if not args.device_map:
+        quant_model = quant_model.to(device)
+
+    try:
+        finetune(
+            quant_model,
+            train_loader=train_dataloader,
+            orig_hiddens=orig_hiddens,
+            args=args,
+            device=device,
+            ckpt_dir=ckpt_dir,
+            lm_head=lm_head,
+            init_ppl=init_ppl,
+            init_smlr=init_smlr,
+            file_handle=f,
         )
-        print("word ppl for int4 init=", init_ppl)
-
-        # get data
-        train_dataloader = get_loaders(
-            args.dataset,
-            nsamples=args.nsamples,
-            seed=args.seed,
-            model_path=args.base_model,
-            seqlen=args.model_seqlen,
-            use_fast_tokenizer=args.use_fast_tokenizer,
-            trust_remote_code=args.trust_remote_code,
-            model_id=args.base_model,
-        )
-
-        # create original model
-        orig_model = get_model(
-            args.base_model, args.finetune_dtype, args.device_map, trust_remote_code=args.trust_remote_code
-        )
-        device = "cuda"
-        if not args.device_map:
-            orig_model = orig_model.to(device)
-        lm_head = deepcopy(orig_model.lm_head)
-
-        tokenizer = AutoTokenizer.from_pretrained(
-            args.base_model, use_fast=args.use_fast_tokenizer, trust_remote_code=True
-        )
-
-        # cache logits to not store original model, except the last layer.
-        CACHE_DIR = MODEL_DIR / "hiddens_cache"
-        CACHE_DIR.mkdir(exist_ok=True, parents=True)
-        orig_hiddens = get_orig_hiddens(orig_model, train_dataloader, args.model_seqlen, args.dataset, CACHE_DIR)
-
-        # Load model with FQ and LoRA adapters
-        quant_model = load_nncf_quantized_model(args.nncf_ckpt_dir, orig_model, tokenizer)
-        print("NNCF model device=", quant_model.device)
-        if not args.device_map:
-            quant_model = quant_model.to(device)
-
-        with mlflow.start_run(run_name=exp_name) as run:
-            try:
-                print(f"Run ID: {run.info.run_id}")
-                mlflow.log_params(vars(args))
-                finetune(
-                    quant_model,
-                    train_loader=train_dataloader,
-                    orig_hiddens=orig_hiddens,
-                    args=args,
-                    device=device,
-                    ckpt_dir=ckpt_dir,
-                    lm_head=lm_head,
-                    init_ppl=init_ppl,
-                    init_smlr=init_smlr,
-                    file_handle=f,
-                )
-            finally:
-                print_memory_stats()
-                if args.mlflow:
-                    print("Adding log to artifacts: ", log_filename)
-                    mlflow.log_artifact(log_filename)
-                    torch.cuda.empty_cache()
-                    torch.cuda.reset_peak_memory_stats()
-                    print(f"eval: {torch.cuda.max_memory_allocated()=:,}")
-                    mlflow.log_params({"max_cuda_mem_eval": round(torch.cuda.max_memory_allocated() / 1e9, 2)})
+    finally:
+        print_memory_stats()
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        print(f"eval: {torch.cuda.max_memory_allocated()=:,}")
 
 
 if __name__ == "__main__":
