@@ -768,6 +768,7 @@ class SymmetricQuantizer(BaseQuantizer):
         self.set_levels()
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
+        self.to(x.device)
         return symmetric_quantize(
             x, self.levels, self.level_low, self.level_high, self.scale, self.eps, skip=execute_traced_op_as_identity
         )
@@ -955,6 +956,7 @@ class AsymmetricQuantizer(BaseQuantizer):
         self.level_low, self.level_high = calculate_asymmetric_level_ranges(self.num_bits - scaled_num_bits)
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
+        self.to(x.device)
         return asymmetric_quantize(
             x,
             self.levels,
@@ -1097,6 +1099,7 @@ class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
         self.init_lora(lspec)
 
     def quantize(self, x: torch.Tensor, execute_traced_op_as_identity: bool = False):
+        self.to(x.device)
         return asymmetric_quantize_lora(
             x,
             self._lspec.weight_shape,
@@ -1142,6 +1145,7 @@ class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
         self.init_lora(lspec)
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
+        self.to(x.device)
         return symmetric_quantize_lora(
             x,
             self._lspec.weight_shape,

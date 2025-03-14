@@ -15,6 +15,14 @@ from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 
 import nncf
+from nncf.data.dataset import Dataset
+from nncf.experimental.torch2.function_hook.serialization import get_config
+from nncf.experimental.torch2.function_hook.serialization import load_from_config
+from nncf.parameters import CompressionFormat
+from nncf.parameters import CompressWeightsMode
+from nncf.quantization.advanced_parameters import AdvancedCompressionParameters
+from nncf.quantization.quantize_model import compress_weights
+from nncf.scopes import IgnoredScope
 from nncf.torch.quantization.layers import AsymmetricQuantizer as AQ
 from nncf.torch.quantization.layers import LoraMixin
 from nncf.torch.quantization.layers import SymmetricQuantizer as SQ
@@ -86,3 +94,62 @@ def test_fq_lora_tuning(mode, backup_mode, compression_kwargs, ref_num_trainable
 
     assert first_loss > 8
     assert float(loss) < 1
+
+
+def test_checkpoint_loading(tmp_path):
+    model_id = "hf-internal-testing/tiny-random-GPTNeoXForCausalLM"
+    if not torch.cuda.is_available():
+        pytest.skip("Skipping CUDA test case for CPU only setups.")
+    device = "cuda"
+    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map="cuda")
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    example_input = tokenizer("dummy", return_tensors="pt").to(device)
+    ref_output = tokenizer.decode(
+        model.generate(**example_input, do_sample=False, max_new_tokens=20)[0], skip_special_tokens=True
+    )
+    # except_lm_head_and_5th_vproj = (
+    #     r"^(?!.*(GPTNeoXLayer\[2\]/GPTNeoXSdpaAttention\[attention\]/Linear\[query_key_value\]/l|embed_out).*$).*$"
+    # )
+    except_2_layers = r"^(?!.*(mlp/dense_4h_to_h/linear/1|lm_head).*$).*$"
+    model = compress_weights(
+        model,
+        group_size=32,
+        mode=CompressWeightsMode.INT4_ASYM,
+        backup_mode=CompressWeightsMode.INT8_ASYM,
+        dataset=Dataset([dict(example_input)]),
+        compression_format=CompressionFormat.FQ_LORA,
+        ignored_scope=IgnoredScope(patterns=[except_2_layers]),
+        advanced_parameters=AdvancedCompressionParameters(lora_adapter_rank=2),
+    )
+
+    from nncf.experimental.torch2.function_hook.nncf_graph.nncf_graph_builder import build_nncf_graph
+
+    build_nncf_graph(model, **example_input).visualize_graph(tmp_path / "fq_model.dot")
+
+    ref_output = tokenizer.decode(
+        model.generate(**example_input, do_sample=False, max_new_tokens=20)[0], skip_special_tokens=True
+    )
+
+    # save checkpoint
+    ckpt_path = tmp_path / "nncf_ckpt.pth"
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "compression_config": get_config(model),
+        },
+        ckpt_path,
+    )
+    del model
+
+    # load checkpoint
+    nncf_ckpt = torch.load(ckpt_path, weights_only=False)
+    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map="cuda")
+
+    model = load_from_config(model, nncf_ckpt["compression_config"])
+    model.load_state_dict(nncf_ckpt["model_state_dict"])
+
+    actual_output = tokenizer.decode(
+        model.generate(**example_input, do_sample=False, max_new_tokens=20)[0],
+        skip_special_tokens=True,
+    )
+    assert actual_output == ref_output
