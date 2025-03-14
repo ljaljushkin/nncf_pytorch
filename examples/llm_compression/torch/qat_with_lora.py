@@ -64,7 +64,6 @@ def get_model(model_path, dtype="auto", device_map=None, trust_remote_code=False
         device_map=device_map,
         low_cpu_mem_usage=True,
         local_files_only=True,
-        **model_kwargs,
     )
     print("Model loaded sucсessfully ...")
     return model
@@ -292,9 +291,6 @@ def kl_div(student_hiddens, teacher_hiddens):
 
 
 def set_trainable(model, lora_lr, fq_lr, weight_decay):
-    for param in model.parameters():
-        param.requires_grad = False
-
     scales_to_train = []
     adapters_to_train = []
     for quantizer in model._nncf.external_quantizers.values():
@@ -433,8 +429,7 @@ def finetune(
         print(word_ppl)
         smlr = wwb_eval(args.base_model, last_dir, file_handle)
         print(smlr)
-        tb.add_scalar("word_ppl", word_ppl, total_microbatches)
-        tb.add_scalar("similarity", smlr, total_microbatches)
+        tb.add_scalars("metrics", {"word_ppl": word_ppl, "similarity": smlr}, total_microbatches)
 
         if word_ppl < best_word_ppl:
             print(f"New best lm_eval word perplexity = {word_ppl:.4f}")
