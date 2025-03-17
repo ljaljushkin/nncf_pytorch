@@ -156,7 +156,7 @@ def get_similarity(model, wwb_eval):
         start_time = time.time()
         model = nncf.strip(model)
         patch_nncf_decompressors(model)
-        export_from_model(model, IR_DIR, patch_16bit_model=True)
+        export_from_model(model.cpu(), IR_DIR, patch_16bit_model=True, device="cpu")
         ov_model = OVModelForCausalLM.from_pretrained(
             model_id=IR_DIR,
             trust_remote_code=True,
