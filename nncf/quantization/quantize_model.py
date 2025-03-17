@@ -649,7 +649,6 @@ def compress_weights(
         ignored_scope,
         sensitivity_metric,
         backup_mode,
-        compression_format,
         advanced_parameters,
     )
 
