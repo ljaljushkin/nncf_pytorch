@@ -139,3 +139,4 @@ original_graph.dot
 tests/post_training/**/*memory_logs
 env*
 mlruns
+output

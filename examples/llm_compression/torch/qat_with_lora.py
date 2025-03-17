@@ -17,22 +17,24 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence, Union
 
+import torch
+import torch.nn.functional as F
 from datasets import load_dataset
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from tqdm import trange
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 from whowhatbench import TextEvaluator
 
-import torch
-import torch.nn.functional as F
-from examples.torch.common.execution import set_seed
 from nncf.data.dataset import Dataset
 from nncf.parameters import CompressionFormat
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.model_creation import load_from_config
-from torch.utils.tensorboard import SummaryWriter
+from nncf.torch.model_graph_manager import get_const_node
+from nncf.torch.model_graph_manager import get_module_by_name
+from nncf.torch.model_graph_manager import split_const_name
 
 MODEL_ID = "HuggingFaceTB/SmolLM-1.7B-Instruct"
 DEVICE = "cuda"
@@ -48,6 +50,7 @@ WWB_REF_FILE = OUTPUT_DIR / "wwb_ref.csv"
 # TODO: remove with lm_eval
 LAST_DIR = OUTPUT_DIR / "last_ckpt"
 LAST_DIR.mkdir(exist_ok=True)
+LAST_CKPT_FILE = LAST_DIR / CKPT_NAME
 
 
 # TODO: hardcode for sample case only!
@@ -69,17 +72,26 @@ def get_wikitext2(nsamples, seqlen, tokenizer):
     traindata = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
     limit = nsamples * seqlen // 4  # ~1k for 128 samples with seqlen=32 to be aligned with optimum
     text = "".join([" \n" if s == "" else s for s in traindata["text"][:limit]])
-    trainenc = tokenizer(text, return_tensors="pt").cuda()
+    trainenc = tokenizer(text, return_tensors="pt")
     print(type(trainenc), trainenc)
     trainloader = []
     for _ in range(nsamples):
         i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
         j = i + seqlen
-        inp = trainenc.input_ids[:, i:j]
+        inp = trainenc.input_ids[:, i:j].to(DEVICE)
         attention_mask = torch.ones_like(inp)
-        # TODO: position ids??
-        trainloader.append({"input_ids": inp, "attention_mask": attention_mask})
+        position_ids = torch.cumsum(attention_mask, axis=1) - 1
+        trainloader.append({"input_ids": inp, "attention_mask": attention_mask, "position_ids": position_ids})
     return trainloader
+
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU.
+    random.seed(seed)  # Python random module.
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 
 # TODO: remove
@@ -99,33 +111,54 @@ def eval_on_wikitext(ckpt_dir):
 
 
 def save_wwb_ref(model, tokenizer):
-    wwb_eval = TextEvaluator(base_model=model, tokenizer=tokenizer, use_chat_template=True)
-    wwb_eval.dump_gt(str(WWB_REF_FILE))
+    if not WWB_REF_FILE.exists():
+        wwb_eval = TextEvaluator(base_model=model, tokenizer=tokenizer, use_chat_template=True)
+        wwb_eval.dump_gt(str(WWB_REF_FILE))
 
 
 # TODO: what about class with all parameters on init, saved wwb_eval, cached_hiddens
 # TODO: float strip? How much faster?
 # TODO: OV export and eval in OV how much faster?
 def get_similarity(model, wwb_eval):
+    float_strip = False
+    if float_strip:
+        layout = model.nncf.transformation_layout()
+        model = model.nncf.get_clean_shallow_copy()
+        graph = model.nncf.get_graph()
+        t = layout.transformations
+        for command in t:
+            quantizer = command.fn
+            tp = command.target_points[0]
+            node_with_weight = graph.get_node_by_name(tp.target_node_name)
+            weight_node = get_const_node(node_with_weight, tp.input_port_id, graph)
+            weight_name = weight_node.layer_attributes.name
+            module_name, weight_attr_name = split_const_name(weight_name)
+            layer = get_module_by_name(module_name, model)
+            weight = getattr(layer, weight_attr_name)
+            fq_weight = quantizer.quantize(weight)
+            setattr(layer, weight_attr_name, torch.nn.Parameter(fq_weight))
+    else:
+
+
     _, all_metrics = wwb_eval.score(model)
     return float(all_metrics["similarity"].iloc[0])
 
 
 # TODO: is it needed only for lm_eval
 # TODO: or save ckpt for further resume and export?
-def save_checkpoint(model, ckpt_dir):
+def save_checkpoint(model, ckpt_file):
     torch.save(
         {
             "nncf_state_dict": model.nncf.state_dict(),
             "nncf_config": model.nncf.get_config(),
         },
-        ckpt_dir / CKPT_NAME,
+        ckpt_file,
     )
 
 
 # TODO: keep for resume??
-def load_nncf_quantized_model(model, example_input, ckpt_dir):
-    ckpt = torch.load(Path(ckpt_dir) / CKPT_NAME, weights_only=False)
+def load_nncf_quantized_model(model, example_input, ckpt_file):
+    ckpt = torch.load(ckpt_file, weights_only=False)
     model = load_from_config(model, ckpt["nncf_config"], example_input=example_input)
     model.nncf.load_state_dict(ckpt["nncf_state_dict"])
     return model
@@ -159,7 +192,7 @@ def print_trainable_parameters(module):
 def calc_hiddens(model, dataloader):
     orig_hiddens = []
     for i in trange(len(dataloader), total=len(dataloader), desc="Calculating original hiddens", leave=False):
-        batch = maybe_get_0th_element(dataloader[i]).to(DEVICE)
+        batch = maybe_get_0th_element(dataloader[i])
         orig_hiddens.append(model.model(batch).last_hidden_state.cpu())
     return orig_hiddens
 
@@ -202,20 +235,40 @@ def set_trainable(model, lora_lr, fq_lr, weight_decay):
     return param_to_train
 
 
-def finetune(
-    model,
-    tokenizer,
-    train_loader,
-    orig_hiddens,
-):
-    microbatch_size = 2
-    batch_size = 32
-    grad_accumulation_steps = batch_size // microbatch_size
-    num_samples = len(train_loader)
-    epoch_samples = num_samples - num_samples % microbatch_size
-    microbatches_per_epoch = epoch_samples // microbatch_size
+def main():
+    assert torch.cuda.is_available()
+    set_seed(42)
 
-    tb = SummaryWriter(TENSORBOARD_DIR, "QAT with absorbable LoRA")
+    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=TORCH_DTYPE, device_map="auto")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+
+    save_wwb_ref(model, tokenizer)
+
+    train_loader = get_wikitext2(nsamples=1024, seqlen=1024, tokenizer=tokenizer)
+    # orig_hiddens = calc_hiddens(model, train_loader)
+
+    example_input = train_loader[0]
+    if LAST_CKPT_FILE.exists():
+        model = load_nncf_quantized_model(model, example_input, LAST_CKPT_FILE)
+    else:
+        model = compress_weights(
+            model,
+            mode=CompressWeightsMode.INT4_ASYM,
+            group_size=64,
+            subset_size=1,
+            dataset=Dataset([example_input]),
+            compression_format=CompressionFormat.FQ_LORA,
+        )
+        save_checkpoint(model, LAST_CKPT_FILE)
+
+    # microbatch_size = 2
+    # batch_size = 32
+    # grad_accumulation_steps = batch_size // microbatch_size
+    # num_samples = len(train_loader)
+    # epoch_samples = num_samples - num_samples % microbatch_size
+    # microbatches_per_epoch = epoch_samples // microbatch_size
+
+    # tb = SummaryWriter(TENSORBOARD_DIR, "QAT with absorbable LoRA")
 
     wwb_eval = TextEvaluator(
         tokenizer=tokenizer, gt_data=WWB_REF_FILE, test_data=str(WWB_REF_FILE), use_chat_template=True
@@ -224,7 +277,6 @@ def finetune(
     best_similarity = get_similarity(model, wwb_eval)
     print("similarity for int4 init=", best_similarity)
 
-    save_checkpoint(model, LAST_DIR)
     best_word_ppl = eval_on_wikitext(LAST_DIR)
     print("word ppl for int4 init=", best_word_ppl)
 
@@ -301,29 +353,6 @@ def finetune(
 
     # TODO:
     # export best, evaluate OV IR
-
-
-def main():
-    assert torch.cuda.is_available()
-    set_seed(42)
-
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=TORCH_DTYPE, device_map="auto")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-
-    save_wwb_ref(model, tokenizer)
-
-    train_dataloader = get_wikitext2(nsamples=1024, seqlen=1024, tokenizer=tokenizer)
-    orig_hiddens = calc_hiddens(model, train_dataloader)
-
-    model = compress_weights(
-        model,
-        mode=CompressWeightsMode.INT4_ASYM,
-        group_size=64,
-        dataset=Dataset(train_dataloader[0]),
-        compression_format=CompressionFormat.FQ_LORA,
-    )
-
-    finetune(model, tokenizer, train_dataloader, orig_hiddens)
 
 
 if __name__ == "__main__":
