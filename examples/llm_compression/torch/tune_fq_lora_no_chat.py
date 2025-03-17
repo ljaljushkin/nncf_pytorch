@@ -258,8 +258,8 @@ def load_nncf_quantized_model(nncf_ckpt_dir, student_model, tokenizer, merge_8bi
     }
     print(example_input)
     nncf_ckpt = torch.load(Path(nncf_ckpt_dir) / "nncf_checkpoint.pth", weights_only=False)
-    model = load_from_config(model, nncf_ckpt["compression_config"])
-    model.load_state_dict(nncf_ckpt["model_state_dict"])
+    student_model = load_from_config(student_model, nncf_ckpt["compression_config"])
+    student_model.load_state_dict(nncf_ckpt["model_state_dict"])
     # from nncf.torch import load_from_config
     # student_model = load_from_config(student_model, nncf_ckpt["nncf_config"], example_input=example_input)
     # student_model.nncf.load_state_dict(nncf_ckpt["nncf_state_dict"])
@@ -411,9 +411,9 @@ def finetune(
             ("best_step", 0),
         ]
     )
-    layer = model_to_tune._nncf.external_quantizers.FQ_LORA_model_layers_13_mlp_down_proj_weight
-    param_to_train = set_trainable(model_to_tune, lora_lr=args.lr, fq_lr=args.fq_lr, weight_decay=args.weight_decay)
-    opt = torch.optim.AdamW(param_to_train, lr=args.lr, betas=(args.adam_beta1, args.adam_beta2))
+    # layer = model_to_tune._nncf.external_quantizers.FQ_LORA_model_layers_13_mlp_down_proj_weight
+    # param_to_train = set_trainable(model_to_tune, lora_lr=args.lr, fq_lr=args.fq_lr, weight_decay=args.weight_decay)
+    opt = torch.optim.AdamW(model_to_tune.parameters(), lr=args.lr, betas=(args.adam_beta1, args.adam_beta2))
     model_to_tune.train()
 
     for epoch in range(args.epochs):
@@ -461,14 +461,14 @@ def finetune(
 
             (loss / grad_accumulation_steps).backward()
 
-            if layer._lora_A.grad is not None:
-                metadata["23dj_gA"] = torch.linalg.norm(layer._lora_A.grad.data).item()
-                metadata["23dj_gB"] = torch.linalg.norm(layer._lora_B.grad.data).item()
-            if hasattr(layer, "input_low") and layer.input_low.grad is not None:
-                metadata["23dj_gIL"] = torch.linalg.norm(layer.input_low.grad.data).item()
-                metadata["23dj_gIR"] = torch.linalg.norm(layer.input_range.grad.data).item()
-            if hasattr(layer, "scale") and layer.scale.grad is not None:
-                metadata["23dj_gS"] = torch.linalg.norm(layer.scale.grad.data).item()
+            # if layer._lora_A.grad is not None:
+            #     metadata["23dj_gA"] = torch.linalg.norm(layer._lora_A.grad.data).item()
+            #     metadata["23dj_gB"] = torch.linalg.norm(layer._lora_B.grad.data).item()
+            # if hasattr(layer, "input_low") and layer.input_low.grad is not None:
+            #     metadata["23dj_gIL"] = torch.linalg.norm(layer.input_low.grad.data).item()
+            #     metadata["23dj_gIR"] = torch.linalg.norm(layer.input_range.grad.data).item()
+            # if hasattr(layer, "scale") and layer.scale.grad is not None:
+            #     metadata["23dj_gS"] = torch.linalg.norm(layer.scale.grad.data).item()
 
             if metadata["grad_steps_accumulated"] == grad_accumulation_steps:
                 metadata["lr"] = get_lr(opt)
@@ -480,13 +480,13 @@ def finetune(
                 metadata["aggregated_loss"] = metadata["loss_numerator"] / metadata["loss_denominator"]
                 metadata["loss_numerator"] = metadata["loss_denominator"] = 0
 
-                metadata["23dj_A"] = torch.linalg.norm(layer._lora_A.data).item()
-                metadata["23dj_B"] = torch.linalg.norm(layer._lora_B.data).item()
-                if hasattr(layer, "input_low"):
-                    metadata["23dj_IL"] = torch.linalg.norm(layer.input_low.data).item()
-                    metadata["23dj_IR"] = torch.linalg.norm(layer.input_range.data).item()
-                else:
-                    metadata["23dj_S"] = torch.linalg.norm(layer.scale.data).item()
+                # metadata["23dj_A"] = torch.linalg.norm(layer._lora_A.data).item()
+                # metadata["23dj_B"] = torch.linalg.norm(layer._lora_B.data).item()
+                # if hasattr(layer, "input_low"):
+                #     metadata["23dj_IL"] = torch.linalg.norm(layer.input_low.data).item()
+                #     metadata["23dj_IR"] = torch.linalg.norm(layer.input_range.data).item()
+                # else:
+                #     metadata["23dj_S"] = torch.linalg.norm(layer.scale.data).item()
 
             if (
                 args.print_every_steps
@@ -510,16 +510,16 @@ def finetune(
                     "best_eval_perplexity",
                     "best_similarity",
                     "current_epoch",
-                    "23dj_A",
-                    "23dj_gA",
-                    "23dj_B",
-                    "23dj_gB",
-                    "23dj_S",
-                    "23dj_gS",
-                    "23dj_IL",
-                    "23dj_gIL",
-                    "23dj_IR",
-                    "23dj_gIR",
+                    # "23dj_A",
+                    # "23dj_gA",
+                    # "23dj_B",
+                    # "23dj_gB",
+                    # "23dj_S",
+                    # "23dj_gS",
+                    # "23dj_IL",
+                    # "23dj_gIL",
+                    # "23dj_IR",
+                    # "23dj_gIR",
                 ]
                 log_data = OrderedDict(filter(lambda pair: pair[0] in names_to_log, metadata.items()))
                 mlflow.log_metrics(log_data, step=metadata["total_microbatches"])
@@ -714,12 +714,12 @@ def main(argv):
             mlflow.set_experiment("Tune FQLoRA")
 
         init_ppl, init_smlr = None, None
-        init_smlr = wwb_eval(args.base_model, Path(args.nncf_ckpt_dir), f)
-        print("similarity for int4 init=", init_smlr)
+        # init_smlr = wwb_eval(args.base_model, Path(args.nncf_ckpt_dir), f)
+        # print("similarity for int4 init=", init_smlr)
         # init_ppl = eval_on_wikitext(
         #     args.base_model, Path(args.nncf_ckpt_dir), f, args.eval_model_seqlen, args.finetune_dtype
         # )
-        print("word ppl for int4 init=", init_ppl)
+        # print("word ppl for int4 init=", init_ppl)
 
         # get data
         train_dataloader = get_loaders(
