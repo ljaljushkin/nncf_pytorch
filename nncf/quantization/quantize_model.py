@@ -441,7 +441,7 @@ def compress_weights(
     gptq: Optional[bool] = None,
     lora_correction: Optional[bool] = None,
     backup_mode: Optional[BackupMode] = None,
-    compression_format: Optional[CompressionFormat] = None,
+    compression_format: Optional[CompressionFormat] = CompressionFormat.DQ,
     advanced_parameters: Optional[AdvancedCompressionParameters] = None,
 ) -> TModel:
     """
@@ -499,6 +499,7 @@ def compress_weights(
         INT8_ASYM stands for 8-bit integer asymmetric quantization with a typical non-fixed zero point.
     :type backup_mode: nncf.BackupMode
     :param compression_format: Describes the format in which the model is saved after weight compression.
+        Defaults to nncf.CompressionFormat.DQ.
     :type compression_format: nncf.CompressionFormat
     :param advanced_parameters: Advanced parameters for compression algorithms.
     :type advanced_parameters: nncf.AdvancedCompressionParameters
@@ -515,7 +516,7 @@ def compress_weights(
 
     if backend == BackendType.TORCH:
         from nncf.torch.model_creation import is_wrapped_model
-        from nncf.torch.model_creation import wrap_model
+        from nncf.torch.nncf_network import NNCFNetwork
         from nncf.torch.quantization.quantize_model import compress_weights_impl as pt_compression_weights_impl
 
         if mode in [CompressWeightsMode.NF4, CompressWeightsMode.E2M1]:
@@ -532,12 +533,12 @@ def compress_weights(
             msg = "Torch backend does not support statistics caching."
             raise nncf.ParameterNotSupportedError(msg)
 
-        if compression_format == CompressionFormat.FQ and group_size == -1:
+        if compression_format == CompressionFormat.FQ and group_size != -1:
             msg = "Torch backend does not support FQ compression format for group-wise quantization."
             raise nncf.ParameterNotSupportedError(msg)
 
         if is_wrapped_model(model):
-            if not model.nncf.trace_parameters:
+            if isinstance(model, NNCFNetwork) and not model.nncf.trace_parameters:
                 msg = (
                     "Tracing capabilities with tracing parameters are required in the PyTorch model "
                     "for nncf.compress_weights(). Please wrap the model using "
@@ -549,6 +550,8 @@ def compress_weights(
             msg = "Please provide a dataset of at least one element for PyTorch model tracing."
             raise nncf.ValidationError(msg)
         else:
+            from nncf.torch.model_creation import wrap_model
+
             example_input = next(iter(dataset.get_inference_data()))
             model = wrap_model(model, example_input=example_input, trace_parameters=True)
         if mode in (CompressWeightsMode.INT8, CompressWeightsMode.INT8_ASYM, CompressWeightsMode.INT8_SYM):
@@ -658,6 +661,7 @@ def compress_weights(
         model=model,
         dataset=dataset,
         subset_size=subset_size,
+        compression_format=compression_format,
         **weight_compression_configuration,
     )
 

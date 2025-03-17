@@ -12,6 +12,7 @@
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -38,11 +39,28 @@ ACCURACY_METRICS_AFTER_TRAINING = "accuracy_metrics_after_training"
 MODEL_SIZE_METRICS = "model_size_metrics"
 PERFORMANCE_METRICS = "performance_metrics"
 
+NUM_RETRY_ON_CONNECTION_ERROR = 2
+RETRY_TIMEOUT = 60
+
 
 def example_test_cases():
     example_scope = load_json(EXAMPLE_SCOPE_PATH)
     for example_name, example_params in example_scope.items():
         yield pytest.param(example_name, example_params, id=example_name)
+
+
+def _is_connection_error(txt: str) -> bool:
+    error_list = [
+        "ReadTimeoutError",
+        "HTTPError",
+        "URL fetch failure",
+    ]
+    for line in txt.split()[::-1]:
+        if any(e in line for e in error_list):
+            print("-------------------------------")
+            print(f"Detect connection error: {line}")
+            return True
+    return False
 
 
 @pytest.mark.parametrize("example_name, example_params", example_test_cases())
@@ -77,7 +95,13 @@ def test_examples(
 
     if ov_version_override is not None:
         ov_version_cmd_line = f"{pip_with_venv} install {ov_version_override}"
+        uninstall_cmd_line = f"{pip_with_venv} uninstall --yes openvino-genai openvino_tokenizers"
+        extra_index_url = "https://storage.openvinotoolkit.org/simple/wheels/nightly"
+        wwb_module_string = "whowhatbench@git+https://github.com/openvinotoolkit/openvino.genai.git#subdirectory=tools/who_what_benchmark"
+        wwb_override_cmd_line = f"{pip_with_venv} install --pre --extra-index-url {extra_index_url} {wwb_module_string}"
         subprocess.run(ov_version_cmd_line, check=True, shell=True)
+        subprocess.run(uninstall_cmd_line, check=True, shell=True)
+        subprocess.run(wwb_override_cmd_line, check=True, shell=True)
 
     subprocess.run(f"{pip_with_venv} list", check=True, shell=True)
 
@@ -93,8 +117,20 @@ def test_examples(
     run_cmd_line = f"{python_executable_with_venv} {run_example_py} --name {example_name} --output {metrics_file_path}"
     if data is not None:
         run_cmd_line += f" --data {data}"
-    cmd = Command(run_cmd_line, cwd=PROJECT_ROOT, env=env)
-    cmd.run()
+
+    retry_count = 0
+    while True:
+        cmd = Command(run_cmd_line, cwd=PROJECT_ROOT, env=env)
+        try:
+            ret = cmd.run()
+            if ret == 0:
+                break
+        except Exception as e:
+            if retry_count >= NUM_RETRY_ON_CONNECTION_ERROR or not _is_connection_error(str(e)):
+                raise e
+        retry_count += 1
+        print(f"Retry {retry_count} after {RETRY_TIMEOUT} seconds")
+        time.sleep(RETRY_TIMEOUT)
 
     measured_metrics = load_json(metrics_file_path)
     print(measured_metrics)

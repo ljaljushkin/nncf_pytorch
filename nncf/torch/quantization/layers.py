@@ -41,7 +41,7 @@ from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.graph.transformations.commands import TargetType
 from nncf.torch.layer_utils import COMPRESSION_MODULES
 from nncf.torch.layer_utils import CompressionParameter
-from nncf.torch.layer_utils import StatefullModuleInterface
+from nncf.torch.layer_utils import StatefulModuleInterface
 from nncf.torch.quantization.quantize_functions import ExportQuantizeToFakeQuantize
 from nncf.torch.quantization.quantize_functions import ExportQuantizeToONNXQuantDequant
 from nncf.torch.quantization.quantize_functions import TuneRange
@@ -315,7 +315,7 @@ class PTQuantizerSetup(QuantizerSetupBase):
         self.quantization_points[qp_id] = qp
 
 
-class BaseQuantizer(nn.Module, StatefullModuleInterface, ABC):
+class BaseQuantizer(nn.Module, StatefulModuleInterface, ABC):
     def __init__(self, qspec: PTQuantizerSpec):
         super().__init__()
         self._qspec = qspec
@@ -768,7 +768,6 @@ class SymmetricQuantizer(BaseQuantizer):
         self.set_levels()
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
-        # in multi-device case with device_map=auto after loading nncf checkpoint, quantizers have a different device.
         self.to(x.device)
         return symmetric_quantize(
             x, self.levels, self.level_low, self.level_high, self.scale, self.eps, skip=execute_traced_op_as_identity
@@ -957,7 +956,6 @@ class AsymmetricQuantizer(BaseQuantizer):
         self.level_low, self.level_high = calculate_asymmetric_level_ranges(self.num_bits - scaled_num_bits)
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
-        # in multi-device case with device_map=auto after loading nncf checkpoint, quantizers have a different device.
         self.to(x.device)
         return asymmetric_quantize(
             x,
@@ -1066,48 +1064,47 @@ class LoraMixin:
     Represents learnable LoRA (Low-Rank Adaptation) adapters for quantization modules.
     """
 
-    LORA_A_PARAM_NAME = "_lora_A"
-    LORA_B_PARAM_NAME = "_lora_B"
+    LORA_A_PARAM_NAME = "lora_A"
+    LORA_B_PARAM_NAME = "lora_B"
 
-    def __init__(self, lspec: PTLoraSpec):
+    def init_lora(self, lspec: PTLoraSpec):
         self._lspec = lspec
         out_features, in_features = lspec.orig_weight_shape
-        self._lora_A = torch.nn.Parameter(torch.ones((lspec.lora_rank, in_features), dtype=torch.bfloat16))
-        self._lora_B = torch.nn.Parameter(torch.zeros((out_features, lspec.lora_rank), dtype=torch.bfloat16))
+        self.lora_A = torch.nn.Parameter(torch.ones((lspec.lora_rank, in_features), dtype=torch.bfloat16))
+        self.lora_B = torch.nn.Parameter(torch.zeros((out_features, lspec.lora_rank), dtype=torch.bfloat16))
 
     def enable_gradients(self):
-        self._lora_A.requires_grad = True
-        self._lora_B.requires_grad = True
+        self.lora_A.requires_grad = True
+        self.lora_B.requires_grad = True
 
     @abstractmethod
     def disable_gradients(self):
-        self._lora_A.requires_grad = False
-        self._lora_B.requires_grad = False
+        self.lora_A.requires_grad = False
+        self.lora_B.requires_grad = False
 
     def get_adapters(self) -> Dict[str, torch.Tensor]:
         return {
-            self.LORA_A_PARAM_NAME: self._lora_A,
-            self.LORA_B_PARAM_NAME: self._lora_B,
+            self.LORA_A_PARAM_NAME: self.lora_A,
+            self.LORA_B_PARAM_NAME: self.lora_B,
         }
 
 
 @COMPRESSION_MODULES.register()
 @QUANTIZATION_MODULES.register(QuantizationMode.ASYMMETRIC_LORA)
 class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
-    _arg_names = ["qspec", "lspeq"]
+    _arg_names = ["qspec", "lspec"]
 
     def __init__(self, qspec: PTQuantizerSpec, lspec: PTLoraSpec):
         super().__init__(qspec)
-        LoraMixin.__init__(self, lspec)
+        self.init_lora(lspec)
 
     def quantize(self, x: torch.Tensor, execute_traced_op_as_identity: bool = False):
-        # in multi-device case with device_map=auto after loading nncf checkpoint, quantizers have a different device.
         self.to(x.device)
         return asymmetric_quantize_lora(
             x,
             self._lspec.weight_shape,
-            self._lora_A,
-            self._lora_B,
+            self.lora_A,
+            self.lora_B,
             self.input_low,
             self.input_range,
             self.level_low,
@@ -1145,16 +1142,15 @@ class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
 class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
     def __init__(self, qspec: PTQuantizerSpec, lspec: PTLoraSpec):
         super().__init__(qspec)
-        LoraMixin.__init__(self, lspec)
+        self.init_lora(lspec)
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
-        # in multi-device case with device_map=auto after loading nncf checkpoint, quantizers have a different device.
         self.to(x.device)
         return symmetric_quantize_lora(
             x,
             self._lspec.weight_shape,
-            self._lora_A,
-            self._lora_B,
+            self.lora_A,
+            self.lora_B,
             self.scale,
             self.level_low,
             self.level_high,

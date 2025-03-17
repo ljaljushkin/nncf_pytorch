@@ -397,10 +397,8 @@ class AdvancedCompressionParameters:
     # Advanced Lora Correction algorithm parameters
     lora_correction_params: AdvancedLoraCorrectionParameters = field(default_factory=AdvancedLoraCorrectionParameters)
 
-    # Advanced parameters compression format
-    compression_format_params: AdvancedCompressionFormatParameters = field(
-        default_factory=AdvancedCompressionFormatParameters
-    )
+    # rank of lora adapters for FQ_LORA format. Defaults to 256.
+    lora_adapter_rank: int = 256
 
 
 @api()
