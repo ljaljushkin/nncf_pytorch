@@ -9,6 +9,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from nncf.experimental.torch2.function_hook.serialization import get_config
+from nncf.experimental.torch2.function_hook.serialization import load_from_config
 import argparse
 import json
 import os
@@ -222,15 +224,25 @@ def wwb_eval(model_id, ckpt_dir, file_handle):
 def save_checkpoint(wrapped_model, ckpt_dir, ckpt_name="nncf_checkpoint.pth"):
     if not ckpt_dir.exists():
         ckpt_dir.mkdir()
-    nncf_state_dict = wrapped_model.nncf.state_dict()
-    nncf_config = wrapped_model.nncf.get_config()
+    # NOTE: new tracing
     torch.save(
         {
-            "nncf_state_dict": nncf_state_dict,
-            "nncf_config": nncf_config,
+            "model_state_dict": wrapped_model.state_dict(),
+            "compression_config": get_config(wrapped_model),
         },
         ckpt_dir / ckpt_name,
     )
+
+    # NOTE: old tracing
+    # nncf_state_dict = wrapped_model.nncf.state_dict()
+    # nncf_config = wrapped_model.nncf.get_config()
+    # torch.save(
+    #     {
+    #         "nncf_state_dict": nncf_state_dict,
+    #         "nncf_config": nncf_config,
+    #     },
+    #     ckpt_dir / ckpt_name,
+    # )
 
 
 def load_nncf_quantized_model(nncf_ckpt_dir, student_model, tokenizer, merge_8bit_FQ=False):
@@ -246,10 +258,11 @@ def load_nncf_quantized_model(nncf_ckpt_dir, student_model, tokenizer, merge_8bi
     }
     print(example_input)
     nncf_ckpt = torch.load(Path(nncf_ckpt_dir) / "nncf_checkpoint.pth", weights_only=False)
-    from nncf.torch import load_from_config
-
-    student_model = load_from_config(student_model, nncf_ckpt["nncf_config"], example_input=example_input)
-    student_model.nncf.load_state_dict(nncf_ckpt["nncf_state_dict"])
+    model = load_from_config(model, nncf_ckpt["compression_config"])
+    model.load_state_dict(nncf_ckpt["model_state_dict"])
+    # from nncf.torch import load_from_config
+    # student_model = load_from_config(student_model, nncf_ckpt["nncf_config"], example_input=example_input)
+    # student_model.nncf.load_state_dict(nncf_ckpt["nncf_state_dict"])
     return student_model
 
 
@@ -512,18 +525,18 @@ def finetune(
                 mlflow.log_metrics(log_data, step=metadata["total_microbatches"])
             # torch.cuda.nvtx.range_pop()
         save_checkpoint(model_to_tune, last_dir, ckpt_name)
-        word_ppl = eval_on_wikitext(args.base_model, last_dir, file_handle, args.eval_model_seqlen, args.finetune_dtype)
-        print(word_ppl)
+        # word_ppl = eval_on_wikitext(args.base_model, last_dir, file_handle, args.eval_model_seqlen, args.finetune_dtype)
+        # print(word_ppl)
         smlr = wwb_eval(args.base_model, last_dir, file_handle)
         print(smlr)
-        metadata["lm_eval_word_ppl_no_init"] = metadata["lm_eval_word_ppl"] = word_ppl
-        metadata["wwb_similarity_no_init"] = metadata["wwb_similarity"] = smlr
-        if word_ppl < metadata["best_eval_perplexity"]:
-            print(f"New best lm_eval word perplexity = {word_ppl:.4f}")
-            metadata["best_eval_perplexity"] = word_ppl
-            metadata["best_step"] = metadata["total_optimizer_steps"]
-            shutil.copy(last_dir / ckpt_name, ckpt_dir / ckpt_name)
-            shutil.copy(last_dir / "results.json", ckpt_dir / "results.json")
+        # metadata["lm_eval_word_ppl_no_init"] = metadata["lm_eval_word_ppl"] = word_ppl
+        # metadata["wwb_similarity_no_init"] = metadata["wwb_similarity"] = smlr
+        # if word_ppl < metadata["best_eval_perplexity"]:
+        #     print(f"New best lm_eval word perplexity = {word_ppl:.4f}")
+        #     metadata["best_eval_perplexity"] = word_ppl
+        #     metadata["best_step"] = metadata["total_optimizer_steps"]
+        #     shutil.copy(last_dir / ckpt_name, ckpt_dir / ckpt_name)
+        #     shutil.copy(last_dir / "results.json", ckpt_dir / "results.json")
         if smlr > metadata["best_similarity"]:
             print(f"New best wwb similarity = {smlr:.4f}")
             metadata["best_similarity"] = smlr
@@ -703,9 +716,9 @@ def main(argv):
         init_ppl, init_smlr = None, None
         init_smlr = wwb_eval(args.base_model, Path(args.nncf_ckpt_dir), f)
         print("similarity for int4 init=", init_smlr)
-        init_ppl = eval_on_wikitext(
-            args.base_model, Path(args.nncf_ckpt_dir), f, args.eval_model_seqlen, args.finetune_dtype
-        )
+        # init_ppl = eval_on_wikitext(
+        #     args.base_model, Path(args.nncf_ckpt_dir), f, args.eval_model_seqlen, args.finetune_dtype
+        # )
         print("word ppl for int4 init=", init_ppl)
 
         # get data

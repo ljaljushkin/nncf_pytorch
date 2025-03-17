@@ -51,7 +51,7 @@ MODEL_NAME="Meta-Llama-3-8B"
 
 
 MAX_LENGTH=4096
-INIT_DIR="FQ_emb_head_int8_int4_sym_rank256_gs-1_test"
+INIT_DIR="FQ_emb_head_int8_int4_sym_rank256_gs-1_test_new_hook"
 EXP_NAME="DS_Llama_lr1e-04_fqlr1e-05_wd1e-04"
 # python add_FQ_with_LoRA.py -m $BASE_MODEL -s $INIT_DIR
 

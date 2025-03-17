@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from nncf.experimental.torch2.function_hook.serialization import get_config
 import argparse
 import random
 import sys
@@ -25,28 +26,36 @@ import nncf
 import torch
 from nncf.common.logging.logger import set_log_file
 
-GROUP_SIZE = 64
-MODE = nncf.CompressWeightsMode.INT4_ASYM
-BACKUP_MODE = nncf.BackupMode.INT8_ASYM
-compression_kwargs = dict(
-    scale_estimation=True, awq=True
-)
+GROUP_SIZE = -1
+MODE = nncf.CompressWeightsMode.INT4_SYM
+BACKUP_MODE = nncf.BackupMode.INT8_SYM
+compression_kwargs = None # dict(
+    # scale_estimation=True, awq=True
+# )
 
 def save_checkpoint(wrapped_model, ckpt_dir):
     if not ckpt_dir.exists():
         ckpt_dir.mkdir()
     wrapped_model = wrapped_model.cpu()
-    nncf_state_dict = wrapped_model.nncf.state_dict()
-    nncf_config = wrapped_model.nncf.get_config()
+    # nncf_state_dict = wrapped_model.nncf.state_dict()
+    # nncf_config = wrapped_model.nncf.get_config()
     ckpt_path = ckpt_dir / "nncf_checkpoint.pth"
     print(f"Saving ckpt to: {ckpt_path}")
+    # torch.save(
+    #     {
+    #         "nncf_state_dict": nncf_state_dict,
+    #         "nncf_config": nncf_config,
+    #     },
+    #     ckpt_path,
+    # )
     torch.save(
         {
-            "nncf_state_dict": nncf_state_dict,
-            "nncf_config": nncf_config,
+            "model_state_dict": wrapped_model.state_dict(),
+            "compression_config": get_config(wrapped_model),
         },
         ckpt_path,
     )
+
 
 
 def set_seed(seed):
@@ -131,7 +140,11 @@ with log_filename.open("w") as f, redirect_stdout(f), redirect_stderr(f):
         backup_mode=BACKUP_MODE,
         dataset=nncf.Dataset(dataset),
         compression_format=nncf.CompressionFormat.FQ_LORA,
-        **compression_kwargs
+        # **compression_kwargs
     )
     save_checkpoint(model, ckpt_dir)
-    model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")
+
+    from nncf.experimental.torch2.function_hook.nncf_graph.nncf_graph_builder import build_nncf_graph
+    build_nncf_graph(model, **dataset).visualize_graph(ckpt_dir / "fq_model.dot")
+
+    # model.nncf.get_graph().visualize_graph(ckpt_dir / "fq_model.dot")

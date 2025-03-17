@@ -12,6 +12,8 @@
 import argparse
 import json
 from pathlib import Path
+from nncf.experimental.torch2.function_hook.serialization import get_config
+from nncf.experimental.torch2.function_hook.serialization import load_from_config
 
 # from optimum.exporters.openvino.convert import export_from_model
 from transformers import AutoModelForCausalLM
@@ -19,7 +21,7 @@ from transformers import AutoTokenizer
 from whowhatbench import TextEvaluator
 
 import torch
-from nncf.torch import load_from_config
+# from nncf.torch import load_from_config
 from nncf.torch.model_graph_manager import get_const_node
 from nncf.torch.model_graph_manager import get_module_by_name
 from nncf.torch.model_graph_manager import split_const_name
@@ -76,11 +78,17 @@ dataset = [
 nncf_ckpt = torch.load(nncf_ckpt_dir / "nncf_checkpoint.pth", map_location="cpu", weights_only=False)
 # NOTE: assume that the whole hf_model=AutoModelForCausalLM(...) was passed to NNCF for compression
 # TODO: won't work with accelerator, the model is not supposed to be overriden? see @property model in HFLM
-model = load_from_config(model, nncf_ckpt["nncf_config"], example_input=dataset[0])
-model.nncf.load_state_dict(nncf_ckpt["nncf_state_dict"])
+
+# NOTE: old tracing
+# model = load_from_config(model, nncf_ckpt["nncf_config"], example_input=dataset[0])
+# model.nncf.load_state_dict(nncf_ckpt["nncf_state_dict"])
+# NOTE: new tracing
+model = load_from_config(model, nncf_ckpt["compression_config"])
+model.load_state_dict(nncf_ckpt["model_state_dict"])
+
 model.cuda()
 
-float_strip = True
+float_strip = False
 if float_strip:
     layout = model.nncf.transformation_layout()
     model = model.nncf.get_clean_shallow_copy()
