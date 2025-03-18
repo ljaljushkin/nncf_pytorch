@@ -36,8 +36,9 @@ from nncf.parameters import CompressionFormat
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.model_creation import load_from_config
-from nncf.torch.quantization.layers import BaseQuantizer
+from nncf.torch.quantization.layers import AsymmetricLoraQuantizer
 from nncf.torch.quantization.layers import BaseWeightsDecompressor
+from nncf.torch.quantization.layers import SymmetricLoraQuantizer
 from torch import Tensor
 from torch import nn
 from torch.jit import TracerWarning
@@ -94,6 +95,7 @@ def get_wikitext2(nsamples, seqlen, tokenizer):
         i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
         j = i + seqlen
         inp = trainenc.input_ids[:, i:j].to(DEVICE)
+        # TODO: or recompute attention_mask/position_ids on tuning?
         attention_mask = torch.ones_like(inp)
         position_ids = torch.cumsum(attention_mask, axis=1) - 1
         trainloader.append({"input_ids": inp, "attention_mask": attention_mask, "position_ids": position_ids})
@@ -158,13 +160,8 @@ def get_similarity(model, wwb_eval):
 # TODO: is it needed only for lm_eval
 # TODO: or save ckpt for further resume and export?
 def save_checkpoint(model, ckpt_file):
-    torch.save(
-        {
-            "nncf_state_dict": model.nncf.state_dict(),
-            "nncf_config": model.nncf.get_config(),
-        },
-        ckpt_file,
-    )
+    ckpt = {"nncf_state_dict": model.nncf.state_dict(), "nncf_config": model.nncf.get_config()}
+    torch.save(ckpt, ckpt_file)
 
 
 # TODO: keep for resume??
@@ -218,14 +215,14 @@ def kl_div(student_hiddens, teacher_hiddens):
     )
 
 
-def set_trainable(model, lora_lr, fq_lr, weight_decay):
+def set_trainable(model, lora_lr, fq_lr):
     model.requires_grad_(False)
     scales_to_train = []
     adapters_to_train = []
     transformations = model.nncf.transformation_layout().transformations
     for command in transformations:
         quantizer = command.fn
-        if isinstance(quantizer, BaseQuantizer) and (quantizer.num_bits == 4):
+        if isinstance(quantizer, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer)) and (quantizer.num_bits == 4):
             quantizer.enable_gradients()
             # TODO: introduce get quantization params?
             params = quantizer.get_trainable_params()
@@ -287,21 +284,22 @@ def main():
     )
     best_similarity = 0
     best_word_ppl = float("inf")
-    # best_similarity = get_similarity(model, wwb_eval)
-    # print("similarity for int4 init=", best_similarity)
-    # best_word_ppl = eval_on_wikitext(LAST_DIR)
-    # print("word ppl for int4 init=", best_word_ppl)
+    best_similarity = get_similarity(model, wwb_eval)
+    print("similarity for int4 init=", best_similarity)
+    best_word_ppl = eval_on_wikitext(LAST_DIR)
+    print("word ppl for int4 init=", best_word_ppl)
     lm_head = deepcopy(model.lm_head)
     lm_head.requires_grad_(False)
 
-    param_to_train = set_trainable(model, lora_lr=5e-4, fq_lr=5e-5, weight_decay=5e-4)
+    param_to_train = set_trainable(model, lora_lr=5e-4, fq_lr=5e-5)
     # TODO: is lr needed? check with get_lr.
-    opt = torch.optim.AdamW(param_to_train)
+    opt = torch.optim.AdamW(param_to_train, weight_decay=5e-4)
     model.train()
 
     aggregated_loss = float("nan")
     loss_numerator = grad_steps = total_microbatches = 0
-    for epoch in range(4):
+    for epoch in range(32):
+        start_time = time.time()
         batch_indices_epoch = torch.randperm(num_samples)[:epoch_samples].chunk(microbatches_per_epoch)
         for batch_indices in tqdm(batch_indices_epoch, desc=f"Train epoch {epoch}", leave=[False]):
             batch_indices = batch_indices.tolist()
@@ -341,11 +339,12 @@ def main():
             if grad_steps == grad_accumulation_steps:
                 opt.step()
                 opt.zero_grad()
-                # reset accumulated step and loss
                 aggregated_loss = loss_numerator / grad_steps
                 loss_numerator = grad_steps = 0
 
             tb.add_scalar("loss", aggregated_loss, total_microbatches)
+
+        print(f"Epoch took {(time.time() - start_time) // 60} minutes")
 
         # TODO: when remove lm_eval, save only the best ckpt
         save_checkpoint(model, LAST_CKPT_FILE)
