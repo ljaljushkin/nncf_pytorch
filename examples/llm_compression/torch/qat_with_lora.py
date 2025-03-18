@@ -8,15 +8,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import json
 import random
 import shutil
 import subprocess
 import time
+import warnings
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Iterable, List, Sequence, Union
+from typing import Dict, List, Union
 from weakref import WeakKeyDictionary
 
 from datasets import load_dataset
@@ -36,8 +36,12 @@ from nncf.parameters import CompressionFormat
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.model_creation import load_from_config
+from nncf.torch.quantization.layers import BaseQuantizer
 from nncf.torch.quantization.layers import BaseWeightsDecompressor
+from torch import Tensor
 from torch import nn
+from torch.jit import TracerWarning
+from torch.utils.tensorboard import SummaryWriter
 
 MODEL_ID = "HuggingFaceTB/SmolLM-1.7B-Instruct"
 DEVICE = "cuda"
@@ -56,8 +60,10 @@ LAST_DIR.mkdir(exist_ok=True)
 LAST_CKPT_FILE = LAST_DIR / CKPT_NAME
 IR_DIR = LAST_DIR / "OV"
 IR_DIR.mkdir(exist_ok=True)
+HIDDENS_PATH = OUTPUT_DIR / "hidden_cache.pth"
 
 
+# TODO: (nlyalyus) move to Optimum-Intel (ticket 164159)
 class PatchDecompressorDtype:
     def __init__(self, model):
         self.model = model
@@ -78,27 +84,11 @@ class PatchDecompressorDtype:
             decompressor.result_dtype = dtype
 
 
-# TODO: hardcode for sample case only!
-def maybe_get_0th_element(x: Union[Any, Sequence[Any]]) -> Any:
-    """
-    Return first element if input is Sequence, otherwise return input
-    """
-    if isinstance(x, Sequence):
-        return x[0]
-    return x
-
-
-def _extract_into_tensor(tensor_list: List[torch.Tensor], indices: Iterable[int], device=None, dtype=None):
-    extracted_items = [maybe_get_0th_element(tensor_list[i]) for i in indices]
-    return torch.cat(extracted_items, dim=0).to(device=device, dtype=dtype)
-
-
 def get_wikitext2(nsamples, seqlen, tokenizer):
     traindata = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
     limit = nsamples * seqlen // 4  # ~1k for 128 samples with seqlen=32 to be aligned with optimum
     text = "".join([" \n" if s == "" else s for s in traindata["text"][:limit]])
     trainenc = tokenizer(text, return_tensors="pt")
-    print(type(trainenc), trainenc)
     trainloader = []
     for _ in range(nsamples):
         i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
@@ -121,6 +111,7 @@ def set_seed(seed):
 
 # TODO: remove
 def eval_on_wikitext(ckpt_dir):
+    print("#" * 50 + " Evaluate via lm-eval-harness" + "#" * 50)
     result_path = ckpt_dir / "results.json"
     cmd = (
         f"lm_eval --model=hf --model_args=pretrained={MODEL_ID},"
@@ -143,12 +134,13 @@ def save_wwb_ref(model, tokenizer):
 
 # TODO: what about class with all parameters on init, saved wwb_eval, cached_hiddens
 # TODO: float strip is 1.7 faster, but need a new strip format.
-# TODO: OV export and eval in OV how much faster?
 def get_similarity(model, wwb_eval):
+    print("#" * 50 + " Evaluate via WWB" + "#" * 50)
     start_time = time.time()
     model = nncf.strip(model)
-    with PatchDecompressorDtype(model):
-        export_from_model(model, IR_DIR, patch_16bit_model=True)
+    with PatchDecompressorDtype(model), warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=TracerWarning)
+        export_from_model(model.cpu(), IR_DIR, patch_16bit_model=True, device="cpu")
         ov_model = OVModelForCausalLM.from_pretrained(
             model_id=IR_DIR,
             trust_remote_code=True,
@@ -156,7 +148,7 @@ def get_similarity(model, wwb_eval):
             compile=True,
             ov_config={"KV_CACHE_PRECISION": "f16", "DYNAMIC_QUANTIZATION_GROUP_SIZE": "0"},
         )
-        print(f"Strip to OV took {time.time() - start_time} seconds")
+        # print(f"Strip to OV took {time.time() - start_time} seconds")
     start_time = time.time()
     _, all_metrics = wwb_eval.score(ov_model)
     print(f"WWB OV eval took {time.time() - start_time} seconds")
@@ -211,8 +203,8 @@ def print_trainable_parameters(module):
 def calc_hiddens(model, dataloader):
     orig_hiddens = []
     for i in trange(len(dataloader), total=len(dataloader), desc="Calculating original hiddens", leave=False):
-        batch = maybe_get_0th_element(dataloader[i])
-        orig_hiddens.append(model.model(batch).last_hidden_state.cpu())
+        # TODO: why cpu? to save as ckpt?
+        orig_hiddens.append(model.model(**dataloader[i]).last_hidden_state.cpu())
     return orig_hiddens
 
 
@@ -227,44 +219,46 @@ def kl_div(student_hiddens, teacher_hiddens):
 
 
 def set_trainable(model, lora_lr, fq_lr, weight_decay):
+    model.requires_grad_(False)
     scales_to_train = []
     adapters_to_train = []
-    # TODO: no compression controller anymore, call helper function from nncf!
-    for quantizer in model._nncf.external_quantizers.values():
-        if quantizer.num_bits == 8:
-            quantizer.disable_gradients()
-            continue
-        params = quantizer.get_trainable_params()
-        adapter_names = quantizer.get_adapters().keys()
-        for name, param in params.items():
-            if name in adapter_names:
-                adapters_to_train.append(param)
-            else:
-                scales_to_train.append(param)
+    transformations = model.nncf.transformation_layout().transformations
+    for command in transformations:
+        quantizer = command.fn
+        if isinstance(quantizer, BaseQuantizer) and (quantizer.num_bits == 4):
+            quantizer.enable_gradients()
+            # TODO: introduce get quantization params?
+            params = quantizer.get_trainable_params()
+            adapters = quantizer.get_adapters()
+            adapters_to_train.extend(adapters.values())
+            scales_to_train.extend(param for name, param in params.items() if name not in adapters)
 
     for name, param in model.named_parameters():
         if param.requires_grad:
             print("Tune: ", name)
     print_trainable_parameters(model)
 
-    param_to_train = [
-        {"params": adapters_to_train, "lr": lora_lr, "weight_decay": weight_decay},
-        {"params": scales_to_train, "lr": fq_lr, "weight_decay": weight_decay},
+    return [
+        {"params": adapters_to_train, "lr": lora_lr},
+        {"params": scales_to_train, "lr": fq_lr},
     ]
-    return param_to_train
 
 
 def main():
     assert torch.cuda.is_available()
     set_seed(42)
 
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=TORCH_DTYPE, device_map="auto")
+    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=TORCH_DTYPE, device_map="cuda")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
     save_wwb_ref(model, tokenizer)
 
     train_loader = get_wikitext2(nsamples=1024, seqlen=1024, tokenizer=tokenizer)
-    # orig_hiddens = calc_hiddens(model, train_loader)
+    if HIDDENS_PATH.exists():
+        orig_hiddens = torch.load(HIDDENS_PATH)
+    else:
+        orig_hiddens = calc_hiddens(model, train_loader)
+        torch.save(orig_hiddens, HIDDENS_PATH)
 
     example_input = train_loader[0]
     if LAST_CKPT_FILE.exists():
@@ -274,31 +268,29 @@ def main():
             model,
             mode=CompressWeightsMode.INT4_ASYM,
             group_size=64,
-            subset_size=1,
             dataset=Dataset([example_input]),
             compression_format=CompressionFormat.FQ_LORA,
         )
         save_checkpoint(model, LAST_CKPT_FILE)
 
-    # microbatch_size = 2
-    # batch_size = 32
-    # grad_accumulation_steps = batch_size // microbatch_size
-    # num_samples = len(train_loader)
-    # epoch_samples = num_samples - num_samples % microbatch_size
-    # microbatches_per_epoch = epoch_samples // microbatch_size
+    microbatch_size = 2
+    batch_size = 32
+    grad_accumulation_steps = batch_size // microbatch_size
+    num_samples = len(train_loader)
+    epoch_samples = num_samples - num_samples % microbatch_size
+    microbatches_per_epoch = epoch_samples // microbatch_size
 
-    # tb = SummaryWriter(TENSORBOARD_DIR, "QAT with absorbable LoRA")
+    tb = SummaryWriter(TENSORBOARD_DIR, "QAT with absorbable LoRA")
 
     wwb_eval = TextEvaluator(
         tokenizer=tokenizer, gt_data=WWB_REF_FILE, test_data=str(WWB_REF_FILE), use_chat_template=True
     )
-
-    best_similarity = get_similarity(model, wwb_eval)
-    print("similarity for int4 init=", best_similarity)
-    exit()
-    best_word_ppl = eval_on_wikitext(LAST_DIR)
-    print("word ppl for int4 init=", best_word_ppl)
-
+    best_similarity = 0
+    best_word_ppl = float("inf")
+    # best_similarity = get_similarity(model, wwb_eval)
+    # print("similarity for int4 init=", best_similarity)
+    # best_word_ppl = eval_on_wikitext(LAST_DIR)
+    # print("word ppl for int4 init=", best_word_ppl)
     lm_head = deepcopy(model.lm_head)
     lm_head.requires_grad_(False)
 
@@ -309,14 +301,23 @@ def main():
 
     aggregated_loss = float("nan")
     loss_numerator = grad_steps = total_microbatches = 0
-    for epoch in range(32):
+    for epoch in range(4):
         batch_indices_epoch = torch.randperm(num_samples)[:epoch_samples].chunk(microbatches_per_epoch)
-        for batch_indices in tqdm(batch_indices_epoch, desc=f"Train epoch {epoch}", leave=False):
+        for batch_indices in tqdm(batch_indices_epoch, desc=f"Train epoch {epoch}", leave=[False]):
             batch_indices = batch_indices.tolist()
             total_microbatches += 1
-            inputs = _extract_into_tensor(train_loader, batch_indices)
+
+            def form_batch(inputs: List[Union[Dict[str, Tensor], Tensor]], indices: List[int]):
+                if isinstance(inputs[0], dict):
+                    batch = {name: torch.cat([inputs[i][name] for i in indices], dim=0) for name in inputs[0]}
+                    # batch = {k: v.to(device=DEVICE, dtype=TORCH_DTYPE) for k, v in batch.items()}
+                else:
+                    batch = torch.cat([inputs[i] for i in indices], dim=0).to(device=DEVICE, dtype=TORCH_DTYPE)
+                return batch
+
+            inputs = form_batch(train_loader, batch_indices)
             with torch.no_grad():
-                targets = lm_head(_extract_into_tensor(orig_hiddens, batch_indices))
+                targets = lm_head(form_batch(orig_hiddens, batch_indices))
                 if hasattr(model.config, "final_logit_softcapping"):  # Gemma
                     fls = model.config.final_logit_softcapping
                     if fls is not None:
@@ -324,7 +325,7 @@ def main():
                         targets = torch.tanh(targets)
                         targets = targets * fls
 
-            outputs = model(inputs).logits
+            outputs = model(**inputs).logits
             # TODO: is device needed?
             loss = kl_div(outputs, targets.to(dtype=TORCH_DTYPE))
 
@@ -344,22 +345,16 @@ def main():
                 aggregated_loss = loss_numerator / grad_steps
                 loss_numerator = grad_steps = 0
 
-            if total_microbatches % 32 == 0:
-                print(
-                    f"epoch {epoch}\t",
-                    f"\t| total microbatches = {total_microbatches}",
-                    f"\tloss = {aggregated_loss:.9f}",
-                )
-            tb.add_scalars("metrics", {"loss": loss, "aggregated_loss": aggregated_loss}, total_microbatches)
+            tb.add_scalar("loss", aggregated_loss, total_microbatches)
 
         # TODO: when remove lm_eval, save only the best ckpt
-        save_checkpoint(model, LAST_DIR)
+        save_checkpoint(model, LAST_CKPT_FILE)
         word_ppl = eval_on_wikitext(LAST_DIR)
         print(word_ppl)
         smlr = get_similarity(model, wwb_eval)
         print(smlr)
-        tb.add_scalars("metrics", {"word_ppl": word_ppl, "similarity": smlr}, total_microbatches)
-
+        tb.add_scalar("word_ppl", word_ppl, total_microbatches)
+        tb.add_scalar("similarity", smlr, total_microbatches)
         if word_ppl < best_word_ppl:
             print(f"New best lm_eval word perplexity = {word_ppl:.4f}")
             best_word_ppl = word_ppl
@@ -369,9 +364,8 @@ def main():
             print(f"New best wwb similarity = {smlr:.4f}")
             best_similarity = smlr
             shutil.copy(LAST_DIR / CKPT_NAME, OUTPUT_DIR / CKPT_NAME)
-
-    # TODO:
-    # export best, evaluate OV IR
+            shutil.copytree(IR_DIR, OUTPUT_DIR, dirs_exist_ok=True)
+    print(f"Finetuned OV model has similarity={best_similarity} and located here: {IR_DIR}")
 
 
 if __name__ == "__main__":

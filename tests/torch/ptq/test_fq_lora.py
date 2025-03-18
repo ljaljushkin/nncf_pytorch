@@ -11,10 +11,6 @@
 
 import pytest
 import torch
-from optimum.exporters.openvino.convert import export_from_model
-from optimum.intel.openvino import OVModelForCausalLM
-from sentence_transformers import SentenceTransformer
-from sentence_transformers import util
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 
