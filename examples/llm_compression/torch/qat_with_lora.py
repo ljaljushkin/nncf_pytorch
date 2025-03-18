@@ -17,6 +17,7 @@ import time
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence, Union
+from weakref import WeakKeyDictionary
 
 from datasets import load_dataset
 from optimum.exporters.openvino.convert import export_from_model
@@ -35,10 +36,8 @@ from nncf.parameters import CompressionFormat
 from nncf.parameters import CompressWeightsMode
 from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.model_creation import load_from_config
-from nncf.torch.model_graph_manager import get_const_node
-from nncf.torch.model_graph_manager import get_module_by_name
-from nncf.torch.model_graph_manager import split_const_name
 from nncf.torch.quantization.layers import BaseWeightsDecompressor
+from torch import nn
 
 MODEL_ID = "HuggingFaceTB/SmolLM-1.7B-Instruct"
 DEVICE = "cuda"
@@ -59,13 +58,24 @@ IR_DIR = LAST_DIR / "OV"
 IR_DIR.mkdir(exist_ok=True)
 
 
-def patch_nncf_decompressors(model):
-    model_layout = model.nncf.transformation_layout()
-    transformations = model_layout.transformations
-    for command in transformations:
-        decompressor = command.fn
-        if isinstance(decompressor, BaseWeightsDecompressor):
-            decompressor.result_dtype = torch.float32
+class PatchDecompressorDtype:
+    def __init__(self, model):
+        self.model = model
+        self.modules_map: WeakKeyDictionary[nn.Module, List[str]] = WeakKeyDictionary()
+
+    def __enter__(self):
+        model_layout = self.model.nncf.transformation_layout()
+        transformations = model_layout.transformations
+        for command in transformations:
+            decompressor = command.fn
+            if isinstance(decompressor, BaseWeightsDecompressor):
+                self.modules_map[decompressor] = decompressor.result_dtype
+                decompressor.result_dtype = torch.float32
+
+    def __exit__(self, *args):
+        print("exit args=", args)
+        for decompressor, dtype in self.modules_map.items():
+            decompressor.result_dtype = dtype
 
 
 # TODO: hardcode for sample case only!
@@ -132,31 +142,13 @@ def save_wwb_ref(model, tokenizer):
 
 
 # TODO: what about class with all parameters on init, saved wwb_eval, cached_hiddens
-# TODO: float strip? How much faster?
+# TODO: float strip is 1.7 faster, but need a new strip format.
 # TODO: OV export and eval in OV how much faster?
 def get_similarity(model, wwb_eval):
-    float_strip = False
-    if float_strip:
-        layout = model.nncf.transformation_layout()
-        model = model.nncf.get_clean_shallow_copy()
-        graph = model.nncf.get_graph()
-        t = layout.transformations
-        for command in t:
-            quantizer = command.fn
-            tp = command.target_points[0]
-            node_with_weight = graph.get_node_by_name(tp.target_node_name)
-            weight_node = get_const_node(node_with_weight, tp.input_port_id, graph)
-            weight_name = weight_node.layer_attributes.name
-            module_name, weight_attr_name = split_const_name(weight_name)
-            layer = get_module_by_name(module_name, model)
-            weight = getattr(layer, weight_attr_name)
-            fq_weight = quantizer.quantize(weight)
-            setattr(layer, weight_attr_name, torch.nn.Parameter(fq_weight))
-    else:
-        start_time = time.time()
-        model = nncf.strip(model)
-        patch_nncf_decompressors(model)
-        export_from_model(model.cpu(), IR_DIR, patch_16bit_model=True, device="cpu")
+    start_time = time.time()
+    model = nncf.strip(model)
+    with PatchDecompressorDtype(model):
+        export_from_model(model, IR_DIR, patch_16bit_model=True)
         ov_model = OVModelForCausalLM.from_pretrained(
             model_id=IR_DIR,
             trust_remote_code=True,
@@ -165,8 +157,9 @@ def get_similarity(model, wwb_eval):
             ov_config={"KV_CACHE_PRECISION": "f16", "DYNAMIC_QUANTIZATION_GROUP_SIZE": "0"},
         )
         print(f"Strip to OV took {time.time() - start_time} seconds")
+    start_time = time.time()
     _, all_metrics = wwb_eval.score(ov_model)
-
+    print(f"WWB OV eval took {time.time() - start_time} seconds")
     return float(all_metrics["similarity"].iloc[0])
 
 
