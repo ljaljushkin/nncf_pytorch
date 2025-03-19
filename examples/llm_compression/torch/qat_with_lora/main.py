@@ -8,8 +8,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import random
 import shutil
+import subprocess
 import warnings
 from copy import deepcopy
 from pathlib import Path
@@ -35,7 +37,9 @@ import nncf
 from nncf.data.dataset import Dataset
 from nncf.parameters import CompressionFormat
 from nncf.parameters import CompressWeightsMode
+from nncf.parameters import StripFormat
 from nncf.quantization.quantize_model import compress_weights
+from nncf.torch.model_creation import load_from_config
 from nncf.torch.quantization.layers import AsymmetricLoraQuantizer
 from nncf.torch.quantization.layers import BaseWeightsDecompressor
 from nncf.torch.quantization.layers import SymmetricLoraQuantizer
@@ -176,6 +180,7 @@ def set_trainable(model, lora_lr, fq_lr):
     print_trainable_parameters(model)
     return [{"params": adapters_to_train, "lr": lora_lr}, {"params": scales_to_train, "lr": fq_lr}]
 
+
 def eval_on_wikitext(ckpt_dir):
     print("#" * 50 + " Evaluate via lm-eval-harness" + "#" * 50)
     result_path = ckpt_dir / "results.json"
@@ -190,8 +195,9 @@ def eval_on_wikitext(ckpt_dir):
         print("Parsing lm-eval results from file: ", result_path)
         j = json.load(f)
         word_ppl = j["results"]["wikitext"]["word_perplexity,none"]
-        print(f'word_ppl on wikitext is {word_ppl}')
+        print(f"word_ppl on wikitext is {word_ppl}")
         return word_ppl
+
 
 def save_checkpoint(model, ckpt_file):
     ckpt = {"nncf_state_dict": model.nncf.state_dict(), "nncf_config": model.nncf.get_config()}
@@ -203,6 +209,7 @@ def load_checkpoint(model, example_input, ckpt_file):
     model = load_from_config(model, ckpt["nncf_config"], example_input=example_input)
     model.nncf.load_state_dict(ckpt["nncf_state_dict"])
     return model
+
 
 def main():
     assert torch.cuda.is_available()
