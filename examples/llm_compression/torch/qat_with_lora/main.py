@@ -57,7 +57,7 @@ BEST_DIR = LAST_DIR / "best"
 for path in [OUTPUT_DIR, TENSORBOARD_DIR, LAST_DIR, BEST_DIR]:
     path.mkdir(exist_ok=True, parents=True)
 WWB_REF_FILE = OUTPUT_DIR / "wwb_ref.csv"
-CKPT_FILE = LAST_DIR / "nncf_ckpt.pth"
+CKPT_FILE = LAST_DIR / "nncf_checkpoint.pth"
 
 
 # TODO: (nlyalyus) move to Optimum-Intel (ticket 164159)
@@ -114,6 +114,7 @@ def set_seed(seed):
 def save_wwb_ref(model, tokenizer):
     print("#" * 50 + " Collect reference answers for WWB" + "#" * 50)
     if not WWB_REF_FILE.exists():
+        # consider model.cpu as WA?
         wwb_eval = TextEvaluator(base_model=model, tokenizer=tokenizer, use_chat_template=True)
         wwb_eval.dump_gt(str(WWB_REF_FILE))
 
@@ -182,7 +183,7 @@ def set_trainable(model, lora_lr, fq_lr):
 
 
 def eval_on_wikitext(ckpt_dir):
-    print("#" * 50 + " Evaluate via lm-eval-harness" + "#" * 50)
+    print("#" * 50 + " Evaluate via lm-eval-harness " + "#" * 50)
     result_path = ckpt_dir / "results.json"
     cmd = (
         f"lm_eval --model=hf --model_args=pretrained={MODEL_ID},"
