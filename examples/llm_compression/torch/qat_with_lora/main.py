@@ -53,6 +53,7 @@ BEST_DIR = LAST_DIR / "best"
 for path in [OUTPUT_DIR, TENSORBOARD_DIR, LAST_DIR, BEST_DIR]:
     path.mkdir(exist_ok=True, parents=True)
 WWB_REF_FILE = OUTPUT_DIR / "wwb_ref.csv"
+CKPT_FILE = LAST_DIR / "nncf_ckpt.pth"
 
 
 # TODO: (nlyalyus) move to Optimum-Intel (ticket 164159)
@@ -107,6 +108,7 @@ def set_seed(seed):
 
 
 def save_wwb_ref(model, tokenizer):
+    print("#" * 50 + " Collect reference answers for WWB" + "#" * 50)
     if not WWB_REF_FILE.exists():
         wwb_eval = TextEvaluator(base_model=model, tokenizer=tokenizer, use_chat_template=True)
         wwb_eval.dump_gt(str(WWB_REF_FILE))
@@ -114,7 +116,7 @@ def save_wwb_ref(model, tokenizer):
 
 def get_similarity(model, wwb_eval, ir_dir):
     print("#" * 50 + " Evaluate via WWB" + "#" * 50)
-    model = nncf.strip(model)
+    model = nncf.strip(model, strip_format=StripFormat.DQ)
     with PatchDecompressorDtype(model), warnings.catch_warnings():
         warnings.simplefilter("ignore", category=TracerWarning)
         export_from_model(model.cpu(), ir_dir, patch_16bit_model=True, device="cpu")
@@ -174,6 +176,33 @@ def set_trainable(model, lora_lr, fq_lr):
     print_trainable_parameters(model)
     return [{"params": adapters_to_train, "lr": lora_lr}, {"params": scales_to_train, "lr": fq_lr}]
 
+def eval_on_wikitext(ckpt_dir):
+    print("#" * 50 + " Evaluate via lm-eval-harness" + "#" * 50)
+    result_path = ckpt_dir / "results.json"
+    cmd = (
+        f"lm_eval --model=hf --model_args=pretrained={MODEL_ID},"
+        f"trust_remote_code=True,nncf_ckpt_dir={ckpt_dir},"
+        f"device_map=auto,parallelize=True,dtype=bfloat16,max_length=2048 "
+        f"--tasks=wikitext --output_path={result_path}"
+    )
+    subprocess.run(cmd.split(" "), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    with result_path.open("r") as f:
+        print("Parsing lm-eval results from file: ", result_path)
+        j = json.load(f)
+        word_ppl = j["results"]["wikitext"]["word_perplexity,none"]
+        print(f'word_ppl on wikitext is {word_ppl}')
+        return word_ppl
+
+def save_checkpoint(model, ckpt_file):
+    ckpt = {"nncf_state_dict": model.nncf.state_dict(), "nncf_config": model.nncf.get_config()}
+    torch.save(ckpt, ckpt_file)
+
+
+def load_checkpoint(model, example_input, ckpt_file):
+    ckpt = torch.load(ckpt_file, weights_only=False)
+    model = load_from_config(model, ckpt["nncf_config"], example_input=example_input)
+    model.nncf.load_state_dict(ckpt["nncf_state_dict"])
+    return model
 
 def main():
     assert torch.cuda.is_available()
@@ -188,13 +217,16 @@ def main():
     orig_hiddens = calc_hiddens(model, train_loader)
 
     example_input = train_loader[0]
-    model = compress_weights(
-        model,
-        mode=CompressWeightsMode.INT4_ASYM,
-        group_size=64,
-        dataset=Dataset([example_input]),
-        compression_format=CompressionFormat.FQ_LORA,
-    )
+    if CKPT_FILE.exists():
+        model = load_checkpoint(model, example_input, CKPT_FILE)
+    else:
+        model = compress_weights(
+            model,
+            mode=CompressWeightsMode.INT4_ASYM,
+            group_size=64,
+            dataset=Dataset([example_input]),
+            compression_format=CompressionFormat.FQ_LORA,
+        )
 
     microbatch_size = 2
     batch_size = 32
@@ -210,6 +242,8 @@ def main():
     )
     best_similarity = get_similarity(model, wwb_eval, LAST_DIR)
     print(f"WWB similarity for initial 4bit model= {best_similarity:.4f}")
+    save_checkpoint(model, CKPT_FILE)
+    best_word_ppl = eval_on_wikitext(CKPT_FILE.parent)
     lm_head = deepcopy(model.lm_head)
     lm_head.requires_grad_(False)
 
@@ -264,7 +298,12 @@ def main():
 
         smlr = get_similarity(model, wwb_eval, LAST_DIR)
         print(f"WWB similarity = {smlr:.4f}")
+        save_checkpoint(model, CKPT_FILE)
+        word_ppl = eval_on_wikitext(CKPT_FILE.parent)
         tb.add_scalar("similarity", smlr, total_microbatches)
+        tb.add_scalar("word_ppl", word_ppl, total_microbatches)
+        if word_ppl < best_word_ppl:
+            print(f"New best perplexity = {word_ppl:.4f}")
         if smlr > best_similarity:
             print(f"New best WWB similarity = {smlr:.4f}")
             best_similarity = smlr
