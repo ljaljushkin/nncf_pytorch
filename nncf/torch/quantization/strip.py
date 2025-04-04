@@ -214,7 +214,8 @@ def asym_fq_to_decompressor(
     assert isinstance(quantizer, AsymmetricQuantizer)
     weight_dtype = weight.dtype
     weight_shape = weight.shape
-    eps = torch.finfo(weight_dtype).eps
+    # eps = torch.finfo(weight_dtype).eps
+    eps = torch.finfo(torch.float32).eps
     qdq_weight = quantizer.quantize(weight)
     if hasattr(quantizer, "_lspec"):
         # Reshape for group-wise quantization, implemented for classes with lora spec only
@@ -226,12 +227,15 @@ def asym_fq_to_decompressor(
 
     integer_dtype = torch.uint8
 
-    input_low = input_low.to(weight_dtype)
-    input_range = input_range.to(weight_dtype)
+    # input_low = input_low.to(weight_dtype)
+    # input_range = input_range.to(weight_dtype)
+    input_low = input_low.to(torch.float32)
+    input_range = input_range.to(torch.float32)
 
     scale = input_range / quantizer.level_high
     scale = torch.where(torch.abs(scale) < eps, eps, scale)
-    scale = scale.to(weight_dtype)
+    # scale = scale.to(weight_dtype)
+    scale = scale.to(torch.float32)
 
     zero_point = quantizer.level_low - torch.round(input_low / scale)
     zero_point = torch.clip(zero_point, quantizer.level_low, quantizer.level_high)
