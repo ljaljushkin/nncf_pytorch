@@ -13,14 +13,17 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 import torch.nn.functional as F
 import transformers
 from datasets import load_dataset
+from lm_eval import simple_evaluate
+from lm_eval.models.optimum_lm import OptimumLM
 from optimum.exporters.openvino.convert import export_from_model
 from optimum.intel.openvino import OVModelForCausalLM
+from optimum.modeling_base import OptimizedModel
 from torch import Tensor
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
@@ -37,6 +40,10 @@ from nncf.parameters import CompressWeightsMode
 from nncf.parameters import StripFormat
 from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.model_creation import load_from_config
+from nncf.torch.model_graph_manager import get_const_data
+from nncf.torch.model_graph_manager import get_const_node
+from nncf.torch.model_graph_manager import get_module_by_name
+from nncf.torch.model_graph_manager import split_const_name
 from nncf.torch.quantization.layers import AsymmetricLoraQuantizer
 from nncf.torch.quantization.layers import SymmetricLoraQuantizer
 
@@ -65,37 +72,22 @@ def get_wikitext2(nsamples: int, seqlen: int, tokenizer: Any, device: torch.devi
     return trainloader
 
 
-@torch.no_grad()
-def save_wwb_ref(model: str, tokenizer: Any, wwb_ref_file: Path) -> None:
+def measure_perplexity(
+    optimum_model: OptimizedModel, max_length: Optional[int] = None, limit: Optional[Union[int, float]] = None
+) -> float:
     """
-    Save the reference answers for the WWB (WhoWhatBenchmark) evaluation.
+    Measure perplexity on the Wikitext dataset, via rolling loglikelihoods for a given model.
 
-    :param model: The model to be evaluated.
-    :param tokenizer: The tokenizer used for processing text inputs.
-    :param wwb_ref_file: The file path where the reference answers will be saved.
-    """
-    if not wwb_ref_file.exists():
-        print("#" * 50 + " Collect reference answers for WWB " + "#" * 50)
-        wwb_eval = TextEvaluator(base_model=model, tokenizer=tokenizer, use_chat_template=True)
-        wwb_eval.dump_gt(str(wwb_ref_file))
-        torch.cuda.empty_cache()
-
-
-def measure_similarity(model_for_eval: OVModelForCausalLM, tokenizer: Any, wwb_ref_file: Path) -> float:
-    """
-    Measures the similarity of a model's output to a reference outputs from a given file using WWB evaluation.
-
-    :param model_for_eval: An OpenVINO model to be evaluated.
-    :param tokenizer: The tokenizer used for processing text data.
-    :param wwb_ref_file: The file path to the reference data for WWB evaluation.
+    :param optimum_model: A model to be evaluated.
+    :param max_length: The maximum sequence length for evaluation.
+    :param limit: Limit the number of examples per task (only use this for testing).
+        If <1, limit is a percentage of the total number of examples.
     :return: The similarity score as a float.
     """
-    print("#" * 50 + " Evaluate via WWB " + "#" * 50)
-    wwb_eval = TextEvaluator(
-        tokenizer=tokenizer, gt_data=wwb_ref_file, test_data=str(wwb_ref_file), use_chat_template=True
-    )
-    _, all_metrics = wwb_eval.score(model_for_eval)
-    return float(all_metrics["similarity"].iloc[0])
+    print("#" * 50 + " Evaluate via lm-eval-harness " + "#" * 50)
+    lm_obj = OptimumLM(pretrained=optimum_model, max_length=max_length)
+    results = simple_evaluate(lm_obj, tasks=["wikitext"], limit=limit)
+    return results["results"]["wikitext"]["word_perplexity,none"]
 
 
 @torch.no_grad()
@@ -238,6 +230,14 @@ def export_to_openvino(
     )
 
 
+def limit_type(astr: str):
+    value = int(astr)
+    if value < 0 or value > 1:
+        msg = "value not in range [0,1]"
+        raise argparse.ArgumentTypeError(msg)
+    return value
+
+
 def get_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=True)
 
@@ -263,7 +263,15 @@ def get_argument_parser() -> argparse.ArgumentParser:
 
     # Data params
     parser.add_argument("--nsamples", type=int, default=1024, help="Number of training samples")
-    parser.add_argument("--seqlen", type=int, default=1024, help="Calibration data context length.")
+    parser.add_argument("--calib_seqlen", type=int, default=1024, help="Calibration data context length.")
+    parser.add_argument("--eval_seqlen", type=int, default=2048, help="Evaluation data context length.")
+    parser.add_argument(
+        "--limit",
+        type=limit_type,
+        default=None,
+        help="A percentage of the total number of examples for evaluation. "
+        "Should be on the range [0,1]. If None, all samples will be used.",
+    )
 
     # Training params
     parser.add_argument(
@@ -316,15 +324,8 @@ def main(argv) -> float:
     model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch_dtype, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
 
-    # Use WhoWhatBench tool (WWB) is for validation during tuning. It estimates the similarity score between embedding
-    # computed by for data generated by two models, original floating-point one and optimized.
-    # TODO: (nlyalyus) Use original model for collecting reference, once the bug in WWB resolved.
-    wwb_ref_model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch_dtype, device_map="cpu")
-    save_wwb_ref(wwb_ref_model, tokenizer, wwb_ref_file)
-    del wwb_ref_model
-
     # Prepare training data and pre-compute hiddens of teacher model for distillation loss.
-    train_loader = get_wikitext2(nsamples=args.nsamples, seqlen=args.seqlen, tokenizer=tokenizer, device=device)
+    train_loader = get_wikitext2(nsamples=args.nsamples, seqlen=args.calib_seqlen, tokenizer=tokenizer, device=device)
     orig_hiddens = calc_hiddens(model, train_loader)
 
     # Create or load model to tune with Fake Quantizers and absorbable LoRA adapters.
@@ -339,11 +340,12 @@ def main(argv) -> float:
     param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr)
     opt = torch.optim.AdamW(param_to_train, weight_decay=weight_decay)
 
-    # Convert torch checkpoint to an OpenVINO model and evaluate it via WWB.
+    # Convert torch checkpoint to an OpenVINO model and evaluate it via LM-Evaluation-Harness.
     model_for_eval = export_to_openvino(args.pretrained, train_loader[0], ckpt_file, last_dir)
-    best_similarity = measure_similarity(model_for_eval, tokenizer, wwb_ref_file)
-    tb.add_scalar("similarity", best_similarity, 0)
-    print(f"Initial WWB similarity= {best_similarity:.4f}")
+    best_perplexity = measure_perplexity(model_for_eval, args.eval_seqlen, args.limit)
+    tb.add_scalar("perplexity", best_perplexity, 0)
+    print(f"Initial perplexity on wikitext = {best_perplexity:.4f}")
+    del model_for_eval
 
     # Run tuning with distillation loss and validation on WWB after each epoch.
     grad_accumulation_steps = args.batch_size // args.microbatch_size
@@ -373,7 +375,7 @@ def main(argv) -> float:
                         targets = torch.tanh(targets)
                         targets = targets * fls
             outputs = model(**inputs).logits
-            loss = kl_div(outputs, targets.to(dtype=torch_dtype))
+            loss = kl_div(outputs, targets.to(dtype=torch_dtype, device=device))
 
             # Perform an optimization step after accumulating gradients over multiple minibatches.
             loss_numerator += loss.item()
@@ -389,20 +391,22 @@ def main(argv) -> float:
                 loss_numerator = grad_steps = 0
             tb.add_scalar("loss", aggregated_loss, total_microbatches)
 
-        # Export tuned model to OpenVINO and evaluate it using WWB.
-        # Save the best checkpoint and OpenVINO IR for the highest similarity score obtained from WWB.
+        # Export tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
+        # Save the best checkpoint and OpenVINO IR for the lowest perplexity.
         save_checkpoint(model, ckpt_file)
         model_for_eval = export_to_openvino(args.pretrained, train_loader[0], ckpt_file, last_dir)
-        similarity = measure_similarity(model_for_eval, tokenizer, wwb_ref_file)
-        print(f"[Epoch {epoch}], WWB similarity = {similarity:.4f}")
-        tb.add_scalar("similarity", similarity, total_microbatches)
-        if similarity > best_similarity:
-            print(f"New best WWB similarity = {similarity:.4f}")
-            best_similarity = similarity
+        perplexity = measure_perplexity(model_for_eval, args.eval_seqlen, args.limit)
+        tb.add_scalar("perplexity", perplexity, total_microbatches)
+        print(f"[Epoch {epoch}], perplexity on wikitext = {perplexity:.4f}")
+        del model_for_eval
+
+        if perplexity < best_perplexity:
+            print(f"New best WWB perplexity = {perplexity:.4f}")
+            best_perplexity = perplexity
             shutil.copytree(last_dir, best_dir, dirs_exist_ok=True)
 
-    print(f"The finetuned OV model with the best similarity={best_similarity} saved to: {best_dir}")
-    return best_similarity
+    print(f"The finetuned OV model with the best perplexity={best_perplexity} saved to: {best_dir}")
+    return best_perplexity
 
 
 if __name__ == "__main__":
