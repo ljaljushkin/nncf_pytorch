@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import argparse
+import pprint
 import shutil
 import sys
 from datetime import datetime
@@ -31,7 +32,6 @@ from tqdm import tqdm
 from tqdm import trange
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
-from whowhatbench import TextEvaluator
 
 import nncf
 from nncf.data.dataset import Dataset
@@ -41,7 +41,6 @@ from nncf.parameters import StripFormat
 from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.model_creation import load_from_config
 from nncf.torch.model_graph_manager import get_const_data
-from nncf.torch.model_graph_manager import get_const_node
 from nncf.torch.model_graph_manager import get_module_by_name
 from nncf.torch.model_graph_manager import split_const_name
 from nncf.torch.quantization.layers import AsymmetricLoraQuantizer
@@ -279,7 +278,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
         type=float,
         default=1e-4,
         help="Learning rate for fine-tuning. "
-        "For larger models (over 2 billion parameters), a learning rate of 5e-4 is recommended.",
+        "For larger models (over 3 billion parameters), a learning rate of 5e-5 is recommended.",
     )
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs.")
     parser.add_argument("--batch_size", type=int, default=32, help="Size of training batch.")
@@ -290,6 +289,32 @@ def get_argument_parser() -> argparse.ArgumentParser:
         help="Size of each training microbatch. Gradients will be accumulated until the batch size is reached.",
     )
     return parser
+
+@torch.no_grad()
+def remove_fq_in_torch_model(
+    orig_model: AutoModelForCausalLM, model_input: torch.Tensor, ckpt_file: Path
+) -> AutoModelForCausalLM:
+    model = load_checkpoint(orig_model, model_input, ckpt_file)
+    # model_to_eval = nncf.strip(model_to_eval, strip_format=StripFormat.FLOAT)
+    transformations = model.nncf.transformation_layout().transformations
+    graph = model.nncf.get_graph()
+    model = model.nncf.get_clean_shallow_copy()
+    for command in transformations:
+        quantizer = command.fn
+        tp = command.target_points[0]
+        weight_node = graph.get_node_by_name(tp.target_node_name)
+        # node_with_weight = graph.get_node_by_name(tp.target_node_name)
+        # weight_node = get_const_node(node_with_weight, tp.input_port_id, graph)
+        weight = get_const_data(weight_node, model)
+        fq_weight = quantizer.quantize(weight)
+
+        weight_name = weight_node.layer_attributes.name
+        module_name, const_attr_name = split_const_name(weight_name)
+        module = get_module_by_name(module_name, model)
+        weight = getattr(module, const_attr_name)
+        weight.requires_grad = False
+        weight.data = fq_weight
+    return model
 
 
 def main(argv) -> float:
@@ -315,10 +340,13 @@ def main(argv) -> float:
         shutil.rmtree(output_dir, ignore_errors=True)
     for path in [output_dir, tensorboard_dir, last_dir, best_dir]:
         path.mkdir(exist_ok=True, parents=True)
-    wwb_ref_file = output_dir / "wwb_ref.csv"
     ckpt_file = last_dir / "nncf_checkpoint.pth"
     print(f"To visualize the loss and validation metrics, open Tensorboard using the logs from: {tensorboard_dir}")
     tb = SummaryWriter(tensorboard_dir, "QAT with absorbable LoRA")
+    hparams = vars(args)
+    hparams['output_dir'] = str(hparams['output_dir'])
+    pprint.pprint(hparams)
+    tb.add_hparams(hparams, {})
 
     # Load original model and tokenizer.
     model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch_dtype, device_map="auto")
@@ -341,13 +369,15 @@ def main(argv) -> float:
     opt = torch.optim.AdamW(param_to_train, weight_decay=weight_decay)
 
     # Convert torch checkpoint to an OpenVINO model and evaluate it via LM-Evaluation-Harness.
-    model_for_eval = export_to_openvino(args.pretrained, train_loader[0], ckpt_file, last_dir)
-    best_perplexity = measure_perplexity(model_for_eval, args.eval_seqlen, args.limit)
+    # model_to_eval = export_to_openvino(args.pretrained, train_loader[0], ckpt_file, last_dir)
+    model_to_eval = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch.bfloat16, device_map="cuda")
+    model_to_eval = remove_fq_in_torch_model(model_to_eval, example_input, ckpt_file)
+    best_perplexity = measure_perplexity(model_to_eval, args.eval_seqlen, args.limit)
     tb.add_scalar("perplexity", best_perplexity, 0)
     print(f"Initial perplexity on wikitext = {best_perplexity:.4f}")
-    del model_for_eval
+    del model_to_eval
 
-    # Run tuning with distillation loss and validation on WWB after each epoch.
+    # Run tuning with distillation loss and validation after each epoch.
     grad_accumulation_steps = args.batch_size // args.microbatch_size
     num_samples = len(train_loader)
     epoch_samples = num_samples - num_samples % args.microbatch_size
@@ -394,14 +424,16 @@ def main(argv) -> float:
         # Export tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
         # Save the best checkpoint and OpenVINO IR for the lowest perplexity.
         save_checkpoint(model, ckpt_file)
-        model_for_eval = export_to_openvino(args.pretrained, train_loader[0], ckpt_file, last_dir)
-        perplexity = measure_perplexity(model_for_eval, args.eval_seqlen, args.limit)
+        model_to_eval = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch.bfloat16, device_map="cuda")
+        model_to_eval = remove_fq_in_torch_model(model_to_eval, example_input, ckpt_file)
+        # model_for_eval = export_to_openvino(args.pretrained, train_loader[0], ckpt_file, last_dir)
+        perplexity = measure_perplexity(model_to_eval, args.eval_seqlen, args.limit)
         tb.add_scalar("perplexity", perplexity, total_microbatches)
         print(f"[Epoch {epoch}], perplexity on wikitext = {perplexity:.4f}")
-        del model_for_eval
+        del model_to_eval
 
         if perplexity < best_perplexity:
-            print(f"New best WWB perplexity = {perplexity:.4f}")
+            print(f"New best perplexity = {perplexity:.4f}")
             best_perplexity = perplexity
             shutil.copytree(last_dir, best_dir, dirs_exist_ok=True)
 
