@@ -14,7 +14,7 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Optional
 
 import torch
 import torch.nn.functional as F
@@ -28,16 +28,16 @@ from optimum.modeling_base import OptimizedModel
 from torch import Tensor
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
-from tqdm import tqdm
-from tqdm import trange
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 
 import nncf
+from nncf.common.logging.track_progress import track
 from nncf.data.dataset import Dataset
 from nncf.parameters import CompressionFormat
 from nncf.parameters import CompressWeightsMode
 from nncf.parameters import StripFormat
+from nncf.quantization.advanced_parameters import AdvancedCompressionParameters
 from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.model_creation import load_from_config
 from nncf.torch.model_graph_manager import get_const_data
@@ -47,22 +47,22 @@ from nncf.torch.quantization.layers import AsymmetricLoraQuantizer
 from nncf.torch.quantization.layers import SymmetricLoraQuantizer
 
 
-def get_wikitext2(nsamples: int, seqlen: int, tokenizer: Any, device: torch.device) -> List[Tensor]:
+def get_wikitext2(num_samples: int, seqlen: int, tokenizer: Any, device: torch.device) -> List[Tensor]:
     """
     Loads and processes the Wikitext-2 dataset for training.
 
-    :param nsamples: Number of samples to generate.
+    :param num_samples: Number of samples to generate.
     :param seqlen: Sequence length for each sample.
     :param tokenizer: Tokenizer to encode the text.
     :param device: Device to move the tensors to (e.g., 'cpu' or 'cuda').
     :return: A list of tensors containing the tokenized text samples.
     """
     traindata = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
-    limit = nsamples * seqlen // 4  # ~1k for 128 samples with seqlen=32 to be aligned with optimum
+    limit = num_samples * seqlen // 4  # ~1k for 128 samples with seqlen=32 to be aligned with optimum
     text = "".join([" \n" if s == "" else s for s in traindata["text"][:limit]])
     trainenc = tokenizer(text, return_tensors="pt")
     trainloader = []
-    for _ in range(nsamples):
+    for _ in range(num_samples):
         # Crop a sequence of tokens of length seqlen starting at a random position
         i = torch.randint(0, trainenc.input_ids.shape[1] - seqlen - 1, (1,)).item()
         j = i + seqlen
@@ -99,8 +99,8 @@ def calc_hiddens(model: nn.Module, dataloader: List[Tensor]) -> List[Tensor]:
     :return: A list of hidden states for each input in the dataloader.
     """
     orig_hiddens = []
-    for i in trange(len(dataloader), total=len(dataloader), desc="Calculating original hiddens", leave=False):
-        model_input = get_model_input(dataloader[i])
+    for data in track(dataloader, description="Calculating original hiddens"):
+        model_input = get_model_input(data)
         orig_hiddens.append(model.model(**model_input).last_hidden_state)
     torch.cuda.empty_cache()
     return orig_hiddens
@@ -259,9 +259,11 @@ def get_argument_parser() -> argparse.ArgumentParser:
         help="Whether to start from previously saved checkpoint. If not specified or checkpoint does not exist, "
         "start from scratch by post-training weight compression initialization.",
     )
+    parser.add_argument("--lora_rank", type=int, default=256, help="Rank of lora adapters")
 
     # Data params
-    parser.add_argument("--nsamples", type=int, default=1024, help="Number of training samples")
+    parser.add_argument("--num_train_samples", type=int, default=1024, help="Number of training samples")
+    parser.add_argument("--num_val_samples", type=int, default=None, help="Number of validation samples for WWB.")
     parser.add_argument("--calib_seqlen", type=int, default=1024, help="Calibration data context length.")
     parser.add_argument("--eval_seqlen", type=int, default=2048, help="Evaluation data context length.")
     parser.add_argument(
@@ -319,7 +321,7 @@ def remove_fq_in_torch_model(
 
 def main(argv) -> float:
     """
-    Fine-tunes the specified model and returns the best validation similarity score.
+    Fine-tunes the specified model and returns the difference between initial and best validation similarity scores.
     """
     parser = get_argument_parser()
     args = parser.parse_args(argv)
@@ -328,7 +330,10 @@ def main(argv) -> float:
     device = "cuda"
     torch_dtype = torch.bfloat16
     compression_config = dict(
-        mode=CompressWeightsMode.INT4_ASYM, group_size=64, compression_format=CompressionFormat.FQ_LORA
+        mode=CompressWeightsMode.INT4_ASYM,
+        group_size=64,
+        compression_format=CompressionFormat.FQ_LORA,
+        advanced_parameters=AdvancedCompressionParameters(lora_adapter_rank=args.lora_rank),
     )
 
     # Configure output and log files.
@@ -353,7 +358,9 @@ def main(argv) -> float:
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
 
     # Prepare training data and pre-compute hiddens of teacher model for distillation loss.
-    train_loader = get_wikitext2(nsamples=args.nsamples, seqlen=args.calib_seqlen, tokenizer=tokenizer, device=device)
+    train_loader = get_wikitext2(
+        num_samples=args.num_train_samples, seqlen=args.calib_seqlen, tokenizer=tokenizer, device=device
+    )
     orig_hiddens = calc_hiddens(model, train_loader)
 
     # Create or load model to tune with Fake Quantizers and absorbable LoRA adapters.
@@ -386,7 +393,7 @@ def main(argv) -> float:
     loss_numerator = grad_steps = total_microbatches = 0
     for epoch in range(args.epochs):
         batch_indices_epoch = torch.randperm(num_samples)[:epoch_samples].chunk(microbatches_per_epoch)
-        for indices in tqdm(batch_indices_epoch, desc=f"Train epoch {epoch}", leave=[False]):
+        for indices in track(batch_indices_epoch, description=f"Train epoch {epoch}"):
             indices = indices.tolist()
             total_microbatches += 1
 
