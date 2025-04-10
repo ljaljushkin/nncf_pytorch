@@ -34,6 +34,9 @@ from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 
 import nncf
+from nncf.common.graph.layer_attributes import ConstantLayerAttributes
+from nncf.experimental.torch2.function_hook.hook_storage import HookStorage, decode_hook_name
+from nncf.experimental.torch2.function_hook.nncf_graph.nncf_graph_builder import build_nncf_graph
 import nncf.torch
 from nncf.common.logging.track_progress import track
 from nncf.data.dataset import Dataset
@@ -47,7 +50,7 @@ from nncf.torch.model_creation import load_from_config
 from nncf.torch.model_graph_manager import get_const_data
 from nncf.torch.model_graph_manager import get_module_by_name
 from nncf.torch.model_graph_manager import split_const_name
-from nncf.torch.quantization.layers import AsymmetricLoraQuantizer
+from nncf.torch.quantization.layers import AsymmetricLoraQuantizer, AsymmetricQuantizer, SymmetricQuantizer
 from nncf.torch.quantization.layers import SymmetricLoraQuantizer
 
 warnings.filterwarnings("ignore", category=TracerWarning)
@@ -326,6 +329,65 @@ def remove_fq_in_torch_model(
         weight.data = fq_weight
     return model
 
+def remove_fq_in_torch2_model(
+    orig_model: AutoModelForCausalLM, model_input: torch.Tensor, ckpt_file: Path
+):
+    model = load_checkpoint(orig_model, model_input, ckpt_file)
+    graph = build_nncf_graph(model, model_input)
+    hook_storage = get_hook_storage(orig_model)
+
+    for name, module in hook_storage.named_hooks():
+        if not isinstance(module, (SymmetricQuantizer, AsymmetricQuantizer)):
+            continue
+        msg = ""
+        if module._qspec.half_range or module._qspec.narrow_range:
+            msg += "Unexpected parameters of quantizers on strip: half_range and narrow_range should be False.\n"
+        if module.num_bits not in [4, 8]:
+            msg += f"Unsupported number of bits {module.num_bits} for the quantizer {module}.\n"
+        if msg:
+            raise nncf.ValidationError(msg)
+
+        hook_type, op_name, port_id = decode_hook_name(name)
+        weight_node = graph.get_node_by_name(op_name)
+
+        if weight_node is None:
+            msg = "FQ is not assigned to weight. Strip to DQ format is not supported for FQ on activation."
+            raise nncf.UnsupportedModelError(msg)
+
+        if not isinstance(weight_node.layer_attributes, ConstantLayerAttributes):
+            msg = f"Unexpected layer attributes type {type(weight_node.layer_attributes)}"
+            raise nncf.InternalError(msg)
+
+        weight = get_const_data(weight_node, model)
+        fq_weight = module.quantize(weight)
+
+        module_name, weight_attr_name = split_const_name(weight_node.layer_attributes.name)
+        module = get_module_by_name(module_name, model)
+        weight_param = getattr(module, weight_attr_name)
+
+        weight_param.requires_grad = False
+        weight_param.data = fq_weight
+
+        # ATR_HOOK_STORAGE
+    model.__nncf_hooks = HookStorage()
+        # hook_storage.set_submodule(name, decompressor)
+
+        # hook_key = HookStorage._generate_key(op_name, port_id)
+        # hook_storage.set_submodule(name, decompressor)
+
+        # if hook_key not in storage_dict:
+        #     return value
+        # for hook in storage_dict[hook_key].values():
+        #     value = hook(value)
+
+        # storage = getattr(hook_storage, hook_type).storage_ref()
+
+        # if storage is not None and self.key in storage and self.id in storage[self.key]:
+        #     del storage[self.key][self.id]
+        #     if not storage[self.key]:
+        #         del storage[self.key]
+    return model
+
 
 def main(argv) -> float:
     """
@@ -386,7 +448,7 @@ def main(argv) -> float:
     # Convert torch checkpoint to an OpenVINO model and evaluate it via LM-Evaluation-Harness.
     # model_to_eval = export_to_openvino(args.pretrained, train_loader[0], ckpt_file, last_dir)
     model_to_eval = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch.bfloat16, device_map="cuda")
-    model_to_eval = remove_fq_in_torch_model(model_to_eval, example_input, ckpt_file)
+    model_to_eval = remove_fq_in_torch2_model(model_to_eval, example_input, ckpt_file)
     best_perplexity = measure_perplexity(model_to_eval, args.eval_seqlen, args.limit)
     tb.add_scalar("perplexity", best_perplexity, 0)
     print(f"Initial perplexity on wikitext = {best_perplexity:.4f}")
@@ -440,7 +502,7 @@ def main(argv) -> float:
         # Save the best checkpoint and OpenVINO IR for the lowest perplexity.
         save_checkpoint(model, ckpt_file)
         model_to_eval = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch.bfloat16, device_map="cuda")
-        model_to_eval = remove_fq_in_torch_model(model_to_eval, example_input, ckpt_file)
+        model_to_eval = remove_fq_in_torch2_model(model_to_eval, example_input, ckpt_file)
         # model_for_eval = export_to_openvino(args.pretrained, train_loader[0], ckpt_file, last_dir)
         perplexity = measure_perplexity(model_to_eval, args.eval_seqlen, args.limit)
         tb.add_scalar("perplexity", perplexity, total_microbatches)
@@ -453,6 +515,9 @@ def main(argv) -> float:
             shutil.copytree(last_dir, best_dir, dirs_exist_ok=True)
 
     print(f"The finetuned OV model with the best perplexity={best_perplexity} saved to: {best_dir}")
+    max_cuda_mem_eval = round(torch.cuda.max_memory_allocated() / 1e9, 2)
+    tb.add_hparams({}, metric_dict={"max_cuda_mem_eval_Gb": max_cuda_mem_eval})
+    print(f"Max CUDA memory allocated in Gb: {max_cuda_mem_eval}")
     return best_perplexity
 
 
