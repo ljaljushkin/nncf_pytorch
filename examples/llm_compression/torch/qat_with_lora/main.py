@@ -41,7 +41,7 @@ import nncf.torch
 from nncf.common.logging.track_progress import track
 from nncf.data.dataset import Dataset
 from nncf.experimental.torch2.function_hook.wrapper import get_hook_storage
-from nncf.parameters import CompressionFormat
+from nncf.parameters import BackupMode, CompressionFormat
 from nncf.parameters import CompressWeightsMode
 from nncf.parameters import StripFormat
 from nncf.quantization.advanced_parameters import AdvancedCompressionParameters
@@ -293,7 +293,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
         help="Learning rate for fine-tuning. "
         "For larger models (over 3 billion parameters), a learning rate of 5e-5 is recommended.",
     )
-    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs.")
+    parser.add_argument("--epochs", type=int, default=32, help="Number of epochs.")
     parser.add_argument("--batch_size", type=int, default=32, help="Size of training batch.")
     parser.add_argument(
         "--microbatch_size",
@@ -400,8 +400,9 @@ def main(argv) -> float:
     device = "cuda"
     torch_dtype = torch.bfloat16
     compression_config = dict(
-        mode=CompressWeightsMode.INT4_ASYM,
-        group_size=64,
+        mode=CompressWeightsMode.INT4_SYM,
+        backup_mode=BackupMode.NONE,
+        group_size=128,
         compression_format=CompressionFormat.FQ_LORA,
         advanced_parameters=AdvancedCompressionParameters(lora_adapter_rank=args.lora_rank),
     )
