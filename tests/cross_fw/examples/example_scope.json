@@ -282,7 +282,8 @@
         "cpu": "Intel(R) Core(TM) i9-10980XE CPU @ 3.00GHz",
         "accuracy_tolerance": 0.002,
         "accuracy_metrics": {
-            "similarity_diff": 0.027
+            "perplexity_diff_torch": 0.027,
+            "best_perplexity_diff": 0.027
         }
     },
     "quantization_aware_training_tensorflow_mobilenet_v2": {
