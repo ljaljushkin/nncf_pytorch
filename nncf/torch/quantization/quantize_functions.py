@@ -127,9 +127,11 @@ class QuantizeSymmetricTorch(torch.autograd.Function):
         # 15/8 * scale or (2-1/8) * scale
         input_range = torch.abs((2 + 1 / level_low) * scale)
 
+        dtype = input_.dtype
         if input_.dtype in [torch.bfloat16, torch.float16]:
-            input_low = input_low.type(input_.dtype)
-            input_range = input_range.type(input_.dtype)
+            input_ = input_.type(torch.float32)
+            # input_low = input_low.type(input_.dtype)
+            # input_range = input_range.type(input_.dtype)
 
         original_shape = input_.shape
         input_ = input_.reshape(input_shape)
@@ -142,7 +144,7 @@ class QuantizeSymmetricTorch(torch.autograd.Function):
         ctx.levels = levels
 
         output = output.reshape(original_shape)
-        return output
+        return output.type(dtype)
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -169,9 +171,11 @@ class QuantizeSymmetricTorch(torch.autograd.Function):
 class QuantizeAsymmetricTorch(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_, input_shape, input_low, input_range, level_low, level_high, levels):
+        dtype = input_.dtype
         if input_.dtype in [torch.bfloat16, torch.float16]:
-            input_low = input_low.type(input_.dtype)
-            input_range = input_range.type(input_.dtype)
+            input_ = input_.type(torch.float32)
+            # input_low = input_low.type(input_.dtype)
+            # input_range = input_range.type(input_.dtype)
 
         original_shape = input_.shape
         input_ = input_.reshape(input_shape)
@@ -185,7 +189,7 @@ class QuantizeAsymmetricTorch(torch.autograd.Function):
         ctx.levels = levels
 
         output = output.reshape(original_shape)
-        return output
+        return output.type(dtype)
 
     @staticmethod
     def backward(ctx, grad_output):
