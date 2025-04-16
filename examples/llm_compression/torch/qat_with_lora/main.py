@@ -14,6 +14,7 @@ import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
+from pprint import pprint
 from typing import Any, Dict, List, Optional, Union
 
 import torch
@@ -22,6 +23,7 @@ import transformers
 from datasets import load_dataset
 from lm_eval import simple_evaluate
 from lm_eval.models.optimum_lm import OptimumLM
+from lm_eval.tasks import TaskManager
 from optimum.exporters.openvino.convert import export_from_model
 from optimum.intel.openvino import OVModelForCausalLM
 from optimum.modeling_base import OptimizedModel
@@ -74,7 +76,11 @@ def get_wikitext2(num_samples: int, seqlen: int, tokenizer: Any, device: torch.d
 
 
 def measure_perplexity(
-    optimum_model: OptimizedModel, max_length: Optional[int] = None, limit: Optional[Union[int, float]] = None
+    optimum_model: OptimizedModel,
+    task_manager: TaskManager,
+    max_length: Optional[int] = None,
+    limit: Optional[Union[int, float]] = None,
+    task="wikitext_validation",
 ) -> float:
     """
     Measure perplexity on the Wikitext dataset, via rolling loglikelihoods for a given model.
@@ -87,8 +93,8 @@ def measure_perplexity(
     """
     print("#" * 50 + " Evaluate via lm-eval-harness " + "#" * 50)
     lm_obj = OptimumLM(pretrained=optimum_model, max_length=max_length)
-    results = simple_evaluate(lm_obj, tasks=["wikitext"], limit=limit)
-    return results["results"]["wikitext"]["word_perplexity,none"]
+    results = simple_evaluate(lm_obj, tasks=[task], limit=limit, task_manager=task_manager)
+    return results["results"][task]["word_perplexity,none"]
 
 
 @torch.no_grad()
@@ -311,6 +317,7 @@ def main(argv) -> float:
     """
     parser = get_argument_parser()
     args = parser.parse_args(argv)
+    pprint(vars(args))
     assert torch.cuda.is_available()
     transformers.set_seed(42)
     device = "cuda"
@@ -334,6 +341,7 @@ def main(argv) -> float:
     ckpt_file = last_dir / "nncf_checkpoint.pth"
     print(f"To visualize the loss and validation metrics, open Tensorboard using the logs from: {tensorboard_dir}")
     tb = SummaryWriter(tensorboard_dir, "QAT with absorbable LoRA")
+    task_manager = TaskManager(include_path=str(Path(__file__).resolve().parent))
 
     # Load original model and tokenizer.
     model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch_dtype, device_map="auto")
@@ -366,7 +374,8 @@ def main(argv) -> float:
         eval_model = nncf.strip(
             eval_model, do_copy=False, strip_format=StripFormat.IN_PLACE, example_input=example_input
         )
-    initial_perplexity = best_perplexity = measure_perplexity(eval_model, args.eval_seqlen, args.limit)
+
+    initial_perplexity = best_perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit)
     if args.fast_eval:
         del eval_model
 
@@ -428,7 +437,11 @@ def main(argv) -> float:
             eval_model = nncf.strip(
                 eval_model, do_copy=False, strip_format=StripFormat.IN_PLACE, example_input=example_input
             )
-        perplexity = measure_perplexity(eval_model, args.eval_seqlen, args.limit)
+        perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit)
+        # optional... just for testing!
+        torch_perplexity = measure_perplexity(
+            eval_model, task_manager, args.eval_seqlen, args.limit, task="wikitext_test"
+        )
         if args.fast_eval:
             del eval_model
         tb.add_scalar("perplexity", perplexity, total_microbatches)
@@ -442,10 +455,13 @@ def main(argv) -> float:
     # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
     best_ckpt_file = best_dir / "nncf_checkpoint.pth"
     model_for_eval = export_to_openvino(args.pretrained, train_loader[0], best_ckpt_file, best_dir)
-    ov_perplexity = measure_perplexity(model_for_eval, args.eval_seqlen, args.limit)
+    ov_perplexity = measure_perplexity(model_for_eval, task_manager, args.eval_seqlen, args.limit, task="wikitext_test")
     tb.add_scalar("ov_perplexity", ov_perplexity, 0)
-    print(f"The finetuned OV model with the best perplexity={ov_perplexity} saved to: {best_dir}")
-    return initial_perplexity - best_perplexity, best_perplexity - ov_perplexity
+    print(
+        f"The finetuned OV model with the OV ppl={ov_perplexity} Torch ppl={torch_perplexity} "
+        f"Validation ppl={best_perplexity} saved to: {best_dir}"
+    )
+    return initial_perplexity - best_perplexity, torch_perplexity - ov_perplexity
 
 
 if __name__ == "__main__":
