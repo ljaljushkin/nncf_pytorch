@@ -438,10 +438,6 @@ def main(argv) -> float:
                 eval_model, do_copy=False, strip_format=StripFormat.IN_PLACE, example_input=example_input
             )
         perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit)
-        # optional... just for testing!
-        torch_perplexity = measure_perplexity(
-            eval_model, task_manager, args.eval_seqlen, args.limit, task="wikitext_test"
-        )
         if args.fast_eval:
             del eval_model
         tb.add_scalar("perplexity", perplexity, total_microbatches)
@@ -454,6 +450,13 @@ def main(argv) -> float:
     del model
     # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
     best_ckpt_file = best_dir / "nncf_checkpoint.pth"
+    eval_model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch_dtype, device_map="auto")
+    eval_model = load_checkpoint(eval_model, best_ckpt_file)
+    eval_model = nncf.strip(eval_model, do_copy=False, strip_format=StripFormat.IN_PLACE, example_input=example_input)
+    # optional... just for testing!
+    torch_perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit, task="wikitext_test")
+    del eval_model
+
     model_for_eval = export_to_openvino(args.pretrained, train_loader[0], best_ckpt_file, best_dir)
     ov_perplexity = measure_perplexity(model_for_eval, task_manager, args.eval_seqlen, args.limit, task="wikitext_test")
     tb.add_scalar("ov_perplexity", ov_perplexity, 0)
