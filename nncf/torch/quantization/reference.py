@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 import nncf
+from nncf.torch.quantization.triton_reference import triton_forward
 from nncf.torch.utils import sum_like
 
 GeneralizedTensor = TypeVar("GeneralizedTensor", torch.Tensor, np.ndarray)
@@ -54,6 +55,8 @@ class ReferenceQuantize:
     def forward(
         self, input_: GeneralizedTensor, input_low: GeneralizedTensor, input_range: GeneralizedTensor, levels: int
     ) -> GeneralizedTensor:
+        dtype = input_.dtype
+        input_ = input_.type(torch.float32)
         scale = (levels - 1) / input_range
         output = input_.clip(min=input_low, max=input_low + input_range)
         zero_point = (-input_low * scale).round()
@@ -62,7 +65,7 @@ class ReferenceQuantize:
         output -= zero_point
         output = output.round()
         output = output / scale
-        return output
+        return output.type(dtype)
 
     def backward(
         self,
@@ -70,7 +73,7 @@ class ReferenceQuantize:
         input_: GeneralizedTensor,
         input_low: GeneralizedTensor,
         input_range: GeneralizedTensor,
-        output: GeneralizedTensor,
+        levels: int,
         level_low: int,
         level_high: int,
         is_asymmetric: bool = False,
@@ -83,6 +86,7 @@ class ReferenceQuantize:
 
         mask_in = 1 - mask_hi - mask_lo
         range_sign = self._sign(input_range)
+        output = self.forward(input_, input_low, input_range, levels)
         err = (output - input_) * self._reciprocal(input_range * range_sign)
         grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
         grad_range = sum_like(grad_range, input_range)
@@ -123,3 +127,15 @@ class ReferenceQuantizedFunctions:
     _executor = ReferenceQuantize(backend_type=ReferenceBackendType.TORCH)
     Quantize_forward = _executor.forward
     Quantize_backward = _executor.backward
+
+
+class ReferenceQuantizedFunctionsCompile:
+    _executor = ReferenceQuantize(backend_type=ReferenceBackendType.TORCH)
+    Quantize_forward = torch.compile(_executor.forward)
+    Quantize_backward = torch.compile(_executor.backward)
+
+
+class ReferenceQuantizedFunctionsTriton:
+    _executor = ReferenceQuantize(backend_type=ReferenceBackendType.TORCH)
+    Quantize_forward = triton_forward
+    Quantize_backward = torch.compile(_executor.backward)

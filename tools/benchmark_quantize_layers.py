@@ -35,11 +35,15 @@ from tools.benchmark import run_worker
 
 TIME_SCALES = {"ms": 1000}
 NBITS = 8
-GPU_RUNS_LOW_BATCH = 10000
+GPU_RUNS_LOW_BATCH = 1000
 GPU_RUNS_HIGH_BATCH = 100
 CPU_RUNS = 100
 LOW_BATCH_INPUT_SIZE = [2, 96, 64, 64]
 HIGH_BATCH_INPUT_SIZE = [128, 96, 64, 64]
+
+LM_HEAD_1B = [2048, 128256]
+LM_HEAD_3B = [3072, 128256]
+LM_HEAD_8B = [4096, 128256]
 
 
 class BatchMode(Enum):
@@ -75,32 +79,28 @@ class GranularityType(Enum):
     PER_CHANNEL = "per_channel"
 
 
-TEST_TENSOR_TYPES: List[TensorType] = [TensorType.WEIGHTS, TensorType.ACTIVATIONS]
-TEST_GRANULARITY: List[GranularityType] = [GranularityType.PER_TENSOR, GranularityType.PER_CHANNEL]
+TEST_TENSOR_TYPES: List[TensorType] = [TensorType.WEIGHTS]
+TEST_GRANULARITY: List[GranularityType] = [GranularityType.PER_CHANNEL]
 TEST_SYMMETRIC: List[bool] = [True, False]
-TEST_DEVICES: List[torch.device] = [torch.device("cuda"), torch.device("cpu")]
+TEST_DEVICES: List[torch.device] = [torch.device("cuda")]
 
 TEST_BATCHES: List[BatchDescriptor] = [
     BatchDescriptor(
-        mode=BatchMode.LOW,
-        input_size=LOW_BATCH_INPUT_SIZE,
+        mode=BatchMode.HIGH,
+        input_size=LM_HEAD_1B,
         num_runs={torch.device("cuda"): GPU_RUNS_LOW_BATCH, torch.device("cpu"): CPU_RUNS},
     ),
-    BatchDescriptor(
-        mode=BatchMode.HIGH,
-        input_size=HIGH_BATCH_INPUT_SIZE,
-        num_runs={torch.device("cuda"): GPU_RUNS_HIGH_BATCH, torch.device("cpu"): CPU_RUNS},
-    ),
 ]
-TEST_DTYPES: List[torch.dtype] = [torch.float, torch.half]
+TEST_DTYPES: List[torch.dtype] = [
+    # torch.float32, torch.float16,
+    torch.bfloat16
+]
 TEST_EXEC_TYPES: List[ExecutionType] = [
     ExecutionType.REGULAR,
-    ExecutionType.DISTRIBUTED_DATA_PARALLEL,
-    ExecutionType.DATA_PARALLEL,
 ]
-TEST_NARROW_RANGE: List[bool] = [False, True]
-TEST_TIMING_MODE: List[TimingMode] = [TimingMode.WALL, TimingMode.KERNEL]
-TEST_REFERENCE: List[bool] = [False, True]
+TEST_NARROW_RANGE: List[bool] = [False]
+TEST_TIMING_MODE: List[TimingMode] = [TimingMode.KERNEL]
+TEST_REFERENCE: List[bool] = [False]
 
 
 @dataclass
@@ -220,11 +220,25 @@ if __name__ == "__main__":
                 run_data = {"time": -1}
         else:
             run_data = call_fn(module, input_size, param_struct.device, num_runs, dtype=param_struct.dtype)
+            max_memory = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
 
-        runtime = next(iter(run_data.values()))
-        benchmark_data.append({**param_struct.to_dict(), "time_ms": runtime})
+        b_data = {**param_struct.to_dict()}
+        if param_struct.timing_mode == TimingMode.WALL:
+            cell_name = "forward + backward"
+            b_data.update({cell_name: run_data[cell_name]})
+        elif param_struct.timing_mode == TimingMode.KERNEL:
+            fwd_cell = "forward_avg"
+            b_data.update({fwd_cell: run_data[fwd_cell]})
+            bwd_cell = "backward_avg"
+            b_data.update({bwd_cell: run_data[bwd_cell]})
 
+        b_data.update({"memory": max_memory})
+        benchmark_data.append(b_data)
         df = pd.DataFrame(benchmark_data)
+
+        torch.cuda.reset_peak_memory_stats()
 
         df.to_csv(file_name, index=False)
     print("Done!")
+
+# To run: BENCHMARK_MODE=EXTENSION/COMPILE/REFERENCE python benchmark_quantize_layers.py
