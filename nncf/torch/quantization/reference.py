@@ -55,8 +55,8 @@ class ReferenceQuantize:
     def forward(
         self, input_: GeneralizedTensor, input_low: GeneralizedTensor, input_range: GeneralizedTensor, levels: int
     ) -> GeneralizedTensor:
-        dtype = input_.dtype
-        input_ = input_.type(torch.float32)
+        # dtype = input_.dtype
+        # input_ = input_.type(torch.float32)
         scale = (levels - 1) / input_range
         output = input_.clip(min=input_low, max=input_low + input_range)
         zero_point = (-input_low * scale).round()
@@ -65,7 +65,7 @@ class ReferenceQuantize:
         output -= zero_point
         output = output.round()
         output = output / scale
-        return output.type(dtype)
+        return output  # .type(dtype)
 
     def backward(
         self,

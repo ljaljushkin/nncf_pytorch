@@ -28,9 +28,10 @@ class QuantizeSymmetric(torch.autograd.Function):
     def forward(ctx, input_, scale, level_low, level_high, levels):
         # Required to support both torch.amp.autocast and models that perform explicit type casting
         # inside their forward calls.
-        if input_.dtype in [torch.bfloat16, torch.float16]:
-            scale = scale.type(input_.dtype)
-
+        dtype = input_.dtype
+        # if input_.dtype in [torch.bfloat16, torch.float16]:
+        #     scale = scale.type(input_.dtype)
+        # input_ = input_.type(torch.float32)
         input_low = scale * (level_low / level_high)
         input_range = scale - input_low
 
@@ -38,16 +39,28 @@ class QuantizeSymmetric(torch.autograd.Function):
             if not input_.is_contiguous():
                 nncf_logger.debug("input_ is not contiguous!")
                 input_ = input_.contiguous()
-            output = QuantizedFunctionsCUDA.get("Quantize_forward")(input_, input_low, input_range, levels)
+            output = QuantizedFunctionsCUDA.get("Quantize_forward")(
+                input_.type(torch.float32),
+                # input_,
+                input_low,
+                input_range,
+                levels,
+            )
         else:
-            output = QuantizedFunctionsCPU.get("Quantize_forward")(input_, input_low, input_range, levels)
+            output = QuantizedFunctionsCPU.get("Quantize_forward")(
+                input_.type(torch.float32),
+                # input_,
+                input_low,
+                input_range,
+                levels,
+            )
 
         ctx.save_for_backward(input_, input_low, input_range)
         ctx.levels = levels
         ctx.level_low = level_low
         ctx.level_high = level_high
 
-        return output
+        return output.type(dtype)
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
@@ -78,23 +91,37 @@ class QuantizeAsymmetric(torch.autograd.Function):
     def forward(ctx, input_, input_low, input_range, level_low, level_high, levels):
         # Required to support both torch.amp.autocast and models that perform explicit type casting
         # inside their forward calls.
+        dtype = input_.dtype
         if input_.dtype in [torch.bfloat16, torch.float16]:
             input_low = input_low.type(input_.dtype)
             input_range = input_range.type(input_.dtype)
+        # input_ = input_.type(torch.float32)
 
         if input_.is_cuda:
             if not input_.is_contiguous():
                 nncf_logger.debug("input_ is not contiguous!")
                 input_ = input_.contiguous()
-            output = QuantizedFunctionsCUDA.get("Quantize_forward")(input_, input_low, input_range, levels)
+            output = QuantizedFunctionsCUDA.get("Quantize_forward")(
+                input_.type(torch.float32),
+                # input_,
+                input_low,
+                input_range,
+                levels,
+            )
         else:
-            output = QuantizedFunctionsCPU.get("Quantize_forward")(input_, input_low, input_range, levels)
+            output = QuantizedFunctionsCPU.get("Quantize_forward")(
+                input_.type(torch.float32),
+                # input_,
+                input_low,
+                input_range,
+                levels,
+            )
 
         ctx.save_for_backward(input_, input_low, input_range)
         ctx.levels = levels
         ctx.level_low = level_low
         ctx.level_high = level_high
-        return output
+        return output.type(dtype)
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
