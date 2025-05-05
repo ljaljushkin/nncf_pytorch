@@ -148,11 +148,13 @@ frobenius
 fsolve
 funcs
 fval
+fxawq
 fxsq
 gacts
 gelsy
 gelu
 genai
+getsizeof
 gflop
 gflops
 giga
