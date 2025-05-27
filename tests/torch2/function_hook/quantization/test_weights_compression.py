@@ -83,7 +83,7 @@ class MatMulModel(torch.nn.Module):
 
 
 class LinearModel(torch.nn.Module):
-    def __init__(self, weight: torch.Tensor = torch.ones(size=(256, 256), dtype=torch.float32)):
+    def __init__(self, weight: torch.Tensor = torch.ones(size=(12, 24), dtype=torch.float32)):
         super().__init__()
         self.linear = torch.nn.Linear(weight.shape[0], weight.shape[1], False)
         self.linear.weight = torch.nn.Parameter(weight)
@@ -411,11 +411,13 @@ def test_model_devices_and_precisions(use_cuda, dtype):
     device = torch.device("cuda" if use_cuda else "cpu")
     dtype = torch.float16 if dtype == "float16" else torch.float32
 
-    model = MatMulModel().to(device)
+    # model = MatMulModel().to(device)
+    model = LinearModel(torch.arange(0, 12 * 24, dtype=torch.float32).reshape(12, 24).transpose(1, 0)).to(device)
+    # print(model.linear.weight)
     if dtype == torch.float16:
         model.half()
 
-    dummy_input = torch.rand((1, 256), dtype=dtype, device=device)
+    dummy_input = torch.rand((1, 12), dtype=dtype, device=device)
     wrapped_model = GraphModelWrapper(wrap_model(model), example_input=dummy_input)
     compressed_model = compress_weights(wrapped_model)
     result = compressed_model(dummy_input)

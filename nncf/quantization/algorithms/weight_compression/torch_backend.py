@@ -11,6 +11,7 @@
 
 from typing import Callable, Iterable, Optional, Union
 
+import matplotlib.pyplot as plt
 import torch
 
 import nncf
@@ -503,6 +504,23 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 continue
 
             if compression_format == CompressionFormat.DQ:
+                visualize_sparsity(compressed_weight.tensor.data.clone(), save_path="before.png")
+                num_rows, num_cols = weight.shape
+                device = weight.device
+                for r in range(num_rows):
+                    for c_start in range(0, num_cols, 4):
+                        c_end = min(c_start + 4, num_cols)
+                        block_size = c_end - c_start
+                        if block_size == 4:
+                            # We have a full block of 4
+                            # Choose 2 distinct indices out of 0, 1, 2, 3 to zero out
+                            indices_to_zero_in_block = torch.randperm(4, device=device)[:2]
+                            compressed_weight.tensor.data[r, c_start + indices_to_zero_in_block] = 0.0
+                        elif block_size > 0:  # Partial block at the end
+                            msg = f"number of out features ({num_cols}) is not divisable by 4"
+                            raise RuntimeError(msg)
+                            # pass  # Elements not in a full block of 4 remain untouched
+                visualize_sparsity(compressed_weight.tensor.data, save_path="after.png")
                 command = self.get_dq_insertion_command(compressed_weight, wc_params, model, graph, weight_node)
             else:
                 rank = advanced_parameters.lora_adapter_rank
@@ -585,3 +603,75 @@ class PTMixedPrecisionAlgoBackend(MixedPrecisionAlgoBackend, PTWeightCompression
         collector = TensorCollector(MeanMagnitudeTensorStatistic)
         collector.register_statistic_branch(MeanMagnitudeTensorStatistic.MEAN_MAGNITUDE_STAT, reducer, aggregator)
         return collector
+
+
+def visualize_sparsity(weights, title="Weight Sparsity Visualization", save_path="debug_sparsity.png"):
+    """
+    Visualizes the sparsity pattern of a PyTorch weight tensor.
+
+    Args:
+        weights (torch.Tensor): The weight tensor to visualize.
+        title (str): The title for the plot.
+        save_path (str, optional): Path to save the plot (e.g., "sparsity_plot.png").
+                                     If None, the plot is displayed.
+    """
+    if not isinstance(weights, torch.Tensor):
+        msg = "weights must be a torch.Tensor"
+        raise TypeError(msg)
+
+    weights_np = weights[:12, :12].cpu().numpy()
+    print(weights_np)
+    print(weights_np != 0)
+
+    if weights_np.ndim == 2:
+        weights_reshaped = weights_np
+    else:  # Should not happen due to earlier checks
+        print(f"Warning: Unexpected weight tensor dimension {weights_np.ndim}.")
+        return
+
+    plt.figure(figsize=(12, max(6, weights_reshaped.shape[0] * 0.1)))  # Adjust figure size
+    plt.imshow(weights_reshaped != 0, cmap="binary", aspect="auto", interpolation="nearest")  # 'binary' is good for 0/1
+
+    plt.title(title)
+    plt.xlabel(f"Elements along the last dimension (Original size: {weights_np.shape[-1]})")
+    if weights_np.ndim > 1:
+        plt.ylabel("Rows (or flattened leading dimensions)")
+    else:
+        plt.ylabel("Element")
+
+    # Add lines to demarcate blocks of 4 if the number of columns is reasonable
+    if weights_reshaped.shape[1] <= 128:  # Only draw lines if not too cluttered
+        for j in range(4, weights_reshaped.shape[1], 4):
+            plt.axvline(x=j - 0.5, color="red", linestyle="-", linewidth=1)
+    if weights_reshaped.shape[1] <= 64:  # Only draw lines if not too cluttered
+        for i_row in range(weights_reshaped.shape[0] - 1):
+            plt.axhline(y=i_row + 0.5, color="blue", linestyle="-", linewidth=1)
+
+    # Basic colorbar (less critical for binary)
+    # cbar = plt.colorbar(ticks=[0, 1])
+    # cbar.ax.set_yticklabels(['Zero', 'Non-Zero'])
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches="tight")
+        print(f"Plot saved to {save_path}")
+    plt.close()
+
+    plt.figure(figsize=(12, max(6, weights_reshaped.shape[0] * 0.1)))  # Adjust figure size
+    plt.imshow(weights_reshaped, cmap="gray_r", aspect="auto")  # Use gray scale and invert for sparse (0) to be black
+
+    # Add lines to demarcate blocks of 4 if the number of columns is reasonable
+    if weights_reshaped.shape[1] <= 128:  # Only draw lines if not too cluttered
+        for j in range(4, weights_reshaped.shape[1], 4):
+            plt.axvline(x=j - 0.5, color="red", linestyle="-", linewidth=1)
+    if weights_reshaped.shape[1] <= 64:  # Only draw lines if not too cluttered
+        for i_row in range(weights_reshaped.shape[0] - 1):
+            plt.axhline(y=i_row + 0.5, color="blue", linestyle="-", linewidth=1)
+
+    plt.title(title)
+    plt.xlabel("Columns")
+    plt.ylabel("Rows")
+    plt.colorbar(label="Non-zero Values")  # Indicate what the colors mean.
+
+    if save_path:
+        plt.savefig(save_path.split(".")[0] + "_gray.png")
+        plt.close()
