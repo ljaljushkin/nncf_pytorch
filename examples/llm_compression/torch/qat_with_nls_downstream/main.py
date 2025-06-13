@@ -28,7 +28,7 @@ import numpy as np
 import torch
 import transformers
 from lm_eval import evaluator
-from lm_eval.models.optimum_lm import OptimumLM
+from lm_eval.models.optimum_lm import HFLM
 from optimum.exporters.openvino.convert import export_from_model
 from optimum.intel.openvino import OVModelForCausalLM
 from optimum.modeling_base import OptimizedModel
@@ -310,8 +310,8 @@ def lm_eval(
     :return: A dictionary containing the evaluation results.
     """
     print("#" * 50 + " Evaluate via lm-eval-harness " + "#" * 50)
-    lm_obj = OptimumLM(pretrained=model, batch_size=batch_size)
-    results = evaluator.simple_evaluate(lm_obj, tasks=task, log_samples=False)["results"]
+    lm_obj = HFLM(pretrained=model, batch_size=64, max_batch_size=64)
+    results = evaluator.simple_evaluate(lm_obj, tasks=task, log_samples=False, apply_chat_template=True, batch_size=64, max_batch_size=64)["results"]
     return results[task]
 
 
@@ -576,8 +576,8 @@ def main(argv) -> float:
     do_train = not args.eval_only
     compression_format = CompressionFormat.FQ_LORA if disable_nls else CompressionFormat.FQ_LORA_NLS
     compression_config = dict(
-        mode=CompressWeightsMode.INT4_ASYM,
-        group_size=64,
+        mode=CompressWeightsMode.INT4_SYM,
+        group_size=128,
         compression_format=compression_format,
         advanced_parameters=AdvancedCompressionParameters(lora_adapter_rank=lora_rank),
     )

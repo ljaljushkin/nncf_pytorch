@@ -1240,10 +1240,10 @@ class AsymmetricLoraNLSQuantizer(AsymmetricLoraQuantizer, LoraNLSMixin):
 
 @COMPRESSION_MODULES.register()
 @QUANTIZATION_MODULES.register(QuantizationMode.SYMMETRIC_LORA)
-class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
+class SymmetricLoraQuantizer(SymmetricQuantizer):
     def __init__(self, qspec: PTQuantizerSpec, lspec: PTLoraSpec):
         super().__init__(qspec)
-        self.init_lora(lspec)
+        # self.init_lora(lspec)
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
         # TODO: (dokuchaev) remove within new tracing (ticket-163869)
@@ -1253,8 +1253,8 @@ class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
         return symmetric_quantize_lora(
             x,
             self._lspec.weight_shape,
-            self.lora_A,
-            self.lora_B,
+            # self.lora_A,
+            # self.lora_B,
             self.scale,
             self.level_low,
             self.level_high,
@@ -1265,15 +1265,15 @@ class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
 
     def enable_gradients(self) -> None:
         super().enable_gradients()
-        LoraMixin.enable_gradients(self)
+        # LoraMixin.enable_gradients(self)
 
     def disable_gradients(self) -> None:
         super().disable_gradients()
-        LoraMixin.disable_gradients(self)
+        # LoraMixin.disable_gradients(self)
 
     def get_trainable_params(self) -> dict[str, torch.Tensor]:
         params = super().get_trainable_params()
-        params.update(LoraMixin.get_adapters(self))
+        # params.update(LoraMixin.get_adapters(self))
         return params
 
     def get_config(self) -> dict[str, Any]:

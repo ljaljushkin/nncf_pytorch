@@ -52,7 +52,7 @@ from nncf.torch.quantization.layers import SymmetricLoraQuantizer
 warnings.filterwarnings("ignore", category=TracerWarning)
 
 
-def get_wikitext2(num_samples: int, seqlen: int, tokenizer: Any, device: torch.device) -> list[Tensor]:
+def get_wikitext2(num_samples: int, seqlen: int, tokenizer: Any, device: torch.device, with_chat_template=False) -> list[Tensor]:
     """
     Loads and processes the Wikitext-2 dataset for training.
 
@@ -72,7 +72,123 @@ def get_wikitext2(num_samples: int, seqlen: int, tokenizer: Any, device: torch.d
         i = torch.randint(0, trainenc.input_ids.shape[1] - seqlen - 1, (1,)).item()
         j = i + seqlen
         inp = trainenc.input_ids[:, i:j].to(device)
+        if with_chat_template:
+            random_text = tokenizer.batch_decode(inp)[0]
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": random_text},
+            ]
+            inp = tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors='pt'
+            ).to(device)
+            NUM_CHAT_END_TOKENS = 5
+            inp = torch.cat((inp[:,:(seqlen-NUM_CHAT_END_TOKENS)], inp[:, -NUM_CHAT_END_TOKENS:]), dim=1)
         trainloader.append(inp)
+    return trainloader
+
+def get_wiki_with_chat(num_samples: int, seqlen: int, tokenizer: Any, device: torch.device, with_chat_template=True) -> list[Tensor]:
+    dataset = load_dataset("databricks/databricks-dolly-15k", split="train", streaming=True)
+    dataset = dataset.shuffle(seed=42, buffer_size=1000) # Shuffle a buffer
+
+    MIN_TOKENS = seqlen
+    NUM_SAMPLES = num_samples
+    attempts = 0
+    trainloader = []
+    for example in dataset:
+        attempts += 1
+        if len(trainloader) == NUM_SAMPLES: # If streaming, limit checks
+            print(f"Collected {len(trainloader)} samples by checking {attempts} samples, stopping search.")
+            break
+
+        text = example.get("text", "")
+        if not text:
+            continue
+
+        prompt = "{text}"
+        if with_chat_template:
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt},
+            ]
+            tokenized_input = tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors='pt'
+            ).to(device)
+            num_tokens = tokenized_input.numel()
+            if num_tokens >= MIN_TOKENS:
+                NUM_CHAT_END_TOKENS = 5
+                tokenized_input = torch.cat((tokenized_input[:,:(MIN_TOKENS-NUM_CHAT_END_TOKENS)], tokenized_input[:, -NUM_CHAT_END_TOKENS:]), dim=1)
+            else:
+                continue
+        else:
+            tokenized_input = tokenizer(prompt, return_tensors='pt').input_ids.to(device)
+            num_tokens = tokenized_input.numel()
+            if num_tokens < MIN_TOKENS:
+                continue
+            tokenized_input = tokenized_input[:,:MIN_TOKENS]
+        trainloader.append(tokenized_input)
+
+    if len(trainloader) != MIN_TOKENS:
+        raise RuntimeError(f"Collected not enough samples {len(trainloader)} by checking all dataset ({attempts} samples)")
+    return trainloader
+
+def get_dolly_with_chat(num_samples: int, seqlen: int, tokenizer: Any, device: torch.device, with_chat_template=True) -> list[Tensor]:
+    dataset = load_dataset("databricks/databricks-dolly-15k", split="train", streaming=True)
+    dataset = dataset.shuffle(seed=42, buffer_size=1000) # Shuffle a buffer
+
+    MIN_TOKENS = seqlen
+    NUM_SAMPLES = num_samples
+    attempts = 0
+    trainloader = []
+    for example in dataset:
+        attempts += 1
+        if len(trainloader) == NUM_SAMPLES: # If streaming, limit checks
+            print(f"Collected {len(trainloader)} samples by checking {attempts} samples, stopping search.")
+            break
+
+        instruction = example.get("instruction", "")
+        context = example.get("context", "")
+        if not instruction or not context:
+            continue
+
+        instr_tokens = len(tokenizer(instruction).input_ids)
+        if instr_tokens > MIN_TOKENS // 4:
+            print(f'Number of instruction tokens {instr_tokens} are more than 1/4 of target {MIN_TOKENS}, which is too much')
+            continue
+
+        prompt = f"{instruction}\n\nContext:\n{context.strip()}"
+        if with_chat_template:
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt},
+            ]
+            tokenized_input = tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors='pt'
+            ).to(device)
+            num_tokens = tokenized_input.numel()
+            if num_tokens >= MIN_TOKENS:
+                NUM_CHAT_END_TOKENS = 5
+                tokenized_input = torch.cat((tokenized_input[:,:(MIN_TOKENS-NUM_CHAT_END_TOKENS)], tokenized_input[:, -NUM_CHAT_END_TOKENS:]), dim=1)
+            else:
+                continue
+        else:
+            tokenized_input = tokenizer(prompt, return_tensors='pt').input_ids.to(device)
+            num_tokens = tokenized_input.numel()
+            if num_tokens < MIN_TOKENS:
+                continue
+            tokenized_input = tokenized_input[:,:MIN_TOKENS]
+        trainloader.append(tokenized_input)
+
+    if len(trainloader) != MIN_TOKENS:
+        raise RuntimeError(f"Collected not enough samples {len(trainloader)} by checking all dataset ({attempts} samples)")
     return trainloader
 
 
@@ -167,7 +283,7 @@ def get_model_input(input_ids: Tensor) -> dict[str, Tensor]:
     return {"input_ids": input_ids, "attention_mask": attention_mask, "position_ids": position_ids}
 
 
-def kl_div(student_hiddens: torch.Tensor, teacher_hiddens: torch.Tensor, temperature=1) -> torch.Tensor:
+def kl_div(student_hiddens: torch.Tensor, teacher_hiddens: torch.Tensor) -> torch.Tensor:
     """
     Computes the Kullback-Leibler divergence loss between the student and teacher hidden states.
     The input tensors are expected to have the same shape, and the last dimension represents the number of classes.
@@ -178,11 +294,11 @@ def kl_div(student_hiddens: torch.Tensor, teacher_hiddens: torch.Tensor, tempera
     """
     num_classes = student_hiddens.shape[-1]
     return F.kl_div(
-        input=F.log_softmax(student_hiddens.view(-1, num_classes) / temperature, dim=-1),
-        target=F.softmax(teacher_hiddens.view(-1, num_classes) / temperature, dim=-1),
+        input=F.log_softmax(student_hiddens.view(-1, num_classes), dim=-1),
+        target=F.log_softmax(teacher_hiddens.view(-1, num_classes), dim=-1),
         log_target=True,
         reduction="batchmean",
-    ) * temperature ** 2
+    )
 
 
 def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[str, Any]]:
@@ -208,9 +324,9 @@ def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[s
         if isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer)) and (module.num_bits == 4):
             module.enable_gradients()
             params = module.get_trainable_params()
-            # adapters = module.get_adapters()
-            # adapters_to_train.extend(adapters.values())
-            scales_to_train.extend(params)#param for name, param in params.items() if name not in adapters)
+            adapters = module.get_adapters()
+            adapters_to_train.extend(adapters.values())
+            scales_to_train.extend(param for name, param in params.items() if name not in adapters)
 
     params = list(model.parameters())
     trainable_params = sum(p.numel() for p in params if p.requires_grad)
@@ -221,10 +337,7 @@ def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[s
         f"trainable%: {100 * trainable_params / all_param:.4f}"
     )
     model.train()
-    return [
-        # {"params": adapters_to_train, "lr": lora_lr},
-        {"params": scales_to_train, "lr": fq_lr}
-    ]
+    return [{"params": adapters_to_train, "lr": lora_lr}, {"params": scales_to_train, "lr": fq_lr}]
 
 
 def save_checkpoint(model: nn.Module, ckpt_file: Path) -> None:
@@ -319,7 +432,6 @@ def get_argument_parser() -> argparse.ArgumentParser:
     )
 
     # Data params
-    parser.add_argument("--temperature", type=int, default=1)
     parser.add_argument("--num_train_samples", type=int, default=1024, help="Number of training samples")
     parser.add_argument("--calib_seqlen", type=int, default=1024, help="Calibration data context length.")
     parser.add_argument("--eval_seqlen", type=int, default=2048, help="Evaluation data context length.")
@@ -346,6 +458,14 @@ def get_argument_parser() -> argparse.ArgumentParser:
         type=int,
         default=8,
         help="Size of each training microbatch. Gradients will be accumulated until the batch size is reached.",
+    )
+    parser.add_argument(
+        "--use_dolly",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--no_chat",
+        action="store_true",
     )
     return parser
 
@@ -388,9 +508,17 @@ def main(argv) -> float:
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
 
     # Prepare training data and pre-compute hiddens of teacher model for distillation loss.
-    train_loader = get_wikitext2(
-        num_samples=args.num_train_samples, seqlen=args.calib_seqlen, tokenizer=tokenizer, device=device
-    )
+    if args.use_dolly:
+        train_loader = get_dolly_with_chat(
+            num_samples=args.num_train_samples, seqlen=args.calib_seqlen, tokenizer=tokenizer, device=device,
+            with_chat_template=not args.no_chat
+        )
+    else:
+        train_loader = get_wikitext2(
+            num_samples=args.num_train_samples, seqlen=args.calib_seqlen, tokenizer=tokenizer, device=device,
+            with_chat_template=not args.no_chat
+        )
+
     orig_hiddens = calc_hiddens(model, train_loader)
 
     # Create or load model to tune with Fake Quantizers and absorbable LoRA adapters.
@@ -400,17 +528,17 @@ def main(argv) -> float:
     else:
         model = compress_weights(model, dataset=Dataset([example_input]), **compression_config)
         save_checkpoint(model, ckpt_file)
-    fq_lr = args.lr# / 10
+    fq_lr = args.lr / 10
     weight_decay = args.lr
     param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr)
     opt = torch.optim.AdamW(param_to_train, weight_decay=weight_decay)
 
-    with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
-        initial_perplexity = best_perplexity = measure_perplexity(
-            eval_model, task_manager, args.eval_seqlen, args.limit
-        )
-    tb.add_scalar("perplexity", best_perplexity, 0)
-    print(f"Initial word perplexity on wikitext (validation) = {best_perplexity:.4f}")
+    # with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
+    #     initial_perplexity = best_perplexity = measure_perplexity(
+    #         eval_model, task_manager, args.eval_seqlen, args.limit
+    #     )
+    # tb.add_scalar("perplexity", best_perplexity, 0)
+    # print(f"Initial word perplexity on wikitext (validation) = {best_perplexity:.4f}")
 
     # Run tuning with distillation loss and validation after each epoch.
     grad_accumulation_steps = args.batch_size // args.microbatch_size
@@ -439,7 +567,7 @@ def main(argv) -> float:
                         targets = torch.tanh(targets)
                         targets = targets * fls
             outputs = model(**inputs).logits
-            loss = kl_div(outputs, targets.to(dtype=torch_dtype, device=device), args.temperature)
+            loss = kl_div(outputs, targets.to(dtype=torch_dtype, device=device))
 
             # Perform an optimization step after accumulating gradients over multiple minibatches.
             loss_numerator += loss.item()
@@ -458,26 +586,26 @@ def main(argv) -> float:
 
         # Keep the best checkpoint with the lowest perplexity.
         save_checkpoint(model, ckpt_file)
-        with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
-            perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit)
-            tb.add_scalar("perplexity", perplexity, total_steps)
-            print(f"[Epoch {epoch}], word perplexity on wikitext (validation) = {perplexity:.4f}")
-            if perplexity < best_perplexity:
-                print(f"New best word perplexity = {perplexity:.4f}")
-                best_perplexity = perplexity
-                shutil.copytree(last_dir, best_dir, dirs_exist_ok=True)
+        # with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
+        #     perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit)
+        #     tb.add_scalar("perplexity", perplexity, total_steps)
+        #     print(f"[Epoch {epoch}], word perplexity on wikitext (validation) = {perplexity:.4f}")
+        #     if perplexity < best_perplexity:
+        #         print(f"New best word perplexity = {perplexity:.4f}")
+        #         best_perplexity = perplexity
+        #         shutil.copytree(last_dir, best_dir, dirs_exist_ok=True)
 
-    del model
-    # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
-    best_ckpt_file = best_dir / "nncf_checkpoint.pth"
-    model_for_eval = export_to_openvino(args.pretrained, best_ckpt_file, best_dir)
-    ov_perplexity = measure_perplexity(model_for_eval, task_manager, args.eval_seqlen, args.limit, task="wikitext")
-    tb.add_scalar("ov_perplexity", ov_perplexity, 0)
-    print(
-        f"The finetuned model has been exported to OpenVINO and saved to: {best_dir}\n"
-        f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
-    )
-    return initial_perplexity - best_perplexity, ov_perplexity
+    # del model
+    # # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
+    # best_ckpt_file = last_dir / "nncf_checkpoint.pth"
+    # model_for_eval = export_to_openvino(args.pretrained, best_ckpt_file, best_dir)
+    # ov_perplexity = measure_perplexity(model_for_eval, task_manager, args.eval_seqlen, args.limit, task="wikitext")
+    # tb.add_scalar("ov_perplexity", ov_perplexity, 0)
+    # print(
+    #     f"The finetuned model has been exported to OpenVINO and saved to: {best_dir}\n"
+    #     f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
+    # )
+    # return initial_perplexity - best_perplexity, ov_perplexity
 
 
 if __name__ == "__main__":
