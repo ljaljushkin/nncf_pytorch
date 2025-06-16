@@ -321,13 +321,15 @@ def asymmetric_quantize_lora(
 
 
 @register_operator()
-def symmetric_quantize_lora(input_, input_shape, scale, level_low, level_high, levels, eps, skip: bool = False):
+def symmetric_quantize_lora(input_, input_shape, A, B, scale, level_low, level_high, levels, eps, skip: bool = False):
     if has_torch_function_unary(input_):
         return handle_torch_function(
             symmetric_quantize_lora,
             (input_,),
             input_,
             input_shape,
+            A,
+            B,
             scale,
             level_low,
             level_high,
@@ -338,7 +340,7 @@ def symmetric_quantize_lora(input_, input_shape, scale, level_low, level_high, l
     if skip:
         return input_
     scale_safe = torch.where(torch.abs(scale) < eps, eps, scale)
-    input_ = (input_).type(input_.dtype)  # input(float16) + lora(bfloat16) = float32, need a cast to float16
+    input_ = (input_ + B @ A).type(input_.dtype)  # input(float16) + lora(bfloat16) = float32, need a cast to float16
     return QuantizeSymmetricTorch.apply(
         input_,
         input_shape,

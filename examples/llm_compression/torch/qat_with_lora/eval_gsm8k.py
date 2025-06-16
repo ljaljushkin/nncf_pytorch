@@ -83,12 +83,13 @@ for name in tqdm([
     #     compile=True,
     #     # ov_config={"KV_CACHE_PRECISION": "f16"},
     # )
+    lm_obj = HFLM(pretrained=model, batch_size=1)
+
+    # task = "hellaswag"
+    # results = simple_evaluate(lm_obj, tasks=[task], log_samples=False)
+    # dump_results(results, ckpt_file.parent, task)
 
     task = "gpqa"
-    lm_obj = HFLM(pretrained=model, batch_size=4)
     results = simple_evaluate(lm_obj, tasks=[task], log_samples=False, apply_chat_template=True)
     dump_results(results, ckpt_file.parent, task)
 
-    task = "hellaswag"
-    results = simple_evaluate(lm_obj, tasks=[task], log_samples=False)
-    dump_results(results, ckpt_file.parent, task)

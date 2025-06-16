@@ -142,3 +142,4 @@ out*
 gptq
 tmp*
 *.txt
+auto_*
