@@ -1096,6 +1096,7 @@ class LoraMixin:
 
     def init_lora(self, lspec: PTLoraSpec):
         self._lspec = lspec
+        self.lora_alpha = 1
         default_lora_dtype = torch.bfloat16
         out_features, in_features = lspec.orig_weight_shape
         rank = lspec.lora_rank
@@ -1107,6 +1108,9 @@ class LoraMixin:
             raise nncf.ValidationError(msg)
         self.lora_A = torch.nn.Parameter(torch.ones((rank, in_features), dtype=default_lora_dtype))
         self.lora_B = torch.nn.Parameter(torch.zeros((out_features, rank), dtype=default_lora_dtype))
+
+    def set_lora_alpha(self, alpha: float) -> None:
+        self.lora_alpha = alpha
 
     def enable_gradients(self):
         self.lora_A.requires_grad = True
@@ -1176,6 +1180,7 @@ class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
             self._lspec.weight_shape,
             self.lora_A,
             self.lora_B,
+            self.lora_alpha,
             self.input_low,
             self.input_range,
             self.level_low,
@@ -1255,6 +1260,7 @@ class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
             self._lspec.weight_shape,
             self.lora_A,
             self.lora_B,
+            self.lora_alpha,
             self.scale,
             self.level_low,
             self.level_high,

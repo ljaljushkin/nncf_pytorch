@@ -286,7 +286,7 @@ def asymmetric_quantize(input_, levels, level_low, level_high, input_low, input_
 
 @register_operator()
 def asymmetric_quantize_lora(
-    input_, input_shape, A, B, input_low_, input_range_, level_low, level_high, levels, eps, skip: bool = False
+    input_, input_shape, A, B, lora_alpha, input_low_, input_range_, level_low, level_high, levels, eps, skip: bool = False
 ):
     if has_torch_function_unary(input_):
         return handle_torch_function(
@@ -296,6 +296,7 @@ def asymmetric_quantize_lora(
             input_shape,
             A,
             B,
+            lora_alpha,
             input_low_,
             input_range_,
             level_low,
@@ -308,7 +309,8 @@ def asymmetric_quantize_lora(
         return input_
     input_range_safe = abs(input_range_) + eps
     input_low, input_range = TuneRange.apply(input_low_, input_range_safe, levels)
-    input_ = (input_ + B @ A).type(input_.dtype)  # input(float16) + lora(bfloat16) = float32, need a cast to float16
+    rank = A.shape[0]
+    input_ = (input_ + lora_alpha / rank * B @ A).type(input_.dtype)  # input(float16) + lora(bfloat16) = float32, need a cast to float16
     return QuantizeAsymmetricTorch.apply(
         input_,
         input_shape,
@@ -321,7 +323,7 @@ def asymmetric_quantize_lora(
 
 
 @register_operator()
-def symmetric_quantize_lora(input_, input_shape, A, B, scale, level_low, level_high, levels, eps, skip: bool = False):
+def symmetric_quantize_lora(input_, input_shape, A, B, lora_alpha, scale, level_low, level_high, levels, eps, skip: bool = False):
     if has_torch_function_unary(input_):
         return handle_torch_function(
             symmetric_quantize_lora,
@@ -330,6 +332,7 @@ def symmetric_quantize_lora(input_, input_shape, A, B, scale, level_low, level_h
             input_shape,
             A,
             B,
+            lora_alpha,
             scale,
             level_low,
             level_high,
@@ -340,7 +343,8 @@ def symmetric_quantize_lora(input_, input_shape, A, B, scale, level_low, level_h
     if skip:
         return input_
     scale_safe = torch.where(torch.abs(scale) < eps, eps, scale)
-    input_ = (input_ + B @ A).type(input_.dtype)  # input(float16) + lora(bfloat16) = float32, need a cast to float16
+    rank = A.shape[0]
+    input_ = (input_ + lora_alpha / rank * B @ A).type(input_.dtype)  # input(float16) + lora(bfloat16) = float32, need a cast to float16
     return QuantizeSymmetricTorch.apply(
         input_,
         input_shape,

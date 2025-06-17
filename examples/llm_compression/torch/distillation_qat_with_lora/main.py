@@ -167,7 +167,7 @@ def get_model_input(input_ids: Tensor) -> dict[str, Tensor]:
     return {"input_ids": input_ids, "attention_mask": attention_mask, "position_ids": position_ids}
 
 
-def kl_div(student_hiddens: torch.Tensor, teacher_hiddens: torch.Tensor) -> torch.Tensor:
+def kl_div(student_hiddens: torch.Tensor, teacher_hiddens: torch.Tensor, temperature=1) -> torch.Tensor:
     """
     Computes the Kullback-Leibler divergence loss between the student and teacher hidden states.
     The input tensors are expected to have the same shape, and the last dimension represents the number of classes.
@@ -178,14 +178,14 @@ def kl_div(student_hiddens: torch.Tensor, teacher_hiddens: torch.Tensor) -> torc
     """
     num_classes = student_hiddens.shape[-1]
     return F.kl_div(
-        input=F.log_softmax(student_hiddens.view(-1, num_classes), dim=-1),
-        target=F.log_softmax(teacher_hiddens.view(-1, num_classes), dim=-1),
+        input=F.log_softmax(student_hiddens.view(-1, num_classes) / temperature, dim=-1),
+        target=F.softmax(teacher_hiddens.view(-1, num_classes) / temperature, dim=-1),
         log_target=True,
         reduction="batchmean",
-    )
+    ) * temperature ** 2
 
 
-def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[str, Any]]:
+def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float, lora_alpha: float) -> list[dict[str, Any]]:
     """
     Sets the trainable parameters of the model for quantization-aware training with LoRA (Low-Rank Adaptation).
 
@@ -205,6 +205,7 @@ def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[s
     hook_storage = get_hook_storage(model)
     for _, module in hook_storage.named_hooks():
         if isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer)) and (module.num_bits == 4):
+            module.set_lora_alpha(lora_alpha)
             module.enable_gradients()
             params = module.get_trainable_params()
             adapters = module.get_adapters()
@@ -305,6 +306,8 @@ def get_argument_parser() -> argparse.ArgumentParser:
         "start from scratch by post-training weight compression initialization.",
     )
     parser.add_argument("--lora_rank", type=int, default=256, help="Rank of lora adapters")
+    parser.add_argument("--lora_alpha", type=float, default=1, help="Factor to multiply lora adapters")
+    parser.add_argument("--temperature", type=float, default=1, help="KL-divergence temperature")
     parser.add_argument(
         "--fast_eval",
         action="store_true",
@@ -369,7 +372,7 @@ def main(argv) -> float:
     last_dir = output_dir / "last"
     best_dir = output_dir / "best"
     if not args.resume:
-        shutil.rmtree(output_dir, ignore_errors=True)
+        shutil.rmtree(tensorboard_dir, ignore_errors=True)
     for path in [output_dir, tensorboard_dir, last_dir, best_dir]:
         path.mkdir(exist_ok=True, parents=True)
     ckpt_file = last_dir / "nncf_checkpoint.pth"
@@ -396,7 +399,7 @@ def main(argv) -> float:
         save_checkpoint(model, ckpt_file)
     fq_lr = args.lr / 10
     weight_decay = args.lr
-    param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr)
+    param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr, lora_alpha=args.lora_alpha)
     opt = torch.optim.AdamW(param_to_train, weight_decay=weight_decay)
 
     with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
@@ -433,7 +436,7 @@ def main(argv) -> float:
                         targets = torch.tanh(targets)
                         targets = targets * fls
             outputs = model(**inputs).logits
-            loss = kl_div(outputs, targets.to(dtype=torch_dtype, device=device))
+            loss = kl_div(outputs, targets.to(dtype=torch_dtype, device=device), args.temperature)
 
             # Perform an optimization step after accumulating gradients over multiple minibatches.
             loss_numerator += loss.item()
