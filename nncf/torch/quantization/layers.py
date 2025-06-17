@@ -165,13 +165,14 @@ class PTQuantizerSpec(QuantizerSpec):
 
 
 class PTLoraSpec:
-    _arg_names = ["lora_rank", "orig_weight_shape", "weight_shape"]
+    _arg_names = ["lora_rank", "orig_weight_shape", "weight_shape", "lora_alpha"]
 
     def __init__(
         self,
         lora_rank: int,
         orig_weight_shape: list[int],
         weight_shape: list[int],
+        lora_alpha: int = 1,
     ):
         """
         :param lora_rank: The rank of the adapters.
@@ -180,6 +181,7 @@ class PTLoraSpec:
             quantization, weights are reshaped from [Cout, Cin] to [Cout, Cin // group_size, group_size].
         """
         self.lora_rank = lora_rank
+        self.lora_alpha = lora_alpha
         self.orig_weight_shape = orig_weight_shape
         self.weight_shape = weight_shape
 
@@ -1096,7 +1098,7 @@ class LoraMixin:
 
     def init_lora(self, lspec: PTLoraSpec):
         self._lspec = lspec
-        self.lora_alpha = 1
+        self._lspec.lora_alpha = 1
         default_lora_dtype = torch.bfloat16
         out_features, in_features = lspec.orig_weight_shape
         rank = lspec.lora_rank
@@ -1110,7 +1112,7 @@ class LoraMixin:
         self.lora_B = torch.nn.Parameter(torch.zeros((out_features, rank), dtype=default_lora_dtype))
 
     def set_lora_alpha(self, alpha: float) -> None:
-        self.lora_alpha = alpha
+        self._lspec.lora_alpha = alpha
 
     def enable_gradients(self):
         self.lora_A.requires_grad = True
@@ -1180,7 +1182,7 @@ class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
             self._lspec.weight_shape,
             self.lora_A,
             self.lora_B,
-            self.lora_alpha,
+            self._lspec.lora_alpha,
             self.input_low,
             self.input_range,
             self.level_low,
@@ -1260,7 +1262,7 @@ class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
             self._lspec.weight_shape,
             self.lora_A,
             self.lora_B,
-            self.lora_alpha,
+            self._lspec.lora_alpha,
             self.scale,
             self.level_low,
             self.level_high,

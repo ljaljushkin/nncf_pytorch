@@ -39,7 +39,7 @@ import nncf
 import nncf.torch
 from nncf.common.logging.track_progress import track
 from nncf.data.dataset import Dataset
-from nncf.parameters import CompressionFormat
+from nncf.parameters import BackupMode, CompressionFormat
 from nncf.parameters import CompressWeightsMode
 from nncf.parameters import StripFormat
 from nncf.quantization.advanced_parameters import AdvancedCompressionParameters
@@ -180,9 +180,9 @@ def kl_div(student_hiddens: torch.Tensor, teacher_hiddens: torch.Tensor, tempera
     return F.kl_div(
         input=F.log_softmax(student_hiddens.view(-1, num_classes) / temperature, dim=-1),
         target=F.softmax(teacher_hiddens.view(-1, num_classes) / temperature, dim=-1),
-        log_target=True,
+        log_target=False,
         reduction="batchmean",
-    ) * temperature ** 2
+    ) * (temperature ** 2)
 
 
 def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float, lora_alpha: float) -> list[dict[str, Any]]:
@@ -360,8 +360,9 @@ def main(argv) -> float:
     device = "cuda"
     torch_dtype = torch.bfloat16
     compression_config = dict(
-        mode=CompressWeightsMode.INT4_ASYM,
-        group_size=64,
+        mode=CompressWeightsMode.INT4_SYM,
+        group_size=128,
+        backup_mode=BackupMode.NONE,
         compression_format=CompressionFormat.FQ_LORA,
         advanced_parameters=AdvancedCompressionParameters(lora_adapter_rank=args.lora_rank),
     )
@@ -402,12 +403,12 @@ def main(argv) -> float:
     param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr, lora_alpha=args.lora_alpha)
     opt = torch.optim.AdamW(param_to_train, weight_decay=weight_decay)
 
-    with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
-        initial_perplexity = best_perplexity = measure_perplexity(
-            eval_model, task_manager, args.eval_seqlen, args.limit
-        )
-    tb.add_scalar("perplexity", best_perplexity, 0)
-    print(f"Initial word perplexity on wikitext (validation) = {best_perplexity:.4f}")
+    # with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
+    #     initial_perplexity = best_perplexity = measure_perplexity(
+    #         eval_model, task_manager, args.eval_seqlen, args.limit
+    #     )
+    # tb.add_scalar("perplexity", best_perplexity, 0)
+    # print(f"Initial word perplexity on wikitext (validation) = {best_perplexity:.4f}")
 
     # Run tuning with distillation loss and validation after each epoch.
     grad_accumulation_steps = args.batch_size // args.microbatch_size
@@ -455,26 +456,26 @@ def main(argv) -> float:
 
         # Keep the best checkpoint with the lowest perplexity.
         save_checkpoint(model, ckpt_file)
-        with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
-            perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit)
-            tb.add_scalar("perplexity", perplexity, total_steps)
-            print(f"[Epoch {epoch}], word perplexity on wikitext (validation) = {perplexity:.4f}")
-            if perplexity < best_perplexity:
-                print(f"New best word perplexity = {perplexity:.4f}")
-                best_perplexity = perplexity
-                shutil.copytree(last_dir, best_dir, dirs_exist_ok=True)
+        # with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
+        #     perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit)
+        #     tb.add_scalar("perplexity", perplexity, total_steps)
+        #     print(f"[Epoch {epoch}], word perplexity on wikitext (validation) = {perplexity:.4f}")
+        #     if perplexity < best_perplexity:
+        #         print(f"New best word perplexity = {perplexity:.4f}")
+        #         best_perplexity = perplexity
+        #         shutil.copytree(last_dir, best_dir, dirs_exist_ok=True)
 
-    del model
-    # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
-    best_ckpt_file = best_dir / "nncf_checkpoint.pth"
-    model_for_eval = export_to_openvino(args.pretrained, best_ckpt_file, best_dir)
-    ov_perplexity = measure_perplexity(model_for_eval, task_manager, args.eval_seqlen, args.limit, task="wikitext")
-    tb.add_scalar("ov_perplexity", ov_perplexity, 0)
-    print(
-        f"The finetuned model has been exported to OpenVINO and saved to: {best_dir}\n"
-        f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
-    )
-    return initial_perplexity - best_perplexity, ov_perplexity
+    # del model
+    # # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
+    # best_ckpt_file = best_dir / "nncf_checkpoint.pth"
+    # model_for_eval = export_to_openvino(args.pretrained, best_ckpt_file, best_dir)
+    # ov_perplexity = measure_perplexity(model_for_eval, task_manager, args.eval_seqlen, args.limit, task="wikitext")
+    # tb.add_scalar("ov_perplexity", ov_perplexity, 0)
+    # print(
+    #     f"The finetuned model has been exported to OpenVINO and saved to: {best_dir}\n"
+    #     f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
+    # )
+    # return initial_perplexity - best_perplexity, ov_perplexity
 
 
 if __name__ == "__main__":

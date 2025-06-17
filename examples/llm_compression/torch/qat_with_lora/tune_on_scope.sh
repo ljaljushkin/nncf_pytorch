@@ -30,15 +30,14 @@ pids=()
 
 # Launch models asynchronously
 # REPRO
-run_model_async 0 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r128 "--lora_alpha 128 --lora_rank 128 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
-# run_model_async 1 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r128_alpha "--lora_alpha 1 --lora_rank 128 --microbatch_size=2 --eval_seqlen=4096 --batch_size 64 --epochs 10"
-# run_model_async 2 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r128_alpha_t2 "--lora_alpha 1 --temperature 2 --lora_rank 128 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
-# run_model_async 3 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r128_t2 "--lora_alpha 128 --temperature 2 --lora_rank 128 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
-
-# run_model_async 4 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r32 "--lora_alpha 128 --lora_rank 32 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
-# run_model_async 5 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r32_alpha "--lora_alpha 1 --lora_rank 32 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
-# run_model_async 6 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r32_alpha_t2 "--lora_alpha 1 --temperature 2 --lora_rank 32 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
-# run_model_async 7 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r32_t2 "--lora_alpha 128 --temperature 2 --lora_rank 32 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
+run_model_async 0 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r256 "--lora_alpha 256 --lora_rank 256 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
+run_model_async 1 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r256_alpha "--lora_alpha 1 --lora_rank 256 --microbatch_size=2 --eval_seqlen=4096 --batch_size 64 --epochs 10"
+run_model_async 2 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r256_alpha_t2 "--lora_alpha 1 --temperature 2 --lora_rank 256 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
+run_model_async 3 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r256_t2 "--lora_alpha 256 --temperature 2 --lora_rank 256 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
+run_model_async 4 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r32 "--lora_alpha 32 --lora_rank 32 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
+run_model_async 5 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r32_alpha "--lora_alpha 1 --lora_rank 32 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
+run_model_async 6 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r32_alpha_t2 "--lora_alpha 1 --temperature 2 --lora_rank 32 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
+run_model_async 7 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r32_t2 "--lora_alpha 32 --temperature 2 --lora_rank 32 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10"
 
 # CHAT dolly 128
 # run_model_async 2 Qwen/Qwen2.5-1.5B-Instruct 1e-4 "--eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 10 --lora_rank 128 --calib_seqlen=128 --num_train_samples=128"
