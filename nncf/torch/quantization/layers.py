@@ -192,7 +192,9 @@ class PTLoraSpec:
 
         :param state: Output of `get_state()` method.
         """
-        kwargs = {arg: state[arg] for arg in cls._arg_names}
+        kwargs = {arg: state[arg] for arg in cls._arg_names if arg in state}
+        if 'lora_alpha' not in state:
+            kwargs['lora_alpha'] = state['lora_rank']
         return cls(**kwargs)
 
     def get_state(self):

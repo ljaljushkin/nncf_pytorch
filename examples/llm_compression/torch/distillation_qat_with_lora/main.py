@@ -363,9 +363,11 @@ def main(argv) -> float:
         mode=CompressWeightsMode.INT4_SYM,
         group_size=128,
         backup_mode=BackupMode.NONE,
+        awq=True,
         compression_format=CompressionFormat.FQ_LORA,
         advanced_parameters=AdvancedCompressionParameters(lora_adapter_rank=args.lora_rank),
     )
+    pprint(compression_config)
 
     # Configure output and log files.
     output_dir = Path(args.output_dir)
@@ -397,7 +399,8 @@ def main(argv) -> float:
         model = load_checkpoint(model, ckpt_file)
     else:
         model = compress_weights(model, dataset=Dataset([example_input]), **compression_config)
-        save_checkpoint(model, ckpt_file)
+        # save_checkpoint(model, ckpt_file)
+        ckpt_file.unlink(missing_ok=True)
     fq_lr = args.lr / 10
     weight_decay = args.lr
     param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr, lora_alpha=args.lora_alpha)
@@ -455,7 +458,8 @@ def main(argv) -> float:
                 tb.add_scalar("loss", aggregated_loss, total_steps)
 
         # Keep the best checkpoint with the lowest perplexity.
-        save_checkpoint(model, ckpt_file)
+        if epoch in [1, 4, 9, 19, 31]:
+            save_checkpoint(model, ckpt_file.parent / (ckpt_file.stem + f"_{epoch}.pth"))
         # with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
         #     perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit)
         #     tb.add_scalar("perplexity", perplexity, total_steps)

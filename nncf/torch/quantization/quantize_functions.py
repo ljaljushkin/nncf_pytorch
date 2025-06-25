@@ -273,7 +273,7 @@ def symmetric_quantize(input_, levels, level_low, level_high, scale, eps, skip: 
 
 @register_operator()
 def asymmetric_quantize(input_, levels, level_low, level_high, input_low, input_range, eps, skip: bool = False):
-    assert False, "asymmetric_quantize"
+    assert levels != 16, "asymmetric_quantize for 4 bit"
     if has_torch_function_unary(input_):
         return handle_torch_function(
             asymmetric_quantize, (input_,), input_, levels, level_low, level_high, input_low, input_range, eps, skip
