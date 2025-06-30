@@ -18,6 +18,7 @@ from pathlib import Path
 from pprint import pprint
 from typing import Any, Generator, Optional, Union
 
+from nncf.torch.function_hook.nncf_graph.nncf_graph_builder import build_nncf_graph
 import torch
 import torch.nn.functional as F
 import transformers
@@ -42,7 +43,7 @@ from nncf.data.dataset import Dataset
 from nncf.parameters import BackupMode, CompressionFormat
 from nncf.parameters import CompressWeightsMode
 from nncf.parameters import StripFormat
-from nncf.quantization.advanced_parameters import AdvancedCompressionParameters
+from nncf.quantization.advanced_parameters import AdvancedAWQParameters, AdvancedCompressionParameters
 from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.function_hook.wrapper import get_hook_storage
 from nncf.torch.model_creation import load_from_config
@@ -179,8 +180,8 @@ def kl_div(student_hiddens: torch.Tensor, teacher_hiddens: torch.Tensor, tempera
     num_classes = student_hiddens.shape[-1]
     return F.kl_div(
         input=F.log_softmax(student_hiddens.view(-1, num_classes) / temperature, dim=-1),
-        target=F.softmax(teacher_hiddens.view(-1, num_classes) / temperature, dim=-1),
-        log_target=False,
+        target=F.log_softmax(teacher_hiddens.view(-1, num_classes) / temperature, dim=-1),
+        log_target=True,
         reduction="batchmean",
     ) * (temperature ** 2)
 
@@ -224,7 +225,7 @@ def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float, lora_alpha: fl
     return [{"params": adapters_to_train, "lr": lora_lr}, {"params": scales_to_train, "lr": fq_lr}]
 
 
-def save_checkpoint(model: nn.Module, ckpt_file: Path) -> None:
+def save_checkpoint(model: nn.Module, ckpt_file: Path, model_state: bool = False) -> None:
     """
     Saves the state of a tuned model from a checkpoint.
 
@@ -233,6 +234,9 @@ def save_checkpoint(model: nn.Module, ckpt_file: Path) -> None:
     """
     hook_storage = get_hook_storage(model)
     ckpt = {"nncf_state_dict": hook_storage.state_dict(), "nncf_config": nncf.torch.get_config(model)}
+    if model_state:
+        model_file = ckpt_file.parent / 'model_state.pth'
+        torch.save(model.state_dict(), model_file)
     torch.save(ckpt, ckpt_file)
 
 
@@ -249,6 +253,10 @@ def load_checkpoint(model: nn.Module, ckpt_file: Path) -> nn.Module:
     model = load_from_config(model, ckpt["nncf_config"])
     hook_storage = get_hook_storage(model)
     hook_storage.load_state_dict(ckpt["nncf_state_dict"])
+    model_file = ckpt_file.parent / 'model_state.pth'
+    if model_file.exists():
+        model_state = torch.load(model_file, weights_only=False, map_location="cpu")
+        model.load_state_dict(model_state)
     return model
 
 
@@ -360,12 +368,16 @@ def main(argv) -> float:
     device = "cuda"
     torch_dtype = torch.bfloat16
     compression_config = dict(
-        mode=CompressWeightsMode.INT4_SYM,
-        group_size=128,
-        backup_mode=BackupMode.NONE,
-        awq=True,
+        mode=CompressWeightsMode.INT4_ASYM,
+        group_size=64,
+        # backup_mode=BackupMode.NONE,
+        # awq=True,
+        # scale_estimation=True,
         compression_format=CompressionFormat.FQ_LORA,
-        advanced_parameters=AdvancedCompressionParameters(lora_adapter_rank=args.lora_rank),
+        # advanced_parameters=AdvancedCompressionParameters(
+        #     awq_params=AdvancedAWQParameters(prefer_data_aware_scaling=False),
+        #     lora_adapter_rank=args.lora_rank
+        # ),
     )
     pprint(compression_config)
 
@@ -373,15 +385,14 @@ def main(argv) -> float:
     output_dir = Path(args.output_dir)
     tensorboard_dir = output_dir / "tb" / datetime.now().strftime("%Y-%m-%d__%H-%M-%S")
     last_dir = output_dir / "last"
-    best_dir = output_dir / "best"
     if not args.resume:
         shutil.rmtree(tensorboard_dir, ignore_errors=True)
-    for path in [output_dir, tensorboard_dir, last_dir, best_dir]:
+    for path in [output_dir, tensorboard_dir, last_dir]:
         path.mkdir(exist_ok=True, parents=True)
     ckpt_file = last_dir / "nncf_checkpoint.pth"
     print(f"To visualize the loss and validation metrics, open Tensorboard using the logs from: {tensorboard_dir}")
     tb = SummaryWriter(tensorboard_dir, "QAT with absorbable LoRA")
-    task_manager = TaskManager(include_path=str(Path(__file__).resolve().parent / "custom_eval_tasks"))
+    # task_manager = TaskManager(include_path=str(Path(__file__).resolve().parent / "custom_eval_tasks"))
 
     # Load original model and tokenizer.
     model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch_dtype, device_map="auto")
@@ -398,20 +409,26 @@ def main(argv) -> float:
     if args.resume and ckpt_file.exists():
         model = load_checkpoint(model, ckpt_file)
     else:
-        model = compress_weights(model, dataset=Dataset([example_input]), **compression_config)
-        # save_checkpoint(model, ckpt_file)
-        ckpt_file.unlink(missing_ok=True)
+        # calib_loader = get_wikitext2(
+        #     num_samples=128, seqlen=128, tokenizer=tokenizer, device=device
+        # )
+        # calib_dataset = Dataset(map(get_model_input, calib_loader))
+        calib_dataset = Dataset([example_input])
+        model = compress_weights(model, dataset=calib_dataset, **compression_config)
+        save_checkpoint(model, ckpt_file.parent / (ckpt_file.stem + "_0.pth"), False)
+        # ckpt_file.unlink(missing_ok=True)
     fq_lr = args.lr / 10
     weight_decay = args.lr
     param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr, lora_alpha=args.lora_alpha)
     opt = torch.optim.AdamW(param_to_train, weight_decay=weight_decay)
 
-    # with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
+    # with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file.parent / (ckpt_file.stem + f"_0.pth")) as eval_model:
     #     initial_perplexity = best_perplexity = measure_perplexity(
     #         eval_model, task_manager, args.eval_seqlen, args.limit
     #     )
     # tb.add_scalar("perplexity", best_perplexity, 0)
     # print(f"Initial word perplexity on wikitext (validation) = {best_perplexity:.4f}")
+    # exit()
 
     # Run tuning with distillation loss and validation after each epoch.
     grad_accumulation_steps = args.batch_size // args.microbatch_size
@@ -458,8 +475,8 @@ def main(argv) -> float:
                 tb.add_scalar("loss", aggregated_loss, total_steps)
 
         # Keep the best checkpoint with the lowest perplexity.
-        if epoch in [1, 4, 9, 19, 31]:
-            save_checkpoint(model, ckpt_file.parent / (ckpt_file.stem + f"_{epoch}.pth"))
+        if epoch in [1, 9, 31]:
+            save_checkpoint(model, ckpt_file.parent / (ckpt_file.stem + f"_{epoch}.pth"), False)
         # with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
         #     perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit)
         #     tb.add_scalar("perplexity", perplexity, total_steps)

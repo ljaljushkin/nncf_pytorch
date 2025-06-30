@@ -261,6 +261,7 @@ def get_scale_zp_from_input_low_input_high(level_low, level_high, input_low, inp
 
 @register_operator()
 def symmetric_quantize(input_, levels, level_low, level_high, scale, eps, skip: bool = False):
+    assert False, "symmetric_quantize"
     if has_torch_function_unary(input_):
         return handle_torch_function(
             symmetric_quantize, (input_,), input_, levels, level_low, level_high, scale, eps, skip
@@ -289,7 +290,6 @@ def asymmetric_quantize(input_, levels, level_low, level_high, input_low, input_
 def asymmetric_quantize_lora(
     input_, input_shape, A, B, lora_alpha, input_low_, input_range_, level_low, level_high, levels, eps, skip: bool = False
 ):
-    assert False, "asymmetric_quantize_lora"
     if has_torch_function_unary(input_):
         return handle_torch_function(
             asymmetric_quantize_lora,
@@ -326,6 +326,7 @@ def asymmetric_quantize_lora(
 
 @register_operator()
 def symmetric_quantize_lora(input_, input_shape, A, B, lora_alpha, scale, level_low, level_high, levels, eps, skip: bool = False):
+    assert False, "symmetric_quantize_lora"
     if has_torch_function_unary(input_):
         return handle_torch_function(
             symmetric_quantize_lora,

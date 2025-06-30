@@ -40,10 +40,10 @@ for json_file in search_dir.rglob('**/results_*.json'):
 df = pd.DataFrame(data, columns=['Name', 'Epoch', 'wikitext', 'hellaswag', 'gsm8k_sm', 'gsm8k_fm'])
 # df = df[df['Name'].str.startswith('out_Qwen_Qwen2_5-1_5B-Instruct_repro')]
 df = df[df['Epoch'].notna()]
-print(df)
+# print(df)
 
 pt = df.pivot_table(index=['Name', 'Epoch'], values=['wikitext', 'hellaswag', 'gsm8k_sm', 'gsm8k_fm'])
-print(pt)
+
 
 # pt = df.groupby(['Name', 'Epoch']).agg({
 #     'wikitext': 'min',
@@ -57,3 +57,4 @@ print(pt)
 # modela_rows = modela_rows.sort_values(by='Name')
 # print(modela_rows)
 pt.to_csv('/local_ssd2/nlyalyus/projects/nncf/examples/llm_compression/torch/distillation_qat_with_lora/tmp.csv')
+print(pt.tail(10))

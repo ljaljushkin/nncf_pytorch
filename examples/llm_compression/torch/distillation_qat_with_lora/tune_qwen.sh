@@ -84,14 +84,31 @@ pids=()
 # run_model_async 1 Qwen/Qwen2.5-3B-Instruct 1e-4 "--eval_seqlen=4096 --microbatch_size=2"
 # run_model_async 0,2 mistralai/Mistral-7B-v0.3 5e-5 "--eval_seqlen=4096 --microbatch_size=2"
 
-run_model_async 7 Qwen/Qwen2.5-1.5B-Instruct 1e-4 repro_r256_alpha_awq "--lora_alpha 256 --lora_rank 256 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 32"
-# run_model_async 6 Qwen/Qwen2.5-1.5B-Instruct 1e-4 repro_r256_alpha_awq_se "--lora_alpha 1 --lora_rank 256 --microbatch_size=2 --eval_seqlen=4096 --batch_size 64 --epochs 32"
+# run_model_async 1 Qwen/Qwen2.5-1.5B-Instruct 5e-5 repro_r256_alpha_awq "--lora_alpha 1 --lora_rank 256 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 32"
+# run_model_async 0 Qwen/Qwen2.5-1.5B-Instruct 1e-4 repro_r256_alpha_round "--lora_alpha 1 --lora_rank 256 --microbatch_size=2 --eval_seqlen=4096 --batch_size 64 --epochs 32"
+# run_model_async 3 meta-llama/Llama-3.2-3B-Instruct 5e-5 repro_r256_alpha_awq "--lora_alpha 1 --lora_rank 256 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 32"
+# run_model_async 7 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r256_alpha_awq_se_ab_lowlr "--lora_alpha 1 --lora_rank 256 --microbatch_size=2 --eval_seqlen=4096 --batch_size 64 --epochs 32"
+# run_model_async 7 microsoft/Phi-3.5-mini-instruct 5e-5 repro_r256_alpha_awq "--lora_alpha 1 --lora_rank 256 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 32"
+# run_model_async 2 microsoft/Phi-3.5-mini-instruct 1e-4 repro_r256_alpha_awq_se_ab "--lora_alpha 1 --lora_rank 256 --microbatch_size=2 --eval_seqlen=4096 --batch_size 64 --epochs 32"
 
-# run_model_async 0 microsoft/Phi-3.5-mini-instruct 1e-4 repro_r256_int8_head "--lora_alpha 256 --lora_rank 256 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 32"
-# run_model_async 1 microsoft/Phi-3.5-mini-instruct 1e-4 repro_r256_alpha_int8_head "--lora_alpha 1 --lora_rank 256 --microbatch_size=2 --eval_seqlen=4096 --batch_size 64 --epochs 32"
 
-# run_model_async 2 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r256_int8_head "--lora_alpha 256 --lora_rank 256 --eval_seqlen=4096 --microbatch_size=2 --batch_size 64 --epochs 32"
-# run_model_async 3 meta-llama/Llama-3.2-3B-Instruct 1e-4 repro_r256_alpha_int8_head "--lora_alpha 1 --lora_rank 256 --microbatch_size=2 --eval_seqlen=4096 --batch_size 64 --epochs 32"
+# CUDA_VISIBLE_DEVICES=2 python eval.py -m HuggingFaceTB/SmolLM-1.7B-Instruct -f out_HuggingFaceTB_SmolLM-1_7B-Instruct_alpha_gs64_asym > /dev/null 2>&1 &
+# CUDA_VISIBLE_DEVICES=4 python eval.py -m meta-llama/Llama-3.2-1B-Instruct -f out_meta-llama_Llama-3_2-1B-Instruct_alpha_gs64_asym > /dev/null 2>&1 &
+# CUDA_VISIBLE_DEVICES=2 python eval.py -m meta-llama/Llama-3.2-3B-Instruct -f out_meta-llama_Llama-3_2-3B-Instruct_alpha_gs64_asym > /dev/null 2>&1 &
+# CUDA_VISIBLE_DEVICES=3 python eval.py -m google/gemma-2-2b-it -f out_google_gemma-2-2b-it_alpha_gs64_asym > /dev/null 2>&1 &
+# CUDA_VISIBLE_DEVICES=4 python eval.py -m microsoft/Phi-3-mini-4k-instruct -f out_microsoft_Phi-3-mini-4k-instruct_alpha_gs64_asym > /dev/null 2>&1 &
+# CUDA_VISIBLE_DEVICES=5 python eval.py -m microsoft/Phi-3.5-mini-instruct -f out_microsoft_Phi-3_5-mini-instruct_alpha_gs64_asym > /dev/null 2>&1 &
+
+run_model_async 2 meta-llama/Llama-3.2-1B-Instruct 5e-5 alpha_gs64_asym "--lora_alpha 256 --eval_seqlen=4096 --microbatch_size=4"
+run_model_async 3 meta-llama/Llama-3.2-3B-Instruct 1e-4 alpha_gs64_asym "--lora_alpha 256 --eval_seqlen=4096 --microbatch_size=2"
+run_model_async 7 HuggingFaceTB/SmolLM-1.7B-Instruct 5e-4 alpha_gs64_asym "--lora_alpha 256 --eval_seqlen=2048 --microbatch_size=4"
+run_model_async 5 microsoft/Phi-3.5-mini-instruct 1e-4 alpha_gs64_asym "--lora_alpha 256 --eval_seqlen=4096 --microbatch_size=2"
+run_model_async 6 google/gemma-2-2b-it 1e-4 alpha_gs64_asym "--lora_alpha 256 --eval_seqlen=4096 --microbatch_size=4"
+run_model_async 0 microsoft/Phi-3-mini-4k-instruct 5e-5 alpha_gs64_asym "--lora_alpha 256 --eval_seqlen=4096 --microbatch_size=4"
+run_model_async 1 meta-llama/Meta-Llama-3-8B-Instruct 5e-5 alpha_gs64_asym "--lora_alpha 256 --eval_seqlen=4096 --microbatch_size=2"
+run_model_async 4 mistralai/Mistral-7B-v0.3 5e-5 alpha_gs64_asym "--lora_alpha 256 --eval_seqlen=4096 --microbatch_size=2"
+# run_model_async 4 Qwen/Qwen2.5-3B-Instruct 1e-4 alpha_gs64_asymx "--lora_alpha 256 --eval_seqlen=4096 --microbatch_size=2"
+
 
 echo ""
 echo "All processes started. Use the following PIDs to monitor or kill if needed:"

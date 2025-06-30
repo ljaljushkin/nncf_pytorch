@@ -29,6 +29,10 @@ def load_checkpoint(model: nn.Module, ckpt_file: Path) -> nn.Module:
     model = load_from_config(model, ckpt["nncf_config"])
     hook_storage = get_hook_storage(model)
     hook_storage.load_state_dict(ckpt["nncf_state_dict"])
+    model_file = ckpt_file.parent / 'model_state.pth'
+    if model_file.exists():
+        model_state = torch.load(model_file, weights_only=False, map_location="cpu")
+        model.load_state_dict(model_state)
     return model
 
 
@@ -67,7 +71,7 @@ def main(argv) -> float:
     pprint(vars(args))
 
     name = args.folder
-    for idx in [31, 9, 4, 19, 1]:
+    for idx in [0, 1, 9]:#, 1, 9, 31]:#31, 9, 4, 19, 1]:
         ckpt_file = Path(name) / 'last' / f"nncf_checkpoint_{idx}.pth"
         if not ckpt_file.exists():
             print('Path to checkpoint doesn\'t exist: ', ckpt_file)
@@ -81,24 +85,24 @@ def main(argv) -> float:
         example_input = {k: v.to(device) for k, v in model.dummy_inputs.items()}
         model = nncf.strip(model, do_copy=False, strip_format=StripFormat.IN_PLACE, example_input=example_input)
 
-        task = "gsm8k"
-        lm_obj = HFLM(pretrained=model, batch_size=16)
-        results = simple_evaluate(lm_obj, tasks=[task], log_samples=False, apply_chat_template=True)
-        dump_results(results, ckpt_file.parent, task + f"_{idx}")
-        del lm_obj
+        # task = "gsm8k"
+        # lm_obj = HFLM(pretrained=model, batch_size=16)
+        # results = simple_evaluate(lm_obj, tasks=[task], log_samples=False, apply_chat_template=True)
+        # dump_results(results, ckpt_file.parent, task + f"_{idx}")
+        # del lm_obj
 
-        lm_obj = HFLM(pretrained=model)
+        lm_obj = HFLM(pretrained=model, max_length=4096)
         task = "wikitext"
         results = simple_evaluate(lm_obj, tasks=[task], log_samples=False)
         dump_results(results, ckpt_file.parent, task + f"_{idx}")
         pprint(results["results"])
         del lm_obj
 
-        lm_obj = HFLM(pretrained=model, batch_size=16)
-        task = "hellaswag"
-        results = simple_evaluate(lm_obj, tasks=[task], log_samples=False)
-        dump_results(results, ckpt_file.parent, task + f"_{idx}")
-        del lm_obj
+        # lm_obj = HFLM(pretrained=model, batch_size=16)
+        # task = "hellaswag"
+        # results = simple_evaluate(lm_obj, tasks=[task], log_samples=False)
+        # dump_results(results, ckpt_file.parent, task + f"_{idx}")
+        # del lm_obj
 
 
         # results["config"]["model_dtype"] = str(results["config"]["model_dtype"])
