@@ -8,3 +8,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+""" Required for correct COMPRESSION_MODULES registry functioning """
+from nncf.quantization.algorithms.smooth_quant.torch_backend import SQMultiply as SQMultiply
