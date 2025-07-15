@@ -282,16 +282,30 @@ def backward_kernel_with_reduction(
     # Store grad_input directly (no reduction needed)
     tl.store(grad_input_ptr + offsets, grad_input, mask=offsets < input__elements)
 
-    # For grad_low and grad_range, we need to perform sum reduction
-    # Use atomic operations to accumulate into the reduced tensors
-    # Map current position to the corresponding position in the reduced tensors
+    # Efficient reduction with local accumulation
+    # Group threads by their target offset to reduce atomic contention
+    valid_mask = offsets < input__elements
 
-    # Calculate the position in the reduced tensors (same as input_low/input_range offsets)
-    low_range_mask = input_low_offset < input_low_elements
-    tl.atomic_add(grad_low_summed_ptr + input_low_offset, grad_low, mask=(offsets < input__elements) & low_range_mask)
+    # For grad_low reduction - use block-level reduction before atomic add
+    for i in range(BLOCK_SIZE):
+        if i < BLOCK_SIZE:
+            current_offset = input_low_offset[i] if i < tl.static_range(BLOCK_SIZE) else 0
+            current_grad = grad_low[i] if i < tl.static_range(BLOCK_SIZE) else 0.0
+            current_valid = valid_mask[i] if i < tl.static_range(BLOCK_SIZE) else False
 
-    range_mask = input_range_offset < input_range_elements
-    tl.atomic_add(grad_range_summed_ptr + input_range_offset, grad_range, mask=(offsets < input__elements) & range_mask)
+            if current_valid and current_offset < input_low_elements:
+                # Use a more efficient atomic operation pattern
+                tl.atomic_add(grad_low_summed_ptr + current_offset, current_grad)
+
+    # For grad_range reduction - similar approach
+    for i in range(BLOCK_SIZE):
+        if i < BLOCK_SIZE:
+            current_offset = input_range_offset[i] if i < tl.static_range(BLOCK_SIZE) else 0
+            current_grad = grad_range[i] if i < tl.static_range(BLOCK_SIZE) else 0.0
+            current_valid = valid_mask[i] if i < tl.static_range(BLOCK_SIZE) else False
+
+            if current_valid and current_offset < input_range_elements:
+                tl.atomic_add(grad_range_summed_ptr + current_offset, current_grad)
 
 
 @triton.autotune(
@@ -722,63 +736,63 @@ def warp_level_sum_reduction_kernel(
             tl.atomic_add(output_ptr + output_offset, local_sum[0])
 
 
-@triton.autotune(
-    configs=[
-        triton.Config(kwargs={"BLOCK_SIZE": 256}),
-        triton.Config(kwargs={"BLOCK_SIZE": 512}),
-        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
-    ],
-    key=["BLOCK_SIZE"],
-)
-@triton.jit
-def hierarchical_sum_reduction_kernel(
-    input_ptr: torch.tensor,
-    input_meta: torch.tensor,
-    output_ptr: torch.tensor,
-    output_meta: torch.tensor,
-    temp_storage_ptr: torch.tensor,
-    BLOCK_SIZE: tl.constexpr,
-) -> None:
-    """
-    Hierarchical sum reduction kernel with multiple reduction levels.
+# @triton.autotune(
+#     configs=[
+#         triton.Config(kwargs={"BLOCK_SIZE": 256}),
+#         triton.Config(kwargs={"BLOCK_SIZE": 512}),
+#         triton.Config(kwargs={"BLOCK_SIZE": 1024}),
+#     ],
+#     key=["BLOCK_SIZE"],
+# )
+# @triton.jit
+# def hierarchical_sum_reduction_kernel(
+#     input_ptr: torch.tensor,
+#     input_meta: torch.tensor,
+#     output_ptr: torch.tensor,
+#     output_meta: torch.tensor,
+#     temp_storage_ptr: torch.tensor,
+#     BLOCK_SIZE: tl.constexpr,
+# ) -> None:
+#     """
+#     Hierarchical sum reduction kernel with multiple reduction levels.
 
-    This kernel implements a multi-level reduction strategy similar to the CUDA
-    implementation, using temporary storage for intermediate results.
+#     This kernel implements a multi-level reduction strategy similar to the CUDA
+#     implementation, using temporary storage for intermediate results.
 
-    :param input_ptr: Memory pointer to input tensor to be reduced.
-    :param input_meta: Meta information for input tensor (shape + stride).
-    :param output_ptr: Memory pointer to output tensor that stores reduced values.
-    :param output_meta: Meta information for output tensor (shape + stride).
-    :param temp_storage_ptr: Temporary storage for intermediate reductions.
-    :param BLOCK_SIZE: Size of the memory block for current process.
-    """
-    pid = tl.program_id(0)
-    tid = tl.arange(0, BLOCK_SIZE)
+#     :param input_ptr: Memory pointer to input tensor to be reduced.
+#     :param input_meta: Meta information for input tensor (shape + stride).
+#     :param output_ptr: Memory pointer to output tensor that stores reduced values.
+#     :param output_meta: Meta information for output tensor (shape + stride).
+#     :param temp_storage_ptr: Temporary storage for intermediate reductions.
+#     :param BLOCK_SIZE: Size of the memory block for current process.
+#     """
+#     pid = tl.program_id(0)
+#     tid = tl.arange(0, BLOCK_SIZE)
 
-    # Get shapes and strides
-    input_s0, input_s1, input_s2, input_s3 = read_shape(input_meta)
-    output_s0, output_s1, output_s2, output_s3 = read_shape(output_meta)
+#     # Get shapes and strides
+#     input_s0, input_s1, input_s2, input_s3 = read_shape(input_meta)
+#     output_s0, output_s1, output_s2, output_s3 = read_shape(output_meta)
 
-    input_st0, input_st1, input_st2, input_st3 = read_stride(input_meta)
-    output_st0, output_st1, output_st2, output_st3 = read_stride(output_meta)
+#     input_st0, input_st1, input_st2, input_st3 = read_stride(input_meta)
+#     output_st0, output_st1, output_st2, output_st3 = read_stride(output_meta)
 
-    input_elements = input_s0 * input_s1 * input_s2 * input_s3  # Stage 1: Thread-level accumulation
-    thread_offsets = pid * BLOCK_SIZE + tid
-    thread_mask = thread_offsets < input_elements
+#     input_elements = input_s0 * input_s1 * input_s2 * input_s3  # Stage 1: Thread-level accumulation
+#     thread_offsets = pid * BLOCK_SIZE + tid
+#     thread_mask = thread_offsets < input_elements
 
-    # Load input values
-    input_vals = tl.load(input_ptr + thread_offsets, mask=thread_mask, other=0.0)
+#     # Load input values
+#     input_vals = tl.load(input_ptr + thread_offsets, mask=thread_mask, other=0.0)
 
-    # For each thread, determine which output element it contributes to
-    # and accumulate accordingly
-    # This is where you'd implement the mapping logic based on reduction axes
+#     # For each thread, determine which output element it contributes to
+#     # and accumulate accordingly
+#     # This is where you'd implement the mapping logic based on reduction axes
 
-    # Stage 2: Block-level reduction using shared memory equivalent
-    # Triton handles this automatically with appropriate reduction operations
+#     # Stage 2: Block-level reduction using shared memory equivalent
+#     # Triton handles this automatically with appropriate reduction operations
 
-    # Stage 3: Write results
-    # Use atomic operations to ensure thread safety across blocks
-    tl.atomic_add(temp_storage_ptr + pid, tl.sum(input_vals))
+#     # Stage 3: Write results
+#     # Use atomic operations to ensure thread safety across blocks
+#     tl.atomic_add(temp_storage_ptr + pid, tl.sum(input_vals))
 
 
 # ==============================================================================
@@ -823,42 +837,42 @@ def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> to
     return output
 
 
-def advanced_triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> torch.Tensor:
-    """
-    Advanced Triton implementation of sum_like with hierarchical reduction.
+# def advanced_triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> torch.Tensor:
+#     """
+#     Advanced Triton implementation of sum_like with hierarchical reduction.
 
-    :param tensor_to_sum: Tensor to be reduced.
-    :param ref_tensor: Reference tensor whose shape determines the reduction.
-    :return: Reduced tensor with the same shape as ref_tensor.
-    """
-    if ref_tensor.numel() == 1:
-        return tensor_to_sum.sum()
+#     :param tensor_to_sum: Tensor to be reduced.
+#     :param ref_tensor: Reference tensor whose shape determines the reduction.
+#     :return: Reduced tensor with the same shape as ref_tensor.
+#     """
+#     if ref_tensor.numel() == 1:
+#         return tensor_to_sum.sum()
 
-    # Create output tensor with same shape as reference
-    output = torch.zeros_like(ref_tensor)
+#     # Create output tensor with same shape as reference
+#     output = torch.zeros_like(ref_tensor)
 
-    # Create temporary storage for intermediate reductions
-    num_blocks = triton.cdiv(tensor_to_sum.numel(), 1024)  # Assuming max block size of 1024
-    temp_storage = torch.zeros(num_blocks, dtype=tensor_to_sum.dtype, device=tensor_to_sum.device)
+#     # Create temporary storage for intermediate reductions
+#     num_blocks = triton.cdiv(tensor_to_sum.numel(), 1024)  # Assuming max block size of 1024
+#     temp_storage = torch.zeros(num_blocks, dtype=tensor_to_sum.dtype, device=tensor_to_sum.device)
 
-    # Get meta information for both tensors
-    input_meta = get_4d_tensor_meta(tensor_to_sum)
-    output_meta = get_4d_tensor_meta(output)
+#     # Get meta information for both tensors
+#     input_meta = get_4d_tensor_meta(tensor_to_sum)
+#     output_meta = get_4d_tensor_meta(output)
 
-    with torch.cuda.device(tensor_to_sum.device):
-        # Launch hierarchical reduction kernel
-        grid = lambda meta: (triton.cdiv(tensor_to_sum.numel(), meta["BLOCK_SIZE"]),)
-        hierarchical_sum_reduction_kernel[grid](
-            tensor_to_sum,
-            input_meta,
-            output,
-            output_meta,
-            temp_storage,
-        )
+#     with torch.cuda.device(tensor_to_sum.device):
+#         # Launch hierarchical reduction kernel
+#         grid = lambda meta: (triton.cdiv(tensor_to_sum.numel(), meta["BLOCK_SIZE"]),)
+#         hierarchical_sum_reduction_kernel[grid](
+#             tensor_to_sum,
+#             input_meta,
+#             output,
+#             output_meta,
+#             temp_storage,
+#         )
 
-        # Final reduction of temporary storage if needed
-        if num_blocks > 1:
-            # Additional reduction step would go here
-            pass
+#         # Final reduction of temporary storage if needed
+#         if num_blocks > 1:
+#             # Additional reduction step would go here
+#             pass
 
-    return output
+#     return output

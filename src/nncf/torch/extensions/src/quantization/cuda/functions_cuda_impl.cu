@@ -305,6 +305,15 @@ at::Tensor q_cuda_forward(
 
     uint64_t contiguous_elements_per_scale = 0;
     uint64_t scale_count = input_range.numel();
+    // Print tensor shapes for debugging
+    std::cout << "input shape: [";
+    for (int i = 0; i < input.dim(); i++) {
+        std::cout << input.size(i) << (i < input.dim() - 1 ? ", " : "");
+    }
+    std::cout << "]" << std::endl;
+
+    std::cout << "input_low shape: [" << input_low.sizes() << "]" << std::endl;
+    std::cout << "input_range shape: [" << input_range.sizes() << "]" << std::endl;
     switch (scale_type)
     {
         case ScaleType::PER_ACTIVATION_CHANNEL:
@@ -320,6 +329,9 @@ at::Tensor q_cuda_forward(
             break;
     }
 
+    std::cout << "scale_count=" << scale_count << std::endl;
+    std::cout << "contiguous_elements_per_scale=" << contiguous_elements_per_scale << std::endl;
+    std::cout << "quantized_elements_count=" << quantized_elements_count << std::endl;
 
     auto output = at::empty_like(input);
 

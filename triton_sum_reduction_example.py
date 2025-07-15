@@ -7,8 +7,8 @@ kernels, specifically for grad_range and grad_low in quantization backward passe
 """
 
 import torch
-import triton
-import triton.language as tl
+
+from nncf.torch.quantization.triton.reference import triton_sum_like
 
 
 def demonstrate_triton_sum_reduction():
@@ -39,7 +39,7 @@ def demonstrate_triton_sum_reduction():
     grad_low_full = torch.randn_like(input_tensor)  # Full tensor size
     grad_range_full = torch.randn_like(input_tensor)  # Full tensor size
 
-    print(f"\nBefore reduction:")
+    print("\nBefore reduction:")
     print(f"Grad low (full) shape: {grad_low_full.shape}")
     print(f"Grad range (full) shape: {grad_range_full.shape}")
 
@@ -59,17 +59,23 @@ def demonstrate_triton_sum_reduction():
         return result
 
     # Apply PyTorch sum reduction
-    grad_low_reduced_pytorch = pytorch_sum_like(grad_low_full, input_low)
-    grad_range_reduced_pytorch = pytorch_sum_like(grad_range_full, input_range)
-
-    print(f"\nAfter PyTorch reduction:")
+    grad_low_reduced_pytorch = pytorch_sum_like(grad_low_full.clone(), input_low)
+    grad_range_reduced_pytorch = pytorch_sum_like(grad_range_full.clone(), input_range)
+    print("\nAfter PyTorch reduction:")
     print(f"Grad low (reduced) shape: {grad_low_reduced_pytorch.shape}")
     print(f"Grad range (reduced) shape: {grad_range_reduced_pytorch.shape}")
 
     # The Triton implementation would achieve the same result but with
     # better performance characteristics, especially for large tensors
 
-    return grad_low_reduced_pytorch, grad_range_reduced_pytorch
+    grad_low_reduced_triton = triton_sum_like(grad_low_full, input_low)
+    grad_range_reduced_triton = triton_sum_like(grad_range_full, input_range)
+    print("\nAfter Triton reduction:")
+    print(f"Grad low (reduced) shape: {grad_low_reduced_triton.shape}")
+    print(f"Grad range (reduced) shape: {grad_range_reduced_triton.shape}")
+
+    assert torch.allclose(grad_low_reduced_triton, grad_low_reduced_pytorch)
+    assert torch.allclose(grad_range_reduced_triton, grad_range_reduced_pytorch)
 
 
 def explain_triton_implementation():
@@ -160,7 +166,7 @@ def performance_comparison():
 if __name__ == "__main__":
     if torch.cuda.is_available():
         demonstrate_triton_sum_reduction()
-        explain_triton_implementation()
-        performance_comparison()
+        # explain_triton_implementation()
+        # performance_comparison()
     else:
         print("CUDA not available. This example requires GPU support.")
