@@ -308,14 +308,12 @@ def backward_kernel_with_reduction(
                 tl.atomic_add(grad_range_summed_ptr + current_offset, current_grad)
 
 
-# @triton.autotune(
-#     configs=[
-#         triton.Config(kwargs={"BLOCK_SIZE": 256}),
-#         triton.Config(kwargs={"BLOCK_SIZE": 512}),
-#         triton.Config(kwargs={"BLOCK_SIZE": 1024}),
-#     ],
-#     key=["BLOCK_SIZE"],
-# )
+@triton.autotune(
+    configs=[
+        triton.Config(kwargs={"BLOCK_SIZE": 256}),
+    ],
+    key=["BLOCK_SIZE"],
+)
 @triton.jit
 def backward_kernel_separate_with_reduction(
     grad_output_ptr: torch.tensor,
@@ -437,10 +435,20 @@ def backward_kernel_separate_with_reduction(
         range_o0 * grad_range_st0 + range_o1 * grad_range_st1 + range_o2 * grad_range_st2 + range_o3 * grad_range_st3
     )
 
-    # Use atomic operations for sum reduction
+    # Use atomic operations for sum reduction with proper masking
     valid_mask = offsets < input__elements
-    tl.atomic_add(grad_low_ptr + grad_low_offsets, grad_low, mask=valid_mask)
-    tl.atomic_add(grad_range_ptr + grad_range_offsets, grad_range, mask=valid_mask)
+
+    # Get the total number of elements in the reduced tensors for bounds checking
+    grad_low_elements = calculate_total_elements(grad_low_meta)
+    grad_range_elements = calculate_total_elements(grad_range_meta)
+
+    # Only perform atomic operations if the offset is within bounds AND the input element is valid
+    grad_low_valid = (grad_low_offsets < grad_low_elements) & valid_mask
+    grad_range_valid = (grad_range_offsets < grad_range_elements) & valid_mask
+
+    # Apply atomic operations only for valid elements
+    tl.atomic_add(grad_low_ptr + grad_low_offsets, grad_low, mask=grad_low_valid)
+    tl.atomic_add(grad_range_ptr + grad_range_offsets, grad_range, mask=grad_range_valid)
 
 
 @triton.autotune(
@@ -576,27 +584,17 @@ def backward(
     is_asymmetric: bool = False,
 ) -> tuple[torch.tensor]:
     """
-    Wrapper for the backward kernel with optimized sum reduction.
+    Backward pass for asymmetric quantization using Triton.
 
-    This function uses the backward_kernel_separate to compute gradients and
-    then applies optimized triton_sum_like for reduction.
-
-    :param grad_output: grad_output as torch.tensor.
-    :param input_: input_ as torch.tensor.
-    :param input_low: input_low as torch.tensor.
-    :param input_range: input_range as torch.tensor.
-    :param levels: Levels value.
-    :param level_low: Level low value.
-    :param level_high: Level high value.
-    :param is_asymmetric: Bool value for asymmetric quantization.
-    :return: Calculated grad_input, grad_low and grad_range as tuple of torch.tensor values.
+    This implementation uses the integrated backward_kernel_separate_with_reduction
+    kernel that performs gradient computation and sum reduction in a single pass.
     """
-    # grad_input has the same shape as input_
+    # Create gradient tensors
     grad_input = torch.empty_like(input_)
 
-    # Create unreduced gradient tensors (same size as input_)
-    grad_low_unreduced = torch.empty_like(input_)
-    grad_range_unreduced = torch.empty_like(input_)
+    # Create REDUCED gradient tensors (same size as input_low and input_range)
+    grad_low = torch.zeros_like(input_low)  # Use zeros since we'll accumulate into it
+    grad_range = torch.zeros_like(input_range)  # Use zeros since we'll accumulate into it
 
     # Get meta information for tensors
     grad_output_meta = get_4d_tensor_meta(grad_output)
@@ -604,11 +602,11 @@ def backward(
     input_low_meta = get_4d_tensor_meta(input_low)
     input_range_meta = get_4d_tensor_meta(input_range)
 
-    grad_low_meta = get_4d_tensor_meta(grad_low_unreduced)
-    grad_range_meta = get_4d_tensor_meta(grad_range_unreduced)
+    grad_low_meta = get_4d_tensor_meta(grad_low)
+    grad_range_meta = get_4d_tensor_meta(grad_range)
 
     with torch.cuda.device(input_.device):
-        # Launch the separate kernel that computes gradients without reduction
+        # Launch the kernel that computes gradients with integrated reduction
         grid = lambda meta: (triton.cdiv(input_.numel(), meta["BLOCK_SIZE"]),)
         backward_kernel_separate_with_reduction[grid](
             grad_output,
@@ -623,18 +621,13 @@ def backward(
             level_low,
             level_high,
             grad_input,
-            grad_low_unreduced,
+            grad_low,
             grad_low_meta,
-            grad_range_unreduced,
+            grad_range,
             grad_range_meta,
-            BLOCK_SIZE=256,
         )
 
-    # Use optimized triton_sum_like to reduce gradients
-    # grad_low = triton_sum_like(grad_low_unreduced, input_low)
-    # grad_range = triton_sum_like(grad_range_unreduced, input_range)
-
-    return grad_input, grad_low_unreduced, grad_range_unreduced
+    return grad_input, grad_low, grad_range
 
 
 @triton.autotune(
