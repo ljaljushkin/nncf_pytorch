@@ -1,3 +1,25 @@
+"""
+Triton-based quantization reference implementation with integrated sum reduction.
+
+This module provides Triton kernel implementations for fake quantization operations
+with optimized gradient computation and sum reduction. The key improvement is the
+integration of sum reduction directly into the backward kernel, eliminating the
+need for separate reduction passes.
+
+Key Features:
+- Integrated gradient computation and sum reduction in backward_kernel_with_reduction
+- Atomic operations for thread-safe accumulation
+- Reduced memory bandwidth and kernel launch overhead
+- Support for per-tensor and per-channel quantization modes
+- Fallback implementation (backward_separate_reduction) for comparison
+
+Performance Benefits:
+- Single kernel launch instead of multiple passes
+- Direct accumulation into reduced tensors
+- Eliminates temporary full-size tensor allocation
+- Better memory locality and cache utilization
+"""
+
 # Copyright (c) 2025 Intel Corporation
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -162,7 +184,126 @@ def forward_kernel(
     key=["BLOCK_SIZE"],
 )
 @triton.jit
-def backward_kernel(
+def backward_kernel_with_reduction(
+    grad_output_ptr: torch.tensor,
+    grad_output_meta: torch.tensor,
+    input__ptr: torch.tensor,
+    input__meta: torch.tensor,
+    input_low_ptr: torch.tensor,
+    input_low_meta: torch.tensor,
+    input_range_ptr: torch.tensor,
+    input_range_meta: torch.tensor,
+    levels: int,
+    level_low: int,
+    level_high: int,
+    grad_input_ptr: torch.tensor,
+    grad_low_summed_ptr: torch.tensor,
+    grad_range_summed_ptr: torch.tensor,
+    BLOCK_SIZE: tl.constexpr,
+) -> None:
+    """
+    Backward kernel implementation with integrated sum reduction.
+
+    This kernel computes gradients and performs sum reduction in a single pass,
+    eliminating the need for separate reduction kernels and improving performance.
+
+    :param grad_output_ptr: Memory pointer to grad_output torch.tensor.
+    :param input__ptr: Memory pointer to input_ torch.tensor.
+    :param input_low_ptr: Memory pointer to input_low torch.tensor.
+    :param input_range_ptr: Memory pointer to input_range torch.tensor.
+    :param levels: Levels value as scalar.
+    :param level_low: Level low value as scalar.
+    :param level_high: Level high value as scalar.
+    :param grad_input_ptr: Memory pointer to grad_input torch.tensor that would be filled with return value.
+    :param grad_low_summed_ptr: Memory pointer to grad_low torch.tensor (already reduced shape).
+    :param grad_range_summed_ptr: Memory pointer to grad_range torch.tensor (already reduced shape).
+    :param BLOCK_SIZE: Size of the memory block for current process.
+    """
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    input__s0, input__s1, input__s2, input__s3 = read_shape(input__meta)
+    input__elements = input__s0 * input__s1 * input__s2 * input__s3
+
+    tmp = offsets
+    i3 = tmp % input__s3
+    tmp //= input__s3
+    i2 = tmp % input__s2
+    tmp //= input__s2
+    i1 = tmp % input__s1
+    tmp //= input__s1
+    i0 = tmp % input__s0
+
+    # Calculate offsets for input_low and input_range
+    input_low_st0, input_low_st1, input_low_st2, input_low_st3 = read_stride(input_low_meta)
+    input_low_offset = i0 * input_low_st0 + i1 * input_low_st1 + i2 * input_low_st2 + i3 * input_low_st3
+    input_low_elements = calculate_total_elements(input_low_meta)
+
+    input_range_st0, input_range_st1, input_range_st2, input_range_st3 = read_stride(input_range_meta)
+    input_range_offset = i0 * input_range_st0 + i1 * input_range_st1 + i2 * input_range_st2 + i3 * input_range_st3
+    input_range_elements = calculate_total_elements(input_range_meta)
+
+    # Load input tensors
+    grad_output = tl.load(grad_output_ptr + offsets, mask=offsets < input__elements, other=0.0).to(tl.float32)
+    input_ = tl.load(input__ptr + offsets, mask=offsets < input__elements, other=0.0).to(tl.float32)
+    input_low = tl.load(input_low_ptr + input_low_offset, mask=input_low_offset < input_low_elements, other=0.0).to(
+        tl.float32
+    )
+    input_range = tl.load(
+        input_range_ptr + input_range_offset, mask=input_range_offset < input_range_elements, other=0.0
+    ).to(tl.float32)
+
+    # Compute gradient masks
+    mask_hi = input_ > (input_low + input_range)
+    mask_hi = mask_hi.to(tl.float32)
+    mask_lo = input_ < input_low
+    mask_lo = mask_lo.to(tl.float32)
+    mask_in = 1 - mask_hi - mask_lo
+
+    # Compute forward pass output for gradient calculation
+    scale = (levels - 1) / input_range
+    output = tl.clamp(input_, min=input_low, max=input_low + input_range)
+    zero_point = libdevice.nearbyint(-input_low * scale)
+    output -= input_low
+    output *= scale
+    output -= zero_point
+    output = libdevice.nearbyint(output)
+    output = output / scale
+
+    # Compute gradients
+    input_range_above_zero = input_range > 0
+    input_range_below_zero = input_range < 0
+    range_sign = input_range_above_zero - input_range_below_zero
+    reciprocal = 1 / (input_range * range_sign)
+    err = (output - input_) * reciprocal
+    grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
+    grad_input = grad_output * mask_in
+    grad_low = grad_output * (mask_hi + mask_lo)
+
+    # Store grad_input directly (no reduction needed)
+    tl.store(grad_input_ptr + offsets, grad_input, mask=offsets < input__elements)
+
+    # For grad_low and grad_range, we need to perform sum reduction
+    # Use atomic operations to accumulate into the reduced tensors
+    # Map current position to the corresponding position in the reduced tensors
+
+    # Calculate the position in the reduced tensors (same as input_low/input_range offsets)
+    low_range_mask = input_low_offset < input_low_elements
+    tl.atomic_add(grad_low_summed_ptr + input_low_offset, grad_low, mask=(offsets < input__elements) & low_range_mask)
+
+    range_mask = input_range_offset < input_range_elements
+    tl.atomic_add(grad_range_summed_ptr + input_range_offset, grad_range, mask=(offsets < input__elements) & range_mask)
+
+
+@triton.autotune(
+    configs=[
+        triton.Config(kwargs={"BLOCK_SIZE": 256}),
+        triton.Config(kwargs={"BLOCK_SIZE": 512}),
+        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
+    ],
+    key=["BLOCK_SIZE"],
+)
+@triton.jit
+def backward_kernel_separate(
     grad_output_ptr: torch.tensor,
     grad_output_meta: torch.tensor,
     input__ptr: torch.tensor,
@@ -180,21 +321,8 @@ def backward_kernel(
     BLOCK_SIZE: tl.constexpr,
 ) -> None:
     """
-    "
-    Backward kernel implementation based on reference formula - nncf/torch/quantization/reference.py
-    :param grad_output_ptr: Memory pointer to grad_output torch.tensor.
-    :param input__ptr: Memory pointer to input_ torch.tensor.
-    :param input_low_ptr: Memory pointer to input_low torch.tensor.
-    :param input_range_ptr: Memory pointer to input_range torch.tensor.
-    :param levels: Levels value as scalar.
-    :param level_low: Level low value as scalar.
-    :param level_high: Level high value as scalar.
-    :param grad_input_ptr: Memory pointer to grad_input torch.tensor that would be filled with return value.
-    :param grad_low_ptr: Memory pointer to grad_low torch.tensor that would be filled with return value.
-    :param grad_range_ptr: Memory pointer to grad_range torch.tensor that would be filled with return value.
-    :param last_dim: Scalar to calculate loading offset for input_low/range pointers.
-    :param is_per_tensor: Bool value for offset correction in per-tensor case.
-    :param BLOCK_SIZE: Size of the memory block for current process.
+    Original backward kernel implementation without integrated reduction.
+    This generates full-size gradient tensors that need separate reduction.
     """
     pid = tl.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
@@ -229,7 +357,6 @@ def backward_kernel(
     mask_hi = mask_hi.to(tl.float32)
     mask_lo = input_ < input_low
     mask_lo = mask_lo.to(tl.float32)
-
     mask_in = 1 - mask_hi - mask_lo
 
     scale = (levels - 1) / input_range
@@ -241,17 +368,14 @@ def backward_kernel(
     output = libdevice.nearbyint(output)
     output = output / scale
 
-    # Signed range calculation
+    # Compute gradients
     input_range_above_zero = input_range > 0
     input_range_below_zero = input_range < 0
     range_sign = input_range_above_zero - input_range_below_zero
-    # Reciprocal calculation
     reciprocal = 1 / (input_range * range_sign)
     err = (output - input_) * reciprocal
     grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
-
     grad_input = grad_output * mask_in
-
     grad_low = grad_output * (mask_hi + mask_lo)
 
     tl.store(grad_input_ptr + offsets, grad_input, mask=offsets < input__elements)
@@ -303,33 +427,36 @@ def backward(
     is_asymmetric: bool = False,
 ) -> tuple[torch.tensor]:
     """
-    Wrapper for the backward kernel with Triton-based sum reduction.
+    Wrapper for the backward kernel with integrated Triton-based sum reduction.
     It contains preparation steps like output memory allocation via tensor creation,
     additional values calculation and CUDA context management based on the input tensors.
-    :param grad_output: input_ as torch.tensor.
+    :param grad_output: grad_output as torch.tensor.
     :param input_: input_ as torch.tensor.
     :param input_low: input_low as torch.tensor.
     :param input_range: input_range as torch.tensor.
     :param levels: Levels value.
+    :param level_low: Level low value.
+    :param level_high: Level high value.
+    :param is_asymmetric: Bool value for asymmetric quantization.
     :return: Calculated grad_input, grad_low and grad_range as tuple of torch.tensor values.
     """
+    # grad_input has the same shape as input_
     grad_input = torch.empty_like(input_)
-    grad_low = torch.empty_like(input_)
-    grad_range = torch.empty_like(input_)
 
+    # grad_low and grad_range have the same shape as input_low and input_range (reduced)
+    grad_low = torch.zeros_like(input_low)
+    grad_range = torch.zeros_like(input_range)
+
+    # Get meta information for tensors
     grad_output_meta = get_4d_tensor_meta(grad_output)
     input__meta = get_4d_tensor_meta(input_)
     input_low_meta = get_4d_tensor_meta(input_low)
     input_range_meta = get_4d_tensor_meta(input_range)
 
     with torch.cuda.device(input_.device):
-        grid = lambda meta: (
-            triton.cdiv(input_.numel(), meta["BLOCK_SIZE"])
-            * triton.cdiv(input_low.numel(), meta["BLOCK_SIZE"])
-            * triton.cdiv(input_range.numel(), meta["BLOCK_SIZE"]),
-        )
-
-        backward_kernel[grid](
+        # Launch the integrated kernel that performs gradient computation and reduction
+        grid = lambda meta: (triton.cdiv(input_.numel(), meta["BLOCK_SIZE"]),)
+        backward_kernel_with_reduction[grid](
             grad_output,
             grad_output_meta,
             input_,
@@ -345,11 +472,6 @@ def backward(
             grad_low,
             grad_range,
         )
-
-        # Use Triton-based sum reduction for better performance
-        # This replaces the temporary sum_like solution with native Triton implementation
-        grad_low = triton_sum_like(grad_low, input_low)
-        grad_range = triton_sum_like(grad_range, input_range)
 
     return grad_input, grad_low, grad_range
 
@@ -659,6 +781,17 @@ def hierarchical_sum_reduction_kernel(
     tl.atomic_add(temp_storage_ptr + pid, tl.sum(input_vals))
 
 
+# ==============================================================================
+# INTEGRATED TRITON KERNEL WITH SUM REDUCTION
+# ==============================================================================
+# The backward_kernel_with_reduction integrates gradient computation and
+# sum reduction into a single kernel, eliminating the need for separate
+# triton_sum_like calls and improving performance by:
+# 1. Reducing kernel launch overhead
+# 2. Minimizing memory transfers
+# 3. Using atomic operations for direct accumulation
+# 4. Avoiding temporary full-size tensor allocation
+# ==============================================================================
 def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> torch.Tensor:
     """
     Triton implementation of sum_like functionality.
