@@ -317,6 +317,141 @@ def backward_kernel_with_reduction(
     key=["BLOCK_SIZE"],
 )
 @triton.jit
+def backward_kernel_separate_with_reduction(
+    grad_output_ptr: torch.tensor,
+    grad_output_meta: torch.tensor,
+    input__ptr: torch.tensor,
+    input__meta: torch.tensor,
+    input_low_ptr: torch.tensor,
+    input_low_meta: torch.tensor,
+    input_range_ptr: torch.tensor,
+    input_range_meta: torch.tensor,
+    levels: int,
+    level_low: int,
+    level_high: int,
+    grad_input_ptr: torch.tensor,
+    grad_low_ptr: torch.tensor,
+    grad_low_meta: torch.tensor,
+    grad_range_ptr: torch.tensor,
+    grad_range_meta: torch.tensor,
+    BLOCK_SIZE: tl.constexpr,
+) -> None:
+    """
+    Backward kernel with integrated sum reduction for grad_low and grad_range.
+
+    This kernel computes gradients and performs sum reduction in a single pass,
+    writing grad_input to full-size tensor and grad_low/grad_range to reduced tensors.
+
+    :param grad_output_ptr: Memory pointer to grad_output torch.tensor.
+    :param input__ptr: Memory pointer to input_ torch.tensor.
+    :param input_low_ptr: Memory pointer to input_low torch.tensor.
+    :param input_range_ptr: Memory pointer to input_range torch.tensor.
+    :param levels: Levels value as scalar.
+    :param level_low: Level low value as scalar.
+    :param level_high: Level high value as scalar.
+    :param grad_input_ptr: Memory pointer to grad_input torch.tensor that would be filled with return value.
+    :param grad_low_ptr: Memory pointer to grad_low torch.tensor (already reduced shape).
+    :param grad_range_ptr: Memory pointer to grad_range torch.tensor (already reduced shape).
+    :param BLOCK_SIZE: Size of the memory block for current process.
+    """
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    input__s0, input__s1, input__s2, input__s3 = read_shape(input__meta)
+    input__elements = input__s0 * input__s1 * input__s2 * input__s3
+
+    tmp = offsets
+    i3 = tmp % input__s3
+    tmp //= input__s3
+    i2 = tmp % input__s2
+    tmp //= input__s2
+    i1 = tmp % input__s1
+    tmp //= input__s1
+    i0 = tmp % input__s0
+
+    input_low_st0, input_low_st1, input_low_st2, input_low_st3 = read_stride(input_low_meta)
+    input_low_offset = i0 * input_low_st0 + i1 * input_low_st1 + i2 * input_low_st2 + i3 * input_low_st3
+    input_low_elements = calculate_total_elements(input_low_meta)
+
+    input_range_st0, input_range_st1, input_range_st2, input_range_st3 = read_stride(input_range_meta)
+    input_range_offset = i0 * input_range_st0 + i1 * input_range_st1 + i2 * input_range_st2 + i3 * input_range_st3
+    input_range_elements = calculate_total_elements(input_range_meta)
+
+    grad_output = tl.load(grad_output_ptr + offsets, mask=offsets < input__elements).to(tl.float32)
+    input_ = tl.load(input__ptr + offsets, mask=offsets < input__elements).to(tl.float32)
+    input_low = tl.load(input_low_ptr + input_low_offset, mask=input_low_offset < input_low_elements).to(tl.float32)
+    input_range = tl.load(input_range_ptr + input_range_offset, mask=input_range_offset < input_range_elements).to(
+        tl.float32
+    )
+
+    mask_hi = input_ > (input_low + input_range)
+    mask_hi = mask_hi.to(tl.float32)
+    mask_lo = input_ < input_low
+    mask_lo = mask_lo.to(tl.float32)
+    mask_in = 1 - mask_hi - mask_lo
+
+    scale = (levels - 1) / input_range
+    output = tl.clamp(input_, min=input_low, max=input_low + input_range)
+    zero_point = libdevice.nearbyint(-input_low * scale)
+    output -= input_low
+    output *= scale
+    output -= zero_point
+    output = libdevice.nearbyint(output)
+    output = output / scale
+
+    # Compute gradients
+    input_range_above_zero = input_range > 0
+    input_range_below_zero = input_range < 0
+    range_sign = input_range_above_zero - input_range_below_zero
+    reciprocal = 1 / (input_range * range_sign)
+    err = (output - input_) * reciprocal
+    grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
+    grad_input = grad_output * mask_in
+    grad_low = grad_output * (mask_hi + mask_lo)
+
+    # Store grad_input directly (no reduction needed)
+    tl.store(grad_input_ptr + offsets, grad_input, mask=offsets < input__elements)
+
+    # Get shapes for reduction mapping
+    input_low_s0, input_low_s1, input_low_s2, input_low_s3 = read_shape(input_low_meta)
+    input_range_s0, input_range_s1, input_range_s2, input_range_s3 = read_shape(input_range_meta)
+
+    # Calculate corresponding output coordinates for grad_low (reduction mapping)
+    lo_o0 = tl.where(input_low_s0 == 1, 0, i0)
+    lo_o1 = tl.where(input_low_s1 == 1, 0, i1)
+    lo_o2 = tl.where(input_low_s2 == 1, 0, i2)
+    lo_o3 = tl.where(input_low_s3 == 1, 0, i3)
+
+    # Calculate corresponding output coordinates for grad_range (reduction mapping)
+    range_o0 = tl.where(input_range_s0 == 1, 0, i0)
+    range_o1 = tl.where(input_range_s1 == 1, 0, i1)
+    range_o2 = tl.where(input_range_s2 == 1, 0, i2)
+    range_o3 = tl.where(input_range_s3 == 1, 0, i3)
+
+    # Calculate output offsets for atomic accumulation using reduced tensor strides
+    # Use the strides from the actual reduced tensors (grad_low and grad_range)
+    grad_low_st0, grad_low_st1, grad_low_st2, grad_low_st3 = read_stride(grad_low_meta)
+    grad_range_st0, grad_range_st1, grad_range_st2, grad_range_st3 = read_stride(grad_range_meta)
+
+    grad_low_offsets = lo_o0 * grad_low_st0 + lo_o1 * grad_low_st1 + lo_o2 * grad_low_st2 + lo_o3 * grad_low_st3
+    grad_range_offsets = (
+        range_o0 * grad_range_st0 + range_o1 * grad_range_st1 + range_o2 * grad_range_st2 + range_o3 * grad_range_st3
+    )
+
+    # Use atomic operations for sum reduction
+    valid_mask = offsets < input__elements
+    tl.atomic_add(grad_low_ptr + grad_low_offsets, grad_low, mask=valid_mask)
+    tl.atomic_add(grad_range_ptr + grad_range_offsets, grad_range, mask=valid_mask)
+
+
+@triton.autotune(
+    configs=[
+        triton.Config(kwargs={"BLOCK_SIZE": 256}),
+        triton.Config(kwargs={"BLOCK_SIZE": 512}),
+        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
+    ],
+    key=["BLOCK_SIZE"],
+)
+@triton.jit
 def backward_kernel_separate(
     grad_output_ptr: torch.tensor,
     grad_output_meta: torch.tensor,
@@ -441,10 +576,10 @@ def backward(
     is_asymmetric: bool = False,
 ) -> tuple[torch.tensor]:
     """
-    Wrapper for the backward kernel with integrated optimized Triton-based sum reduction.
+    Wrapper for the backward kernel with optimized sum reduction.
 
-    This function uses the backward_kernel_separate to compute full-size gradients,
-    then applies the working optimized sum reduction kernel for grad_low and grad_range.
+    This function uses the backward_kernel_separate to compute gradients and
+    then applies optimized triton_sum_like for reduction.
 
     :param grad_output: grad_output as torch.tensor.
     :param input_: input_ as torch.tensor.
@@ -459,9 +594,9 @@ def backward(
     # grad_input has the same shape as input_
     grad_input = torch.empty_like(input_)
 
-    # Create temporary full-size tensors for grad_low and grad_range
-    grad_low_full = torch.empty_like(input_)
-    grad_range_full = torch.empty_like(input_)
+    # Create unreduced gradient tensors (same size as input_)
+    grad_low_unreduced = torch.empty_like(input_)
+    grad_range_unreduced = torch.empty_like(input_)
 
     # Get meta information for tensors
     grad_output_meta = get_4d_tensor_meta(grad_output)
@@ -470,7 +605,7 @@ def backward(
     input_range_meta = get_4d_tensor_meta(input_range)
 
     with torch.cuda.device(input_.device):
-        # Launch the separate kernel that computes full-size gradients
+        # Launch the separate kernel that computes gradients without reduction
         grid = lambda meta: (triton.cdiv(input_.numel(), meta["BLOCK_SIZE"]),)
         backward_kernel_separate[grid](
             grad_output,
@@ -485,13 +620,13 @@ def backward(
             level_low,
             level_high,
             grad_input,
-            grad_low_full,
-            grad_range_full,
+            grad_low_unreduced,
+            grad_range_unreduced,
         )
 
-    # Apply optimized sum reduction to get final grad_low and grad_range
-    grad_low = triton_sum_like(grad_low_full, input_low)
-    grad_range = triton_sum_like(grad_range_full, input_range)
+    # Use optimized triton_sum_like to reduce gradients
+    grad_low = triton_sum_like(grad_low_unreduced, input_low)
+    grad_range = triton_sum_like(grad_range_unreduced, input_range)
 
     return grad_input, grad_low, grad_range
 
@@ -946,99 +1081,66 @@ def warp_level_sum_reduction_kernel(
     key=["BLOCK_SIZE"],
 )
 @triton.jit
-def simple_sum_reduction_kernel(
+def optimized_sum_reduction_kernel(
     input_ptr: torch.tensor,
+    input_meta: torch.tensor,
     output_ptr: torch.tensor,
-    input_shape_ptr: torch.tensor,
-    output_shape_ptr: torch.tensor,
-    input_stride_ptr: torch.tensor,
-    output_stride_ptr: torch.tensor,
-    total_elements: int,
+    output_meta: torch.tensor,
     BLOCK_SIZE: tl.constexpr,
 ) -> None:
     """
-    Simple sum reduction kernel that mimics PyTorch's sum behavior.
+    Optimized sum reduction kernel that processes input elements in blocks.
 
-    This kernel works by mapping each output element to all input elements
-    that should contribute to it, following the broadcasting rules.
+    This kernel processes input elements in blocks and uses atomic operations
+    to accumulate results correctly, providing better performance than the
+    simple iteration-based approach.
     """
     pid = tl.program_id(0)
 
-    # Calculate which output elements this block will process
-    output_start = pid * BLOCK_SIZE
+    # Get shapes and strides
+    input_s0, input_s1, input_s2, input_s3 = read_shape(input_meta)
+    output_s0, output_s1, output_s2, output_s3 = read_shape(output_meta)
 
-    # Load shapes and strides as individual elements
-    input_s0 = tl.load(input_shape_ptr + 0)
-    input_s1 = tl.load(input_shape_ptr + 1)
-    input_s2 = tl.load(input_shape_ptr + 2)
-    input_s3 = tl.load(input_shape_ptr + 3)
+    input_st0, input_st1, input_st2, input_st3 = read_stride(input_meta)
+    output_st0, output_st1, output_st2, output_st3 = read_stride(output_meta)
 
-    output_s0 = tl.load(output_shape_ptr + 0)
-    output_s1 = tl.load(output_shape_ptr + 1)
-    output_s2 = tl.load(output_shape_ptr + 2)
-    output_s3 = tl.load(output_shape_ptr + 3)
+    input_elements = input_s0 * input_s1 * input_s2 * input_s3
 
-    input_st0 = tl.load(input_stride_ptr + 0)
-    input_st1 = tl.load(input_stride_ptr + 1)
-    input_st2 = tl.load(input_stride_ptr + 2)
-    input_st3 = tl.load(input_stride_ptr + 3)
+    # Process input elements in blocks
+    input_offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    input_mask = input_offsets < input_elements
 
-    output_st0 = tl.load(output_stride_ptr + 0)
-    output_st1 = tl.load(output_stride_ptr + 1)
-    output_st2 = tl.load(output_stride_ptr + 2)
-    output_st3 = tl.load(output_stride_ptr + 3)
+    # Convert linear input index to 4D coordinates
+    tmp = input_offsets
+    i3 = tmp % input_s3
+    tmp //= input_s3
+    i2 = tmp % input_s2
+    tmp //= input_s2
+    i1 = tmp % input_s1
+    tmp //= input_s1
+    i0 = tmp % input_s0
 
-    # Calculate total output elements
-    output_total = output_s0 * output_s1 * output_s2 * output_s3
+    # Calculate corresponding output coordinates (reduction mapping)
+    o0 = tl.where(output_s0 == 1, 0, i0)
+    o1 = tl.where(output_s1 == 1, 0, i1)
+    o2 = tl.where(output_s2 == 1, 0, i2)
+    o3 = tl.where(output_s3 == 1, 0, i3)
 
-    # For each output element that this block processes
-    for i in range(BLOCK_SIZE):
-        if output_start + i < output_total:
-            # Convert linear output index to 4D coordinates
-            out_idx = output_start + i
-            tmp = out_idx
-            o3 = tmp % output_s3
-            tmp //= output_s3
-            o2 = tmp % output_s2
-            tmp //= output_s2
-            o1 = tmp % output_s1
-            tmp //= output_s1
-            o0 = tmp % output_s0
+    # Load input values
+    input_vals = tl.load(input_ptr + input_offsets, mask=input_mask, other=0.0).to(tl.float32)
 
-            # Sum over all input elements that map to this output element
-            local_sum = 0.0
+    # Calculate output offsets for this block
+    output_offsets = o0 * output_st0 + o1 * output_st1 + o2 * output_st2 + o3 * output_st3
 
-            # Iterate over all input elements
-            for i0 in range(input_s0):
-                for i1 in range(input_s1):
-                    for i2 in range(input_s2):
-                        for i3 in range(input_s3):
-                            # Check if this input element maps to our output element
-                            # (output dimensions with size 1 collect from all input elements in that dimension)
-                            maps_to_output = (
-                                ((output_s0 == 1) | (i0 == o0))
-                                & ((output_s1 == 1) | (i1 == o1))
-                                & ((output_s2 == 1) | (i2 == o2))
-                                & ((output_s3 == 1) | (i3 == o3))
-                            )
-
-                            if maps_to_output:
-                                # Calculate input offset and load value
-                                input_offset = i0 * input_st0 + i1 * input_st1 + i2 * input_st2 + i3 * input_st3
-                                input_val = tl.load(input_ptr + input_offset)
-                                local_sum += input_val
-
-            # Store the result
-            output_offset = o0 * output_st0 + o1 * output_st1 + o2 * output_st2 + o3 * output_st3
-            tl.store(output_ptr + output_offset, local_sum)
+    # Use atomic operations to accumulate results
+    tl.atomic_add(output_ptr + output_offsets, input_vals, mask=input_mask)
 
 
 def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> torch.Tensor:
     """
     Triton implementation of sum_like functionality.
 
-    This function uses the simple sum reduction kernel that follows the same logic
-    as the PyTorch reference implementation for maximum numerical accuracy.
+    This function uses the working optimized kernel for better performance.
 
     :param tensor_to_sum: Tensor to be reduced.
     :param ref_tensor: Reference tensor whose shape determines the reduction.
@@ -1053,33 +1155,20 @@ def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> to
     # Create output tensor with same shape as reference
     output = torch.zeros_like(ref_tensor)
 
-    # Prepare shapes and strides as tensors
-    input_shape = torch.tensor(
-        list(tensor_to_sum.shape) + [1] * (4 - len(tensor_to_sum.shape)), dtype=torch.int32, device=tensor_to_sum.device
-    )
-    output_shape = torch.tensor(
-        list(ref_tensor.shape) + [1] * (4 - len(ref_tensor.shape)), dtype=torch.int32, device=ref_tensor.device
-    )
-    input_stride = torch.tensor(
-        list(tensor_to_sum.stride()) + [0] * (4 - len(tensor_to_sum.stride())),
-        dtype=torch.int32,
-        device=tensor_to_sum.device,
-    )
-    output_stride = torch.tensor(
-        list(ref_tensor.stride()) + [0] * (4 - len(ref_tensor.stride())), dtype=torch.int32, device=ref_tensor.device
-    )
+    # Get meta information for both tensors
+    input_meta = get_4d_tensor_meta(tensor_to_sum)
+    output_meta = get_4d_tensor_meta(output)
 
     with torch.cuda.device(tensor_to_sum.device):
-        # Launch the simple reduction kernel that produces numerically accurate results
-        grid = lambda meta: (triton.cdiv(ref_tensor.numel(), meta["BLOCK_SIZE"]),)
-        simple_sum_reduction_kernel[grid](
+        # Launch the working optimized kernel with fixed block size
+        block_size = 256
+        grid_size = triton.cdiv(tensor_to_sum.numel(), block_size)
+        working_optimized_sum_reduction_kernel[(grid_size,)](
             tensor_to_sum,
+            input_meta,
             output,
-            input_shape,
-            output_shape,
-            input_stride,
-            output_stride,
-            ref_tensor.numel(),
+            output_meta,
+            BLOCK_SIZE=block_size,
         )
 
     return output
