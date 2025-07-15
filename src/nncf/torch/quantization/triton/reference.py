@@ -308,14 +308,14 @@ def backward_kernel_with_reduction(
                 tl.atomic_add(grad_range_summed_ptr + current_offset, current_grad)
 
 
-@triton.autotune(
-    configs=[
-        triton.Config(kwargs={"BLOCK_SIZE": 256}),
-        triton.Config(kwargs={"BLOCK_SIZE": 512}),
-        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
-    ],
-    key=["BLOCK_SIZE"],
-)
+# @triton.autotune(
+#     configs=[
+#         triton.Config(kwargs={"BLOCK_SIZE": 256}),
+#         triton.Config(kwargs={"BLOCK_SIZE": 512}),
+#         triton.Config(kwargs={"BLOCK_SIZE": 1024}),
+#     ],
+#     key=["BLOCK_SIZE"],
+# )
 @triton.jit
 def backward_kernel_separate_with_reduction(
     grad_output_ptr: torch.tensor,
@@ -604,10 +604,13 @@ def backward(
     input_low_meta = get_4d_tensor_meta(input_low)
     input_range_meta = get_4d_tensor_meta(input_range)
 
+    grad_low_meta = get_4d_tensor_meta(grad_low_unreduced)
+    grad_range_meta = get_4d_tensor_meta(grad_range_unreduced)
+
     with torch.cuda.device(input_.device):
         # Launch the separate kernel that computes gradients without reduction
         grid = lambda meta: (triton.cdiv(input_.numel(), meta["BLOCK_SIZE"]),)
-        backward_kernel_separate[grid](
+        backward_kernel_separate_with_reduction[grid](
             grad_output,
             grad_output_meta,
             input_,
@@ -621,7 +624,10 @@ def backward(
             level_high,
             grad_input,
             grad_low_unreduced,
+            grad_low_meta,
             grad_range_unreduced,
+            grad_range_meta,
+            BLOCK_SIZE=256,
         )
 
     # Use optimized triton_sum_like to reduce gradients
