@@ -544,7 +544,7 @@ def sum_reduction_kernel(
     o0 = tmp % output_s0
 
     # Initialize sum accumulator
-    sum_acc = tl.zeros_like(output_idx, dtype=tl.float32)
+    sum_acc = tl.zeros_like(output_idx).to(tl.float32)
 
     # Iterate over all input elements that map to this output element
     for i0 in range(input_s0):
@@ -554,10 +554,10 @@ def sum_reduction_kernel(
                     # Check if this input element maps to our output element
                     # (dimensions with size 1 in output collect from all input elements in that dimension)
                     maps_to_output = (
-                        (output_s0 == 1 or i0 == o0)
-                        and (output_s1 == 1 or i1 == o1)
-                        and (output_s2 == 1 or i2 == o2)
-                        and (output_s3 == 1 or i3 == o3)
+                        ((output_s0 == 1) | (i0 == o0))
+                        & ((output_s1 == 1) | (i1 == o1))
+                        & ((output_s2 == 1) | (i2 == o2))
+                        & ((output_s3 == 1) | (i3 == o3))
                     )
 
                     if maps_to_output:
@@ -590,10 +590,13 @@ def optimized_sum_reduction_kernel(
     BLOCK_SIZE: tl.constexpr,
 ) -> None:
     """
-    Optimized Triton kernel for sum reduction with better memory access patterns.
+    Optimized Triton kernel for sum reduction with hierarchical reduction strategy.
 
-    This kernel uses a more efficient approach by processing input elements in blocks
-    and using shared memory for intermediate reductions.
+    This kernel implements a more efficient approach inspired by CUDA's hierarchical reduction:
+    1. Local accumulation within threads for same output locations
+    2. Block-level reduction using Triton's built-in reduction operations
+    3. Reduced atomic contention through batched operations
+    4. Better memory access patterns and coalescing
 
     :param input_ptr: Memory pointer to input tensor to be reduced.
     :param input_meta: Meta information for input tensor (shape + stride).
@@ -611,6 +614,7 @@ def optimized_sum_reduction_kernel(
     output_st0, output_st1, output_st2, output_st3 = read_stride(output_meta)
 
     input_elements = input_s0 * input_s1 * input_s2 * input_s3
+    output_elements = output_s0 * output_s1 * output_s2 * output_s3
 
     # Process input elements in blocks
     input_offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
@@ -626,22 +630,149 @@ def optimized_sum_reduction_kernel(
     tmp //= input_s1
     i0 = tmp % input_s0
 
-    # Calculate corresponding output coordinates
+    # Calculate corresponding output coordinates (reduction mapping)
     o0 = tl.where(output_s0 == 1, 0, i0)
     o1 = tl.where(output_s1 == 1, 0, i1)
     o2 = tl.where(output_s2 == 1, 0, i2)
     o3 = tl.where(output_s3 == 1, 0, i3)
 
     # Load input values
-    input_vals = tl.load(input_ptr + input_offsets, mask=input_mask).to(tl.float32)
+    input_vals = tl.load(input_ptr + input_offsets, mask=input_mask, other=0.0).to(tl.float32)
 
-    # Calculate output offsets
+    # Calculate output offsets for this block
     output_offsets = o0 * output_st0 + o1 * output_st1 + o2 * output_st2 + o3 * output_st3
 
-    # Perform atomic addition to accumulate results
-    # Note: This is a simplified approach - in practice, you'd want to use
-    # more sophisticated reduction techniques for better performance
-    tl.atomic_add(output_ptr + output_offsets, input_vals, mask=input_mask)
+    # Hierarchical reduction approach:
+    # Step 1: Group elements by their target output location within this block
+    # Step 2: Perform local accumulation for each unique output location
+    # Step 3: Use atomic operations only for the final reduced values
+
+    # For each output location that elements in this block map to
+    for out_elem in range(output_elements):
+        # Convert output element index to coordinates
+        tmp_out = out_elem
+        out_o3 = tmp_out % output_s3
+        tmp_out //= output_s3
+        out_o2 = tmp_out % output_s2
+        tmp_out //= output_s2
+        out_o1 = tmp_out % output_s1
+        tmp_out //= output_s1
+        out_o0 = tmp_out % output_s0
+
+        # Calculate the offset for this output location
+        target_output_offset = out_o0 * output_st0 + out_o1 * output_st1 + out_o2 * output_st2 + out_o3 * output_st3
+
+        # Find all elements in current block that map to this output location
+        matches_target = (output_offsets == target_output_offset) & input_mask
+
+        # Sum all values that map to this output location
+        # tl.sum will return 0.0 if no elements match
+        local_sum = tl.sum(tl.where(matches_target, input_vals, 0.0))
+
+        # Use atomic add to accumulate into the final output
+        # Only one atomic operation per unique output location per block
+        if local_sum != 0.0:
+            tl.atomic_add(output_ptr + target_output_offset, local_sum)
+
+
+@triton.autotune(
+    configs=[
+        triton.Config(kwargs={"BLOCK_SIZE": 256}),
+        triton.Config(kwargs={"BLOCK_SIZE": 512}),
+        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
+    ],
+    key=["BLOCK_SIZE"],
+)
+@triton.jit
+def hierarchical_sum_reduction_kernel(
+    input_ptr: torch.tensor,
+    input_meta: torch.tensor,
+    output_ptr: torch.tensor,
+    output_meta: torch.tensor,
+    BLOCK_SIZE: tl.constexpr,
+) -> None:
+    """
+    Hierarchical sum reduction kernel with advanced reduction strategy.
+
+    This kernel implements a multi-stage reduction approach similar to CUDA's
+    reduce_with_shared_memory, using efficient block-level operations.
+
+    :param input_ptr: Memory pointer to input tensor to be reduced.
+    :param input_meta: Meta information for input tensor (shape + stride).
+    :param output_ptr: Memory pointer to output tensor that stores reduced values.
+    :param output_meta: Meta information for output tensor (shape + stride).
+    :param BLOCK_SIZE: Size of the memory block for current process.
+    """
+    pid = tl.program_id(0)
+
+    # Get shapes and strides
+    input_s0, input_s1, input_s2, input_s3 = read_shape(input_meta)
+    output_s0, output_s1, output_s2, output_s3 = read_shape(output_meta)
+
+    input_st0, input_st1, input_st2, input_st3 = read_stride(input_meta)
+    output_st0, output_st1, output_st2, output_st3 = read_stride(output_meta)
+
+    input_elements = input_s0 * input_s1 * input_s2 * input_s3
+    output_elements = output_s0 * output_s1 * output_s2 * output_s3
+
+    # Stage 1: Thread-level processing
+    input_offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    input_mask = input_offsets < input_elements
+
+    # Convert to 4D coordinates
+    tmp = input_offsets
+    i3 = tmp % input_s3
+    tmp //= input_s3
+    i2 = tmp % input_s2
+    tmp //= input_s2
+    i1 = tmp % input_s1
+    tmp //= input_s1
+    i0 = tmp % input_s0
+
+    # Map to output coordinates
+    o0 = tl.where(output_s0 == 1, 0, i0)
+    o1 = tl.where(output_s1 == 1, 0, i1)
+    o2 = tl.where(output_s2 == 1, 0, i2)
+    o3 = tl.where(output_s3 == 1, 0, i3)
+
+    # Load input values
+    input_vals = tl.load(input_ptr + input_offsets, mask=input_mask, other=0.0).to(tl.float32)
+
+    # Stage 2: Block-level reduction with efficient grouping
+    # Process each unique output location that this block contributes to
+    for out_idx in range(output_elements):
+        # Convert output index to coordinates
+        tmp_out = out_idx
+        target_o3 = tmp_out % output_s3
+        tmp_out //= output_s3
+        target_o2 = tmp_out % output_s2
+        tmp_out //= output_s2
+        target_o1 = tmp_out % output_s1
+        tmp_out //= output_s1
+        target_o0 = tmp_out % output_s0
+
+        # Check which elements in this block contribute to this output
+        contributes = (
+            ((output_s0 == 1) | (o0 == target_o0))
+            & ((output_s1 == 1) | (o1 == target_o1))
+            & ((output_s2 == 1) | (o2 == target_o2))
+            & ((output_s3 == 1) | (o3 == target_o3))
+            & input_mask
+        )
+
+        # Block-level reduction using Triton's efficient sum
+        # tl.sum will return 0.0 if no elements contribute
+        block_sum = tl.sum(tl.where(contributes, input_vals, 0.0))
+
+        # Calculate target output offset
+        target_offset = (
+            target_o0 * output_st0 + target_o1 * output_st1 + target_o2 * output_st2 + target_o3 * output_st3
+        )
+
+        # Atomic accumulation (one per output location per block)
+        # Only perform atomic add if we have a non-zero contribution
+        if block_sum != 0.0:
+            tl.atomic_add(output_ptr + target_offset, block_sum)
 
 
 @triton.autotune(
@@ -702,7 +833,7 @@ def warp_level_sum_reduction_kernel(
         o0 = tmp % output_s0
 
         # Accumulate values for this output element
-        local_sum = tl.zeros([1], dtype=tl.float32)
+        local_sum = 0.0
 
         for i in range(start_idx, end_idx):
             # Convert linear input index to 4D coordinates
@@ -718,10 +849,10 @@ def warp_level_sum_reduction_kernel(
             # Check if this input element contributes to current output element
             # (dimensions with size 1 in output collect from all input elements in that dimension)
             contributes = (
-                (output_s0 == 1 or i0 == o0)
-                and (output_s1 == 1 or i1 == o1)
-                and (output_s2 == 1 or i2 == o2)
-                and (output_s3 == 1 or i3 == o3)
+                ((output_s0 == 1) | (i0 == o0))
+                & ((output_s1 == 1) | (i1 == o1))
+                & ((output_s2 == 1) | (i2 == o2))
+                & ((output_s3 == 1) | (i3 == o3))
             )
 
             if contributes:
@@ -731,9 +862,9 @@ def warp_level_sum_reduction_kernel(
                 local_sum += input_val
 
         # Store the result using atomic operation for thread safety
-        if local_sum[0] != 0:  # Only write if we have a contribution
+        if local_sum != 0:  # Only write if we have a contribution
             output_offset = o0 * output_st0 + o1 * output_st1 + o2 * output_st2 + o3 * output_st3
-            tl.atomic_add(output_ptr + output_offset, local_sum[0])
+            tl.atomic_add(output_ptr + output_offset, local_sum)
 
 
 # @triton.autotune(
@@ -806,9 +937,108 @@ def warp_level_sum_reduction_kernel(
 # 3. Using atomic operations for direct accumulation
 # 4. Avoiding temporary full-size tensor allocation
 # ==============================================================================
+@triton.autotune(
+    configs=[
+        triton.Config(kwargs={"BLOCK_SIZE": 256}),
+        triton.Config(kwargs={"BLOCK_SIZE": 512}),
+        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
+    ],
+    key=["BLOCK_SIZE"],
+)
+@triton.jit
+def simple_sum_reduction_kernel(
+    input_ptr: torch.tensor,
+    output_ptr: torch.tensor,
+    input_shape_ptr: torch.tensor,
+    output_shape_ptr: torch.tensor,
+    input_stride_ptr: torch.tensor,
+    output_stride_ptr: torch.tensor,
+    total_elements: int,
+    BLOCK_SIZE: tl.constexpr,
+) -> None:
+    """
+    Simple sum reduction kernel that mimics PyTorch's sum behavior.
+
+    This kernel works by mapping each output element to all input elements
+    that should contribute to it, following the broadcasting rules.
+    """
+    pid = tl.program_id(0)
+
+    # Calculate which output elements this block will process
+    output_start = pid * BLOCK_SIZE
+
+    # Load shapes and strides as individual elements
+    input_s0 = tl.load(input_shape_ptr + 0)
+    input_s1 = tl.load(input_shape_ptr + 1)
+    input_s2 = tl.load(input_shape_ptr + 2)
+    input_s3 = tl.load(input_shape_ptr + 3)
+
+    output_s0 = tl.load(output_shape_ptr + 0)
+    output_s1 = tl.load(output_shape_ptr + 1)
+    output_s2 = tl.load(output_shape_ptr + 2)
+    output_s3 = tl.load(output_shape_ptr + 3)
+
+    input_st0 = tl.load(input_stride_ptr + 0)
+    input_st1 = tl.load(input_stride_ptr + 1)
+    input_st2 = tl.load(input_stride_ptr + 2)
+    input_st3 = tl.load(input_stride_ptr + 3)
+
+    output_st0 = tl.load(output_stride_ptr + 0)
+    output_st1 = tl.load(output_stride_ptr + 1)
+    output_st2 = tl.load(output_stride_ptr + 2)
+    output_st3 = tl.load(output_stride_ptr + 3)
+
+    # Calculate total output elements
+    output_total = output_s0 * output_s1 * output_s2 * output_s3
+
+    # For each output element that this block processes
+    for i in range(BLOCK_SIZE):
+        if output_start + i < output_total:
+            # Convert linear output index to 4D coordinates
+            out_idx = output_start + i
+            tmp = out_idx
+            o3 = tmp % output_s3
+            tmp //= output_s3
+            o2 = tmp % output_s2
+            tmp //= output_s2
+            o1 = tmp % output_s1
+            tmp //= output_s1
+            o0 = tmp % output_s0
+
+            # Sum over all input elements that map to this output element
+            local_sum = 0.0
+
+            # Iterate over all input elements
+            for i0 in range(input_s0):
+                for i1 in range(input_s1):
+                    for i2 in range(input_s2):
+                        for i3 in range(input_s3):
+                            # Check if this input element maps to our output element
+                            # (output dimensions with size 1 collect from all input elements in that dimension)
+                            maps_to_output = (
+                                ((output_s0 == 1) | (i0 == o0))
+                                & ((output_s1 == 1) | (i1 == o1))
+                                & ((output_s2 == 1) | (i2 == o2))
+                                & ((output_s3 == 1) | (i3 == o3))
+                            )
+
+                            if maps_to_output:
+                                # Calculate input offset and load value
+                                input_offset = i0 * input_st0 + i1 * input_st1 + i2 * input_st2 + i3 * input_st3
+                                input_val = tl.load(input_ptr + input_offset)
+                                local_sum += input_val
+
+            # Store the result
+            output_offset = o0 * output_st0 + o1 * output_st1 + o2 * output_st2 + o3 * output_st3
+            tl.store(output_ptr + output_offset, local_sum)
+
+
 def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> torch.Tensor:
     """
     Triton implementation of sum_like functionality.
+
+    This function uses a simple Triton kernel that follows the same logic
+    as the PyTorch reference implementation.
 
     :param tensor_to_sum: Tensor to be reduced.
     :param ref_tensor: Reference tensor whose shape determines the reduction.
@@ -820,18 +1050,33 @@ def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> to
     # Create output tensor with same shape as reference
     output = torch.zeros_like(ref_tensor)
 
-    # Get meta information for both tensors
-    input_meta = get_4d_tensor_meta(tensor_to_sum)
-    output_meta = get_4d_tensor_meta(output)
+    # Prepare shapes and strides as tensors
+    input_shape = torch.tensor(
+        list(tensor_to_sum.shape) + [1] * (4 - len(tensor_to_sum.shape)), dtype=torch.int32, device=tensor_to_sum.device
+    )
+    output_shape = torch.tensor(
+        list(ref_tensor.shape) + [1] * (4 - len(ref_tensor.shape)), dtype=torch.int32, device=ref_tensor.device
+    )
+    input_stride = torch.tensor(
+        list(tensor_to_sum.stride()) + [0] * (4 - len(tensor_to_sum.stride())),
+        dtype=torch.int32,
+        device=tensor_to_sum.device,
+    )
+    output_stride = torch.tensor(
+        list(ref_tensor.stride()) + [0] * (4 - len(ref_tensor.stride())), dtype=torch.int32, device=ref_tensor.device
+    )
 
     with torch.cuda.device(tensor_to_sum.device):
-        # Use the optimized kernel with atomic operations
-        grid = lambda meta: (triton.cdiv(tensor_to_sum.numel(), meta["BLOCK_SIZE"]),)
-        optimized_sum_reduction_kernel[grid](
+        # Launch the simple reduction kernel
+        grid = lambda meta: (triton.cdiv(ref_tensor.numel(), meta["BLOCK_SIZE"]),)
+        simple_sum_reduction_kernel[grid](
             tensor_to_sum,
-            input_meta,
             output,
-            output_meta,
+            input_shape,
+            output_shape,
+            input_stride,
+            output_stride,
+            ref_tensor.numel(),
         )
 
     return output

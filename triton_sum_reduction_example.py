@@ -74,7 +74,9 @@ def demonstrate_triton_sum_reduction():
     print(f"Grad low (reduced) shape: {grad_low_reduced_triton.shape}")
     print(f"Grad range (reduced) shape: {grad_range_reduced_triton.shape}")
 
-    assert torch.allclose(grad_low_reduced_triton, grad_low_reduced_pytorch)
+    assert torch.allclose(grad_low_reduced_triton, grad_low_reduced_pytorch), (
+        f"{grad_low_reduced_triton} vs {grad_low_reduced_pytorch}"
+    )
     assert torch.allclose(grad_range_reduced_triton, grad_range_reduced_pytorch)
 
 
