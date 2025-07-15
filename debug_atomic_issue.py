@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import torch
 import triton
-from nncf.torch.quantization.triton.reference import backward_kernel_separate_with_reduction, get_4d_tensor_meta
+
+from nncf.torch.quantization.triton.reference import backward_kernel_separate_with_reduction
+from nncf.torch.quantization.triton.reference import get_4d_tensor_meta
 
 # Test the atomic accumulation issue
-device = torch.device('cuda')
+device = torch.device("cuda")
 torch.manual_seed(42)
 
 # Simple test case

@@ -631,10 +631,10 @@ def backward(
         )
 
     # Use optimized triton_sum_like to reduce gradients
-    grad_low = triton_sum_like(grad_low_unreduced, input_low)
-    grad_range = triton_sum_like(grad_range_unreduced, input_range)
+    # grad_low = triton_sum_like(grad_low_unreduced, input_low)
+    # grad_range = triton_sum_like(grad_range_unreduced, input_range)
 
-    return grad_input, grad_low, grad_range
+    return grad_input, grad_low_unreduced, grad_range_unreduced
 
 
 @triton.autotune(

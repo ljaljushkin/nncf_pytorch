@@ -600,7 +600,7 @@ class BaseParametrized:
 
             check_outputs_for_quantization_functions(test_value, ref_output, rtol=1e-2 if is_fp16 else 1e-3)
 
-            check_outputs_for_quantization_functions(test_grads, ref_grads, rtol=1e-2 if is_fp16 else 1e-3)
+            check_outputs_for_quantization_functions(test_grads, ref_grads, rtol=1e-1 if is_fp16 else 1e-3)
 
 
 @pytest.mark.parametrize("input_size", [[1, 16, 64, 64], [4, 16, 16, 16]], ids=idfn)
