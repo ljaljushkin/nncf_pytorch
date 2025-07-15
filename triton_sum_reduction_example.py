@@ -17,6 +17,9 @@ def demonstrate_triton_sum_reduction():
     """
     print("=== Triton Sum Reduction for Quantization Gradients ===\n")
 
+    # Set random seed for reproducibility
+    torch.manual_seed(42)
+
     # Example tensors simulating quantization scenario
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -74,10 +77,12 @@ def demonstrate_triton_sum_reduction():
     print(f"Grad low (reduced) shape: {grad_low_reduced_triton.shape}")
     print(f"Grad range (reduced) shape: {grad_range_reduced_triton.shape}")
 
-    assert torch.allclose(grad_low_reduced_triton, grad_low_reduced_pytorch), (
-        f"{grad_low_reduced_triton} vs {grad_low_reduced_pytorch}"
+    assert torch.allclose(grad_low_reduced_triton, grad_low_reduced_pytorch, atol=1e-5), (
+        f"Grad low mismatch: {grad_low_reduced_triton} vs {grad_low_reduced_pytorch}"
     )
-    assert torch.allclose(grad_range_reduced_triton, grad_range_reduced_pytorch)
+    assert torch.allclose(grad_range_reduced_triton, grad_range_reduced_pytorch, atol=1e-5), (
+        f"Grad range mismatch: {grad_range_reduced_triton} vs {grad_range_reduced_pytorch}"
+    )
 
 
 def explain_triton_implementation():

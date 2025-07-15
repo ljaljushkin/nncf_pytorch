@@ -573,16 +573,8 @@ def sum_reduction_kernel(
     tl.store(output_ptr + output_offset, sum_acc, mask=mask)
 
 
-@triton.autotune(
-    configs=[
-        triton.Config(kwargs={"BLOCK_SIZE": 256}),
-        triton.Config(kwargs={"BLOCK_SIZE": 512}),
-        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
-    ],
-    key=["BLOCK_SIZE"],
-)
 @triton.jit
-def optimized_sum_reduction_kernel(
+def working_optimized_sum_reduction_kernel(
     input_ptr: torch.tensor,
     input_meta: torch.tensor,
     output_ptr: torch.tensor,
@@ -590,13 +582,10 @@ def optimized_sum_reduction_kernel(
     BLOCK_SIZE: tl.constexpr,
 ) -> None:
     """
-    Optimized Triton kernel for sum reduction with hierarchical reduction strategy.
+    Working optimized Triton kernel for sum reduction.
 
-    This kernel implements a more efficient approach inspired by CUDA's hierarchical reduction:
-    1. Local accumulation within threads for same output locations
-    2. Block-level reduction using Triton's built-in reduction operations
-    3. Reduced atomic contention through batched operations
-    4. Better memory access patterns and coalescing
+    This kernel processes input elements in blocks and uses atomic operations
+    to accumulate results correctly.
 
     :param input_ptr: Memory pointer to input tensor to be reduced.
     :param input_meta: Meta information for input tensor (shape + stride).
@@ -614,7 +603,6 @@ def optimized_sum_reduction_kernel(
     output_st0, output_st1, output_st2, output_st3 = read_stride(output_meta)
 
     input_elements = input_s0 * input_s1 * input_s2 * input_s3
-    output_elements = output_s0 * output_s1 * output_s2 * output_s3
 
     # Process input elements in blocks
     input_offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
@@ -642,37 +630,43 @@ def optimized_sum_reduction_kernel(
     # Calculate output offsets for this block
     output_offsets = o0 * output_st0 + o1 * output_st1 + o2 * output_st2 + o3 * output_st3
 
-    # Hierarchical reduction approach:
-    # Step 1: Group elements by their target output location within this block
-    # Step 2: Perform local accumulation for each unique output location
-    # Step 3: Use atomic operations only for the final reduced values
+    # Use atomic operations to accumulate results
+    tl.atomic_add(output_ptr + output_offsets, input_vals, mask=input_mask)
 
-    # For each output location that elements in this block map to
-    for out_elem in range(output_elements):
-        # Convert output element index to coordinates
-        tmp_out = out_elem
-        out_o3 = tmp_out % output_s3
-        tmp_out //= output_s3
-        out_o2 = tmp_out % output_s2
-        tmp_out //= output_s2
-        out_o1 = tmp_out % output_s1
-        tmp_out //= output_s1
-        out_o0 = tmp_out % output_s0
 
-        # Calculate the offset for this output location
-        target_output_offset = out_o0 * output_st0 + out_o1 * output_st1 + out_o2 * output_st2 + out_o3 * output_st3
+def triton_sum_like_optimized(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Optimized Triton implementation of sum_like functionality.
 
-        # Find all elements in current block that map to this output location
-        matches_target = (output_offsets == target_output_offset) & input_mask
+    This function uses the working optimized kernel without autotuner.
 
-        # Sum all values that map to this output location
-        # tl.sum will return 0.0 if no elements match
-        local_sum = tl.sum(tl.where(matches_target, input_vals, 0.0))
+    :param tensor_to_sum: Tensor to be reduced.
+    :param ref_tensor: Reference tensor whose shape determines the reduction.
+    :return: Reduced tensor with the same shape as ref_tensor.
+    """
+    if ref_tensor.numel() == 1:
+        return tensor_to_sum.sum()
 
-        # Use atomic add to accumulate into the final output
-        # Only one atomic operation per unique output location per block
-        if local_sum != 0.0:
-            tl.atomic_add(output_ptr + target_output_offset, local_sum)
+    # Create output tensor with same shape as reference
+    output = torch.zeros_like(ref_tensor)
+
+    # Get meta information for both tensors
+    input_meta = get_4d_tensor_meta(tensor_to_sum)
+    output_meta = get_4d_tensor_meta(output)
+
+    with torch.cuda.device(tensor_to_sum.device):
+        # Launch the working optimized kernel with fixed block size
+        block_size = 256
+        grid_size = triton.cdiv(tensor_to_sum.numel(), block_size)
+        working_optimized_sum_reduction_kernel[(grid_size,)](
+            tensor_to_sum,
+            input_meta,
+            output,
+            output_meta,
+            BLOCK_SIZE=block_size,
+        )
+
+    return output
 
 
 @triton.autotune(
@@ -1037,8 +1031,8 @@ def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> to
     """
     Triton implementation of sum_like functionality.
 
-    This function uses a simple Triton kernel that follows the same logic
-    as the PyTorch reference implementation.
+    This function uses the working optimized kernel that processes input elements
+    directly and uses atomic operations for accumulation.
 
     :param tensor_to_sum: Tensor to be reduced.
     :param ref_tensor: Reference tensor whose shape determines the reduction.
@@ -1050,33 +1044,20 @@ def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> to
     # Create output tensor with same shape as reference
     output = torch.zeros_like(ref_tensor)
 
-    # Prepare shapes and strides as tensors
-    input_shape = torch.tensor(
-        list(tensor_to_sum.shape) + [1] * (4 - len(tensor_to_sum.shape)), dtype=torch.int32, device=tensor_to_sum.device
-    )
-    output_shape = torch.tensor(
-        list(ref_tensor.shape) + [1] * (4 - len(ref_tensor.shape)), dtype=torch.int32, device=ref_tensor.device
-    )
-    input_stride = torch.tensor(
-        list(tensor_to_sum.stride()) + [0] * (4 - len(tensor_to_sum.stride())),
-        dtype=torch.int32,
-        device=tensor_to_sum.device,
-    )
-    output_stride = torch.tensor(
-        list(ref_tensor.stride()) + [0] * (4 - len(ref_tensor.stride())), dtype=torch.int32, device=ref_tensor.device
-    )
+    # Get meta information for both tensors
+    input_meta = get_4d_tensor_meta(tensor_to_sum)
+    output_meta = get_4d_tensor_meta(output)
 
     with torch.cuda.device(tensor_to_sum.device):
-        # Launch the simple reduction kernel
-        grid = lambda meta: (triton.cdiv(ref_tensor.numel(), meta["BLOCK_SIZE"]),)
-        simple_sum_reduction_kernel[grid](
+        # Launch the working optimized kernel with fixed block size
+        block_size = 256
+        grid_size = triton.cdiv(tensor_to_sum.numel(), block_size)
+        working_optimized_sum_reduction_kernel[(grid_size,)](
             tensor_to_sum,
+            input_meta,
             output,
-            input_shape,
-            output_shape,
-            input_stride,
-            output_stride,
-            ref_tensor.numel(),
+            output_meta,
+            BLOCK_SIZE=block_size,
         )
 
     return output
