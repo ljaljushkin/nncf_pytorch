@@ -19,9 +19,9 @@ from nncf.errors import ValidationError
 from nncf.torch.dynamic_graph.patch_pytorch import register_operator
 from nncf.torch.quantization.extensions import QuantizedFunctionsCPU
 
-# from nncf.torch.quantization.triton import QuantizedFunctionsCUDA
-from nncf.torch.quantization.extensions import QuantizedFunctionsCUDA
+# from nncf.torch.quantization.extensions import QuantizedFunctionsCUDA
 from nncf.torch.quantization.reference import ReferenceQuantizedFunctions as RQ
+from nncf.torch.quantization.triton import QuantizedFunctionsCUDA
 from nncf.torch.utils import add_domain
 
 

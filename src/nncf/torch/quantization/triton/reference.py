@@ -441,9 +441,11 @@ def backward(
     is_asymmetric: bool = False,
 ) -> tuple[torch.tensor]:
     """
-    Wrapper for the backward kernel with integrated Triton-based sum reduction.
-    It contains preparation steps like output memory allocation via tensor creation,
-    additional values calculation and CUDA context management based on the input tensors.
+    Wrapper for the backward kernel with integrated optimized Triton-based sum reduction.
+
+    This function uses the backward_kernel_separate to compute full-size gradients,
+    then applies the working optimized sum reduction kernel for grad_low and grad_range.
+
     :param grad_output: grad_output as torch.tensor.
     :param input_: input_ as torch.tensor.
     :param input_low: input_low as torch.tensor.
@@ -457,9 +459,9 @@ def backward(
     # grad_input has the same shape as input_
     grad_input = torch.empty_like(input_)
 
-    # grad_low and grad_range have the same shape as input_low and input_range (reduced)
-    grad_low = torch.zeros_like(input_low)
-    grad_range = torch.zeros_like(input_range)
+    # Create temporary full-size tensors for grad_low and grad_range
+    grad_low_full = torch.empty_like(input_)
+    grad_range_full = torch.empty_like(input_)
 
     # Get meta information for tensors
     grad_output_meta = get_4d_tensor_meta(grad_output)
@@ -468,9 +470,9 @@ def backward(
     input_range_meta = get_4d_tensor_meta(input_range)
 
     with torch.cuda.device(input_.device):
-        # Launch the integrated kernel that performs gradient computation and reduction
+        # Launch the separate kernel that computes full-size gradients
         grid = lambda meta: (triton.cdiv(input_.numel(), meta["BLOCK_SIZE"]),)
-        backward_kernel_with_reduction[grid](
+        backward_kernel_separate[grid](
             grad_output,
             grad_output_meta,
             input_,
@@ -483,9 +485,13 @@ def backward(
             level_low,
             level_high,
             grad_input,
-            grad_low,
-            grad_range,
+            grad_low_full,
+            grad_range_full,
         )
+
+    # Apply optimized sum reduction to get final grad_low and grad_range
+    grad_low = triton_sum_like(grad_low_full, input_low)
+    grad_range = triton_sum_like(grad_range_full, input_range)
 
     return grad_input, grad_low, grad_range
 
@@ -1031,33 +1037,49 @@ def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> to
     """
     Triton implementation of sum_like functionality.
 
-    This function uses the working optimized kernel that processes input elements
-    directly and uses atomic operations for accumulation.
+    This function uses the simple sum reduction kernel that follows the same logic
+    as the PyTorch reference implementation for maximum numerical accuracy.
 
     :param tensor_to_sum: Tensor to be reduced.
     :param ref_tensor: Reference tensor whose shape determines the reduction.
     :return: Reduced tensor with the same shape as ref_tensor.
     """
     if ref_tensor.numel() == 1:
-        return tensor_to_sum.sum()
+        # Preserve the shape of ref_tensor even if it's [1] not []
+        sum_result = tensor_to_sum.sum()
+        # Reshape to match ref_tensor's shape
+        return sum_result.view(ref_tensor.shape)
 
     # Create output tensor with same shape as reference
     output = torch.zeros_like(ref_tensor)
 
-    # Get meta information for both tensors
-    input_meta = get_4d_tensor_meta(tensor_to_sum)
-    output_meta = get_4d_tensor_meta(output)
+    # Prepare shapes and strides as tensors
+    input_shape = torch.tensor(
+        list(tensor_to_sum.shape) + [1] * (4 - len(tensor_to_sum.shape)), dtype=torch.int32, device=tensor_to_sum.device
+    )
+    output_shape = torch.tensor(
+        list(ref_tensor.shape) + [1] * (4 - len(ref_tensor.shape)), dtype=torch.int32, device=ref_tensor.device
+    )
+    input_stride = torch.tensor(
+        list(tensor_to_sum.stride()) + [0] * (4 - len(tensor_to_sum.stride())),
+        dtype=torch.int32,
+        device=tensor_to_sum.device,
+    )
+    output_stride = torch.tensor(
+        list(ref_tensor.stride()) + [0] * (4 - len(ref_tensor.stride())), dtype=torch.int32, device=ref_tensor.device
+    )
 
     with torch.cuda.device(tensor_to_sum.device):
-        # Launch the working optimized kernel with fixed block size
-        block_size = 256
-        grid_size = triton.cdiv(tensor_to_sum.numel(), block_size)
-        working_optimized_sum_reduction_kernel[(grid_size,)](
+        # Launch the simple reduction kernel that produces numerically accurate results
+        grid = lambda meta: (triton.cdiv(ref_tensor.numel(), meta["BLOCK_SIZE"]),)
+        simple_sum_reduction_kernel[grid](
             tensor_to_sum,
-            input_meta,
             output,
-            output_meta,
-            BLOCK_SIZE=block_size,
+            input_shape,
+            output_shape,
+            input_stride,
+            output_stride,
+            ref_tensor.numel(),
         )
 
     return output
