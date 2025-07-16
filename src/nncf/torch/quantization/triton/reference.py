@@ -376,12 +376,14 @@ def backward_kernel_separate_with_reduction(
     input_range_offset = i0 * input_range_st0 + i1 * input_range_st1 + i2 * input_range_st2 + i3 * input_range_st3
     input_range_elements = calculate_total_elements(input_range_meta)
 
-    grad_output = tl.load(grad_output_ptr + offsets, mask=offsets < input__elements).to(tl.float32)
-    input_ = tl.load(input__ptr + offsets, mask=offsets < input__elements).to(tl.float32)
-    input_low = tl.load(input_low_ptr + input_low_offset, mask=input_low_offset < input_low_elements).to(tl.float32)
-    input_range = tl.load(input_range_ptr + input_range_offset, mask=input_range_offset < input_range_elements).to(
+    grad_output = tl.load(grad_output_ptr + offsets, mask=offsets < input__elements, other=0.0).to(tl.float32)
+    input_ = tl.load(input__ptr + offsets, mask=offsets < input__elements, other=0.0).to(tl.float32)
+    input_low = tl.load(input_low_ptr + input_low_offset, mask=input_low_offset < input_low_elements, other=0.0).to(
         tl.float32
     )
+    input_range = tl.load(
+        input_range_ptr + input_range_offset, mask=input_range_offset < input_range_elements, other=0.0
+    ).to(tl.float32)
 
     mask_hi = input_ > (input_low + input_range)
     mask_hi = mask_hi.to(tl.float32)
@@ -1072,14 +1074,14 @@ def warp_level_sum_reduction_kernel(
 # 3. Using atomic operations for direct accumulation
 # 4. Avoiding temporary full-size tensor allocation
 # ==============================================================================
-@triton.autotune(
-    configs=[
-        triton.Config(kwargs={"BLOCK_SIZE": 256}),
-        triton.Config(kwargs={"BLOCK_SIZE": 512}),
-        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
-    ],
-    key=["BLOCK_SIZE"],
-)
+# @triton.autotune(
+#     configs=[
+#         triton.Config(kwargs={"BLOCK_SIZE": 256}),
+#         triton.Config(kwargs={"BLOCK_SIZE": 512}),
+#         triton.Config(kwargs={"BLOCK_SIZE": 1024}),
+#     ],
+#     key=["BLOCK_SIZE"],
+# )
 @triton.jit
 def optimized_sum_reduction_kernel(
     input_ptr: torch.tensor,
@@ -1132,7 +1134,7 @@ def optimized_sum_reduction_kernel(
     # Calculate output offsets for this block
     output_offsets = o0 * output_st0 + o1 * output_st1 + o2 * output_st2 + o3 * output_st3
 
-    # Use atomic operations to accumulate results
+    # Use vectorized atomic operations with proper masking
     tl.atomic_add(output_ptr + output_offsets, input_vals, mask=input_mask)
 
 
@@ -1140,19 +1142,18 @@ def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> to
     """
     Triton implementation of sum_like functionality.
 
-    This function uses the working optimized kernel for better performance.
+    This function uses the two-stage reduction approach to eliminate atomic contention.
 
     :param tensor_to_sum: Tensor to be reduced.
     :param ref_tensor: Reference tensor whose shape determines the reduction.
     :return: Reduced tensor with the same shape as ref_tensor.
     """
     if ref_tensor.numel() == 1:
-        # Preserve the shape of ref_tensor even if it's [1] not []
-        sum_result = tensor_to_sum.sum()
-        # Reshape to match ref_tensor's shape
-        return sum_result.view(ref_tensor.shape)
+        # Use two-stage reduction for single-scale case to avoid atomic contention
+        return two_stage_sum_reduction(tensor_to_sum, ref_tensor)
 
-    # Create output tensor with same shape as reference
+    # For multi-element outputs, use the original approach
+    # (atomic contention is less of an issue when operations target different locations)
     output = torch.zeros_like(ref_tensor)
 
     # Get meta information for both tensors
@@ -1174,42 +1175,113 @@ def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> to
     return output
 
 
-# def advanced_triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> torch.Tensor:
-#     """
-#     Advanced Triton implementation of sum_like with hierarchical reduction.
+def two_stage_sum_reduction(
+    tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor, block_size: int = 256
+) -> torch.Tensor:
+    """
+    Two-stage sum reduction that eliminates atomic contention.
 
-#     :param tensor_to_sum: Tensor to be reduced.
-#     :param ref_tensor: Reference tensor whose shape determines the reduction.
-#     :return: Reduced tensor with the same shape as ref_tensor.
-#     """
-#     if ref_tensor.numel() == 1:
-#         return tensor_to_sum.sum()
+    Stage 1: Each block sums its elements and stores in temporary array
+    Stage 2: Sum all block results and write to output
+    """
+    import triton
 
-#     # Create output tensor with same shape as reference
-#     output = torch.zeros_like(ref_tensor)
+    # Create output tensor
+    output = torch.zeros_like(ref_tensor)
 
-#     # Create temporary storage for intermediate reductions
-#     num_blocks = triton.cdiv(tensor_to_sum.numel(), 1024)  # Assuming max block size of 1024
-#     temp_storage = torch.zeros(num_blocks, dtype=tensor_to_sum.dtype, device=tensor_to_sum.device)
+    # Calculate grid size
+    grid_size = triton.cdiv(tensor_to_sum.numel(), block_size)
 
-#     # Get meta information for both tensors
-#     input_meta = get_4d_tensor_meta(tensor_to_sum)
-#     output_meta = get_4d_tensor_meta(output)
+    # Stage 1: Create temporary buffer for block sums
+    temp_buffer = torch.zeros(grid_size, dtype=tensor_to_sum.dtype, device=tensor_to_sum.device)
 
-#     with torch.cuda.device(tensor_to_sum.device):
-#         # Launch hierarchical reduction kernel
-#         grid = lambda meta: (triton.cdiv(tensor_to_sum.numel(), meta["BLOCK_SIZE"]),)
-#         hierarchical_sum_reduction_kernel[grid](
-#             tensor_to_sum,
-#             input_meta,
-#             output,
-#             output_meta,
-#             temp_storage,
-#         )
+    # Get meta information
+    input_meta = get_4d_tensor_meta(tensor_to_sum)
+    output_meta = get_4d_tensor_meta(output)
 
-#         # Final reduction of temporary storage if needed
-#         if num_blocks > 1:
-#             # Additional reduction step would go here
-#             pass
+    # Stage 1: Each block computes its sum
+    block_sum_reduction_kernel[(grid_size,)](
+        tensor_to_sum,
+        input_meta,
+        temp_buffer,
+        grid_size,
+        BLOCK_SIZE=block_size,
+    )
 
-#     return output
+    # Stage 2: Sum all block results and write to output
+    final_sum_kernel[(1,)](
+        temp_buffer,
+        output,
+        output_meta,
+        grid_size,
+        BLOCK_SIZE=max(grid_size, block_size),
+    )
+
+    return output
+
+
+@triton.jit
+def block_sum_reduction_kernel(
+    input_ptr: torch.tensor,
+    input_meta: torch.tensor,
+    temp_ptr: torch.tensor,
+    num_blocks: int,
+    BLOCK_SIZE: tl.constexpr,
+) -> None:
+    """
+    First stage: Each block sums its elements and stores result in temp array.
+    This eliminates atomic contention by having each block write to a different location.
+    """
+    pid = tl.program_id(0)
+
+    # Get input shape
+    input_s0, input_s1, input_s2, input_s3 = read_shape(input_meta)
+    input_elements = input_s0 * input_s1 * input_s2 * input_s3
+
+    # Process input elements in this block
+    input_offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    input_mask = input_offsets < input_elements
+
+    # Load input values
+    input_vals = tl.load(input_ptr + input_offsets, mask=input_mask, other=0.0).to(tl.float32)
+
+    # Sum all values in this block
+    block_sum = tl.sum(tl.where(input_mask, input_vals, 0.0))
+
+    # Store block sum in temp array (no atomic needed - each block writes to different location)
+    tl.store(temp_ptr + pid, block_sum)
+
+
+@triton.jit
+def final_sum_kernel(
+    temp_ptr: torch.tensor,
+    output_ptr: torch.tensor,
+    output_meta: torch.tensor,
+    num_blocks: int,
+    BLOCK_SIZE: tl.constexpr,
+) -> None:
+    """
+    Second stage: Sum all block results and distribute to output according to reduction pattern.
+    """
+    pid = tl.program_id(0)
+
+    # Get output shape
+    output_s0, output_s1, output_s2, output_s3 = read_shape(output_meta)
+    output_st0, output_st1, output_st2, output_st3 = read_stride(output_meta)
+
+    # Load all block sums
+    block_offsets = tl.arange(0, BLOCK_SIZE)
+    block_mask = block_offsets < num_blocks
+    block_sums = tl.load(temp_ptr + block_offsets, mask=block_mask, other=0.0).to(tl.float32)  # Sum all block results
+    total_sum = tl.sum(tl.where(block_mask, block_sums, 0.0))
+
+    # For single-scale case: output is scalar, write to output[0]
+    is_single_scale = (output_s0 == 1) & (output_s1 == 1) & (output_s2 == 1) & (output_s3 == 1)
+    if is_single_scale:
+        if pid == 0:  # Only first thread writes
+            tl.store(output_ptr, total_sum)
+    else:
+        # For per-channel case: distribute the sum according to reduction pattern
+        # This is more complex and would need to be implemented based on specific reduction pattern
+        if pid == 0:  # For now, assume single output element
+            tl.store(output_ptr, total_sum)
