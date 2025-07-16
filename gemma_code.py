@@ -285,7 +285,7 @@ def _sum_like_4d_kernel_second_stage(
 def sum_like_v2_two_stage(tensor_to_sum, ref_tensor):
     """Two-stage reduction to minimize atomic operations."""
     elements_per_channel = tensor_to_sum.shape[0] * tensor_to_sum.shape[2] * tensor_to_sum.shape[3]
-    BLOCK_SIZE = 2048
+    BLOCK_SIZE = 1024
     num_blocks = triton.cdiv(elements_per_channel, BLOCK_SIZE)
 
     # Create intermediate storage
@@ -332,19 +332,19 @@ def sum_like_v2_adaptive(tensor_to_sum, ref_tensor):
 @triton.testing.perf_report(
     triton.testing.Benchmark(
         x_names=["N_ELEMENTS"],
-        x_vals=[4 * 16 * s * s for s in [16, 32, 64, 128, 256]],
+        x_vals=[64 * 128 * s * s for s in [16, 32, 64, 128, 256]],
         line_arg="provider",
         line_vals=["pytorch", "custom_kernel_v2", "custom_kernel_v2_optimized", "custom_kernel_v2_two_stage"],
         line_names=["PyTorch", "Custom Kernel (v2)", "Custom Kernel (v2 Optimized)", "Custom Kernel (v2 Two-Stage)"],
         styles=[("blue", "-"), ("red", "--"), ("green", "-."), ("orange", ":")],
         ylabel="ms",
         plot_name="sum-like-4d-performance-comparison",
-        args={"D1_size": 16},
+        args={"D1_size": 128},
     )
 )
 def benchmark(D1_size, N_ELEMENTS, provider):
     # Infer shapes from total elements
-    D0_size = 4
+    D0_size = 64
     D2_size = int((N_ELEMENTS / (D0_size * D1_size)) ** 0.5)
     D3_size = int(N_ELEMENTS / (D0_size * D1_size * D2_size))
 
@@ -375,8 +375,8 @@ if __name__ == "__main__":
     print("Testing correctness...")
 
     # Test case
-    tensor_to_sum = torch.randn(4, 16, 16, 16, device="cuda", dtype=torch.float16)
-    ref_tensor = torch.empty(1, 16, 1, 1, device="cuda")
+    tensor_to_sum = torch.randn(64, 64, 64, 64, device="cuda", dtype=torch.float16)
+    ref_tensor = torch.empty(1, 64, 1, 1, device="cuda")
 
     # PyTorch reference
     pytorch_result = torch.sum(tensor_to_sum, axis=(0, 2, 3), keepdim=True)
