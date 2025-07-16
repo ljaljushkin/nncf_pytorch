@@ -1302,7 +1302,8 @@ def final_sum_kernel(
             # Distribute to all output elements (broadcasting behavior)
             # This is a simplified implementation - for real per-channel,
             # you'd need more sophisticated mapping
-            for i in tl.static_range(min(output_elements, 64)):  # Limit for compilation
+            MAX_OUTPUT_ELEMENTS: tl.constexpr = 64  # Fixed limit for compilation
+            for i in tl.static_range(MAX_OUTPUT_ELEMENTS):
                 if i < output_elements:
                     # Convert linear index to 4D coordinates
                     tmp = i
