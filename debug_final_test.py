@@ -28,9 +28,9 @@ print(f"level_high: {level_high}")
 print(f"input_low: {input_low}")
 print(f"input_range: {input_range}")
 
-# Create test data
-ref_input_low = np.full([1, 16, 1, 1], input_low, dtype=np.float16)
-ref_input_range = np.full([1, 16, 1, 1], input_range, dtype=np.float16)
+# Create test data - use single scale
+ref_input_low = np.full([1], input_low, dtype=np.float16)
+ref_input_range = np.full([1], input_range, dtype=np.float16)
 
 # Generate input data (similar to the test)
 np.random.seed(42)

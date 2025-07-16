@@ -145,8 +145,21 @@ def fp32_accum_wrapper(func):
 @fp32_accum_wrapper
 def sum_like(tensor_to_sum, ref_tensor):
     """Warning: may modify tensor_to_sum"""
-    if ref_tensor.size == 1:
-        return tensor_to_sum.sum()
+    import numpy as np
+
+    # Handle single-element tensors
+    if isinstance(ref_tensor, np.ndarray):
+        if ref_tensor.size == 1:
+            # For single-element arrays, return sum with the same shape as ref_tensor
+            sum_result = tensor_to_sum.sum()
+            # Reshape to match ref_tensor's shape exactly
+            return sum_result.reshape(ref_tensor.shape)
+    else:
+        if ref_tensor.numel() == 1:
+            # For single-element tensors, return sum with the same shape as ref_tensor
+            sum_result = tensor_to_sum.sum()
+            # Reshape to match ref_tensor's shape exactly
+            return sum_result.view(ref_tensor.shape)
 
     for dim, size in enumerate(ref_tensor.shape):
         if size == 1:

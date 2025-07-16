@@ -242,6 +242,13 @@ def backward_kernel_with_reduction(
     input_range_offset = i0 * input_range_st0 + i1 * input_range_st1 + i2 * input_range_st2 + i3 * input_range_st3
     input_range_elements = calculate_total_elements(input_range_meta)
 
+    # For single-scale quantization, all offsets should point to element 0
+    # Check if this is single-scale by looking at the total elements
+    if input_low_elements == 1:
+        input_low_offset = input_low_offset * 0  # Set all offsets to 0
+    if input_range_elements == 1:
+        input_range_offset = input_range_offset * 0  # Set all offsets to 0
+
     # Load input tensors
     grad_output = tl.load(grad_output_ptr + offsets, mask=offsets < input__elements, other=0.0).to(tl.float32)
     input_ = tl.load(input__ptr + offsets, mask=offsets < input__elements, other=0.0).to(tl.float32)
@@ -288,23 +295,21 @@ def backward_kernel_with_reduction(
 
     # For grad_low reduction - use block-level reduction before atomic add
     for i in range(BLOCK_SIZE):
-        if i < BLOCK_SIZE:
-            current_offset = input_low_offset[i] if i < tl.static_range(BLOCK_SIZE) else 0
-            current_grad = grad_low[i] if i < tl.static_range(BLOCK_SIZE) else 0.0
-            current_valid = valid_mask[i] if i < tl.static_range(BLOCK_SIZE) else False
-
-            if current_valid and current_offset < input_low_elements:
+        current_valid = valid_mask[i]
+        if current_valid:
+            current_offset = input_low_offset[i]
+            current_grad = grad_low[i]
+            if current_offset < input_low_elements:
                 # Use a more efficient atomic operation pattern
                 tl.atomic_add(grad_low_summed_ptr + current_offset, current_grad)
 
     # For grad_range reduction - similar approach
     for i in range(BLOCK_SIZE):
-        if i < BLOCK_SIZE:
-            current_offset = input_range_offset[i] if i < tl.static_range(BLOCK_SIZE) else 0
-            current_grad = grad_range[i] if i < tl.static_range(BLOCK_SIZE) else 0.0
-            current_valid = valid_mask[i] if i < tl.static_range(BLOCK_SIZE) else False
-
-            if current_valid and current_offset < input_range_elements:
+        current_valid = valid_mask[i]
+        if current_valid:
+            current_offset = input_range_offset[i]
+            current_grad = grad_range[i]
+            if current_offset < input_range_elements:
                 tl.atomic_add(grad_range_summed_ptr + current_offset, current_grad)
 
 
@@ -1146,9 +1151,9 @@ def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor) -> to
     :return: Reduced tensor with the same shape as ref_tensor.
     """
     if ref_tensor.numel() == 1:
-        # Preserve the shape of ref_tensor even if it's [1] not []
+        # For single-element tensors, return sum with the same shape as ref_tensor
         sum_result = tensor_to_sum.sum()
-        # Reshape to match ref_tensor's shape
+        # Reshape to match ref_tensor's shape exactly
         return sum_result.view(ref_tensor.shape)
 
     # Create output tensor with same shape as reference
