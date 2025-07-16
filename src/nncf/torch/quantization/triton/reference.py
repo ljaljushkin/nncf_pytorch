@@ -1142,45 +1142,19 @@ def triton_sum_like(tensor_to_sum: torch.Tensor, ref_tensor: torch.Tensor, block
     """
     Triton implementation of sum_like functionality.
 
-    This function uses optimized block size selection based on contiguous elements per scale
-    to maximize memory efficiency and minimize atomic contention.
+    This function uses optimized two-stage reduction to avoid atomic contention and
+    improve numerical accuracy for large tensors.
 
     :param tensor_to_sum: Tensor to be reduced.
     :param ref_tensor: Reference tensor whose shape determines the reduction.
     :param block_size: Block size to use. If None, will be optimized based on tensor characteristics.
     :return: Reduced tensor with the same shape as ref_tensor.
     """
-    # Calculate contiguous elements per scale for block size optimization
-    # contiguous_elements_per_scale = calculate_contiguous_elements_per_scale(tensor_to_sum, ref_tensor)
+    if block_size is None:
+        block_size = min(1024, triton.next_power_of_2(tensor_to_sum.numel()))
 
-    # # Optimize block size based on contiguous elements per scale
-    # if block_size is None:
-    #     block_size = optimize_block_size_for_contiguous_elements(contiguous_elements_per_scale, tensor_to_sum.numel())
-
-    # Use two-stage reduction for single-scale case to avoid atomic contention
-    # if ref_tensor.numel() == 1:
-    #     return two_stage_sum_reduction(tensor_to_sum, ref_tensor, block_size)
-
-    # For multi-element outputs, use the original approach
-    # (atomic contention is less of an issue when operations target different locations)
-    output = torch.zeros_like(ref_tensor)
-
-    # Get meta information for both tensors
-    input_meta = get_4d_tensor_meta(tensor_to_sum)
-    output_meta = get_4d_tensor_meta(output)
-
-    with torch.cuda.device(tensor_to_sum.device):
-        # Launch the working optimized kernel with dynamically optimized block size
-        grid_size = triton.cdiv(tensor_to_sum.numel(), block_size)
-        optimized_sum_reduction_kernel[(grid_size,)](
-            tensor_to_sum,
-            input_meta,
-            output,
-            output_meta,
-            BLOCK_SIZE=block_size,
-        )
-
-    return output
+    # Use two-stage reduction for better accuracy and performance
+    return two_stage_sum_reduction(tensor_to_sum, ref_tensor, block_size)
 
 
 def two_stage_sum_reduction(

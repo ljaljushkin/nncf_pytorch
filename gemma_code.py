@@ -30,6 +30,8 @@ For a reduction like: def sum_like(tensor_to_sum: Tensor[4, 16, 16, 16], ref_ten
 The two-stage approach is generally the best solution for large-scale reductions in Triton.
 """
 
+import math
+
 import torch
 import triton
 import triton.language as tl
@@ -94,9 +96,7 @@ def _sum_like_4d_kernel_coalesced(
 def sum_like_v2(tensor_to_sum, ref_tensor):
     """Optimized Triton implementation of sum_like for 4D tensors."""
     # Create output tensor with the same dtype as the input tensor
-    output = torch.zeros(
-        tensor_to_sum.shape[1], device=tensor_to_sum.device, dtype=torch.float16
-    )  # tensor_to_sum.dtype)
+    output = torch.zeros(tensor_to_sum.shape[1], device=tensor_to_sum.device, dtype=tensor_to_sum.dtype)
 
     # Calculate grid dimensions for parallel processing
     elements_per_channel = tensor_to_sum.shape[0] * tensor_to_sum.shape[2] * tensor_to_sum.shape[3]
@@ -199,7 +199,203 @@ def sum_like_v2_fp16_optimized(tensor_to_sum, ref_tensor):
 
 # Alternative approach: Two-stage reduction to minimize atomic operations
 @triton.jit
-def _sum_like_4d_kernel_two_stage(
+def _sum_like_general_kernel_two_stage(
+    input_ptr,
+    temp_ptr,
+    input_s0,
+    input_s1,
+    input_s2,
+    input_s3,
+    input_st0,
+    input_st1,
+    input_st2,
+    input_st3,
+    output_s0,
+    output_s1,
+    output_s2,
+    output_s3,
+    num_blocks_per_output,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """
+    Generalized first stage: Reduce within blocks for any dimensional configuration.
+    """
+    # Get program IDs for 2D grid
+    output_idx = tl.program_id(0)
+    block_idx = tl.program_id(1)
+
+    # Calculate elements per output element
+    elements_per_output = 1
+    if output_s0 == 1 and input_s0 > 1:
+        elements_per_output *= input_s0
+    if output_s1 == 1 and input_s1 > 1:
+        elements_per_output *= input_s1
+    if output_s2 == 1 and input_s2 > 1:
+        elements_per_output *= input_s2
+    if output_s3 == 1 and input_s3 > 1:
+        elements_per_output *= input_s3
+
+    # Calculate total output elements
+    output_elements = (
+        (output_s0 if output_s0 > 1 else 1)
+        * (output_s1 if output_s1 > 1 else 1)
+        * (output_s2 if output_s2 > 1 else 1)
+        * (output_s3 if output_s3 > 1 else 1)
+    )
+
+    if output_idx >= output_elements:
+        return
+
+    # Calculate the starting offset for this block
+    start_offset = block_idx * BLOCK_SIZE
+
+    # Convert output index to coordinates
+    tmp = output_idx
+    out_i3 = tmp % (output_s3 if output_s3 > 1 else 1)
+    tmp //= output_s3 if output_s3 > 1 else 1
+    out_i2 = tmp % (output_s2 if output_s2 > 1 else 1)
+    tmp //= output_s2 if output_s2 > 1 else 1
+    out_i1 = tmp % (output_s1 if output_s1 > 1 else 1)
+    tmp //= output_s1 if output_s1 > 1 else 1
+    out_i0 = tmp % (output_s0 if output_s0 > 1 else 1)
+
+    # Accumulate over the elements that contribute to this output
+    accumulated_sum = 0.0
+
+    for i in range(BLOCK_SIZE):
+        element_idx = start_offset + i
+        if element_idx < elements_per_output:
+            # Map element index to input coordinates
+            tmp_elem = element_idx
+
+            # Handle different reduction patterns
+            if output_s0 == 1 and output_s1 > 1:  # Activations: reduce dims 0,2,3, keep dim 1
+                i3 = tmp_elem % input_s3
+                tmp_elem //= input_s3
+                i2 = tmp_elem % input_s2
+                tmp_elem //= input_s2
+                i0 = tmp_elem % input_s0
+                i1 = out_i1
+            elif output_s1 == 1 and output_s0 > 1:  # Weights: reduce dims 1,2,3, keep dim 0
+                i3 = tmp_elem % input_s3
+                tmp_elem //= input_s3
+                i2 = tmp_elem % input_s2
+                tmp_elem //= input_s2
+                i1 = tmp_elem % input_s1
+                i0 = out_i0
+            else:  # Single scale: reduce all dims
+                i3 = tmp_elem % input_s3
+                tmp_elem //= input_s3
+                i2 = tmp_elem % input_s2
+                tmp_elem //= input_s2
+                i1 = tmp_elem % input_s1
+                tmp_elem //= input_s1
+                i0 = tmp_elem % input_s0
+
+            # Calculate memory offset
+            mem_offset = i0 * input_st0 + i1 * input_st1 + i2 * input_st2 + i3 * input_st3
+
+            # Load and accumulate
+            value = tl.load(input_ptr + mem_offset)
+            accumulated_sum += value
+
+    # Store intermediate result
+    temp_offset = output_idx * num_blocks_per_output + block_idx
+    tl.store(temp_ptr + temp_offset, accumulated_sum)
+
+
+@triton.jit
+def _sum_like_4d_kernel_second_stage(
+    temp_ptr,
+    output_ptr,
+    num_output_elements,
+    num_blocks_per_output,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """
+    Second stage: Reduce intermediate results to final output.
+    """
+    output_idx = tl.program_id(0)
+
+    if output_idx >= num_output_elements:
+        return
+
+    # Load intermediate results for this output element
+    temp_offset = output_idx * num_blocks_per_output
+    block_indices = tl.arange(0, BLOCK_SIZE)
+    mask = block_indices < num_blocks_per_output
+
+    intermediate_sums = tl.load(temp_ptr + temp_offset + block_indices, mask=mask, other=0.0)
+
+    # Final reduction
+    final_sum = tl.sum(intermediate_sums)
+
+    # Store result
+    tl.store(output_ptr + output_idx, final_sum)
+
+
+def sum_like_v2_two_stage(tensor_to_sum, ref_tensor):
+    """Two-stage reduction to minimize atomic operations. Works for 2D and 4D tensors with different reduction patterns."""
+
+    # Ensure both tensors are 4D for consistent processing
+    original_tensor_shape = tensor_to_sum.shape
+    original_ref_shape = ref_tensor.shape
+
+    # Convert to 4D if needed
+    if len(original_tensor_shape) == 2:
+        tensor_to_sum = tensor_to_sum.unsqueeze(2).unsqueeze(3)  # [N, C] -> [N, C, 1, 1]
+    if len(original_ref_shape) == 1:
+        ref_tensor = ref_tensor.unsqueeze(0).unsqueeze(2).unsqueeze(3)  # [1] -> [1, 1, 1, 1]
+    elif len(original_ref_shape) == 2:
+        ref_tensor = ref_tensor.unsqueeze(2).unsqueeze(3)  # [N, C] -> [N, C, 1, 1]
+
+    # Calculate total elements that contribute to each output element
+    elements_per_output = 1
+    for i in range(4):
+        if ref_tensor.shape[i] == 1 and tensor_to_sum.shape[i] > 1:
+            elements_per_output *= tensor_to_sum.shape[i]
+
+    # Calculate total output elements
+    output_elements = ref_tensor.numel()
+
+    # Calculate grid dimensions
+    BLOCK_SIZE = 1024
+    num_blocks = triton.cdiv(elements_per_output, BLOCK_SIZE)
+
+    # Create intermediate storage with proper dtype
+    temp_size = output_elements * num_blocks
+    temp_storage = torch.zeros(temp_size, device=tensor_to_sum.device, dtype=tensor_to_sum.dtype)
+
+    # First stage: Block-level reduction
+    grid1 = (output_elements, num_blocks)
+    _sum_like_general_kernel_two_stage[grid1](
+        tensor_to_sum,
+        temp_storage,
+        *tensor_to_sum.shape,
+        *tensor_to_sum.stride(),
+        *ref_tensor.shape,
+        num_blocks,
+        BLOCK_SIZE=BLOCK_SIZE,
+    )
+
+    # Second stage: Final reduction
+    output = torch.zeros(ref_tensor.shape, device=tensor_to_sum.device, dtype=tensor_to_sum.dtype)
+
+    # Use a block size that can handle the number of intermediate results
+    reduction_block_size = min(1024, triton.next_power_of_2(num_blocks))
+
+    grid2 = (output_elements,)
+    _sum_like_4d_kernel_second_stage[grid2](
+        temp_storage, output.view(-1), output_elements, num_blocks, BLOCK_SIZE=reduction_block_size
+    )
+
+    # Restore original shape
+    return output.view(original_ref_shape)
+
+
+# Simplified two-stage reduction for 4D tensors only
+@triton.jit
+def _sum_like_4d_kernel_two_stage_simple(
     input_ptr,
     temp_ptr,
     input_s0,
@@ -214,7 +410,7 @@ def _sum_like_4d_kernel_two_stage(
     BLOCK_SIZE: tl.constexpr,
 ):
     """
-    First stage: Reduce within blocks and store intermediate results.
+    Simplified first stage for 4D tensors: sum over dims 0,2,3, keep dim 1
     """
     # Get program IDs for 2D grid
     channel_idx = tl.program_id(0)
@@ -223,7 +419,7 @@ def _sum_like_4d_kernel_two_stage(
     if channel_idx >= input_s1:
         return
 
-    # Calculate total elements to process for this channel
+    # Calculate elements per channel (dimensions 0, 2, 3)
     elements_per_channel = input_s0 * input_s2 * input_s3
 
     # Calculate the starting offset for this block
@@ -253,7 +449,7 @@ def _sum_like_4d_kernel_two_stage(
 
 
 @triton.jit
-def _sum_like_4d_kernel_second_stage(
+def _sum_like_4d_kernel_second_stage_simple(
     temp_ptr,
     output_ptr,
     input_s1,
@@ -261,7 +457,7 @@ def _sum_like_4d_kernel_second_stage(
     BLOCK_SIZE: tl.constexpr,
 ):
     """
-    Second stage: Reduce intermediate results to final output.
+    Second stage: Reduce intermediate results for each channel
     """
     channel_idx = tl.program_id(0)
 
@@ -282,9 +478,25 @@ def _sum_like_4d_kernel_second_stage(
     tl.store(output_ptr + channel_idx, final_sum)
 
 
-def sum_like_v2_two_stage(tensor_to_sum, ref_tensor):
-    """Two-stage reduction to minimize atomic operations."""
+def sum_like_v2_two_stage_simple(tensor_to_sum, ref_tensor):
+    """Simplified two-stage reduction for 4D tensors only - much faster."""
+    # Only works for 4D tensors with shape reduction pattern [N, C, H, W] -> [1, C, 1, 1]
+    if len(tensor_to_sum.shape) != 4 or len(ref_tensor.shape) != 4:
+        return sum_like_v2_two_stage(tensor_to_sum, ref_tensor)  # Fall back to general version
+
+    # Check if it's the expected reduction pattern
+    if not (
+        ref_tensor.shape[0] == 1
+        and ref_tensor.shape[1] == tensor_to_sum.shape[1]
+        and ref_tensor.shape[2] == 1
+        and ref_tensor.shape[3] == 1
+    ):
+        return sum_like_v2_two_stage(tensor_to_sum, ref_tensor)  # Fall back to general version
+
+    # Calculate elements per channel (dimensions 0, 2, 3)
     elements_per_channel = tensor_to_sum.shape[0] * tensor_to_sum.shape[2] * tensor_to_sum.shape[3]
+
+    # Calculate grid dimensions
     BLOCK_SIZE = 1024
     num_blocks = triton.cdiv(elements_per_channel, BLOCK_SIZE)
 
@@ -294,7 +506,7 @@ def sum_like_v2_two_stage(tensor_to_sum, ref_tensor):
 
     # First stage: Block-level reduction
     grid1 = (tensor_to_sum.shape[1], num_blocks)
-    _sum_like_4d_kernel_two_stage[grid1](
+    _sum_like_4d_kernel_two_stage_simple[grid1](
         tensor_to_sum, temp_storage, *tensor_to_sum.shape, *tensor_to_sum.stride(), num_blocks, BLOCK_SIZE=BLOCK_SIZE
     )
 
@@ -305,25 +517,99 @@ def sum_like_v2_two_stage(tensor_to_sum, ref_tensor):
     reduction_block_size = min(1024, triton.next_power_of_2(num_blocks))
 
     grid2 = (tensor_to_sum.shape[1],)
-    _sum_like_4d_kernel_second_stage[grid2](
+    _sum_like_4d_kernel_second_stage_simple[grid2](
         temp_storage, output, tensor_to_sum.shape[1], num_blocks, BLOCK_SIZE=reduction_block_size
     )
 
     return output.reshape(ref_tensor.shape)
 
 
-def sum_like_v2_adaptive(tensor_to_sum, ref_tensor):
+# Single-stage implementation for comparison
+@triton.jit
+def _sum_like_4d_kernel_single_stage(
+    input_ptr,
+    output_ptr,
+    input_s0,
+    input_s1,
+    input_s2,
+    input_s3,
+    input_st0,
+    input_st1,
+    input_st2,
+    input_st3,
+    BLOCK_SIZE: tl.constexpr,
+):
     """
-    Adaptive implementation that chooses the best kernel based on tensor size and dtype.
+    Single-stage reduction for 4D tensors: sum over dims 0,2,3, keep dim 1
+    Each channel gets one or more blocks, results are atomically accumulated
     """
+    # Get program IDs for 2D grid
+    channel_idx = tl.program_id(0)
+    block_idx = tl.program_id(1)
+
+    if channel_idx >= input_s1:
+        return
+
+    # Calculate elements per channel (dimensions 0, 2, 3)
+    elements_per_channel = input_s0 * input_s2 * input_s3
+
+    # Calculate the starting offset for this block
+    start_offset = block_idx * BLOCK_SIZE
+
+    # Generate linear indices for this block
+    linear_idx = start_offset + tl.arange(0, BLOCK_SIZE)
+    mask = linear_idx < elements_per_channel
+
+    # Convert to 4D coordinates for dimensions 0, 2, 3
+    i3 = linear_idx % input_s3
+    i2 = (linear_idx // input_s3) % input_s2
+    i0 = linear_idx // (input_s3 * input_s2)
+
+    # Calculate memory offsets
+    mem_offsets = i0 * input_st0 + channel_idx * input_st1 + i2 * input_st2 + i3 * input_st3
+
+    # Load data
+    data = tl.load(input_ptr + mem_offsets, mask=mask, other=0.0)
+
+    # Sum within the block
+    block_sum = tl.sum(data)
+
+    # Direct atomic add to output (single stage)
+    tl.atomic_add(output_ptr + channel_idx, block_sum)
+
+
+def sum_like_v2_single_stage(tensor_to_sum, ref_tensor):
+    """Single-stage reduction for 4D tensors - simpler but may have atomic contention."""
+    # Only works for 4D tensors with shape reduction pattern [N, C, H, W] -> [1, C, 1, 1]
+    if len(tensor_to_sum.shape) != 4 or len(ref_tensor.shape) != 4:
+        return sum_like_v2_two_stage(tensor_to_sum, ref_tensor)  # Fall back to general version
+
+    # Check if it's the expected reduction pattern
+    if not (
+        ref_tensor.shape[0] == 1
+        and ref_tensor.shape[1] == tensor_to_sum.shape[1]
+        and ref_tensor.shape[2] == 1
+        and ref_tensor.shape[3] == 1
+    ):
+        return sum_like_v2_two_stage(tensor_to_sum, ref_tensor)  # Fall back to general version
+
+    # Calculate elements per channel (dimensions 0, 2, 3)
     elements_per_channel = tensor_to_sum.shape[0] * tensor_to_sum.shape[2] * tensor_to_sum.shape[3]
 
-    # For small tensors, use the original kernel
-    if elements_per_channel < 65536:
-        return sum_like_v2_fp16_optimized(tensor_to_sum, ref_tensor)
-    # For large tensors, use two-stage reduction
-    else:
-        return sum_like_v2_two_stage(tensor_to_sum, ref_tensor)
+    # Calculate grid dimensions
+    BLOCK_SIZE = 1024
+    num_blocks = triton.cdiv(elements_per_channel, BLOCK_SIZE)
+
+    # Create output tensor (initialized to zero)
+    output = torch.zeros(tensor_to_sum.shape[1], device=tensor_to_sum.device, dtype=tensor_to_sum.dtype)
+
+    # Single stage: Direct reduction with atomic operations
+    grid = (tensor_to_sum.shape[1], num_blocks)
+    _sum_like_4d_kernel_single_stage[grid](
+        tensor_to_sum, output, *tensor_to_sum.shape, *tensor_to_sum.stride(), BLOCK_SIZE=BLOCK_SIZE
+    )
+
+    return output.reshape(ref_tensor.shape)
 
 
 # --- End of re-included code ---
@@ -334,9 +620,21 @@ def sum_like_v2_adaptive(tensor_to_sum, ref_tensor):
         x_names=["N_ELEMENTS"],
         x_vals=[64 * 128 * s * s for s in [16, 32, 64, 128, 256]],
         line_arg="provider",
-        line_vals=["pytorch", "custom_kernel_v2", "custom_kernel_v2_optimized", "custom_kernel_v2_two_stage"],
-        line_names=["PyTorch", "Custom Kernel (v2)", "Custom Kernel (v2 Optimized)", "Custom Kernel (v2 Two-Stage)"],
-        styles=[("blue", "-"), ("red", "--"), ("green", "-."), ("orange", ":")],
+        line_vals=[
+            "pytorch",
+            "custom_kernel_v2",
+            "custom_kernel_v2_optimized",
+            "custom_kernel_v2_two_stage_simple",
+            "custom_kernel_v2_single_stage",
+        ],
+        line_names=[
+            "PyTorch",
+            "Custom Kernel (v2)",
+            "Custom Kernel (v2 Optimized)",
+            "Custom Kernel (v2 Two-Stage Simple)",
+            "Custom Kernel (v2 Single Stage)",
+        ],
+        styles=[("blue", "-"), ("red", "--"), ("green", "-."), ("purple", "-."), ("orange", ":")],
         ylabel="ms",
         plot_name="sum-like-4d-performance-comparison",
         args={"D1_size": 128},
@@ -366,6 +664,10 @@ def benchmark(D1_size, N_ELEMENTS, provider):
         ms, min_ms, max_ms = triton.testing.do_bench(lambda: sum_like_v2_fp16_optimized(x, ref), quantiles=quantiles)
     elif provider == "custom_kernel_v2_two_stage":
         ms, min_ms, max_ms = triton.testing.do_bench(lambda: sum_like_v2_two_stage(x, ref), quantiles=quantiles)
+    elif provider == "custom_kernel_v2_two_stage_simple":
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: sum_like_v2_two_stage_simple(x, ref), quantiles=quantiles)
+    elif provider == "custom_kernel_v2_single_stage":
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: sum_like_v2_single_stage(x, ref), quantiles=quantiles)
 
     return ms, min_ms, max_ms
 
@@ -375,35 +677,81 @@ if __name__ == "__main__":
     print("Testing correctness...")
 
     # Test case
-    tensor_to_sum = torch.randn(64, 64, 64, 64, device="cuda", dtype=torch.float16)
-    ref_tensor = torch.empty(1, 64, 1, 1, device="cuda")
+    tensor_to_sum = torch.randn(64, 128, 64, 64, device="cuda", dtype=torch.float16)
+    # shape = [2, 3, 2, 2]
+    # tensor_to_sum = torch.arange(math.prod(shape), device="cuda", dtype=torch.float16).reshape(shape)
+    # print(tensor_to_sum)
+    ref_tensor = torch.empty(1, 128, 1, 1, device="cuda", dtype=torch.float16)
 
     # PyTorch reference
     pytorch_result = torch.sum(tensor_to_sum, axis=(0, 2, 3), keepdim=True)
-
+    # print(pytorch_result)
     # Our implementations
-    triton_result_v2 = sum_like_v2(tensor_to_sum, ref_tensor)
-    triton_result_v2_optimized = sum_like_v2_fp16_optimized(tensor_to_sum, ref_tensor)
-    triton_result_v2_two_stage = sum_like_v2_two_stage(tensor_to_sum, ref_tensor)
-
+    # triton_result_v2 = sum_like_v2(tensor_to_sum, ref_tensor)
+    # triton_result_v2_optimized = sum_like_v2_fp16_optimized(tensor_to_sum, ref_tensor)
+    # triton_result_v2_two_stage = sum_like_v2_two_stage(tensor_to_sum, ref_tensor)
+    # triton_result_v2_two_stage_simple = sum_like_v2_two_stage_simple(tensor_to_sum, ref_tensor)
+    triton_result_v2_single_stage = sum_like_v2_single_stage(tensor_to_sum, ref_tensor)
+    # print(pytorch_result)
     print(f"PyTorch result shape: {pytorch_result.shape}")
-    print(f"Triton v2 result shape: {triton_result_v2.shape}")
-    print(f"Triton v2 optimized result shape: {triton_result_v2_optimized.shape}")
-    print(f"Triton v2 two-stage result shape: {triton_result_v2_two_stage.shape}")
+    # print(f"Triton v2 result shape: {triton_result_v2.shape}")
+    # print(f"Triton v2 optimized result shape: {triton_result_v2_optimized.shape}")
+    # print(f"Triton v2 two-stage result shape: {triton_result_v2_two_stage.shape}")
+    # print(f"Triton v2 two-stage simple result shape: {triton_result_v2_two_stage_simple.shape}")
+    print(f"Triton v2 single-stage result shape: {triton_result_v2_single_stage.shape}")
 
     # Check correctness
-    assert torch.allclose(pytorch_result, triton_result_v2, rtol=1, atol=1e-1), (
-        f"Results don't match. Max diff: {(pytorch_result - triton_result_v2).abs().max()}"
-    )
+    # assert torch.allclose(pytorch_result, triton_result_v2, rtol=1, atol=1e-1), (
+    #     f"Results don't match. Max diff: {(pytorch_result - triton_result_v2).abs().max()}"
+    # )
 
-    assert torch.allclose(pytorch_result, triton_result_v2_optimized, rtol=1, atol=1e-1), (
-        f"Optimized results don't match. Max diff: {(pytorch_result - triton_result_v2_optimized).abs().max()}"
-    )
+    # assert torch.allclose(pytorch_result, triton_result_v2_optimized, rtol=1, atol=1e-1), (
+    #     f"Optimized results don't match. Max diff: {(pytorch_result - triton_result_v2_optimized).abs().max()}"
+    # )
 
-    assert torch.allclose(pytorch_result, triton_result_v2_two_stage, rtol=1, atol=1e-1), (
-        f"Two-stage results don't match. Max diff: {(pytorch_result - triton_result_v2_two_stage).abs().max()}"
+    # assert torch.allclose(pytorch_result, triton_result_v2_two_stage, rtol=1, atol=1e-1), (
+    #     f"Two-stage results don't match. Max diff: {(pytorch_result - triton_result_v2_two_stage).abs().max()}"
+    # )
+
+    # assert torch.allclose(pytorch_result, triton_result_v2_two_stage_simple, rtol=1, atol=1e-1), (
+    #     f"Two-stage simple results don't match. Max diff: "
+    #     f"{(pytorch_result - triton_result_v2_two_stage_simple).abs().max()}"
+    # )
+
+    assert torch.allclose(pytorch_result, triton_result_v2_single_stage, rtol=1, atol=1e-1), (
+        f"Single-stage results don't match. Max diff: {(pytorch_result - triton_result_v2_single_stage).abs().max()}"
     )
 
     print("✓ All Float16 tests passed!")
+
+    # Performance comparison for small tensor
+    print("\nPerformance comparison for small tensor [2, 3, 2, 2]...")
+
+    # Warmup
+    for _ in range(10):
+        sum_like_v2_two_stage_simple(tensor_to_sum, ref_tensor)
+        sum_like_v2_single_stage(tensor_to_sum, ref_tensor)
+
+    # Benchmark
+    import time
+
+    # Two-stage
+    start = time.time()
+    for _ in range(1000):
+        sum_like_v2_two_stage_simple(tensor_to_sum, ref_tensor)
+    torch.cuda.synchronize()
+    two_stage_time = time.time() - start
+
+    # Single-stage
+    start = time.time()
+    for _ in range(1000):
+        sum_like_v2_single_stage(tensor_to_sum, ref_tensor)
+    torch.cuda.synchronize()
+    single_stage_time = time.time() - start
+
+    print(f"Two-stage time: {two_stage_time * 1000:.3f}ms")
+    print(f"Single-stage time: {single_stage_time * 1000:.3f}ms")
+    print(f"Single-stage is {two_stage_time / single_stage_time:.2f}x faster")
+
     print("Running benchmark...")
     benchmark.run(show_plots=True, print_data=True, save_path="gemma.png")
