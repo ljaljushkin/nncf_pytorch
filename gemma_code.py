@@ -177,14 +177,15 @@ def sum_like_v2_fp16_optimized(tensor_to_sum, ref_tensor):
 
     # Calculate grid dimensions for parallel processing
     elements_per_channel = tensor_to_sum.shape[0] * tensor_to_sum.shape[2] * tensor_to_sum.shape[3]
-
+    print("elements_per_channel=", elements_per_channel)
     # Use larger block size for float16 to reduce atomic contention
-    BLOCK_SIZE = 2048 if tensor_to_sum.dtype == torch.float16 else 1024
+    BLOCK_SIZE = 64 if tensor_to_sum.dtype == torch.float16 else 1024
     num_blocks = triton.cdiv(elements_per_channel, BLOCK_SIZE)
+    print("num_blocks=", num_blocks)
 
     # Use 2D grid: (channels, blocks_per_channel)
     grid = (tensor_to_sum.shape[1], num_blocks)
-
+    print("DTYPE=", tensor_to_sum.dtype)
     if tensor_to_sum.dtype == torch.float16:
         _sum_like_4d_kernel_fp16_optimized[grid](
             tensor_to_sum, output, *tensor_to_sum.shape, *tensor_to_sum.stride(), BLOCK_SIZE=BLOCK_SIZE

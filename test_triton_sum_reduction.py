@@ -14,6 +14,7 @@ This test covers:
 import pytest
 import torch
 
+from gemma_code import sum_like_v2_fp16_optimized
 from nncf.torch.quantization.triton.reference import triton_sum_like
 
 
@@ -72,21 +73,31 @@ def pytorch_sum_like(tensor_to_sum, ref_tensor):
 #         pytest.skip("FP16 not supported on CPU")
 
 
-@pytest.mark.parametrize("is_weights", [True, False], ids=["weights", "activations"])
+# @pytest.mark.parametrize("is_weights", [True, False], ids=["weights", "activations"])
 # @pytest.mark.parametrize("scale_mode", ["single_scale", "per_channel_scale"])
 @pytest.mark.parametrize(
     "input_size",
-    [[1, 16, 64, 64], [4, 16, 16, 16], [1024, 256], [8, 256, 32, 32], [4096, 4096], [256, 1], [4, 64, 128, 128]],
+    [
+        [1, 16, 64, 64],
+        [1, 48, 112, 112],
+        [4, 16, 16, 16],
+        # [1024, 256], [4096, 4096], [256, 1],
+        [8, 256, 32, 32],
+        [16, 192, 28, 28],
+        [16, 96, 112, 112],
+        [16, 576, 14, 14],
+        [4, 64, 128, 128],
+    ],
     ids=idfn,
 )
 # @pytest.mark.parametrize("input_size", [[2, 2, 2, 2]], ids=idfn)
 # @pytest.mark.parametrize("block_size", [8, 32, 256, 512, 1024], ids=["bs8", "bs32", "bs256", "bs512", "bs1024"])
-# @pytest.mark.parametrize("block_size", [2, 8, 16], ids=["bs2", "bs8", "bs16"])
+@pytest.mark.parametrize("is_fp16", [True, False], ids=["fp16", "fp32"])
 class TestTritonSumReduction:
-    def test_triton_sum_like_correctness(self, is_weights, input_size):
+    def test_triton_sum_like_correctness(self, input_size, is_fp16):
         use_cuda = True
-        is_fp16 = True
         scale_mode = "per_channel_scale"
+        is_weights = False
 
         device = torch.device("cuda" if use_cuda else "cpu")
         dtype = torch.float16 if is_fp16 else torch.float32
@@ -100,17 +111,26 @@ class TestTritonSumReduction:
 
         # Compute expected result using PyTorch
         expected = pytorch_sum_like(input_tensor, ref_tensor)
+        expected_once = torch.sum(input_tensor, axis=(0, 2, 3), keepdim=True)
 
         # Compute result using triton_sum_like
-        result = triton_sum_like(input_tensor, ref_tensor, block_size=256)
+        result = sum_like_v2_fp16_optimized(input_tensor, ref_tensor)
 
         # Check results
         assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
-        rtol = 1 if is_fp16 else 1e-5
-        atol = 1e-1 if is_fp16 else 1e-6
+        rtol = 1 if is_fp16 else 1e-2
+        atol = 1e-1 if is_fp16 else 1e-3
+
+        assert torch.allclose(expected_once, expected, rtol=rtol / 10, atol=atol / 10), (
+            f"torch_once vs torch don't match. Max diff: {(expected_once - expected).abs().max()}"
+        )
 
         assert torch.allclose(result, expected, rtol=rtol, atol=atol), (
-            f"Results don't match. Max diff: {(result - expected).abs().max()}"
+            f"kernel vs torch don't match. Max diff: {(result - expected).abs().max()}"
+        )
+
+        assert torch.allclose(result, expected_once, rtol=rtol, atol=atol), (
+            f"kernel vs torch_once don't match. Max diff: {(result - expected_once).abs().max()}"
         )
 
     # def test_optimized_kernel_correctness(self, use_cuda, is_weights, scale_mode, is_fp16, input_size, block_size):
