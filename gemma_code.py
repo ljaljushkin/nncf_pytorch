@@ -438,10 +438,10 @@ def _sum_like_4d_kernel_two_stage_simple(
     mem_offsets = i0 * input_st0 + channel_idx * input_st1 + i2 * input_st2 + i3 * input_st3
 
     # Load data
-    data = tl.load(input_ptr + mem_offsets, mask=mask, other=0.0)
+    data = tl.load(input_ptr + mem_offsets, mask=mask, other=0.0).to(tl.float32)
 
     # Sum within the block
-    block_sum = tl.sum(data)
+    block_sum = tl.sum(data).to(tl.float16)
 
     # Store intermediate result
     temp_offset = channel_idx * num_blocks_per_channel + block_idx
@@ -612,6 +612,193 @@ def sum_like_v2_single_stage(tensor_to_sum, ref_tensor):
     return output.reshape(ref_tensor.shape)
 
 
+# Single-stage kernel with intentional data races for performance measurement
+@triton.jit
+def _sum_like_4d_kernel_single_stage_race(
+    input_ptr,
+    output_ptr,
+    input_s0,
+    input_s1,
+    input_s2,
+    input_s3,
+    input_st0,
+    input_st1,
+    input_st2,
+    input_st3,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """
+    Single-stage kernel with intentional data races.
+    WARNING: This produces incorrect results but measures raw performance.
+    """
+    # Get program IDs for 2D grid
+    channel_idx = tl.program_id(0)
+    block_idx = tl.program_id(1)
+
+    if channel_idx >= input_s1:
+        return
+
+    # Calculate elements per channel (dimensions 0, 2, 3)
+    elements_per_channel = input_s0 * input_s2 * input_s3
+
+    # Calculate the starting offset for this block
+    start_offset = block_idx * BLOCK_SIZE
+
+    # Generate linear indices for this block
+    linear_idx = start_offset + tl.arange(0, BLOCK_SIZE)
+    mask = linear_idx < elements_per_channel
+
+    # Convert to 4D coordinates for dimensions 0, 2, 3
+    i3 = linear_idx % input_s3
+    i2 = (linear_idx // input_s3) % input_s2
+    i0 = linear_idx // (input_s3 * input_s2)
+
+    # Calculate memory offsets
+    mem_offsets = i0 * input_st0 + channel_idx * input_st1 + i2 * input_st2 + i3 * input_st3
+
+    # Load data
+    data = tl.load(input_ptr + mem_offsets, mask=mask, other=0.0)
+
+    # Sum within the block
+    block_sum = tl.sum(data)
+
+    # INTENTIONAL DATA RACE: Direct write without atomic operation
+    # This will cause incorrect results but shows raw performance
+    if block_idx == 0:
+        # Only first block writes to avoid total chaos
+        tl.store(output_ptr + channel_idx, block_sum)
+    else:
+        # Other blocks add their contribution (data race!)
+        current_value = tl.load(output_ptr + channel_idx)
+        tl.store(output_ptr + channel_idx, current_value + block_sum)
+
+
+def sum_like_v2_single_stage_race(tensor_to_sum, ref_tensor):
+    """
+    Single-stage reduction with intentional data races for performance measurement.
+    WARNING: Produces incorrect results but measures raw kernel overhead.
+    """
+    # Only works for 4D tensors with shape reduction pattern [N, C, H, W] -> [1, C, 1, 1]
+    if len(tensor_to_sum.shape) != 4 or len(ref_tensor.shape) != 4:
+        return sum_like_v2_two_stage(tensor_to_sum, ref_tensor)  # Fall back to general version
+
+    # Check if it's the expected reduction pattern
+    if not (
+        ref_tensor.shape[0] == 1
+        and ref_tensor.shape[1] == tensor_to_sum.shape[1]
+        and ref_tensor.shape[2] == 1
+        and ref_tensor.shape[3] == 1
+    ):
+        return sum_like_v2_two_stage(tensor_to_sum, ref_tensor)  # Fall back to general version
+
+    # Calculate elements per channel (dimensions 0, 2, 3)
+    elements_per_channel = tensor_to_sum.shape[0] * tensor_to_sum.shape[2] * tensor_to_sum.shape[3]
+
+    # Calculate grid dimensions
+    BLOCK_SIZE = 1024
+    num_blocks = triton.cdiv(elements_per_channel, BLOCK_SIZE)
+
+    # Create output tensor
+    output = torch.zeros(tensor_to_sum.shape[1], device=tensor_to_sum.device, dtype=tensor_to_sum.dtype)
+
+    # Single stage: Direct reduction with data races
+    grid = (tensor_to_sum.shape[1], num_blocks)
+    _sum_like_4d_kernel_single_stage_race[grid](
+        tensor_to_sum, output, *tensor_to_sum.shape, *tensor_to_sum.stride(), BLOCK_SIZE=BLOCK_SIZE
+    )
+
+    return output.reshape(ref_tensor.shape)
+
+
+# Single-stage kernel with proper atomic operations (for correctness comparison)
+@triton.jit
+def _sum_like_4d_kernel_single_stage_atomic(
+    input_ptr,
+    output_ptr,
+    input_s0,
+    input_s1,
+    input_s2,
+    input_s3,
+    input_st0,
+    input_st1,
+    input_st2,
+    input_st3,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """
+    Single-stage kernel with atomic operations for correctness.
+    """
+    # Get program IDs for 2D grid
+    channel_idx = tl.program_id(0)
+    block_idx = tl.program_id(1)
+
+    if channel_idx >= input_s1:
+        return
+
+    # Calculate elements per channel (dimensions 0, 2, 3)
+    elements_per_channel = input_s0 * input_s2 * input_s3
+
+    # Calculate the starting offset for this block
+    start_offset = block_idx * BLOCK_SIZE
+
+    # Generate linear indices for this block
+    linear_idx = start_offset + tl.arange(0, BLOCK_SIZE)
+    mask = linear_idx < elements_per_channel
+
+    # Convert to 4D coordinates for dimensions 0, 2, 3
+    i3 = linear_idx % input_s3
+    i2 = (linear_idx // input_s3) % input_s2
+    i0 = linear_idx // (input_s3 * input_s2)
+
+    # Calculate memory offsets
+    mem_offsets = i0 * input_st0 + channel_idx * input_st1 + i2 * input_st2 + i3 * input_st3
+
+    # Load data
+    data = tl.load(input_ptr + mem_offsets, mask=mask, other=0.0)
+
+    # Sum within the block
+    block_sum = tl.sum(data)
+
+    # Atomic add for correctness
+    tl.atomic_add(output_ptr + channel_idx, block_sum)
+
+
+def sum_like_v2_single_stage_atomic(tensor_to_sum, ref_tensor):
+    """
+    Single-stage reduction with atomic operations for correctness.
+    """
+    # Only works for 4D tensors with shape reduction pattern [N, C, H, W] -> [1, C, 1, 1]
+    if len(tensor_to_sum.shape) != 4 or len(ref_tensor.shape) != 4:
+        return sum_like_v2_two_stage(tensor_to_sum, ref_tensor)  # Fall back to general version
+
+    # Check if it's the expected reduction pattern
+    if not (
+        ref_tensor.shape[0] == 1
+        and ref_tensor.shape[1] == tensor_to_sum.shape[1]
+        and ref_tensor.shape[2] == 1
+        and ref_tensor.shape[3] == 1
+    ):
+        return sum_like_v2_two_stage(tensor_to_sum, ref_tensor)  # Fall back to general version
+
+    # Calculate elements per channel (dimensions 0, 2, 3)
+    elements_per_channel = tensor_to_sum.shape[0] * tensor_to_sum.shape[2] * tensor_to_sum.shape[3]
+
+    # Calculate grid dimensions
+    BLOCK_SIZE = 1024
+    num_blocks = triton.cdiv(elements_per_channel, BLOCK_SIZE)
+
+    # Create output tensor
+    output = torch.zeros(tensor_to_sum.shape[1], device=tensor_to_sum.device, dtype=tensor_to_sum.dtype)
+
+    # Single stage: Direct reduction with atomic operations
+    grid = (tensor_to_sum.shape[1], num_blocks)
+    _sum_like_4d_kernel_single_stage_atomic[grid](
+        tensor_to_sum, output, *tensor_to_sum.shape, *tensor_to_sum.stride(), BLOCK_SIZE=BLOCK_SIZE
+    )
+
+    return output.reshape(ref_tensor.shape)
+
+
 # --- End of re-included code ---
 
 
@@ -626,6 +813,8 @@ def sum_like_v2_single_stage(tensor_to_sum, ref_tensor):
             "custom_kernel_v2_optimized",
             "custom_kernel_v2_two_stage_simple",
             "custom_kernel_v2_single_stage",
+            "custom_kernel_v2_single_stage_race",
+            "custom_kernel_v2_single_stage_atomic",
         ],
         line_names=[
             "PyTorch",
@@ -633,8 +822,18 @@ def sum_like_v2_single_stage(tensor_to_sum, ref_tensor):
             "Custom Kernel (v2 Optimized)",
             "Custom Kernel (v2 Two-Stage Simple)",
             "Custom Kernel (v2 Single Stage)",
+            "Custom Kernel (v2 Single Stage Race)",
+            "Custom Kernel (v2 Single Stage Atomic)",
         ],
-        styles=[("blue", "-"), ("red", "--"), ("green", "-."), ("purple", "-."), ("orange", ":")],
+        styles=[
+            ("blue", "-"),
+            ("red", "--"),
+            ("green", "-."),
+            ("purple", "-."),
+            ("orange", ":"),
+            ("brown", ":"),
+            ("pink", ":"),
+        ],
         ylabel="ms",
         plot_name="sum-like-4d-performance-comparison",
         args={"D1_size": 128},
@@ -668,6 +867,12 @@ def benchmark(D1_size, N_ELEMENTS, provider):
         ms, min_ms, max_ms = triton.testing.do_bench(lambda: sum_like_v2_two_stage_simple(x, ref), quantiles=quantiles)
     elif provider == "custom_kernel_v2_single_stage":
         ms, min_ms, max_ms = triton.testing.do_bench(lambda: sum_like_v2_single_stage(x, ref), quantiles=quantiles)
+    elif provider == "custom_kernel_v2_single_stage_race":
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: sum_like_v2_single_stage_race(x, ref), quantiles=quantiles)
+    elif provider == "custom_kernel_v2_single_stage_atomic":
+        ms, min_ms, max_ms = triton.testing.do_bench(
+            lambda: sum_like_v2_single_stage_atomic(x, ref), quantiles=quantiles
+        )
 
     return ms, min_ms, max_ms
 
@@ -677,81 +882,150 @@ if __name__ == "__main__":
     print("Testing correctness...")
 
     # Test case
-    tensor_to_sum = torch.randn(64, 128, 64, 64, device="cuda", dtype=torch.float16)
-    # shape = [2, 3, 2, 2]
+    shape = [4, 16, 64, 64]
+    tensor_to_sum = torch.randn(*shape, device="cuda", dtype=torch.float16)
     # tensor_to_sum = torch.arange(math.prod(shape), device="cuda", dtype=torch.float16).reshape(shape)
-    # print(tensor_to_sum)
-    ref_tensor = torch.empty(1, 128, 1, 1, device="cuda", dtype=torch.float16)
+    print("Input tensor:")
+    print(tensor_to_sum[0, 0, 0, :5])
+    ref_tensor = torch.empty(1, 16, 1, 1, device="cuda", dtype=torch.float16)
 
     # PyTorch reference
     pytorch_result = torch.sum(tensor_to_sum, axis=(0, 2, 3), keepdim=True)
-    # print(pytorch_result)
-    # Our implementations
-    # triton_result_v2 = sum_like_v2(tensor_to_sum, ref_tensor)
-    # triton_result_v2_optimized = sum_like_v2_fp16_optimized(tensor_to_sum, ref_tensor)
-    # triton_result_v2_two_stage = sum_like_v2_two_stage(tensor_to_sum, ref_tensor)
-    # triton_result_v2_two_stage_simple = sum_like_v2_two_stage_simple(tensor_to_sum, ref_tensor)
-    triton_result_v2_single_stage = sum_like_v2_single_stage(tensor_to_sum, ref_tensor)
-    # print(pytorch_result)
-    print(f"PyTorch result shape: {pytorch_result.shape}")
-    # print(f"Triton v2 result shape: {triton_result_v2.shape}")
-    # print(f"Triton v2 optimized result shape: {triton_result_v2_optimized.shape}")
-    # print(f"Triton v2 two-stage result shape: {triton_result_v2_two_stage.shape}")
-    # print(f"Triton v2 two-stage simple result shape: {triton_result_v2_two_stage_simple.shape}")
-    print(f"Triton v2 single-stage result shape: {triton_result_v2_single_stage.shape}")
+    print("PyTorch result:")
+    print(pytorch_result)
+
+    # Test all implementations
+    triton_result_two_stage = sum_like_v2_two_stage_simple(tensor_to_sum, ref_tensor)
+    triton_result_atomic = sum_like_v2_single_stage_atomic(tensor_to_sum, ref_tensor)
+    triton_result_race = sum_like_v2_single_stage_race(tensor_to_sum, ref_tensor)
+
+    print("Two-stage result:", triton_result_two_stage.flatten())
+    print("Atomic result:", triton_result_atomic.flatten())
+    print("Race result (may be incorrect):", triton_result_race.flatten())
 
     # Check correctness
-    # assert torch.allclose(pytorch_result, triton_result_v2, rtol=1, atol=1e-1), (
-    #     f"Results don't match. Max diff: {(pytorch_result - triton_result_v2).abs().max()}"
-    # )
-
-    # assert torch.allclose(pytorch_result, triton_result_v2_optimized, rtol=1, atol=1e-1), (
-    #     f"Optimized results don't match. Max diff: {(pytorch_result - triton_result_v2_optimized).abs().max()}"
-    # )
-
-    # assert torch.allclose(pytorch_result, triton_result_v2_two_stage, rtol=1, atol=1e-1), (
-    #     f"Two-stage results don't match. Max diff: {(pytorch_result - triton_result_v2_two_stage).abs().max()}"
-    # )
-
-    # assert torch.allclose(pytorch_result, triton_result_v2_two_stage_simple, rtol=1, atol=1e-1), (
-    #     f"Two-stage simple results don't match. Max diff: "
-    #     f"{(pytorch_result - triton_result_v2_two_stage_simple).abs().max()}"
-    # )
-
-    assert torch.allclose(pytorch_result, triton_result_v2_single_stage, rtol=1, atol=1e-1), (
-        f"Single-stage results don't match. Max diff: {(pytorch_result - triton_result_v2_single_stage).abs().max()}"
+    assert torch.allclose(pytorch_result, triton_result_two_stage, rtol=1, atol=1e-1), (
+        f"Two-stage results don't match. Max diff: {(pytorch_result - triton_result_two_stage).abs().max()}"
     )
 
-    print("✓ All Float16 tests passed!")
+    assert torch.allclose(pytorch_result, triton_result_atomic, rtol=1, atol=1e-1), (
+        f"Atomic results don't match. Max diff: {(pytorch_result - triton_result_atomic).abs().max()}"
+    )
 
-    # Performance comparison for small tensor
-    print("\nPerformance comparison for small tensor [2, 3, 2, 2]...")
+    print("✓ Correctness tests passed!")
 
-    # Warmup
-    for _ in range(10):
-        sum_like_v2_two_stage_simple(tensor_to_sum, ref_tensor)
-        sum_like_v2_single_stage(tensor_to_sum, ref_tensor)
+    # Performance comparison
+    print("\nPerformance comparison:")
+    print("=" * 50)
 
-    # Benchmark
+    # Test with larger tensor for better performance measurement
+    large_shape = [128, 64, 256, 256]
+    large_tensor = torch.randn(large_shape, device="cuda", dtype=torch.float16)
+    large_ref = torch.empty(1, 64, 1, 1, device="cuda", dtype=torch.float16)
+
     import time
 
-    # Two-stage
-    start = time.time()
-    for _ in range(1000):
-        sum_like_v2_two_stage_simple(tensor_to_sum, ref_tensor)
-    torch.cuda.synchronize()
-    two_stage_time = time.time() - start
+    # # Warmup
+    # for _ in range(10):
+    #     _ = sum_like_v2_two_stage_simple(large_tensor, large_ref)
+    #     _ = sum_like_v2_single_stage_atomic(large_tensor, large_ref)
+    #     _ = sum_like_v2_single_stage_race(large_tensor, large_ref)
 
-    # Single-stage
-    start = time.time()
-    for _ in range(1000):
-        sum_like_v2_single_stage(tensor_to_sum, ref_tensor)
-    torch.cuda.synchronize()
-    single_stage_time = time.time() - start
+    # Benchmark
+    def benchmark_func(func, tensor, ref, name):
+        torch.cuda.synchronize()
+        start = time.time()
+        for _ in range(100):
+            result = func(tensor, ref)
+        torch.cuda.synchronize()
+        end = time.time()
+        avg_time = (end - start) / 100 * 1000  # Convert to ms
+        print(f"{name}: {avg_time:.4f}ms")
+        return result
 
-    print(f"Two-stage time: {two_stage_time * 1000:.3f}ms")
-    print(f"Single-stage time: {single_stage_time * 1000:.3f}ms")
-    print(f"Single-stage is {two_stage_time / single_stage_time:.2f}x faster")
+    print(f"Tensor shape: {large_shape}")
+    print(f"Elements per channel: {large_shape[0] * large_shape[2] * large_shape[3]}")
+    print(f"Blocks per channel: {triton.cdiv(large_shape[0] * large_shape[2] * large_shape[3], 1024)}")
 
-    print("Running benchmark...")
-    benchmark.run(show_plots=True, print_data=True, save_path="gemma.png")
+    two_stage_result = benchmark_func(sum_like_v2_two_stage_simple, large_tensor, large_ref, "Two-stage")
+    atomic_result = benchmark_func(sum_like_v2_single_stage_atomic, large_tensor, large_ref, "Single-stage atomic")
+    race_result = benchmark_func(sum_like_v2_single_stage_race, large_tensor, large_ref, "Single-stage race")
+    optimized_result = benchmark_func(sum_like_v2_fp16_optimized, large_tensor, large_ref, "Optimized for fp16")
+    pytorch_result = torch.sum(large_tensor, axis=(0, 2, 3), keepdim=True)
+
+    # Check if results match (race version will likely be wrong)
+    print(f"\nResults match two-stage:")
+    print(f"Atomic vs Two-stage: {torch.allclose(two_stage_result, atomic_result, rtol=1e-2, atol=1e-2)}")
+    print(f"Race vs Two-stage: {torch.allclose(two_stage_result, race_result, rtol=1e-2, atol=1e-2)}")
+    print(f"PyTorch vs Two-stage: {torch.allclose(pytorch_result, two_stage_result, rtol=1e-2, atol=1e-2)}")
+    print(f"PyTorch vs Optimized: {torch.allclose(pytorch_result, optimized_result, rtol=1e-2, atol=1e-2)}")
+
+    # Show max differences
+    print(f"\nMax differences:")
+    print(f"Atomic vs Two-stage: {(two_stage_result - atomic_result).abs().max()}")
+    print(f"Race vs Two-stage: {(two_stage_result - race_result).abs().max()}")
+    print(f"PyTorch vs Two-stage: {(pytorch_result - two_stage_result).abs().max()}")
+    print(f"PyTorch vs Optimized: {(pytorch_result - optimized_result).abs().max()}")
+
+    # Small tensor test to see when single-stage is better
+    print("\nSmall tensor test:")
+    print("=" * 50)
+    small_tensor = tensor_to_sum
+    small_ref = ref_tensor
+
+    print(f"Small tensor shape: {small_tensor.shape}")
+    print(f"Elements per channel: {small_tensor.shape[0] * small_tensor.shape[2] * small_tensor.shape[3]}")
+    print(
+        f"Blocks per channel: {triton.cdiv(small_tensor.shape[0] * small_tensor.shape[2] * small_tensor.shape[3], 1024)}"
+    )
+
+    # benchmark_func(sum_like_v2_two_stage_simple, small_tensor, small_ref, "Two-stage")
+    # benchmark_func(sum_like_v2_single_stage_atomic, small_tensor, small_ref, "Single-stage atomic")
+    # benchmark_func(sum_like_v2_single_stage_race, small_tensor, small_ref, "Single-stage race")
+    # for _ in range(10):
+    #     sum_like_v2_two_stage_simple(tensor_to_sum, ref_tensor)
+    #     sum_like_v2_single_stage(tensor_to_sum, ref_tensor)
+    #     sum_like_v2_single_stage_race(tensor_to_sum, ref_tensor)
+    #     sum_like_v2_single_stage_atomic(tensor_to_sum, ref_tensor)
+
+    # Benchmark
+    # import time
+
+    # # Two-stage
+    # start = time.time()
+    # for _ in range(1000):
+    #     sum_like_v2_two_stage_simple(tensor_to_sum, ref_tensor)
+    # torch.cuda.synchronize()
+    # two_stage_time = time.time() - start
+
+    # # Single-stage
+    # start = time.time()
+    # for _ in range(1000):
+    #     sum_like_v2_single_stage(tensor_to_sum, ref_tensor)
+    # torch.cuda.synchronize()
+    # single_stage_time = time.time() - start
+
+    # # Single-stage with race
+    # start = time.time()
+    # for _ in range(1000):
+    #     sum_like_v2_single_stage_race(tensor_to_sum, ref_tensor)
+    # torch.cuda.synchronize()
+    # single_stage_race_time = time.time() - start
+
+    # # Single-stage with atomic
+    # start = time.time()
+    # for _ in range(1000):
+    #     sum_like_v2_single_stage_atomic(tensor_to_sum, ref_tensor)
+    # torch.cuda.synchronize()
+    # single_stage_atomic_time = time.time() - start
+
+    # print(f"Two-stage time: {two_stage_time * 1000:.3f}ms")
+    # print(f"Single-stage time: {single_stage_time * 1000:.3f}ms")
+    # print(f"Single-stage with race time: {single_stage_race_time * 1000:.3f}ms")
+    # print(f"Single-stage with atomic time: {single_stage_atomic_time * 1000:.3f}ms")
+    # print(f"Single-stage is {two_stage_time / single_stage_time:.2f}x faster")
+    # print(f"Single-stage with race is {two_stage_time / single_stage_race_time:.2f}x faster")
+    # print(f"Single-stage with atomic is {two_stage_time / single_stage_atomic_time:.2f}x faster")
+
+    # print("Running benchmark...")
+    # # benchmark.run(show_plots=True, print_data=True, save_path="gemma.png")
