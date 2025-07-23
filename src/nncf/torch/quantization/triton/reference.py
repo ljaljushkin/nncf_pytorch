@@ -538,10 +538,27 @@ def backward(
         and input_range.shape[0] == 1
         and input_range.shape[1] == input_.shape[1]
     ):
-        use_2d_grid = True
-        is_activation = True
         scale_count = input_.shape[1]  # Number of channels
         elements_per_scale = input_.numel() // scale_count
+
+        # Performance optimization: disable 2D kernel for large tensors with poor memory access patterns
+        # For per-activation-channel with large channel counts and small batch sizes,
+        # the memory stride becomes too large (e.g., [2048, 128256] has stride=128256=513KB)
+        # This causes severe cache misses and makes 2D kernel 7x slower than 1D kernel
+        total_elements = input_.numel()
+        memory_stride = input_.shape[1] * 4  # stride in bytes (float32)
+        cache_line_size = 128  # typical L1 cache line size in bytes
+
+        # Disable 2D kernel when:
+        # 1. Large channel count (> 8192) with poor cache utilization
+        # 2. Memory stride > 64 cache lines (very poor locality)
+        # 3. Total elements > 16M (large tensor where 1D kernel excels)
+        if (scale_count > 8192 and memory_stride > 64 * cache_line_size) or total_elements > 16 * 1024 * 1024:
+            use_2d_grid = False
+            # Force fallback to 1D kernel which provides much better performance
+        else:
+            use_2d_grid = True
+            is_activation = True
 
     with torch.cuda.device(input_.device):
         if use_2d_grid:
