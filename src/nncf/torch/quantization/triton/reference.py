@@ -325,11 +325,7 @@ def backward(
     input_range_meta = get_4d_tensor_meta(input_range)
 
     with torch.cuda.device(input_.device):
-        grid = lambda meta: (
-            triton.cdiv(input_.numel(), meta["BLOCK_SIZE"])
-            * triton.cdiv(input_low.numel(), meta["BLOCK_SIZE"])
-            * triton.cdiv(input_range.numel(), meta["BLOCK_SIZE"]),
-        )
+        grid = lambda meta: (triton.cdiv(input_.numel(), meta["BLOCK_SIZE"]),)
 
         backward_kernel[grid](
             grad_output,
