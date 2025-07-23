@@ -84,8 +84,8 @@ TEST_GRANULARITY: list[GranularityType] = [
     GranularityType.PER_CHANNEL
 ]
 TEST_SYMMETRIC: list[bool] = [
-    True,
-    # False
+    # True,
+    False
 ]
 
 TEST_DEVICES: list[torch.device] = [
@@ -107,7 +107,8 @@ TEST_BATCHES: list[BatchDescriptor] = [
 ]
 TEST_DTYPES: list[torch.dtype] = [
     # torch.float,
-    torch.half
+    # torch.half,
+    torch.bfloat16
 ]
 TEST_EXEC_TYPES: list[ExecutionType] = [
     ExecutionType.REGULAR,
@@ -115,8 +116,8 @@ TEST_EXEC_TYPES: list[ExecutionType] = [
     # ExecutionType.DATA_PARALLEL,
 ]
 TEST_NARROW_RANGE: list[bool] = [
-    # False,
-    True
+    False,
+    # True
 ]
 TEST_TIMING_MODE: list[TimingMode] = [
     # TimingMode.WALL,
@@ -247,7 +248,10 @@ if __name__ == "__main__":
             run_data = call_fn(module, input_size, param_struct.device, num_runs, dtype=param_struct.dtype)
 
         runtime = next(iter(run_data.values()))
-        benchmark_data.append({**param_struct.to_dict(), "time_ms": runtime})
+        # benchmark_data.append({**param_struct.to_dict(), "time_ms": runtime})
+        d = param_struct.to_dict()
+        d.update(run_data)
+        benchmark_data.append({**d, "time_ms": runtime})
 
         df = pd.DataFrame(benchmark_data)
 

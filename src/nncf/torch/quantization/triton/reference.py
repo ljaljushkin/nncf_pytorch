@@ -227,34 +227,42 @@ def backward_kernel(
         tl.float32
     )
 
-    mask_hi = input_ > (input_low + input_range)
+    # Calculate masks for input bounds
+    input_high = input_low + input_range
+    mask_hi = input_ > input_high
     mask_hi = mask_hi.to(tl.float32)
     mask_lo = input_ < input_low
     mask_lo = mask_lo.to(tl.float32)
-
     mask_in = 1 - mask_hi - mask_lo
 
-    scale = (levels - 1) / input_range
-    output = tl.clamp(input_, min=input_low, max=input_low + input_range)
-    zero_point = libdevice.nearbyint(-input_low * scale)
-    output -= input_low
-    output *= scale
-    output -= zero_point
-    output = libdevice.nearbyint(output)
-    output = output / scale
+    # Calculate gradients
+    grad_input = grad_output * mask_in
+    grad_low = grad_output * (mask_hi + mask_lo)
 
-    # Signed range calculation
-    input_range_above_zero = input_range > 0
-    input_range_below_zero = input_range < 0
-    range_sign = input_range_above_zero - input_range_below_zero
-    # Reciprocal calculation
-    reciprocal = 1 / (input_range * range_sign)
+    # For grad_range, we need to compute the error term
+    # Only compute forward pass components needed for error calculation
+    scale = (levels - 1) / input_range
+
+    # Clamp and quantize to get the output
+    clamped_input = tl.clamp(input_, min=input_low, max=input_high)
+    zero_point = libdevice.nearbyint(-input_low * scale)
+    quantized = clamped_input - input_low
+    quantized *= scale
+    quantized -= zero_point
+    quantized = libdevice.nearbyint(quantized)
+    output = quantized / scale
+
+    # Calculate range_sign more efficiently
+    range_sign = tl.where(input_range > 0, 1.0, tl.where(input_range < 0, -1.0, 0.0))
+
+    # Safe reciprocal calculation with epsilon for numerical stability
+    eps = 1e-8
+    safe_range = tl.where(tl.abs(input_range) < eps, eps, input_range)
+    reciprocal = 1.0 / (safe_range * range_sign)
+
+    # Error calculation
     err = (output - input_) * reciprocal
     grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
-
-    grad_input = grad_output * mask_in
-
-    grad_low = grad_output * (mask_hi + mask_lo)
 
     tl.store(grad_input_ptr + offsets, grad_input, mask=offsets < input__elements)
     tl.store(grad_low_ptr + offsets, grad_low, mask=offsets < input__elements)

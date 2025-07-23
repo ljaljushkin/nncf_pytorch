@@ -28,6 +28,7 @@ def warmup(layer, input_, runs, forward_only=False):
 
 def run_wall(layer, input_size_, device, runs, is_print=True, dtype=torch.float) -> dict[str, float]:
     input_ = torch.randn(input_size_, device=torch.device(device), dtype=dtype)
+    input_.requires_grad_(True)
 
     # Force CUDA initialization & warm up
     warmup(layer, input_, 100)
@@ -51,14 +52,15 @@ def run_wall(layer, input_size_, device, runs, is_print=True, dtype=torch.float)
 
 def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torch.float) -> dict[str, float]:
     input_ = torch.randn(input_size_, device=torch.device(device), dtype=dtype)
+    input_.requires_grad_(True)
 
     # Force CUDA initialization & warm up
     warmup(layer, input_, 100, forward_only)
 
     forward_min = math.inf
-    forward_time = 0
+    forward_time, forward_mb = 0, 0
     backward_min = math.inf
-    backward_time = 0
+    backward_time, backward_mb = 0, 0
     for _ in range(runs):
         layer.zero_grad()
 
@@ -70,6 +72,9 @@ def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torc
         forward_min = min(forward_min, elapsed)
         forward_time += elapsed
 
+        forward_mb += torch.cuda.max_memory_allocated() / (1024**3)
+        torch.cuda.reset_max_memory_allocated()
+
         if not forward_only:
             torch.cuda.synchronize()
             start = time.time()
@@ -78,23 +83,28 @@ def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torc
             elapsed = time.time() - start
             backward_min = min(backward_min, elapsed)
             backward_time += elapsed
+            backward_mb += torch.cuda.max_memory_allocated() / (1024**3)
+            torch.cuda.reset_max_memory_allocated()
 
     ctime, scale = list(TIME_SCALES.items())[0]
     forward_min *= scale
     backward_min *= scale
     forward_average = forward_time / runs * scale
     backward_average = backward_time / runs * scale
-
+    forward_mb_avg = forward_mb / runs
+    backward_mb_avg = backward_mb / runs
     print(
         f"Forward: min {forward_min:.3f}{ctime} / avg {forward_average:.3f}{ctime} |"
         f" Backward: min {backward_min:.3f}{ctime} / avg {backward_average:.3f}{ctime}"
     )
 
     return {
-        "forward_min": forward_min,
+        # "forward_min": forward_min,
         "forward_avg": forward_average,
-        "backward_min": backward_min,
+        # "backward_min": backward_min,
         "backward_avg": backward_average,
+        "forward_mb_avg": forward_mb_avg,
+        "backward_mb_avg": backward_mb_avg,
     }
 
 
