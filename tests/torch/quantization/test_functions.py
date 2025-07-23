@@ -605,9 +605,8 @@ class BaseParametrized:
 @pytest.mark.parametrize(
     "input_size",
     [
-        # [1, 16, 64, 64],
+        [1, 16, 64, 64],
         [64, 16 * 64],
-        # [2048, 128256]
     ],
     ids=idfn,
 )
