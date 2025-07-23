@@ -16,38 +16,77 @@ from torch._inductor.runtime.triton_helpers import libdevice
 
 from nncf.torch.utils import sum_like
 
+# def get_optimal_grid_for_per_channel(scale_count: int, elements_per_scale: int, block_size: int) -> tuple[int, int]:
+#     """
+#     Calculate optimal 2D grid size for per-channel quantization based on empirical performance.
 
-def get_optimal_grid_for_per_channel(scale_count: int, elements_per_scale: int, block_size: int) -> tuple[int, int]:
+#     :param scale_count: Number of channels/scales
+#     :param elements_per_scale: Number of elements per channel
+#     :param block_size: Block size from autotune
+#     :return: Tuple of (grid_x, grid_y) optimized for performance
+#     """
+#     grid_x = scale_count
+
+#     # Performance-based heuristics:
+#     # 1. For large elements_per_scale, prefer single block per channel when possible
+#     # 2. Use multiple blocks only when necessary or when it provides clear benefit
+
+#     if elements_per_scale <= block_size:
+#         # Single block can handle all elements in the channel
+#         grid_y = 1
+#     elif elements_per_scale <= 4 * block_size:
+#         # Use minimal blocks for medium-sized channels
+#         grid_y = triton.cdiv(elements_per_scale, block_size)
+#     else:
+#         # For very large channels, balance between memory coalescing and parallelism
+#         # Prefer larger blocks with fewer launches
+#         if block_size >= 1024:
+#             # Large block size: prefer single block per channel for better coalescing
+#             grid_y = 1 if elements_per_scale <= 8 * block_size else triton.cdiv(elements_per_scale, block_size)
+#         else:
+#             # Smaller block size: use more blocks but limit to reasonable number
+#             max_blocks_per_channel = min(64, triton.cdiv(elements_per_scale, block_size))
+#             grid_y = max_blocks_per_channel
+
+#     return (grid_x, grid_y)
+
+
+def get_optimal_grid_for_per_channel(
+    scale_count: int, elements_per_scale: int, block_size: int, is_per_activation: bool = False
+) -> tuple[int, int]:
     """
     Calculate optimal 2D grid size for per-channel quantization based on empirical performance.
 
     :param scale_count: Number of channels/scales
     :param elements_per_scale: Number of elements per channel
     :param block_size: Block size from autotune
+    :param is_per_activation: True for per-activation-channel, False for per-weight-channel
     :return: Tuple of (grid_x, grid_y) optimized for performance
     """
     grid_x = scale_count
 
-    # Performance-based heuristics:
-    # 1. For large elements_per_scale, prefer single block per channel when possible
-    # 2. Use multiple blocks only when necessary or when it provides clear benefit
+    # # Small tensor threshold - use 1D kernel for small tensors to avoid overhead
+    # total_elements = scale_count * elements_per_scale
+    # if total_elements < 512 * 1024:  # Less than 512K elements
+    #     return None  # Signal to use 1D kernel
 
-    if elements_per_scale <= block_size:
-        # Single block can handle all elements in the channel
-        grid_y = 1
-    elif elements_per_scale <= 4 * block_size:
-        # Use minimal blocks for medium-sized channels
-        grid_y = triton.cdiv(elements_per_scale, block_size)
-    else:
-        # For very large channels, balance between memory coalescing and parallelism
-        # Prefer larger blocks with fewer launches
-        if block_size >= 1024:
-            # Large block size: prefer single block per channel for better coalescing
-            grid_y = 1 if elements_per_scale <= 8 * block_size else triton.cdiv(elements_per_scale, block_size)
+    # Performance-based heuristics:
+    if is_per_activation:
+        # Per-activation-channel: elements are interleaved across channels
+        # Memory access pattern is more complex, prefer simpler grid
+        if elements_per_scale <= 2 * block_size:
+            grid_y = 1
         else:
-            # Smaller block size: use more blocks but limit to reasonable number
-            max_blocks_per_channel = min(64, triton.cdiv(elements_per_scale, block_size))
-            grid_y = max_blocks_per_channel
+            # Limit to moderate number of blocks to avoid launch overhead
+            grid_y = min(4, triton.cdiv(elements_per_scale, block_size))
+    else:
+        # Per-weight-channel: elements are contiguous within channel
+        # Can handle larger single blocks efficiently
+        if elements_per_scale <= 8 * block_size:
+            grid_y = 1  # Single block per channel for best coalescing
+        else:
+            # For very large channels, use multiple blocks but prefer fewer
+            grid_y = min(8, triton.cdiv(elements_per_scale, block_size))
 
     return (grid_x, grid_y)
 
@@ -498,6 +537,7 @@ def backward(
         and input_range.shape[1] == input_.shape[1]
     ):
         use_2d_grid = True
+        is_activation = True
         scale_count = input_.shape[1]  # Number of channels
         elements_per_scale = input_.numel() // scale_count
 
@@ -507,6 +547,23 @@ def backward(
             grid = lambda meta: get_optimal_grid_for_per_channel(scale_count, elements_per_scale, meta["BLOCK_SIZE"])
 
             backward_kernel_per_channel_2d[grid](
+                grad_output,
+                input_,
+                input_low,
+                input_range,
+                levels,
+                level_low,
+                level_high,
+                grad_input,
+                grad_low,
+                grad_range,
+                elements_per_scale,
+            )
+        elif is_activation:
+            grid = lambda meta: get_optimal_grid_for_per_channel(
+                scale_count, elements_per_scale, meta["BLOCK_SIZE"], is_per_activation=True
+            )
+            backward_kernel_per_activation_channel[grid](
                 grad_output,
                 input_,
                 input_low,
@@ -549,3 +606,94 @@ def backward(
         grad_range = sum_like(grad_range, input_range)
 
     return grad_input, grad_low, grad_range
+
+
+@triton.autotune(
+    configs=[
+        triton.Config(kwargs={"BLOCK_SIZE": 256}),
+        triton.Config(kwargs={"BLOCK_SIZE": 512}),
+        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
+    ],
+    key=["BLOCK_SIZE"],
+)
+@triton.jit
+def backward_kernel_per_activation_channel(
+    grad_output_ptr: torch.tensor,
+    input__ptr: torch.tensor,
+    input_low_ptr: torch.tensor,
+    input_range_ptr: torch.tensor,
+    levels: int,
+    level_low: int,
+    level_high: int,
+    grad_input_ptr: torch.tensor,
+    grad_low_ptr: torch.tensor,
+    grad_range_ptr: torch.tensor,
+    total_elements_per_scale: int,
+    contiguous_elements_per_scale: int,
+    leading_channel_offset: int,
+    BLOCK_SIZE: tl.constexpr,
+) -> None:
+    """
+    Specialized kernel for per-activation-channel quantization with interleaved memory layout.
+    Based on CUDA's q_scale_per_activation_channel_cuda_backward_kernel pattern.
+    """
+    # Get 2D program IDs
+    scale_idx = tl.program_id(0)  # Channel index
+    per_scale_block_idx = tl.program_id(1)  # Block within this channel
+
+    # Load per-channel parameters
+    input_low = tl.load(input_low_ptr + scale_idx).to(tl.float32)
+    input_range = tl.load(input_range_ptr + scale_idx).to(tl.float32)
+
+    # Pre-calculate gradient computation values
+    alpha = level_low / level_high
+    range_low = input_low
+    range_high = input_low + input_range
+    reverted_range = 1 / input_range
+    scale_factor = (levels - 1) / input_range
+
+    # Calculate thread positions
+    thread_idx = tl.arange(0, BLOCK_SIZE)
+    per_scale_tidx = per_scale_block_idx * BLOCK_SIZE + thread_idx
+
+    # Initial offset to the beginning of the first block belonging to current scale
+    initial_offset = scale_idx * contiguous_elements_per_scale
+
+    # Process interleaved elements with proper stride pattern
+    mask = per_scale_tidx < total_elements_per_scale
+
+    # Calculate additional offset for interleaved pattern
+    block_idx = per_scale_tidx // contiguous_elements_per_scale
+    element_idx = per_scale_tidx % contiguous_elements_per_scale
+    additional_offset = block_idx * leading_channel_offset + element_idx
+
+    final_offsets = initial_offset + additional_offset
+
+    # Load input data
+    grad_output = tl.load(grad_output_ptr + final_offsets, mask=mask, other=0.0).to(tl.float32)
+    input_ = tl.load(input__ptr + final_offsets, mask=mask, other=0.0).to(tl.float32)
+
+    # Forward quantization
+    output = tl.clamp(input_, min=input_low, max=input_low + input_range)
+    zero_point = libdevice.nearbyint(-input_low * scale_factor)
+    output -= input_low
+    output *= scale_factor
+    output -= zero_point
+    output = libdevice.nearbyint(output)
+    output = output / scale_factor
+
+    # Calculate masks and gradients
+    mask_lo = input_ < range_low
+    mask_hi = input_ > range_high
+    mask_in = ~(mask_lo | mask_hi)
+
+    grad_input = tl.where(mask_in, grad_output, 0.0)
+    grad_low = tl.where(mask_lo | mask_hi, grad_output, 0.0)
+    grad_range = tl.where(
+        mask_lo, alpha * grad_output, tl.where(mask_hi, grad_output, grad_output * (output - input_) * reverted_range)
+    )
+
+    # Store results
+    tl.store(grad_input_ptr + final_offsets, grad_input, mask=mask)
+    tl.store(grad_low_ptr + final_offsets, grad_low, mask=mask)
+    tl.store(grad_range_ptr + final_offsets, grad_range, mask=mask)
