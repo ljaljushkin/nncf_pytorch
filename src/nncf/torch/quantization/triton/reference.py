@@ -358,72 +358,58 @@ def backward_kernel_per_channel_2d(
     scale_idx = tl.program_id(0)  # Channel/scale index
     per_scale_block_idx = tl.program_id(1)  # Block within this channel
 
+    # Calculate thread index within this channel (equivalent to CUDA's per_scale_tidx)
+    thread_idx = tl.arange(0, BLOCK_SIZE)
+    per_scale_tidx = per_scale_block_idx * BLOCK_SIZE + thread_idx
+
+    # Calculate base offset for this channel's data
+    base_offset = scale_idx * elements_per_scale
+    offsets = base_offset + per_scale_tidx
+
+    # Mask for valid elements within this channel
+    mask = per_scale_tidx < elements_per_scale
+
+    # Load input data with channel-aligned access (much better coalescing)
+    grad_output = tl.load(grad_output_ptr + offsets, mask=mask).to(tl.float32)
+    input_ = tl.load(input__ptr + offsets, mask=mask).to(tl.float32)
+
     # Load per-channel parameters (one per scale/channel)
-    # Load these early as they're used for all elements in this channel
+    # This is highly efficient as all threads in the block use the same parameter
     input_low = tl.load(input_low_ptr + scale_idx).to(tl.float32)
     input_range = tl.load(input_range_ptr + scale_idx).to(tl.float32)
 
-    # Pre-calculate common values used in gradient computation
+    # Quantization forward pass (same as CUDA's fakeQuantize)
+    scale = (levels - 1) / input_range
+    output = tl.clamp(input_, min=input_low, max=input_low + input_range)
+    zero_point = libdevice.nearbyint(-input_low * scale)
+    output -= input_low
+    output *= scale
+    output -= zero_point
+    output = libdevice.nearbyint(output)
+    output = output / scale
+
+    # Gradient calculations (same as CUDA's calcGrad)
     alpha = level_low / level_high
     range_low = input_low
     range_high = input_low + input_range
     reverted_range = 1 / input_range
-    scale_factor = (levels - 1) / input_range
 
-    # Calculate base offset for this channel's data
-    base_offset = scale_idx * elements_per_scale
+    # Calculate masks for different regions
+    mask_lo = input_ < range_low
+    mask_hi = input_ > range_high
+    mask_in = ~(mask_lo | mask_hi)
 
-    # Handle both single-block and multi-block cases
-    # For performance, process in stride when single block handles entire channel
-    thread_idx = tl.arange(0, BLOCK_SIZE)
-    grid_stride = tl.num_programs(1) * BLOCK_SIZE  # Total threads across all blocks in Y dimension
+    # Calculate gradients following CUDA logic
+    grad_input = tl.where(mask_in, grad_output, 0.0)
+    grad_low = tl.where(mask_lo | mask_hi, grad_output, 0.0)
+    grad_range = tl.where(
+        mask_lo, alpha * grad_output, tl.where(mask_hi, grad_output, grad_output * (output - input_) * reverted_range)
+    )
 
-    # Start from this block's position
-    start_idx = per_scale_block_idx * BLOCK_SIZE
-
-    # Process elements in strides to maximize memory coalescing
-    for batch_start in range(start_idx, elements_per_scale, grid_stride):
-        # Calculate offsets for this batch
-        batch_offsets = batch_start + thread_idx
-        global_offsets = base_offset + batch_offsets
-
-        # Mask for valid elements within this channel
-        mask = batch_offsets < elements_per_scale
-
-        # Skip this batch if no threads have valid elements
-        # Note: We can't use tl.any() easily, so we process anyway with masking
-
-        # Load input data with channel-aligned access (excellent coalescing)
-        grad_output = tl.load(grad_output_ptr + global_offsets, mask=mask, other=0.0).to(tl.float32)
-        input_ = tl.load(input__ptr + global_offsets, mask=mask, other=0.0).to(tl.float32)
-
-        # Quantization forward pass (same as CUDA's fakeQuantize)
-        output = tl.clamp(input_, min=input_low, max=input_low + input_range)
-        zero_point = libdevice.nearbyint(-input_low * scale_factor)
-        output -= input_low
-        output *= scale_factor
-        output -= zero_point
-        output = libdevice.nearbyint(output)
-        output = output / scale_factor
-
-        # Calculate masks for different regions
-        mask_lo = input_ < range_low
-        mask_hi = input_ > range_high
-        mask_in = ~(mask_lo | mask_hi)
-
-        # Calculate gradients following CUDA logic
-        grad_input = tl.where(mask_in, grad_output, 0.0)
-        grad_low = tl.where(mask_lo | mask_hi, grad_output, 0.0)
-        grad_range = tl.where(
-            mask_lo,
-            alpha * grad_output,
-            tl.where(mask_hi, grad_output, grad_output * (output - input_) * reverted_range),
-        )
-
-        # Store results with channel-aligned access
-        tl.store(grad_input_ptr + global_offsets, grad_input, mask=mask)
-        tl.store(grad_low_ptr + global_offsets, grad_low, mask=mask)
-        tl.store(grad_range_ptr + global_offsets, grad_range, mask=mask)
+    # Store results with channel-aligned access
+    tl.store(grad_input_ptr + offsets, grad_input, mask=mask)
+    tl.store(grad_low_ptr + offsets, grad_low, mask=mask)
+    tl.store(grad_range_ptr + offsets, grad_range, mask=mask)
 
 
 def forward(input_: torch.tensor, input_low: torch.tensor, input_range: torch.tensor, levels: int) -> torch.tensor:
