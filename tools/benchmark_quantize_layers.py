@@ -215,7 +215,7 @@ def get_module(params_struct: ParamStruct) -> BaseQuantizer:
 
 
 if __name__ == "__main__":
-    file_name = "benchmark_quantize_layers_result.csv" if len(sys.argv) == 1 else sys.argv[1]
+    file_name = "benchmark.csv" if len(sys.argv) == 1 else sys.argv[1]
     print(f"Benchmark results will be saved to file {file_name}")
 
     benchmark_data: list[dict[str, Any]] = []
