@@ -544,7 +544,8 @@ def backward(
     with torch.cuda.device(input_.device):
         if use_2d_grid:  # Use 2D grid for per-channel cases
             # Use performance-optimized grid calculation
-            grid = lambda meta: get_optimal_grid_for_per_channel(scale_count, elements_per_scale, meta["BLOCK_SIZE"])
+            # grid = lambda meta: get_optimal_grid_for_per_channel(scale_count, elements_per_scale, meta["BLOCK_SIZE"])
+            grid = lambda meta: (scale_count, triton.cdiv(elements_per_scale, meta["BLOCK_SIZE"]))
 
             backward_kernel_per_channel_2d[grid](
                 grad_output,
