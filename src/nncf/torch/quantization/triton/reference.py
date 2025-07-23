@@ -17,6 +17,32 @@ from torch._inductor.runtime.triton_helpers import libdevice
 from nncf.torch.utils import sum_like
 
 
+def get_2d_grid_size_for_per_channel(scale_count: int) -> tuple[int, int]:
+    """
+    Calculate 2D grid size for per-channel quantization, following CUDA's approach.
+
+    :param scale_count: Number of channels/scales
+    :return: Tuple of (grid_x, grid_y) where grid_x=scale_count and grid_y=blocks_per_scale
+    """
+    # Constants from CUDA implementation (approximate values for Triton)
+    TARGET_SM_COUNT = 108  # Typical for modern GPUs
+    TARGET_THREADS_PER_SM = 2048
+    WARP_SIZE = 32
+    MAX_WARPS_PER_BLOCK = 32  # 1024 threads / 32 threads per warp
+    MAX_GRID_SIZE_Y = 65535
+
+    # X corresponds to scale count, Y determined to hit thread-per-SM target
+    grid_size_x = scale_count
+    available_threads_per_scale = int((TARGET_SM_COUNT * TARGET_THREADS_PER_SM) / grid_size_x)
+
+    # Align to warp boundaries
+    available_warps_per_scale = (available_threads_per_scale + WARP_SIZE - 1) // WARP_SIZE
+    blocks_per_scale = max(1, available_warps_per_scale // MAX_WARPS_PER_BLOCK)
+    grid_size_y = min(blocks_per_scale, MAX_GRID_SIZE_Y)
+
+    return (grid_size_x, grid_size_y)
+
+
 def get_4d_tensor_meta(x: torch.tensor) -> torch.tensor:
     """
     Helper function for meta information creation.
@@ -261,6 +287,95 @@ def backward_kernel(
     tl.store(grad_range_ptr + offsets, grad_range, mask=offsets < input__elements)
 
 
+@triton.autotune(
+    configs=[
+        triton.Config(kwargs={"BLOCK_SIZE": 256}),
+        triton.Config(kwargs={"BLOCK_SIZE": 512}),
+        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
+        triton.Config(kwargs={"BLOCK_SIZE": 2048}),
+    ],
+    key=["BLOCK_SIZE"],
+)
+@triton.jit
+def backward_kernel_per_channel_2d(
+    grad_output_ptr: torch.tensor,
+    input__ptr: torch.tensor,
+    input_low_ptr: torch.tensor,
+    input_range_ptr: torch.tensor,
+    levels: int,
+    level_low: int,
+    level_high: int,
+    grad_input_ptr: torch.tensor,
+    grad_low_ptr: torch.tensor,
+    grad_range_ptr: torch.tensor,
+    elements_per_scale: int,  # Elements per channel (e.g., 128256)
+    BLOCK_SIZE: tl.constexpr,
+) -> None:
+    """
+    2D grid per-channel backward kernel following CUDA's q_scale_per_weight_channel_cuda_backward_kernel pattern.
+
+    Grid organization:
+    - program_id(0): scale/channel index (equivalent to blockIdx.x in CUDA)
+    - program_id(1): block index within channel (equivalent to blockIdx.y in CUDA)
+    """
+    # Get 2D program IDs - equivalent to CUDA's blockIdx.x and blockIdx.y
+    scale_idx = tl.program_id(0)  # Channel/scale index
+    per_scale_block_idx = tl.program_id(1)  # Block within this channel
+
+    # Calculate thread index within this channel (equivalent to CUDA's per_scale_tidx)
+    thread_idx = tl.arange(0, BLOCK_SIZE)
+    per_scale_tidx = per_scale_block_idx * BLOCK_SIZE + thread_idx
+
+    # Calculate base offset for this channel's data
+    base_offset = scale_idx * elements_per_scale
+    offsets = base_offset + per_scale_tidx
+
+    # Mask for valid elements within this channel
+    mask = per_scale_tidx < elements_per_scale
+
+    # Load input data with channel-aligned access (much better coalescing)
+    grad_output = tl.load(grad_output_ptr + offsets, mask=mask).to(tl.float32)
+    input_ = tl.load(input__ptr + offsets, mask=mask).to(tl.float32)
+
+    # Load per-channel parameters (one per scale/channel)
+    # This is highly efficient as all threads in the block use the same parameter
+    input_low = tl.load(input_low_ptr + scale_idx).to(tl.float32)
+    input_range = tl.load(input_range_ptr + scale_idx).to(tl.float32)
+
+    # Quantization forward pass (same as CUDA's fakeQuantize)
+    scale = (levels - 1) / input_range
+    output = tl.clamp(input_, min=input_low, max=input_low + input_range)
+    zero_point = libdevice.nearbyint(-input_low * scale)
+    output -= input_low
+    output *= scale
+    output -= zero_point
+    output = libdevice.nearbyint(output)
+    output = output / scale
+
+    # Gradient calculations (same as CUDA's calcGrad)
+    alpha = level_low / level_high
+    range_low = input_low
+    range_high = input_low + input_range
+    reverted_range = 1 / input_range
+
+    # Calculate masks for different regions
+    mask_lo = input_ < range_low
+    mask_hi = input_ > range_high
+    mask_in = ~(mask_lo | mask_hi)
+
+    # Calculate gradients following CUDA logic
+    grad_input = tl.where(mask_in, grad_output, 0.0)
+    grad_low = tl.where(mask_lo | mask_hi, grad_output, 0.0)
+    grad_range = tl.where(
+        mask_lo, alpha * grad_output, tl.where(mask_hi, grad_output, grad_output * (output - input_) * reverted_range)
+    )
+
+    # Store results with channel-aligned access
+    tl.store(grad_input_ptr + offsets, grad_input, mask=mask)
+    tl.store(grad_low_ptr + offsets, grad_low, mask=mask)
+    tl.store(grad_range_ptr + offsets, grad_range, mask=mask)
+
+
 def forward(input_: torch.tensor, input_low: torch.tensor, input_range: torch.tensor, levels: int) -> torch.tensor:
     """
     Wrapper for the forward kernel.
@@ -305,7 +420,7 @@ def backward(
     is_asymmetric: bool = False,
 ) -> tuple[torch.tensor]:
     """
-    Wrapper for the backward kernel.
+    Wrapper for the backward kernel with optimized 2D grid for per-channel quantization.
     It contains preparation steps like output memory allocation via tensor creation,
     additional values calculation and CUDA context management based on the input tensors.
     :param grad_output: input_ as torch.tensor.
@@ -319,30 +434,80 @@ def backward(
     grad_low = torch.empty_like(input_)
     grad_range = torch.empty_like(input_)
 
-    grad_output_meta = get_4d_tensor_meta(grad_output)
-    input__meta = get_4d_tensor_meta(input_)
-    input_low_meta = get_4d_tensor_meta(input_low)
-    input_range_meta = get_4d_tensor_meta(input_range)
+    # Detect per-channel quantization patterns
+    use_2d_grid = False
+    elements_per_scale = 1
+    scale_count = 1
+
+    # Check for per-weight-channel pattern: input[N, C, ...] with params[N, 1, ...]
+    if (
+        len(input_.shape) >= 2
+        and len(input_low.shape) >= 2
+        and input_low.shape[0] == input_.shape[0]
+        and input_low.shape[1] == 1
+        and input_range.shape[0] == input_.shape[0]
+        and input_range.shape[1] == 1
+    ):
+        use_2d_grid = True
+        scale_count = input_.shape[0]  # Number of channels
+        elements_per_scale = input_.numel() // scale_count
+
+    # Check for per-activation-channel pattern: input[N, C, ...] with params[1, C, ...]
+    elif (
+        len(input_.shape) >= 2
+        and len(input_low.shape) >= 2
+        and input_low.shape[0] == 1
+        and input_low.shape[1] == input_.shape[1]
+        and input_range.shape[0] == 1
+        and input_range.shape[1] == input_.shape[1]
+    ):
+        use_2d_grid = True
+        scale_count = input_.shape[1]  # Number of channels
+        elements_per_scale = input_.numel() // scale_count
 
     with torch.cuda.device(input_.device):
-        grid = lambda meta: (triton.cdiv(input_.numel(), meta["BLOCK_SIZE"]),)
+        if use_2d_grid and elements_per_scale > 1024:  # Use 2D grid for large per-channel cases
+            # Calculate 2D grid size following CUDA approach
+            grid_x, grid_y = get_2d_grid_size_for_per_channel(scale_count)
+            grid = lambda meta: (grid_x, grid_y)
 
-        backward_kernel[grid](
-            grad_output,
-            grad_output_meta,
-            input_,
-            input__meta,
-            input_low,
-            input_low_meta,
-            input_range,
-            input_range_meta,
-            levels,
-            level_low,
-            level_high,
-            grad_input,
-            grad_low,
-            grad_range,
-        )
+            backward_kernel_per_channel_2d[grid](
+                grad_output,
+                input_,
+                input_low,
+                input_range,
+                levels,
+                level_low,
+                level_high,
+                grad_input,
+                grad_low,
+                grad_range,
+                elements_per_scale,
+            )
+        else:
+            # Use original 1D grid kernel for single-scale or small tensors
+            grad_output_meta = get_4d_tensor_meta(grad_output)
+            input__meta = get_4d_tensor_meta(input_)
+            input_low_meta = get_4d_tensor_meta(input_low)
+            input_range_meta = get_4d_tensor_meta(input_range)
+
+            grid = lambda meta: (triton.cdiv(input_.numel(), meta["BLOCK_SIZE"]),)
+            backward_kernel[grid](
+                grad_output,
+                grad_output_meta,
+                input_,
+                input__meta,
+                input_low,
+                input_low_meta,
+                input_range,
+                input_range_meta,
+                levels,
+                level_low,
+                level_high,
+                grad_input,
+                grad_low,
+                grad_range,
+            )
 
         # Temporary solution until possibility of sum like kernel in Triton would be confirmed.
         grad_low = sum_like(grad_low, input_low)

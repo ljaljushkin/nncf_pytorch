@@ -552,7 +552,6 @@ class BaseParametrized:
             test_input_low, test_input_range = get_test_data(
                 [ref_input_low, ref_input_range], use_cuda, is_backward=True, is_fp16=is_fp16
             )
-
             ref_input_range = abs(ref_input_range) + EPS
             ref_input_low, ref_input_range = RQ.tune_range(ref_input_low, ref_input_range, levels)
 
@@ -605,10 +604,7 @@ class BaseParametrized:
 
 @pytest.mark.parametrize(
     "input_size",
-    [
-        # [1, 16, 64, 64],
-        [2048, 128256]
-    ],
+    [[1, 16, 64, 64], [4 * 64, 4 * 64], [2048, 128256]],
     ids=idfn,
 )
 class TestParametrizedFast(BaseParametrized):
