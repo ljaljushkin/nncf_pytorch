@@ -516,6 +516,7 @@ def backward(
 
     # TODO: refactor
     # Check for per-weight-channel pattern: input[N, C, ...] with params[N, 1, ...]
+    is_activation = False
     if (
         len(input_.shape) >= 2
         and len(input_low.shape) >= 2
@@ -538,28 +539,48 @@ def backward(
         and input_range.shape[1] == input_.shape[1]
     ):
         use_2d_grid = True
+        is_activation = True
         scale_count = input_.shape[1]  # Number of channels
         elements_per_scale = input_.numel() // scale_count
 
     with torch.cuda.device(input_.device):
-        if use_2d_grid:  # Use 2D grid for per-channel cases
-            # Use performance-optimized grid calculation
-            # grid = lambda meta: get_optimal_grid_for_per_channel(scale_count, elements_per_scale, meta["BLOCK_SIZE"])
-            grid = lambda meta: (scale_count, triton.cdiv(elements_per_scale, meta["BLOCK_SIZE"]))
-
-            backward_kernel_per_channel_2d[grid](
-                grad_output,
-                input_,
-                input_low,
-                input_range,
-                levels,
-                level_low,
-                level_high,
-                grad_input,
-                grad_low,
-                grad_range,
-                elements_per_scale,
-            )
+        if use_2d_grid:
+            if is_activation:  # Use 2D grid for per-channel cases
+                grid = lambda meta: (scale_count, triton.cdiv(elements_per_scale, meta["BLOCK_SIZE"]))
+                # Calculate layout parameters for interleaved access
+                total_elements_per_scale = input_.numel() // scale_count
+                contiguous_elements_per_scale = input_.numel() // (scale_count * input_.shape[0])
+                leading_channel_offset = input_.numel() // input_.shape[0]
+                backward_kernel_per_activation_channel[grid](
+                    grad_output,
+                    input_,
+                    input_low,
+                    input_range,
+                    levels,
+                    level_low,
+                    level_high,
+                    grad_input,
+                    grad_low,
+                    grad_range,
+                    total_elements_per_scale,
+                    contiguous_elements_per_scale,
+                    leading_channel_offset,
+                )
+            else:  # Use 2D grid for per-weight-channel cases
+                grid = lambda meta: (scale_count, triton.cdiv(elements_per_scale, meta["BLOCK_SIZE"]))
+                backward_kernel_per_channel_2d[grid](
+                    grad_output,
+                    input_,
+                    input_low,
+                    input_range,
+                    levels,
+                    level_low,
+                    level_high,
+                    grad_input,
+                    grad_low,
+                    grad_range,
+                    elements_per_scale,
+                )
         else:
             # Use original 1D grid kernel for single-scale or small tensors
             grad_output_meta = get_4d_tensor_meta(grad_output)
@@ -590,3 +611,94 @@ def backward(
         grad_range = sum_like(grad_range, input_range)
 
     return grad_input, grad_low, grad_range
+
+
+@triton.autotune(
+    configs=[
+        triton.Config(kwargs={"BLOCK_SIZE": 256}),
+        triton.Config(kwargs={"BLOCK_SIZE": 512}),
+        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
+    ],
+    key=["BLOCK_SIZE"],
+)
+@triton.jit
+def backward_kernel_per_activation_channel(
+    grad_output_ptr: torch.tensor,
+    input__ptr: torch.tensor,
+    input_low_ptr: torch.tensor,
+    input_range_ptr: torch.tensor,
+    levels: int,
+    level_low: int,
+    level_high: int,
+    grad_input_ptr: torch.tensor,
+    grad_low_ptr: torch.tensor,
+    grad_range_ptr: torch.tensor,
+    total_elements_per_scale: int,
+    contiguous_elements_per_scale: int,
+    leading_channel_offset: int,
+    BLOCK_SIZE: tl.constexpr,
+) -> None:
+    """
+    Specialized kernel for per-activation-channel quantization with interleaved memory layout.
+    Based on CUDA's q_scale_per_activation_channel_cuda_backward_kernel pattern.
+    """
+    # Get 2D program IDs
+    scale_idx = tl.program_id(0)  # Channel index
+    per_scale_block_idx = tl.program_id(1)  # Block within this channel
+
+    # Load per-channel parameters
+    input_low = tl.load(input_low_ptr + scale_idx).to(tl.float32)
+    input_range = tl.load(input_range_ptr + scale_idx).to(tl.float32)
+
+    # Pre-calculate gradient computation values
+    alpha = level_low / level_high
+    range_low = input_low
+    range_high = input_low + input_range
+    reverted_range = 1 / input_range
+    scale_factor = (levels - 1) / input_range
+
+    # Calculate thread positions
+    thread_idx = tl.arange(0, BLOCK_SIZE)
+    per_scale_tidx = per_scale_block_idx * BLOCK_SIZE + thread_idx
+
+    # Initial offset to the beginning of the first block belonging to current scale
+    initial_offset = scale_idx * contiguous_elements_per_scale
+
+    # Process interleaved elements with proper stride pattern
+    mask = per_scale_tidx < total_elements_per_scale
+
+    # Calculate additional offset for interleaved pattern
+    block_idx = per_scale_tidx // contiguous_elements_per_scale
+    element_idx = per_scale_tidx % contiguous_elements_per_scale
+    additional_offset = block_idx * leading_channel_offset + element_idx
+
+    final_offsets = initial_offset + additional_offset
+
+    # Load input data
+    grad_output = tl.load(grad_output_ptr + final_offsets, mask=mask, other=0.0).to(tl.float32)
+    input_ = tl.load(input__ptr + final_offsets, mask=mask, other=0.0).to(tl.float32)
+
+    # Forward quantization
+    output = tl.clamp(input_, min=input_low, max=input_low + input_range)
+    zero_point = libdevice.nearbyint(-input_low * scale_factor)
+    output -= input_low
+    output *= scale_factor
+    output -= zero_point
+    output = libdevice.nearbyint(output)
+    output = output / scale_factor
+
+    # Calculate masks and gradients
+    mask_lo = input_ < range_low
+    mask_hi = input_ > range_high
+    mask_in = ~(mask_lo | mask_hi)
+
+    grad_input = tl.where(mask_in, grad_output, 0.0)
+    grad_low = tl.where(mask_lo | mask_hi, grad_output, 0.0)
+    grad_range = tl.where(
+        mask_lo, alpha * grad_output, tl.where(mask_hi, grad_output, grad_output * (output - input_) * reverted_range)
+    )
+
+    # Store results
+    tl.store(grad_input_ptr + final_offsets, grad_input, mask=mask)
+    tl.store(grad_low_ptr + final_offsets, grad_low, mask=mask)
+    tl.store(grad_range_ptr + final_offsets, grad_range, mask=mask)
