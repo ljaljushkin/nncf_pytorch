@@ -35,10 +35,10 @@ from tools.benchmark import run_worker
 
 TIME_SCALES = {"ms": 1000}
 NBITS = 8
-GPU_RUNS_LOW_BATCH = 10000
+GPU_RUNS_LOW_BATCH = 1000
 GPU_RUNS_HIGH_BATCH = 100
 CPU_RUNS = 100
-LOW_BATCH_INPUT_SIZE = [2, 96, 64, 64]
+LOW_BATCH_INPUT_SIZE = [128, 2048]
 HIGH_BATCH_INPUT_SIZE = [2048, 128256]
 
 
@@ -75,10 +75,7 @@ class GranularityType(Enum):
     PER_CHANNEL = "per_channel"
 
 
-TEST_TENSOR_TYPES: list[TensorType] = [
-    TensorType.WEIGHTS,
-    # TensorType.ACTIVATIONS
-]
+TEST_TENSOR_TYPES: list[TensorType] = [TensorType.WEIGHTS, TensorType.ACTIVATIONS]
 TEST_GRANULARITY: list[GranularityType] = [
     # GranularityType.PER_TENSOR,
     GranularityType.PER_CHANNEL
@@ -94,11 +91,11 @@ TEST_DEVICES: list[torch.device] = [
 ]
 
 TEST_BATCHES: list[BatchDescriptor] = [
-    # BatchDescriptor(
-    #     mode=BatchMode.LOW,
-    #     input_size=LOW_BATCH_INPUT_SIZE,
-    #     num_runs={torch.device("cuda"): GPU_RUNS_LOW_BATCH, torch.device("cpu"): CPU_RUNS},
-    # ),
+    BatchDescriptor(
+        mode=BatchMode.LOW,
+        input_size=LOW_BATCH_INPUT_SIZE,
+        num_runs={torch.device("cuda"): GPU_RUNS_LOW_BATCH, torch.device("cpu"): CPU_RUNS},
+    ),
     BatchDescriptor(
         mode=BatchMode.HIGH,
         input_size=HIGH_BATCH_INPUT_SIZE,
@@ -251,7 +248,7 @@ if __name__ == "__main__":
         # benchmark_data.append({**param_struct.to_dict(), "time_ms": runtime})
         d = param_struct.to_dict()
         d.update(run_data)
-        benchmark_data.append({**d, "time_ms": runtime})
+        benchmark_data.append({**d})
 
         df = pd.DataFrame(benchmark_data)
 

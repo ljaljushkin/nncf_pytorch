@@ -17,6 +17,41 @@ from torch._inductor.runtime.triton_helpers import libdevice
 from nncf.torch.utils import sum_like
 
 
+def get_optimal_grid_for_per_channel(scale_count: int, elements_per_scale: int, block_size: int) -> tuple[int, int]:
+    """
+    Calculate optimal 2D grid size for per-channel quantization based on empirical performance.
+
+    :param scale_count: Number of channels/scales
+    :param elements_per_scale: Number of elements per channel
+    :param block_size: Block size from autotune
+    :return: Tuple of (grid_x, grid_y) optimized for performance
+    """
+    grid_x = scale_count
+
+    # Performance-based heuristics:
+    # 1. For large elements_per_scale, prefer single block per channel when possible
+    # 2. Use multiple blocks only when necessary or when it provides clear benefit
+
+    if elements_per_scale <= block_size:
+        # Single block can handle all elements in the channel
+        grid_y = 1
+    elif elements_per_scale <= 4 * block_size:
+        # Use minimal blocks for medium-sized channels
+        grid_y = triton.cdiv(elements_per_scale, block_size)
+    else:
+        # For very large channels, balance between memory coalescing and parallelism
+        # Prefer larger blocks with fewer launches
+        if block_size >= 1024:
+            # Large block size: prefer single block per channel for better coalescing
+            grid_y = 1 if elements_per_scale <= 8 * block_size else triton.cdiv(elements_per_scale, block_size)
+        else:
+            # Smaller block size: use more blocks but limit to reasonable number
+            max_blocks_per_channel = min(64, triton.cdiv(elements_per_scale, block_size))
+            grid_y = max_blocks_per_channel
+
+    return (grid_x, grid_y)
+
+
 def get_2d_grid_size_for_per_channel(scale_count: int) -> tuple[int, int]:
     """
     Calculate 2D grid size for per-channel quantization, following CUDA's approach.
@@ -25,8 +60,8 @@ def get_2d_grid_size_for_per_channel(scale_count: int) -> tuple[int, int]:
     :return: Tuple of (grid_x, grid_y) where grid_x=scale_count and grid_y=blocks_per_scale
     """
     # Constants from CUDA implementation (approximate values for Triton)
-    TARGET_SM_COUNT = 108  # Typical for modern GPUs
-    TARGET_THREADS_PER_SM = 2048
+    TARGET_SM_COUNT = 72  # Typical for modern GPUs
+    TARGET_THREADS_PER_SM = 1024
     WARP_SIZE = 32
     MAX_WARPS_PER_BLOCK = 32  # 1024 threads / 32 threads per warp
     MAX_GRID_SIZE_Y = 65535
@@ -313,6 +348,7 @@ def backward_kernel_per_channel_2d(
 ) -> None:
     """
     2D grid per-channel backward kernel following CUDA's q_scale_per_weight_channel_cuda_backward_kernel pattern.
+    Optimized to handle both single-block-per-channel and multi-block-per-channel cases efficiently.
 
     Grid organization:
     - program_id(0): scale/channel index (equivalent to blockIdx.x in CUDA)
@@ -322,58 +358,72 @@ def backward_kernel_per_channel_2d(
     scale_idx = tl.program_id(0)  # Channel/scale index
     per_scale_block_idx = tl.program_id(1)  # Block within this channel
 
-    # Calculate thread index within this channel (equivalent to CUDA's per_scale_tidx)
-    thread_idx = tl.arange(0, BLOCK_SIZE)
-    per_scale_tidx = per_scale_block_idx * BLOCK_SIZE + thread_idx
-
-    # Calculate base offset for this channel's data
-    base_offset = scale_idx * elements_per_scale
-    offsets = base_offset + per_scale_tidx
-
-    # Mask for valid elements within this channel
-    mask = per_scale_tidx < elements_per_scale
-
-    # Load input data with channel-aligned access (much better coalescing)
-    grad_output = tl.load(grad_output_ptr + offsets, mask=mask).to(tl.float32)
-    input_ = tl.load(input__ptr + offsets, mask=mask).to(tl.float32)
-
     # Load per-channel parameters (one per scale/channel)
-    # This is highly efficient as all threads in the block use the same parameter
+    # Load these early as they're used for all elements in this channel
     input_low = tl.load(input_low_ptr + scale_idx).to(tl.float32)
     input_range = tl.load(input_range_ptr + scale_idx).to(tl.float32)
 
-    # Quantization forward pass (same as CUDA's fakeQuantize)
-    scale = (levels - 1) / input_range
-    output = tl.clamp(input_, min=input_low, max=input_low + input_range)
-    zero_point = libdevice.nearbyint(-input_low * scale)
-    output -= input_low
-    output *= scale
-    output -= zero_point
-    output = libdevice.nearbyint(output)
-    output = output / scale
-
-    # Gradient calculations (same as CUDA's calcGrad)
+    # Pre-calculate common values used in gradient computation
     alpha = level_low / level_high
     range_low = input_low
     range_high = input_low + input_range
     reverted_range = 1 / input_range
+    scale_factor = (levels - 1) / input_range
 
-    # Calculate masks for different regions
-    mask_lo = input_ < range_low
-    mask_hi = input_ > range_high
-    mask_in = ~(mask_lo | mask_hi)
+    # Calculate base offset for this channel's data
+    base_offset = scale_idx * elements_per_scale
 
-    # Calculate gradients following CUDA logic
-    grad_input = tl.where(mask_in, grad_output, 0.0)
-    grad_low = tl.where(mask_lo | mask_hi, grad_output, 0.0)
-    grad_range = tl.where(
-        mask_lo, alpha * grad_output, tl.where(mask_hi, grad_output, grad_output * (output - input_) * reverted_range)
-    )
+    # Handle both single-block and multi-block cases
+    # For performance, process in stride when single block handles entire channel
+    thread_idx = tl.arange(0, BLOCK_SIZE)
+    grid_stride = tl.num_programs(1) * BLOCK_SIZE  # Total threads across all blocks in Y dimension
 
-    # Store results with channel-aligned access
-    tl.store(grad_input_ptr + offsets, grad_input, mask=mask)
-    tl.store(grad_low_ptr + offsets, grad_low, mask=mask)
-    tl.store(grad_range_ptr + offsets, grad_range, mask=mask)
+    # Start from this block's position
+    start_idx = per_scale_block_idx * BLOCK_SIZE
+
+    # Process elements in strides to maximize memory coalescing
+    for batch_start in range(start_idx, elements_per_scale, grid_stride):
+        # Calculate offsets for this batch
+        batch_offsets = batch_start + thread_idx
+        global_offsets = base_offset + batch_offsets
+
+        # Mask for valid elements within this channel
+        mask = batch_offsets < elements_per_scale
+
+        # Skip this batch if no threads have valid elements
+        # Note: We can't use tl.any() easily, so we process anyway with masking
+
+        # Load input data with channel-aligned access (excellent coalescing)
+        grad_output = tl.load(grad_output_ptr + global_offsets, mask=mask, other=0.0).to(tl.float32)
+        input_ = tl.load(input__ptr + global_offsets, mask=mask, other=0.0).to(tl.float32)
+
+        # Quantization forward pass (same as CUDA's fakeQuantize)
+        output = tl.clamp(input_, min=input_low, max=input_low + input_range)
+        zero_point = libdevice.nearbyint(-input_low * scale_factor)
+        output -= input_low
+        output *= scale_factor
+        output -= zero_point
+        output = libdevice.nearbyint(output)
+        output = output / scale_factor
+
+        # Calculate masks for different regions
+        mask_lo = input_ < range_low
+        mask_hi = input_ > range_high
+        mask_in = ~(mask_lo | mask_hi)
+
+        # Calculate gradients following CUDA logic
+        grad_input = tl.where(mask_in, grad_output, 0.0)
+        grad_low = tl.where(mask_lo | mask_hi, grad_output, 0.0)
+        grad_range = tl.where(
+            mask_lo,
+            alpha * grad_output,
+            tl.where(mask_hi, grad_output, grad_output * (output - input_) * reverted_range),
+        )
+
+        # Store results with channel-aligned access
+        tl.store(grad_input_ptr + global_offsets, grad_input, mask=mask)
+        tl.store(grad_low_ptr + global_offsets, grad_low, mask=mask)
+        tl.store(grad_range_ptr + global_offsets, grad_range, mask=mask)
 
 
 def forward(input_: torch.tensor, input_low: torch.tensor, input_range: torch.tensor, levels: int) -> torch.tensor:
@@ -466,10 +516,9 @@ def backward(
         elements_per_scale = input_.numel() // scale_count
 
     with torch.cuda.device(input_.device):
-        if use_2d_grid and elements_per_scale > 1024:  # Use 2D grid for large per-channel cases
-            # Calculate 2D grid size following CUDA approach
-            grid_x, grid_y = get_2d_grid_size_for_per_channel(scale_count)
-            grid = lambda meta: (grid_x, grid_y)
+        if use_2d_grid:  # Use 2D grid for per-channel cases
+            # Use performance-optimized grid calculation
+            grid = lambda meta: get_optimal_grid_for_per_channel(scale_count, elements_per_scale, meta["BLOCK_SIZE"])
 
             backward_kernel_per_channel_2d[grid](
                 grad_output,
