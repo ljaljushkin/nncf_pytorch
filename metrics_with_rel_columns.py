@@ -1,9 +1,9 @@
 #!/usr/bin/env python3  # noqa: CPY001
 """
 Benchmark analysis script with relative performance columns for each metric.
-Format: name tensor_type input_size forward_avg forward_avg_rel backward_avg
-        backward_avg_rel forward_mb_avg forward_mb_avg_rel backward_mb_avg
-        backward_mb_avg_rel
+Format: name tensor_type input_size forward_avg forward_avg_impr backward_avg
+        backward_avg_impr forward_mb_avg forward_mb_avg_impr backward_mb_avg
+        backward_mb_avg_impr
 """
 
 import glob
@@ -17,16 +17,16 @@ def extract_short_name(filename):
     base = Path(filename).stem
     if base.startswith("benchmark_"):
         name = base[10:]  # Remove 'benchmark_' prefix
-
-        # Extract shorter names for readability
-        if name.startswith("cuda_"):
-            return name  # Keep full cuda name
-        elif name.startswith("triton_"):
-            # Extract just the number or key identifier
-            parts = name.split("_")
-            if len(parts) >= 2:
-                return f"triton_{parts[1]}"  # e.g., triton_10, triton_11
-            return name
+        return name
+        # # Extract shorter names for readability
+        # if name.startswith("cuda_"):
+        #     return name  # Keep full cuda name
+        # elif name.startswith("triton_"):
+        #     # Extract just the number or key identifier
+        #     parts = name.split("_")
+        #     if len(parts) >= 2:
+        #         return f"triton_{parts[1]}"  # e.g., triton_10, triton_11
+        #     return name
     return base
 
 
@@ -86,23 +86,23 @@ def calculate_relative_performance(df):
     df_result = df.copy()
 
     for metric in metrics:
-        rel_col = f"{metric}_rel"
-        df_result[rel_col] = None
+        impr_col = f"{metric}_impr"
+        df_result[impr_col] = None
 
         for idx, row in df_result.iterrows():
             key = (row["tensor_type"], row["input_size"])
 
             if row["name"].startswith("cuda_"):
                 # CUDA rows don't have relative performance
-                df_result.loc[idx, rel_col] = ""
+                df_result.loc[idx, impr_col] = ""
             elif row["name"].startswith("triton_") and key in cuda_lookups[metric]:
                 # Calculate relative performance: (cuda - triton) / cuda
                 cuda_time = cuda_lookups[metric][key]
                 triton_time = row[metric]
                 rel_perf = (cuda_time - triton_time) / cuda_time
-                df_result.loc[idx, rel_col] = f"{rel_perf:.0%}"
+                df_result.loc[idx, impr_col] = f"{rel_perf:.0%}"
             else:
-                df_result.loc[idx, rel_col] = ""
+                df_result.loc[idx, impr_col] = ""
 
     return df_result
 
@@ -112,9 +112,9 @@ def format_results_with_rel_columns(df):
 
     lines = []
     header = (
-        "name tensor_type input_size forward_avg forward_avg_rel backward_avg "
-        "backward_avg_rel forward_mb_avg forward_mb_avg_rel backward_mb_avg "
-        "backward_mb_avg_rel"
+        "name tensor_type input_size forward_avg forward_avg_impr backward_avg "
+        "backward_avg_impr forward_mb_avg forward_mb_avg_impr backward_mb_avg "
+        "backward_mb_avg_impr"
     )
     lines.append(header)
 
@@ -126,18 +126,18 @@ def format_results_with_rel_columns(df):
         tensor_type = row["tensor_type"]
         input_size = row["input_size"]
         forward_avg = f"{row['forward_avg']:.2f}"
-        forward_avg_rel = row["forward_avg_rel"]
+        forward_avg_impr = row["forward_avg_impr"]
         backward_avg = f"{row['backward_avg']:.2f}"
-        backward_avg_rel = row["backward_avg_rel"]
+        backward_avg_impr = row["backward_avg_impr"]
         forward_mb_avg = f"{row['forward_mb_avg']:.2f}"
-        forward_mb_avg_rel = row["forward_mb_avg_rel"]
+        forward_mb_avg_impr = row["forward_mb_avg_impr"]
         backward_mb_avg = f"{row['backward_mb_avg']:.2f}"
-        backward_mb_avg_rel = row["backward_mb_avg_rel"]
+        backward_mb_avg_impr = row["backward_mb_avg_impr"]
 
         line = (
-            f"{name} {tensor_type} {input_size} {forward_avg} {forward_avg_rel} "
-            f"{backward_avg} {backward_avg_rel} {forward_mb_avg} {forward_mb_avg_rel} "
-            f"{backward_mb_avg} {backward_mb_avg_rel}"
+            f"{name} {tensor_type} {input_size} {forward_avg} {forward_avg_impr} "
+            f"{backward_avg} {backward_avg_impr} {forward_mb_avg} {forward_mb_avg_impr} "
+            f"{backward_mb_avg} {backward_mb_avg_impr}"
         )
         lines.append(line)
 
@@ -155,20 +155,23 @@ def create_csv_output(df):
         "tensor_type",
         "input_size",
         "forward_avg",
-        "forward_avg_rel",
+        "forward_avg_impr",
         "backward_avg",
-        "backward_avg_rel",
+        "backward_avg_impr",
         "forward_mb_avg",
-        "forward_mb_avg_rel",
+        "forward_mb_avg_impr",
         "backward_mb_avg",
-        "backward_mb_avg_rel",
+        "backward_mb_avg_impr",
     ]
     output_df = df_sorted[columns].copy()
 
     # Round numeric columns
-    numeric_cols = ["forward_avg", "backward_avg", "forward_mb_avg", "backward_mb_avg"]
-    for col in numeric_cols:
+    time_cols = ["forward_avg", "backward_avg"]
+    for col in time_cols:
         output_df[col] = output_df[col].round(2)
+    mb_cols = ["forward_mb_avg", "backward_mb_avg"]
+    for col in mb_cols:
+        output_df[col] = output_df[col].round(4)
 
     return output_df
 
@@ -194,12 +197,6 @@ def main():
     print("=" * 150)
     for line in lines:
         print(line)
-
-    # Save text output
-    output_file = "metrics_with_rel_columns.txt"
-    with open(output_file, "w") as f:
-        f.write("\n".join(lines))
-    print(f"\nText results saved to {output_file}")
 
     # Save CSV output
     csv_df = create_csv_output(df_with_rel)
