@@ -363,9 +363,9 @@ def backward_kernel(
 
 @triton.autotune(
     configs=[
-        triton.Config(kwargs={"BLOCK_SIZE": 256}),
+        triton.Config(kwargs={"BLOCK_SIZE": 4}),
+        triton.Config(kwargs={"BLOCK_SIZE": 32}),
         triton.Config(kwargs={"BLOCK_SIZE": 512}),
-        triton.Config(kwargs={"BLOCK_SIZE": 1024}),
         triton.Config(kwargs={"BLOCK_SIZE": 2048}),
     ],
     key=["BLOCK_SIZE"],
@@ -382,7 +382,7 @@ def backward_kernel_per_channel_2d(
     grad_input_ptr: torch.tensor,
     grad_low_ptr: torch.tensor,
     grad_range_ptr: torch.tensor,
-    elements_per_scale: int,  # Elements per channel (e.g., 128256)
+    elements_per_scale: int,
     BLOCK_SIZE: tl.constexpr,
 ) -> None:
     """
