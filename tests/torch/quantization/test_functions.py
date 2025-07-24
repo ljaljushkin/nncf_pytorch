@@ -304,7 +304,9 @@ class BaseParametrized:
                 assert tensor_.dtype == torch.half if is_fp16 else torch.float
 
             ref_value = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
-            test_value = symmetric_quantize(test_input, levels, level_low, level_high, test_scale, EPS)
+            test_value = symmetric_quantize(
+                test_input, test_input.shape, levels, level_low, level_high, test_scale, EPS
+            )
             if use_cuda:
                 quant_len = ref_input_range / (2**bits - 1)
                 check_quant_moved(
@@ -388,7 +390,9 @@ class BaseParametrized:
                 mock_prev_output_grads, ref_input, ref_input_low, ref_input_range, levels, level_low, level_high
             )
             del ref_grads[1]
-            test_value = symmetric_quantize(test_input, levels, level_low, level_high, test_scale, EPS)
+            test_value = symmetric_quantize(
+                test_input, test_input.shape, levels, level_low, level_high, test_scale, EPS
+            )
             test_value.sum().backward()
             test_grads = get_grads([test_input, test_scale])
 
@@ -502,7 +506,7 @@ class BaseParametrized:
 
             ref_value = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
             test_value = asymmetric_quantize(
-                test_input, levels, level_low, level_high, test_input_low, test_input_range, EPS
+                test_input, test_input.shape, levels, level_low, level_high, test_input_low, test_input_range, EPS
             )
 
             if use_cuda:
@@ -592,7 +596,7 @@ class BaseParametrized:
             )
 
             test_value = asymmetric_quantize(
-                test_input, levels, level_low, level_high, test_input_low, test_input_range, eps=EPS
+                test_input, test_input.shape, levels, level_low, level_high, test_input_low, test_input_range, eps=EPS
             )
             test_value.sum().backward()
             test_grads = get_grads([test_input, test_input_low, test_input_range])
@@ -642,7 +646,7 @@ def test_mapping_to_zero(use_cuda, quantization_mode):
         uniform_dist_scale = Uniform(0, 100)
         for _ in range(number_of_samples):
             scale = uniform_dist_scale.sample().to(torch.device(device))
-            test_output = symmetric_quantize(x_zero, levels, level_low, level_high, scale, eps)
+            test_output = symmetric_quantize(x_zero, x_zero.shape, levels, level_low, level_high, scale, eps)
             assert torch.isclose(test_output, torch.zeros_like(test_output))
     else:
         level_low = 0
@@ -653,7 +657,9 @@ def test_mapping_to_zero(use_cuda, quantization_mode):
         for _ in range(number_of_samples):
             input_low = uniform_dist_input_low.sample().to(torch.device(device))
             input_range = uniform_dist_input_range.sample().to(torch.device(device))
-            test_output = asymmetric_quantize(x_zero, levels, level_low, level_high, input_low, input_range, eps)
+            test_output = asymmetric_quantize(
+                x_zero, x_zero.shape, levels, level_low, level_high, input_low, input_range, eps
+            )
             assert torch.isclose(test_output, torch.zeros_like(test_output))
 
 

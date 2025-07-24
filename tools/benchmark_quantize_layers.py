@@ -38,8 +38,10 @@ NBITS = 8
 GPU_RUNS_LOW_BATCH = 1000
 GPU_RUNS_HIGH_BATCH = 100
 CPU_RUNS = 100
-# LOW_BATCH_INPUT_SIZE = [128, 2048]
-# HIGH_BATCH_INPUT_SIZE = [2048, 128256]
+GROUP_SIZE = 128
+LOW_BATCH_INPUT_SIZE_2D = [128, 2048]
+TYPICAL_INPUT_SIZE_2D = [2048, 4096]
+HIGH_BATCH_INPUT_SIZE_2D = [2048, 128256]
 LOW_BATCH_INPUT_SIZE = [2, 96, 64, 64]
 HIGH_BATCH_INPUT_SIZE = [128, 96, 64, 64]
 
@@ -75,12 +77,17 @@ class TensorType(Enum):
 class GranularityType(Enum):
     PER_TENSOR = "per_tensor"
     PER_CHANNEL = "per_channel"
+    PER_GROUP = "per_group"
 
 
-TEST_TENSOR_TYPES: list[TensorType] = [TensorType.WEIGHTS, TensorType.ACTIVATIONS]
+TEST_TENSOR_TYPES: list[TensorType] = [
+    TensorType.WEIGHTS,
+    # TensorType.ACTIVATIONS
+]
 TEST_GRANULARITY: list[GranularityType] = [
     # GranularityType.PER_TENSOR,
-    GranularityType.PER_CHANNEL
+    GranularityType.PER_CHANNEL,
+    # GranularityType.PER_GROUP
 ]
 TEST_SYMMETRIC: list[bool] = [
     # True,
@@ -101,6 +108,21 @@ TEST_BATCHES: list[BatchDescriptor] = [
     BatchDescriptor(
         mode=BatchMode.HIGH,
         input_size=HIGH_BATCH_INPUT_SIZE,
+        num_runs={torch.device("cuda"): GPU_RUNS_HIGH_BATCH, torch.device("cpu"): CPU_RUNS},
+    ),
+    BatchDescriptor(
+        mode=BatchMode.LOW,
+        input_size=LOW_BATCH_INPUT_SIZE_2D,
+        num_runs={torch.device("cuda"): GPU_RUNS_LOW_BATCH, torch.device("cpu"): CPU_RUNS},
+    ),
+    BatchDescriptor(
+        mode=BatchMode.HIGH,
+        input_size=HIGH_BATCH_INPUT_SIZE_2D,
+        num_runs={torch.device("cuda"): GPU_RUNS_HIGH_BATCH, torch.device("cpu"): CPU_RUNS},
+    ),
+    BatchDescriptor(
+        mode=BatchMode.HIGH,
+        input_size=TYPICAL_INPUT_SIZE_2D,
         num_runs={torch.device("cuda"): GPU_RUNS_HIGH_BATCH, torch.device("cpu"): CPU_RUNS},
     ),
 ]
@@ -183,6 +205,7 @@ class DefaultedPTQuantizerSpec(PTQuantizerSpec):
     def __init__(
         self,
         scale_shape: tuple[int, ...],
+        weight_shape: tuple[int, ...],
         num_bits: int = 8,
         mode: QuantizationMode = QuantizationMode.SYMMETRIC,
         signedness_to_force: Optional[bool] = None,
@@ -190,7 +213,9 @@ class DefaultedPTQuantizerSpec(PTQuantizerSpec):
         half_range: bool = False,
         logarithm_scale: bool = None,
     ):
-        super().__init__(num_bits, mode, signedness_to_force, narrow_range, half_range, scale_shape, logarithm_scale)
+        super().__init__(
+            num_bits, mode, signedness_to_force, narrow_range, half_range, scale_shape, weight_shape, logarithm_scale
+        )
 
 
 RQ = ReferenceQuantize(backend_type=ReferenceBackendType.TORCH)
@@ -199,13 +224,26 @@ RQ = ReferenceQuantize(backend_type=ReferenceBackendType.TORCH)
 def get_module(params_struct: ParamStruct) -> BaseQuantizer:
     input_shape = params_struct.batch.input_size
     is_weights = params_struct.tensor_type == TensorType.WEIGHTS
+    weight_shape = list(input_shape)
 
-    scale_shape = [
-        1,
-    ]
-    if params_struct.granularity == GranularityType.PER_CHANNEL:
+    if params_struct.granularity == GranularityType.PER_GROUP:
+        channel_axis = 1
+        assert is_weights, "Per-group quantization is only supported for weights"
+        assert len(weight_shape) == 2, "Weight shape must have exactly two dimensions"
+        assert weight_shape[channel_axis] % GROUP_SIZE == 0, "Number of channels must be divisible by GROUP_SIZE"
+        num_groups = weight_shape[channel_axis] // GROUP_SIZE
+        weight_shape[channel_axis : channel_axis + 1] = (num_groups, GROUP_SIZE)
+        scale_shape = list(weight_shape)
+        scale_shape[channel_axis + 1] = 1
+    elif params_struct.granularity == GranularityType.PER_CHANNEL:
         scale_shape = get_per_channel_scale_shape(input_shape, is_weights=is_weights)
-    specs = DefaultedPTQuantizerSpec(scale_shape=scale_shape, narrow_range=params_struct.narrow_range, num_bits=NBITS)
+    else:
+        scale_shape = [
+            1,
+        ]
+    specs = DefaultedPTQuantizerSpec(
+        scale_shape=scale_shape, weight_shape=weight_shape, narrow_range=params_struct.narrow_range, num_bits=NBITS
+    )
 
     module_cls = SymmetricQuantizer if params_struct.symmetric else AsymmetricQuantizer
     m = module_cls(specs)

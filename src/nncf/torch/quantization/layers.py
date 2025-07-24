@@ -80,6 +80,7 @@ class PTQuantizerSpec(QuantizerSpec):
         "narrow_range",
         "half_range",
         "scale_shape",
+        "weight_shape",
         "logarithm_scale",
         "is_quantized_on_export",
         "compression_lr_multiplier",
@@ -93,6 +94,7 @@ class PTQuantizerSpec(QuantizerSpec):
         narrow_range: bool,
         half_range: bool,
         scale_shape: tuple[int, ...],
+        weight_shape: tuple[int, ...],
         logarithm_scale: bool,
         is_quantized_on_export: bool = False,
         compression_lr_multiplier: Optional[float] = None,
@@ -116,6 +118,7 @@ class PTQuantizerSpec(QuantizerSpec):
         super().__init__(num_bits, mode, signedness_to_force, narrow_range, half_range)
         self.per_channel = scale_shape != (1,)
         self.scale_shape = scale_shape
+        self.weight_shape = weight_shape
         self.logarithm_scale = logarithm_scale
         self.compression_lr_multiplier = compression_lr_multiplier
         self.is_quantized_on_export = is_quantized_on_export
@@ -127,6 +130,7 @@ class PTQuantizerSpec(QuantizerSpec):
         narrow_range: bool,
         half_range: bool,
         scale_shape: tuple[int, ...],
+        weight_shape: tuple[int, ...],
         logarithm_scale: bool,
         is_quantized_on_export: bool,
         compression_lr_multiplier: Optional[float],
@@ -138,6 +142,7 @@ class PTQuantizerSpec(QuantizerSpec):
             narrow_range,
             half_range,
             scale_shape,
+            weight_shape,
             logarithm_scale,
             is_quantized_on_export,
             compression_lr_multiplier,
@@ -363,6 +368,7 @@ class BaseQuantizer(nn.Module, StatefulModuleInterface, ABC):
         self.initialized = False
         self.call_count = 0
         self._scale_shape = qspec.scale_shape
+        self._weight_shape = qspec.weight_shape
         self._export_mode = QuantizerExportMode.FAKE_QUANTIZE
 
         class LoadStateListener:
@@ -794,7 +800,14 @@ class SymmetricQuantizer(BaseQuantizer):
             # in multi-device case after loading nncf checkpoint, quantizers have a different device.
             self.to(x.device)
         return symmetric_quantize(
-            x, self.levels, self.level_low, self.level_high, self.scale, self.eps, skip=execute_traced_op_as_identity
+            x,
+            self._weight_shape,
+            self.levels,
+            self.level_low,
+            self.level_high,
+            self.scale,
+            self.eps,
+            skip=execute_traced_op_as_identity,
         )
 
     def get_trainable_params(self) -> dict[str, torch.Tensor]:
@@ -986,6 +999,7 @@ class AsymmetricQuantizer(BaseQuantizer):
             self.to(x.device)
         return asymmetric_quantize(
             x,
+            self._weight_shape,
             self.levels,
             self.level_low,
             self.level_high,
