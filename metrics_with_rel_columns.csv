@@ -2,8 +2,12 @@ name,tensor_type,input_size,forward_avg,forward_avg_impr,backward_avg,backward_a
 2048x1,TensorType.WEIGHTS,"[2048, 128256]",2.97,,4.01,,1.9757,,3.4317,
 2048x62,TensorType.WEIGHTS,"[2048, 128256]",2.79,,7.18,,1.9757,,3.4317,
 cuda_507d96,TensorType.ACTIVATIONS,"[128, 2048]",1.04,,0.96,,0.002,,0.0025,
+cuda_507d96,TensorType.ACTIVATIONS,"[128, 96, 64, 64]",1.67,,2.04,,0.376,,0.4688,
+cuda_507d96,TensorType.ACTIVATIONS,"[2, 96, 64, 64]",0.95,,0.9,,0.0059,,0.0073,
 cuda_507d96,TensorType.ACTIVATIONS,"[2048, 128256]",4.75,,41.4,,1.9688,,2.4551,
 cuda_507d96,TensorType.WEIGHTS,"[128, 2048]",0.93,,0.9,,0.002,,0.0024,
+cuda_507d96,TensorType.WEIGHTS,"[128, 96, 64, 64]",1.36,,1.68,,0.376,,0.4688,
+cuda_507d96,TensorType.WEIGHTS,"[2, 96, 64, 64]",0.83,,0.86,,0.0059,,0.0073,
 cuda_507d96,TensorType.WEIGHTS,"[2048, 128256]",4.64,,6.25,,1.9659,,2.4513,
 triton_10_c1b9ff_slow_but_accurate_weight,TensorType.ACTIVATIONS,"[128, 2048]",1.63,-56%,1.44,-50%,0.002,-0%,0.0035,-38%
 triton_10_c1b9ff_slow_but_accurate_weight,TensorType.ACTIVATIONS,"[2048, 128256]",2.93,38%,7.12,83%,1.9786,-0%,3.4334,-40%
@@ -17,11 +21,23 @@ triton_12_2f62af_fallback_to_1d_grid_fast_and_accurate,TensorType.ACTIVATIONS,"[
 triton_12_2f62af_fallback_to_1d_grid_fast_and_accurate,TensorType.ACTIVATIONS,"[2048, 128256]",2.94,38%,7.56,82%,1.9785,-0%,3.4334,-40%
 triton_12_2f62af_fallback_to_1d_grid_fast_and_accurate,TensorType.WEIGHTS,"[128, 2048]",1.68,-79%,1.44,-59%,0.0022,-13%,0.0034,-40%
 triton_12_2f62af_fallback_to_1d_grid_fast_and_accurate,TensorType.WEIGHTS,"[2048, 128256]",3.03,35%,7.21,-15%,1.9757,-0%,3.4317,-40%
+triton_13_02b9d9,TensorType.ACTIVATIONS,"[128, 2048]",1.56,-49%,1.41,-47%,0.0023,-13%,0.0035,-38%
+triton_13_02b9d9,TensorType.ACTIVATIONS,"[128, 96, 64, 64]",1.79,-8%,2.41,-18%,0.3778,-1%,0.657,-40%
+triton_13_02b9d9,TensorType.ACTIVATIONS,"[2, 96, 64, 64]",2.04,-115%,2.07,-130%,0.0059,-0%,0.011,-50%
+triton_13_02b9d9,TensorType.ACTIVATIONS,"[2048, 128256]",2.92,39%,7.54,82%,1.9786,-0%,3.4334,-40%
+triton_13_02b9d9,TensorType.WEIGHTS,"[128, 2048]",1.52,-63%,1.39,-54%,0.0022,-13%,0.0034,-40%
+triton_13_02b9d9,TensorType.WEIGHTS,"[128, 96, 64, 64]",2.03,-50%,2.47,-47%,0.3778,-1%,0.6573,-40%
+triton_13_02b9d9,TensorType.WEIGHTS,"[2, 96, 64, 64]",1.95,-136%,2.05,-138%,0.0061,-4%,0.0103,-40%
+triton_13_02b9d9,TensorType.WEIGHTS,"[2048, 128256]",2.92,37%,7.21,-15%,1.9757,-0%,3.4317,-40%
 triton_1_43d6d2_PR,TensorType.ACTIVATIONS,"[128, 2048]",1.95,-86%,1.88,-96%,0.002,-0%,0.0035,-38%
 triton_1_43d6d2_PR,TensorType.WEIGHTS,"[128, 2048]",1.95,-109%,1.88,-107%,0.0022,-13%,0.0034,-40%
 triton_2_07e5b9_PR_fixbig,TensorType.ACTIVATIONS,"[128, 2048]",1.85,-77%,1.86,-94%,0.002,-0%,0.0035,-38%
+triton_2_07e5b9_PR_fixbig,TensorType.ACTIVATIONS,"[128, 96, 64, 64]",1.99,-19%,2.48,-22%,0.3778,-1%,0.657,-40%
+triton_2_07e5b9_PR_fixbig,TensorType.ACTIVATIONS,"[2, 96, 64, 64]",2.0,-111%,2.0,-123%,0.0059,-0%,0.011,-50%
 triton_2_07e5b9_PR_fixbig,TensorType.ACTIVATIONS,"[2048, 128256]",3.16,34%,7.56,82%,1.9786,-0%,3.4334,-40%
 triton_2_07e5b9_PR_fixbig,TensorType.WEIGHTS,"[128, 2048]",1.83,-96%,1.85,-104%,0.0022,-13%,0.0034,-40%
+triton_2_07e5b9_PR_fixbig,TensorType.WEIGHTS,"[128, 96, 64, 64]",1.61,-18%,2.35,-40%,0.3778,-1%,0.6573,-40%
+triton_2_07e5b9_PR_fixbig,TensorType.WEIGHTS,"[2, 96, 64, 64]",1.91,-130%,1.99,-131%,0.0061,-4%,0.0103,-40%
 triton_2_07e5b9_PR_fixbig,TensorType.WEIGHTS,"[2048, 128256]",3.34,28%,7.56,-21%,1.9757,-0%,3.4317,-40%
 triton_3_4d6a103,TensorType.WEIGHTS,"[2048, 128256]",3.08,34%,7.5,-20%,1.9757,-0%,3.4317,-40%
 triton_4_ea1b9b_2D_grid,TensorType.WEIGHTS,"[2048, 128256]",2.8,40%,3.96,37%,1.9757,-0%,3.4317,-40%
