@@ -153,12 +153,22 @@ class LMWeightCompression(BaseTestPipeline):
             if not (self.fp32_model_dir / self.OV_MODEL_NAME).exists():
                 # export by model_id
                 self.model_hf = OVModelForCausalLM.from_pretrained(
-                    self.model_id, export=True, load_in_8bit=False, compile=False, stateful=is_stateful
+                    self.model_id,
+                    export=True,
+                    load_in_8bit=False,
+                    compile=False,
+                    stateful=is_stateful,
+                    ov_config={"KV_CACHE_PRECISION": "f16", "DYNAMIC_QUANTIZATION_GROUP_SIZE": "0"},
                 )
             else:
                 # no export, load from IR. Applicable for sequential run of test cases in local environment.
                 self.model_hf = OVModelForCausalLM.from_pretrained(
-                    self.fp32_model_dir, trust_remote_code=True, load_in_8bit=False, compile=False, stateful=is_stateful
+                    self.fp32_model_dir,
+                    trust_remote_code=True,
+                    load_in_8bit=False,
+                    compile=False,
+                    stateful=is_stateful,
+                    ov_config={"KV_CACHE_PRECISION": "f16", "DYNAMIC_QUANTIZATION_GROUP_SIZE": "0"},
                 )
             self.model = self.model_hf.model
         elif self.backend == BackendType.ONNX:
@@ -392,14 +402,21 @@ class LMWeightCompression(BaseTestPipeline):
                 load_in_8bit=False,
                 compile=False,
                 stateful=is_stateful,
+                ov_config={"KV_CACHE_PRECISION": "f16", "DYNAMIC_QUANTIZATION_GROUP_SIZE": "0"},
             )
-            evaluator = Evaluator(base_model=model_gold, tokenizer=self.preprocessor, metrics=("similarity",))
+            evaluator = Evaluator(
+                base_model=model_gold, tokenizer=self.preprocessor, metrics=("similarity",), use_chat_template=False
+            )
             evaluator.dump_gt(str(gt_data_path))
             print("Saving ground-truth validation data:", gt_data_path.resolve())
         else:
             print("Loading existing ground-truth validation data:", gt_data_path.resolve())
             evaluator = Evaluator(
-                tokenizer=self.preprocessor, gt_data=gt_data_path, test_data=str(gt_data_path), metrics=("similarity",)
+                tokenizer=self.preprocessor,
+                gt_data=gt_data_path,
+                test_data=str(gt_data_path),
+                metrics=("similarity",),
+                use_chat_template=False,
             )
 
         if self.backend == BackendType.FP32:
@@ -417,13 +434,15 @@ class LMWeightCompression(BaseTestPipeline):
                 from_onnx=True,
             )
         else:
-            compressed_model_hf = OVModelForCausalLM.from_pretrained(
-                self.output_model_dir,
-                trust_remote_code=True,
-                load_in_8bit=False,
-                compile=False,
-                stateful=is_stateful,
-            )
+            compressed_model_hf = self.model_hf
+            # compressed_model_hf = OVModelForCausalLM.from_pretrained(
+            #     self.output_model_dir,
+            #     trust_remote_code=True,
+            #     load_in_8bit=False,
+            #     compile=False,
+            #     stateful=is_stateful,
+            #     ov_config={"KV_CACHE_PRECISION": "f16", "DYNAMIC_QUANTIZATION_GROUP_SIZE": "0"},
+            # )
 
         print("Evaluation of the target model")
         _, all_metrics = evaluator.score(compressed_model_hf)

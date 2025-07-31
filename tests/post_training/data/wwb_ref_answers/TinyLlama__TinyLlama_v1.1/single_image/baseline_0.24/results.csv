@@ -1,0 +1,2 @@
+Model,Backend,Metric name,Metric value,Metric diff,Num int8,Num int4,Compr. time,Total time,RAM MiB,Status,Build url
+tinyllama_int8_data_free,TORCH,Similarity,0.24209,-0.75791,312,0,0:00:02,0:00:58,7669,Regression: Metric value is less than reference 0.24209 < 0.95624,

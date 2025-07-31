@@ -16,7 +16,10 @@ Finds top-k rows with largest differences for specified layers.
 """
 
 import argparse
+import re
 from dataclasses import dataclass
+from enum import Enum
+from typing import Any
 
 import numpy as np
 import torch
@@ -26,6 +29,13 @@ from transformers import AutoTokenizer
 
 import nncf
 from nncf import CompressWeightsMode
+
+
+class BackendType(Enum):
+    """Supported model backends."""
+
+    PYTORCH = "pytorch"
+    OPENVINO = "openvino"
 
 
 @dataclass
@@ -43,15 +53,22 @@ class LayerComparison:
 class ModelOutputExtractor:
     """Extracts outputs from specified layers during model inference."""
 
-    def __init__(self, model, layer_names: list[str]):
+    def __init__(self, model, layer_names: list[str], backend: BackendType, calibration_dataset=None):
         self.model = model
         self.layer_names = layer_names
+        self.backend = backend
         self.layer_outputs = {}
         self.hooks = []
-        self._register_hooks()
+        self.calibration_dataset = calibration_dataset
+        self.collected_activations = {}
 
-    def _register_hooks(self):
-        """Register forward hooks to capture layer outputs."""
+        if backend == BackendType.PYTORCH:
+            self._register_pytorch_hooks()
+        elif backend == BackendType.OPENVINO:
+            self._setup_openvino_extraction()
+
+    def _register_pytorch_hooks(self):
+        """Register forward hooks for PyTorch models."""
 
         def create_hook(name):
             def hook(module, input, output):
@@ -74,36 +91,80 @@ class ModelOutputExtractor:
     def __call__(self, *args, **kwargs):
         """Forward pass with output extraction."""
         self.layer_outputs.clear()
-        with torch.no_grad():
-            output = self.model(*args, **kwargs)
-        return output, self.layer_outputs.copy()
+
+        if self.backend == BackendType.PYTORCH:
+            with torch.no_grad():
+                output = self.model(*args, **kwargs)
+            return output, self.layer_outputs.copy()
+
+        elif self.backend == BackendType.OPENVINO:
+            msg = "OpenVINO backend is not supported."
+            raise RuntimeError(msg)
 
     def remove_hooks(self):
-        """Remove all registered hooks."""
-        for hook in self.hooks:
-            hook.remove()
-        self.hooks.clear()
+        """Remove all registered hooks (PyTorch only)."""
+        if self.backend == BackendType.PYTORCH:
+            for hook in self.hooks:
+                hook.remove()
+            self.hooks.clear()
 
 
-def find_layer_names(model, target_patterns: list[str]) -> list[str]:
+def load_model(model_id: str, backend: BackendType, device: str = "cpu"):
+    """Load model based on the specified backend."""
+    if backend == BackendType.PYTORCH:
+        return load_pytorch_model(model_id, device)
+    else:
+        msg = f"Unsupported backend: {backend}"
+        raise ValueError(msg)
+
+
+def load_pytorch_model(model_id: str, device: str = "cpu"):
+    """Load PyTorch model."""
+    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32, device_map=device)
+    model.eval()
+    return model
+
+
+def compress_model(model, backend: BackendType, compression_params: dict, calibration_dataset):
+    """Compress model based on backend type."""
+    if backend == BackendType.PYTORCH:
+        # Compress the model directly (no need to copy since we loaded it fresh)
+        compressed_model = nncf.compress_weights(
+            model,
+            dataset=calibration_dataset,
+            # ignored_scope=nncf.IgnoredScope(patterns=[".*embedding.*"]),
+            ignored_scope=nncf.IgnoredScope(patterns=["(?!.*embed.*)\w+"]),
+            **compression_params,
+        )
+        compressed_model.eval()
+        return compressed_model
+    else:
+        msg = f"Unsupported backend for compression: {backend}"
+        raise ValueError(msg)
+
+
+def find_layer_names(model, target_patterns: list[str], backend: BackendType) -> list[str]:
     """Find layer names matching target patterns."""
     found_layers = []
     all_layers = []
 
-    for name, module in model.named_modules():
-        all_layers.append(name)
-        for pattern in target_patterns:
-            if pattern.lower() in name.lower():
-                found_layers.append(name)
-                break
+    if backend == BackendType.PYTORCH:
+        for name, module in model.named_modules():
+            all_layers.append(name)
+            for pattern in target_patterns:
+                if pattern.lower() in name.lower():
+                    found_layers.append(name)
+                    break
 
     if not found_layers:
         print("No layers found matching patterns:", target_patterns)
         print("\nAvailable layers:")
-        for layer in all_layers[:20]:  # Show first 20 layers
+        for layer in all_layers[:15]:  # Show first 15 layers
             print(f"  {layer}")
-        if len(all_layers) > 20:
-            print(f"  ... and {len(all_layers) - 20} more layers")
+        if len(all_layers) > 15:
+            print(f"  ... and {len(all_layers) - 30} more layers")
+        for layer in all_layers[-15:]:  # Show last 15 layers
+            print(f"  {layer}")
 
     return found_layers
 
@@ -304,7 +365,13 @@ def convert_compression_params(params_dict: dict) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Compare outputs between original and compressed LLM models")
     parser.add_argument(
-        "--model-id", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Hugging Face model ID"
+        "--model-id",
+        type=str,
+        default="TinyLlama/TinyLlama_v1.1",
+        help="Hugging Face model ID or path to OpenVINO model",
+    )
+    parser.add_argument(
+        "--backend", type=str, default="pytorch", choices=["pytorch", "openvino"], help="Model backend to use"
     )
     parser.add_argument(
         "--layers", type=str, nargs="+", default=["embed", "lm_head"], help="Layer name patterns to analyze"
@@ -325,22 +392,30 @@ def main():
 
     args = parser.parse_args()
 
-    print(f"Loading model: {args.model_id}")
+    # Convert backend string to enum
+    backend = BackendType.PYTORCH if args.backend == "pytorch" else BackendType.OPENVINO
 
-    # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(args.model_id)
+    print(f"Loading model: {args.model_id}")
+    print(f"Backend: {backend.value}")
+
+    # Load tokenizer (always from HuggingFace for text processing)
+    if backend == BackendType.OPENVINO and not args.model_id.startswith("./") and not args.model_id.startswith("/"):
+        # For OpenVINO, we still need the tokenizer from HuggingFace
+        tokenizer_id = args.model_id
+    else:
+        # For local OpenVINO models, try to infer tokenizer or use a default
+        tokenizer_id = args.model_id if backend == BackendType.PYTORCH else "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     # Load original model
     print("Loading original model...")
-    original_model = AutoModelForCausalLM.from_pretrained(
-        args.model_id, torch_dtype=torch.float32, device_map=args.device
-    )
-    original_model.eval()
+    original_model = load_model(args.model_id, backend, args.device)
 
     # Find target layers
-    target_layers = find_layer_names(original_model, args.layers)
+    target_layers = find_layer_names(original_model, args.layers, backend)
     if not target_layers:
         return
 
@@ -348,15 +423,10 @@ def main():
 
     # Create compressed model
     print("Creating compressed model...")
-    import copy
     import json
 
     compression_params_raw = json.loads(args.compression_params)
     compression_params = convert_compression_params(compression_params_raw)
-
-    # Create a deep copy of the original model for compression
-    print("Creating copy of original model for compression...")
-    compressed_model = copy.deepcopy(original_model)
 
     # Prepare calibration dataset for compression
     dataset = load_dataset("wikitext", "wikitext-2-v1", split="train", revision="b08601e")
@@ -364,21 +434,39 @@ def main():
 
     def transform_fn(data):
         tokenized = tokenizer(data["text"], return_tensors="pt", max_length=128, truncation=True)
+        # For OpenVINO, convert to numpy
+        if backend == BackendType.OPENVINO:
+            return {"input_ids": tokenized["input_ids"].numpy()}
         return {"input_ids": tokenized["input_ids"]}
 
     calibration_dataset = nncf.Dataset(dataset.select(range(100)), transform_fn)
 
-    # Compress the copied model
-    compressed_model = nncf.compress_weights(compressed_model, dataset=calibration_dataset, **compression_params)
-    compressed_model.eval()
+    # Load model again for compression (instead of copying)
+    print("Loading model for compression...")
+    model_for_compression = load_model(args.model_id, backend, args.device)
+    compressed_model = compress_model(model_for_compression, backend, compression_params, calibration_dataset)
 
     # Prepare sample inputs
     print(f"Preparing {args.num_samples} sample inputs...")
     sample_inputs = prepare_sample_inputs(tokenizer, args.num_samples, args.max_length)
 
     # Set up output extractors
-    orig_extractor = ModelOutputExtractor(original_model, target_layers)
-    comp_extractor = ModelOutputExtractor(compressed_model, target_layers)
+    orig_extractor = ModelOutputExtractor(original_model, target_layers, backend, calibration_dataset)
+    comp_extractor = ModelOutputExtractor(compressed_model, target_layers, backend, calibration_dataset)
+
+    # For OpenVINO, try to collect activations using NNCF statistics
+    if backend == BackendType.OPENVINO:
+        print("Attempting to collect activations using NNCF statistics...")
+        orig_activations = orig_extractor.collect_openvino_activations()
+        comp_activations = comp_extractor.collect_openvino_activations()
+
+        if orig_activations or comp_activations:
+            print(
+                f"Successfully collected activations for {len(orig_activations)} original "
+                f"and {len(comp_activations)} compressed operations"
+            )
+        else:
+            print("No activations collected via NNCF statistics - falling back to basic inference")
 
     all_comparisons = []
 
@@ -388,8 +476,12 @@ def main():
             print(f"\nProcessing sample {i + 1}/{len(sample_inputs)}")
             print(f"Text preview: {sample['text']}")
 
-            input_ids = sample["input_ids"].to(args.device)
-            attention_mask = sample["attention_mask"].to(args.device)
+            input_ids = sample["input_ids"]
+            attention_mask = sample["attention_mask"]
+
+            if backend == BackendType.PYTORCH:
+                input_ids = input_ids.to(args.device)
+                attention_mask = attention_mask.to(args.device)
 
             # Get outputs from both models
             _, orig_outputs = orig_extractor(input_ids=input_ids, attention_mask=attention_mask)

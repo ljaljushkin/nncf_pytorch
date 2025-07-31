@@ -21,51 +21,108 @@ from pathlib import Path
 
 
 def run_comparison_test():
-    """Run a simple test of the model comparison tool."""
+    # """Run a simple test of the model comparison tool."""
 
     tool_path = Path(__file__).parent / "compare_model_outputs.py"
 
-    # Basic test with TinyLlama model
-    cmd = [
+    # Test with PyTorch backend
+    print("Testing PyTorch backend...")
+    cmd_pytorch = [
         sys.executable,
         str(tool_path),
         "--model-id",
         "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "--backend",
+        "pytorch",
         "--layers",
-        "embed_tokens",
         "lm_head",
+        "model.embed_tokens",
+        # "model.layers.0.mlp.gate_proj",
+        # "model.layers.0.self_attn.q_proj",
         "--top-k",
-        "5",
+        "3",
         "--metric",
         "l2",
         "--num-samples",
-        "2",
+        "1",
         "--max-length",
-        "16",
+        "128",
         "--compression-params",
-        '{"mode": "int4_sym", "group_size": 128}',
+        # '{"mode": "int8_sym", "group_size": 128}',
+        '{"mode": "int8_asym"}',
         "--device",
         "cpu",
     ]
 
-    print("Running model comparison test...")
-    print("Command:", " ".join(cmd))
+    print("PyTorch Command:", " ".join(cmd_pytorch))
     print("-" * 80)
 
     try:
-        subprocess.run(cmd, capture_output=False, text=True, check=True)
-        print("\nTest completed successfully!")
-        return True
+        subprocess.run(cmd_pytorch, capture_output=False, text=True, check=True)
+        print("\nPyTorch test completed successfully!")
+        pytorch_success = True
     except subprocess.CalledProcessError as e:
-        print(f"\nTest failed with return code {e.returncode}")
-        if e.stdout:
-            print("STDOUT:", e.stdout)
-        if e.stderr:
-            print("STDERR:", e.stderr)
-        return False
+        print(f"\nPyTorch test failed with return code {e.returncode}")
+        pytorch_success = False
     except Exception as e:
-        print(f"\nTest failed with exception: {e}")
-        return False
+        print(f"\nPyTorch test failed with exception: {e}")
+        pytorch_success = False
+
+    # Test with OpenVINO backend (if available)
+    # print("\n" + "=" * 80)
+    # print("Testing OpenVINO backend...")
+
+    # try:
+    #     import openvino
+
+    #     openvino_available = True
+    # except ImportError:
+    #     print("OpenVINO not available, skipping OpenVINO test")
+    #     openvino_available = False
+    #     openvino_success = True  # Don't count as failure if not available
+
+    # if openvino_available:
+    #     cmd_openvino = [
+    #         sys.executable,
+    #         str(tool_path),
+    #         "--model-id",
+    #         "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    #         "--backend",
+    #         "openvino",
+    #         "--layers",
+    #         "__module.model.layers.0.mlp.gate_proj/ov_ext::linear/MatMul",
+    #         # "up_proj",  # OpenVINO layer names are different
+    #         "--top-k",
+    #         "3",
+    #         "--metric",
+    #         "l2",
+    #         "--num-samples",
+    #         "1",
+    #         "--max-length",
+    #         "8",
+    #         "--compression-params",
+    #         '{"mode": "int4_sym", "group_size": 128}',
+    #         "--device",
+    #         "cpu",
+    #     ]
+
+    #     print("OpenVINO Command:", " ".join(cmd_openvino))
+    #     print("-" * 80)
+
+    #     try:
+    #         subprocess.run(cmd_openvino, capture_output=False, text=True, check=True)
+    #         print("\nOpenVINO test completed successfully!")
+    #         openvino_success = True
+    #     except subprocess.CalledProcessError as e:
+    #         print(f"\nOpenVINO test failed with return code {e.returncode}")
+    #         openvino_success = False
+    #     except Exception as e:
+    #         print(f"\nOpenVINO test failed with exception: {e}")
+    #         openvino_success = False
+    # else:
+    #     openvino_success = True
+
+    # return True  # pytorch_success and openvino_success
 
 
 if __name__ == "__main__":

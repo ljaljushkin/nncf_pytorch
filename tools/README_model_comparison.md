@@ -1,131 +1,154 @@
-# Model Output Comparison Tool
+# Model Comparison Tool
 
-This tool compares outputs between original and compressed LLM models and identifies the top-k rows/tokens with the largest differences for specified layers.
-
-## Files
-
-- `compare_model_outputs.py` - Main comparison tool
-- `test_model_comparison.py` - Simple test script demonstrating usage
+A comprehensive tool for comparing the outputs of original vs compressed LLM models using NNCF weight compression. The tool supports both PyTorch and OpenVINO backends and can analyze layer-level differences to understand the impact of compression.
 
 ## Features
 
-- Compares any Hugging Face LLM model in original vs compressed form
-- Supports multiple distance metrics (L2, cosine distance, MSE)
-- Extracts outputs from specific layers (embedding, lm_head, etc.)
-- Finds top-k rows/tokens with largest differences
-- Shows corresponding tokens for easier interpretation
-- Supports different compression configurations
+- **Dual Backend Support**: PyTorch (fully functional) and OpenVINO (experimental)
+- **Layer-Level Analysis**: Extract and compare outputs from specific model layers
+- **Multiple Distance Metrics**: L2 norm, cosine distance, and MSE
+- **Top-K Analysis**: Find the positions/tokens with the largest compression differences
+- **Compression Modes**: Support for various NNCF compression modes (int4_sym, int8_sym, etc.)
+- **Flexible Input**: Use calibration datasets or custom text inputs
 
-## Usage
+## Quick Start
 
-### Basic Usage
-
-```bash
-python tools/compare_model_outputs.py \
-    --model-id "TinyLlama/TinyLlama-1.1B-Chat-v1.0" \
-    --layers embed_tokens lm_head \
-    --top-k 10 \
-    --metric l2 \
-    --num-samples 3 \
-    --max-length 32
-```
-
-### Parameters
-
-- `--model-id`: Hugging Face model ID (default: TinyLlama/TinyLlama-1.1B-Chat-v1.0)
-- `--layers`: Layer name patterns to analyze (default: ["embed", "lm_head"])
-- `--top-k`: Number of top different rows to show (default: 10)
-- `--metric`: Distance metric ("l2", "cosine", "mse") (default: "l2")
-- `--num-samples`: Number of input samples to test (default: 3)
-- `--max-length`: Maximum sequence length (default: 32)
-- `--compression-params`: JSON string with compression parameters
-- `--device`: Device to run inference on (default: "cpu")
-
-### Example with Custom Compression
+### PyTorch Backend (Recommended)
 
 ```bash
-python tools/compare_model_outputs.py \
-    --model-id "microsoft/DialoGPT-small" \
-    --layers transformer.wte transformer.ln_f \
+# Basic comparison of gate projection layer
+python compare_model_outputs.py \
+    --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+    --backend pytorch \
+    --layers model.layers.0.mlp.gate_proj \
     --top-k 5 \
+    --metric l2 \
+    --compression-params '{"mode": "int4_sym", "group_size": 128}'
+
+# Compare multiple layers with different metrics
+python compare_model_outputs.py \
+    --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+    --backend pytorch \
+    --layers model.layers.0.mlp.gate_proj model.layers.0.mlp.up_proj model.embed_tokens \
+    --top-k 3 \
     --metric cosine \
-    --compression-params '{"mode": "int8_sym", "group_size": 64}' \
-    --device cpu
+    --num-samples 5 \
+    --compression-params '{"mode": "int8_sym"}'
 ```
 
-### Running the Test
+### OpenVINO Backend (Experimental)
+
+⚠️ **Note**: OpenVINO backend is currently experimental and may have issues with layer extraction.
 
 ```bash
-python tools/test_model_comparison.py
+# OpenVINO comparison (when working)
+python compare_model_outputs.py \
+    --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+    --backend openvino \
+    --layers gate_proj up_proj \
+    --top-k 3 \
+    --metric l2 \
+    --compression-params '{"mode": "int4_sym", "group_size": 128}'
 ```
 
-## Output Format
+## Parameters
 
-The tool outputs:
+### Required Arguments
+- `--model-id`: HuggingFace model identifier (e.g., `TinyLlama/TinyLlama-1.1B-Chat-v1.0`)
+- `--backend`: Backend to use (`pytorch` or `openvino`)
+- `--layers`: Layer names to analyze (space-separated)
 
-1. **Layer Summary**: For each layer, shows mean and max distances
-2. **Top-K Analysis**: Lists the top-k positions with largest differences, including:
-   - Batch and sequence position
-   - Distance value
-   - Corresponding token (if available)
-   - Token ID
+### Compression Parameters
+- `--compression-params`: JSON string with NNCF compression parameters
+  - Available modes: `int4_sym`, `int4_asym`, `int8_sym`, `int8_asym`, `nf4`, `e2m1`
+  - Example: `'{"mode": "int4_sym", "group_size": 128, "ratio": 0.8}'`
 
-### Example Output
+### Analysis Options
+- `--top-k`: Number of top differences to report (default: 5)
+- `--metric`: Distance metric (`l2`, `cosine`, `mse`) (default: `l2`)
+- `--num-samples`: Number of input samples to process (default: 3)
+- `--max-length`: Maximum input sequence length (default: 32)
+
+### Device and Performance
+- `--device`: Device to use (`cpu`, `cuda`) (default: `cpu`)
+
+## Layer Name Discovery
+
+Use the helper tool to find available layer names:
 
 ```bash
+# Find all layer names in a model
+python discover_layers.py TinyLlama/TinyLlama-1.1B-Chat-v1.0
+
+# Find layers matching a pattern
+python discover_layers.py TinyLlama/TinyLlama-1.1B-Chat-v1.0 --pattern "mlp.*proj"
+```
+
+## Example Output
+
+```
 ================================================================================
 LAYER COMPARISON RESULTS
 ================================================================================
 
-Layer: model.embed_tokens
+Layer: model.layers.0.mlp.gate_proj
 Distance metric: l2
-Mean distance: 0.051234
-Max distance: 0.234567
+Mean distance: 2.491294
+Max distance: 3.744726
 
-Top-5 rows with largest differences:
-  1. Batch 0, Position 7: distance = 0.234567
-      Token: 'the' (ID: 279)
-  2. Batch 1, Position 3: distance = 0.198432
-      Token: 'and' (ID: 322)
-  ...
+Top-2 rows with largest differences:
+  1. Batch 0, Position 1: distance = 3.744726
+      Token: '' (ID: 29871)
+  2. Batch 0, Position 2: distance = 2.616566
+      Token: '=' (ID: 353)
+------------------------------------------------------------
+
+Analysis complete! Processed 1 samples across 1 layers.
 ```
 
-## How It Works
+## Backend Differences
 
-1. **Load Models**: Loads original model and creates compressed version using NNCF
-2. **Layer Hooks**: Registers forward hooks to capture outputs from specified layers
-3. **Inference**: Runs both models on sample inputs from WikiText dataset
-4. **Distance Calculation**: Computes distances between layer outputs using chosen metric
-5. **Top-K Selection**: Identifies positions with largest differences
-6. **Token Mapping**: Maps positions back to original tokens for interpretation
+### PyTorch Backend
+- **Status**: ✅ Fully functional
+- **Layer Names**: Use PyTorch module names (e.g., `model.layers.0.mlp.gate_proj`)
+- **Extraction Method**: Forward hooks for real-time layer output capture
+- **Performance**: Fast, direct access to intermediate outputs
 
-## Supported Distance Metrics
+### OpenVINO Backend
+- **Status**: ⚠️ Experimental (issues with layer extraction)
+- **Layer Names**: Use simplified names (e.g., `gate_proj`, `up_proj`)
+- **Extraction Method**: Model graph modification to add output nodes
+- **Performance**: Optimized for deployment scenarios
 
-- **L2**: Euclidean distance `||orig - comp||_2`
-- **Cosine**: Cosine distance `1 - cosine_similarity(orig, comp)`
-- **MSE**: Mean squared error `mean((orig - comp)^2)`
+## Testing
 
-## Layer Selection
+Run the comprehensive test suite:
 
-The tool automatically finds layers matching the provided patterns. For example:
+```bash
+# Test both backends with various configurations
+python test_model_comparison.py
+```
 
-- `embed` matches embedding layers like `embed_tokens`, `word_embeddings`
-- `lm_head` matches language modeling head layers
-- `attention` matches attention layers
+## Known Issues
 
-If no layers are found, the tool lists available layer names to help you choose.
+1. **OpenVINO Layer Extraction**: Current implementation has issues with OpenVINO model graph modification for intermediate layer outputs
+2. **Memory Usage**: Large models may require significant memory for both original and compressed versions
+3. **Layer Name Mapping**: Different backends use different layer naming conventions
 
-## Requirements
+## Implementation Notes
 
-- PyTorch
-- Transformers
-- NNCF
-- Datasets
-- NumPy
+- **In-place Compression Fix**: The tool uses `copy.deepcopy()` to avoid modifying the original model during compression
+- **Enum Conversion**: String compression parameters are automatically converted to NNCF enums
+- **Error Handling**: Robust error handling for missing layers and invalid parameters
 
-## Troubleshooting
+## Dependencies
 
-1. **Memory Issues**: Reduce `--num-samples` or `--max-length`
-2. **Layer Not Found**: Run once to see available layer names
-3. **CUDA Issues**: Use `--device cpu` for CPU-only execution
-4. **Model Download**: Ensure internet connection for first-time model download
+```
+torch
+transformers
+nncf
+datasets
+numpy
+openvino (optional, for OpenVINO backend)
+optimum[openvino] (optional, for OpenVINO conversion)
+```

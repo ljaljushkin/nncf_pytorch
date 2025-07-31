@@ -1,0 +1,48 @@
+Embedding Outlier Analysis Results
+Model: TinyLlama/TinyLlama_v1.1
+Compression: int8_asym, ratio=0.8, group_size=128
+Outlier method: variance
+
+TOP OUTLIERS (Original Model):
+ 1. listade                   (idx:  7917, score: 0.000489)
+ 2. släktet                   (idx:  7651, score: 0.000480)
+ 3. Während                   (idx: 19609, score: 0.000452)
+ 4. multirow                  (idx: 28570, score: 0.000421)
+ 5. azon                      (idx: 26363, score: 0.000414)
+ 6. accom                     (idx:  7954, score: 0.000409)
+ 7. setContentView            (idx: 26916, score: 0.000409)
+ 8. DOCTYPE                   (idx: 21300, score: 0.000408)
+ 9. familjen                  (idx:  7172, score: 0.000403)
+10. jelent                    (idx: 23962, score: 0.000401)
+11. preventDefault            (idx: 22489, score: 0.000400)
+12. Fourier                   (idx: 27506, score: 0.000399)
+13. jsfiddle                  (idx:  7822, score: 0.000398)
+14. gelang                    (idx: 25769, score: 0.000398)
+15. Muham                     (idx: 27100, score: 0.000398)
+16. removeClass               (idx: 25636, score: 0.000397)
+17. verw                      (idx:  9540, score: 0.000396)
+18. documentclass             (idx: 18329, score: 0.000394)
+19. необ                      (idx: 23842, score: 0.000394)
+20. éső                       (idx: 29464, score: 0.000393)
+
+TOP OUTLIERS (Compressed Model):
+ 1. listade                   (idx:  7917, score: 0.000489)
+ 2. släktet                   (idx:  7651, score: 0.000480)
+ 3. Während                   (idx: 19609, score: 0.000452)
+ 4. multirow                  (idx: 28570, score: 0.000421)
+ 5. azon                      (idx: 26363, score: 0.000414)
+ 6. accom                     (idx:  7954, score: 0.000410)
+ 7. setContentView            (idx: 26916, score: 0.000409)
+ 8. DOCTYPE                   (idx: 21300, score: 0.000407)
+ 9. familjen                  (idx:  7172, score: 0.000403)
+10. jelent                    (idx: 23962, score: 0.000400)
+11. preventDefault            (idx: 22489, score: 0.000400)
+12. Fourier                   (idx: 27506, score: 0.000399)
+13. jsfiddle                  (idx:  7822, score: 0.000399)
+14. gelang                    (idx: 25769, score: 0.000398)
+15. Muham                     (idx: 27100, score: 0.000398)
+16. removeClass               (idx: 25636, score: 0.000396)
+17. verw                      (idx:  9540, score: 0.000396)
+18. documentclass             (idx: 18329, score: 0.000394)
+19. необ                      (idx: 23842, score: 0.000394)
+20. éső                       (idx: 29464, score: 0.000393)

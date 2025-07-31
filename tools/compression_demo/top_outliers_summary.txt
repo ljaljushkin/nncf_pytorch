@@ -1,0 +1,49 @@
+Embedding Outlier Analysis Results
+Model: TinyLlama/TinyLlama_v1.1
+Compression: int8_asym, ratio=0.8, group_size=128
+Outlier method: zscore
+
+TOP OUTLIERS (Original Model):
+ 1.                          (idx:    30, score: 6.433350)
+ 2.                          (idx:    31, score: 6.433350)
+ 3. %                         (idx:    40, score: 6.433350)
+ 4. &                         (idx:    41, score: 6.433350)
+ 5. $                         (idx:    39, score: 6.433350)
+ 6. #                         (idx:    38, score: 6.433350)
+ 7. 8                         (idx:    59, score: 6.433350)
+ 8. 7                         (idx:    58, score: 6.433350)
+ 9. 6                         (idx:    57, score: 6.433350)
+10.                          (idx:    11, score: 6.433350)
+11.                          (idx:    10, score: 6.433350)
+12.                          (idx:     9, score: 6.433350)
+13.                          (idx:     8, score: 6.433350)
+14.                          (idx:    23, score: 6.433350)
+15. 0                         (idx:    51, score: 6.433350)
+16. /                         (idx:    50, score: 6.433350)
+17. .                         (idx:    49, score: 6.433350)
+18. １                         (idx: 31936, score: 6.433350)
+19. <                         (idx:    63, score: 6.433350)
+20. ;                         (idx:    62, score: 6.433350)
+It's TinyLlama/TinyLlama_v1.1
+TOP OUTLIERS (Compressed Model):
+ 1. )                         (idx:    44, score: 6.433415)
+ 2. ;                         (idx:    62, score: 6.433415)
+ 3. １                         (idx: 31936, score: 6.433415)
+ 4. 5                         (idx:    56, score: 6.433415)
+ 5. $                         (idx:    39, score: 6.433415)
+ 6. #                         (idx:    38, score: 6.433415)
+ 7. "                         (idx:    37, score: 6.433415)
+ 8.                          (idx:    23, score: 6.433415)
+ 9.                          (idx:    22, score: 6.433415)
+10.                          (idx:    21, score: 6.433415)
+11.                          (idx:    20, score: 6.433415)
+12.                          (idx:    19, score: 6.433415)
+13.                          (idx:    18, score: 6.433415)
+14.                          (idx:    31, score: 6.433415)
+15.                          (idx:    30, score: 6.433415)
+16.                          (idx:    17, score: 6.433415)
+17.
+                         (idx:    16, score: 6.433415)
+18. *                         (idx:    45, score: 6.433415)
+19. 3                         (idx:    54, score: 6.433415)
+20.                          (idx:     9, score: 6.433415)
