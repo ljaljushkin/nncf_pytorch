@@ -285,7 +285,7 @@ if __name__ == "__main__":
                 run_data = {"time": -1}
         else:
             run_data = call_fn(
-                module, input_size, param_struct.device, num_runs, dtype=param_struct.dtype, forward_only=True
+                module, input_size, param_struct.device, num_runs, dtype=param_struct.dtype, forward_only=False
             )
 
         runtime = next(iter(run_data.values()))

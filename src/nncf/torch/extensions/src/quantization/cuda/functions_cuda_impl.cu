@@ -24,6 +24,14 @@ ScaleType get_scale_type(const at::Tensor& input, const at::Tensor& input_low, c
 
     if (scale_dim > 0)
     {
+        // For per-group quantization, scale tensor has shape [Cout, Cin//GS, 1] (3D)
+        // For per-channel quantization, scale tensor has shape [Cout, 1] or [1, Cin] (2D or effectively 1D)
+        if (scale_dim >= 3 || (scale_dim == 2 && input_range.size(0) > 1 && input_range.size(1) > 1))
+        {
+            // This indicates per-group quantization: scale shape is [Cout, Cin//GS, 1] or similar multi-dimensional
+            return ScaleType::PER_GROUP;
+        }
+
         // For (NxCxHxW) input/output tensors, it is assumed that input_range is
         // either (1) for single-scale quantization, or (Nx1x1x1) for
         // per-channel scale weights quantization, or (1xCx1x1) for per-channel
@@ -220,6 +228,82 @@ __global__ void q_scale_per_weight_channel_cuda_backward_kernel(
 
 
 template <typename scalar_t, typename scalar_accum_t>
+__global__ void q_scale_per_group_cuda_backward_kernel(
+        scalar_t* __restrict__ grad_input,
+        scalar_t* __restrict__ grad_input_low,
+        scalar_t* __restrict__ grad_input_range,
+        scalar_accum_t* __restrict__ dev_tmp_range,
+        scalar_accum_t* __restrict__ dev_tmp_low,
+        int32_t* __restrict__ dev_last_block_counter_range,
+        int32_t* __restrict__ dev_last_block_counter_low,
+        const scalar_t* __restrict__ grad_output,
+        const scalar_t* __restrict__ input,
+        const scalar_t* __restrict__ input_low,
+        const scalar_t* __restrict__ input_range,
+        const scalar_t levels,
+        const scalar_t level_low,
+        const scalar_t level_high,
+        const size_t elements_per_scale,
+        const size_t group_size,
+        const size_t num_groups_per_channel) {
+
+    const uint16_t tidx = threadIdx.x;
+    const uint32_t scale_idx = blockIdx.x;
+    const uint32_t per_scale_block_idx = blockIdx.y;
+
+    const uint64_t per_scale_tidx = per_scale_block_idx * CUDA_MAX_NUM_THREADS_PER_BLOCK + tidx;
+    const uint32_t total_blocks_per_scale = gridDim.y;
+    const uint64_t total_threads_per_scale = total_blocks_per_scale * CUDA_MAX_NUM_THREADS_PER_BLOCK;
+
+    // For per-group quantization, we need to map scale_idx to the correct group
+    // scale_idx maps to [channel, group_within_channel] in the reshaped tensor [Cout, Cin//GS, GS]
+    const size_t channel_idx = scale_idx / num_groups_per_channel;
+    const size_t group_idx_in_channel = scale_idx % num_groups_per_channel;
+
+    // Applying scale data offsets
+    input_low += scale_idx;
+    input_range += scale_idx;
+    dev_tmp_low += scale_idx * total_blocks_per_scale;
+    dev_tmp_range += scale_idx * total_blocks_per_scale;
+    dev_last_block_counter_low += scale_idx;
+    dev_last_block_counter_range += scale_idx;
+    grad_input_low += scale_idx;
+    grad_input_range += scale_idx;
+
+    // Calculate offset for the specific group within the channel
+    // Original tensor shape: [Cout, Cin], reshaped conceptually to [Cout, Cin//GS, GS]
+    // We need to find the starting position of this group in the original flattened tensor
+    const size_t channel_size = elements_per_scale * num_groups_per_channel; // Total elements per channel (Cin)
+    const size_t group_start_in_channel = group_idx_in_channel * group_size;
+    const size_t offset_for_scaled_quantized_elements = channel_idx * channel_size + group_start_in_channel;
+
+    input += offset_for_scaled_quantized_elements;
+    grad_input += offset_for_scaled_quantized_elements;
+    grad_output += offset_for_scaled_quantized_elements;
+
+    scalar_accum_t per_thread_grad_sum_range = 0, per_thread_grad_sum_low = 0;
+    scalar_t output, val_grad_input_range, val_grad_input_low;
+    scalar_t alpha = level_low / level_high;
+    scalar_t range_low = (*input_low);
+    scalar_t range_high = (*input_low) + (*input_range);
+    scalar_t reverted_range = 1 / (*input_range);
+
+    // Process elements within this group (elements_per_scale should be group_size for per-group)
+    for (size_t i = per_scale_tidx; i < elements_per_scale; i += total_threads_per_scale) {
+        fakeQuantize<scalar_t>(&output, (input + i), input_low, input_range, levels);
+        calcGrad<scalar_t>((grad_input + i), &val_grad_input_low, &val_grad_input_range, (grad_output + i),
+                 (input + i), &output, range_low, range_high, reverted_range, alpha);
+        per_thread_grad_sum_range += val_grad_input_range;
+        per_thread_grad_sum_low += val_grad_input_low;
+    }
+
+    __shared__ scalar_accum_t  sh_grad_range[CUDA_MAX_NUM_THREADS_PER_BLOCK];
+    __shared__ scalar_accum_t  sh_grad_low[CUDA_MAX_NUM_THREADS_PER_BLOCK];
+    reduce_with_shared_memory<scalar_t, scalar_accum_t>(sh_grad_range, per_thread_grad_sum_range, tidx, per_scale_block_idx, dev_tmp_range, dev_last_block_counter_range, grad_input_range, total_blocks_per_scale);
+    reduce_with_shared_memory<scalar_t, scalar_accum_t>(sh_grad_low, per_thread_grad_sum_low, tidx, per_scale_block_idx, dev_tmp_low, dev_last_block_counter_low, grad_input_low, total_blocks_per_scale);
+}
+
+template <typename scalar_t, typename scalar_accum_t>
 __global__ void q_scale_per_activation_channel_cuda_backward_kernel(
         scalar_t* __restrict__ grad_input,
         scalar_t* __restrict__ grad_input_low,
@@ -302,10 +386,10 @@ at::Tensor q_cuda_forward(
     at::DeviceGuard guard(input.device());
     const auto quantized_elements_count = input.numel();
 
-    // TODO: extend get_scale_type to detect per-group case
-    // weight_shape: [Cout, Cin] -> [Cout, Cin//GS, GS]
-    // scale_shape: [Cout, Cin//GS, 1]
-    ScaleType scale_type = ScaleType::PER_GROUP;//get_scale_type(input, input_low, input_range);
+    // Detect scale type automatically based on tensor shapes
+    // Per-group: weight_shape: [Cout, Cin] -> [Cout, Cin//GS, GS], scale_shape: [Cout, Cin//GS, 1]
+    // Per-channel: weight_shape: [Cout, Cin], scale_shape: [Cout, 1] or [1, Cin]
+    ScaleType scale_type = get_scale_type(input, input_low, input_range);
 
     uint64_t contiguous_elements_per_scale = 0;
     uint64_t scale_count = input_range.numel();
@@ -439,6 +523,72 @@ std::vector<at::Tensor> q_scale_per_weight_channel_cuda_backward(at::Tensor grad
 }
 
 
+std::vector<at::Tensor> q_scale_per_group_cuda_backward(at::Tensor grad_output,
+        at::Tensor input,
+        at::Tensor input_low,
+        at::Tensor input_range,
+        int levels,
+        int level_low,
+        int level_high) {
+    // Per-group
+    // weight shape: [Cout, Cin] should be reshaped to [Cout, Cin//GS, GS] to work with scale
+    // scale shape: [Cout, Cin//GS, 1]
+    // Per-channel
+    // weight shape: [Cout, Cin]
+    // scale shape: [Cout, 1]
+    at::DeviceGuard guard(input.device());
+
+    // For per-group quantization, we need to calculate group parameters
+    // input_range has shape [Cout, Cin//GS, 1] for per-group
+    // input has shape [Cout, Cin] (flattened as [Cout * Cin])
+    const auto scale_count = input_range.numel(); // Total number of groups: Cout * (Cin//GS)
+    const auto elements_per_scale = input.numel() / scale_count; // This should be group_size (GS)
+
+    // Calculate group structure parameters
+    const auto cout = input_range.size(0); // Number of output channels
+    const auto num_groups_per_channel = input_range.size(1); // Cin//GS
+    const auto group_size = elements_per_scale; // GS
+
+    auto grad_input = at::empty_like(grad_output);
+
+    auto grad_input_low = at::empty(input_range.sizes(), grad_output.options());
+    auto grad_input_range = at::empty(input_range.sizes(), grad_output.options());
+
+    auto accum_options = get_accum_options(grad_output.options());
+    dim3 grid_size = get_2d_grid_size_for_per_channel(scale_count);
+    auto dev_tmp_range = at::zeros({grid_size.x, grid_size.y}, accum_options);
+    auto dev_tmp_low = at::zeros({grid_size.x, grid_size.y}, accum_options);
+    auto dev_last_block_counter_range = at::zeros({grid_size.x, 1},  at::device(grad_output.options().device()).dtype(at::kInt));
+    auto dev_last_block_counter_low = at::zeros({grid_size.x, 1},  at::device(grad_output.options().device()).dtype(at::kInt));
+
+    PROFILE(DISPATCH_TENSOR_DATA_TYPES(input.scalar_type(), "q_scale_per_group_cuda_backward", ([&] {
+              using scalar_accum_t = ACCUM_TYPE_FOR(scalar_t);
+              q_scale_per_group_cuda_backward_kernel<scalar_t, scalar_accum_t><<<grid_size, CUDA_MAX_NUM_THREADS_PER_BLOCK, 0, at::cuda::getCurrentCUDAStream()>>>(
+                  grad_input.data_ptr<scalar_t>(),
+                  grad_input_low.data_ptr<scalar_t>(),
+                  grad_input_range.data_ptr<scalar_t>(),
+                  dev_tmp_range.data_ptr<scalar_accum_t>(),
+                  dev_tmp_low.data_ptr<scalar_accum_t>(),
+                  dev_last_block_counter_range.data_ptr<int32_t>(),
+                  dev_last_block_counter_low.data_ptr<int32_t>(),
+                  grad_output.data_ptr<scalar_t>(),
+                  input.data_ptr<scalar_t>(),
+                  input_low.data_ptr<scalar_t>(),
+                  input_range.data_ptr<scalar_t>(),
+                  levels,
+                  level_low,
+                  level_high,
+                  elements_per_scale,
+                  group_size,
+                  num_groups_per_channel);
+            }));
+    )
+
+    return {grad_input, grad_input_low, grad_input_range};
+}
+
+
+
 std::vector<at::Tensor> q_scale_per_activation_channel_cuda_backward(at::Tensor grad_output,
         at::Tensor input,
         at::Tensor input_low,
@@ -516,6 +666,15 @@ std::vector<at::Tensor> q_cuda_backward(
                 level_high);
         case ScaleType::PER_WEIGHT_CHANNEL:
             return q_scale_per_weight_channel_cuda_backward(
+                grad_output,
+                input,
+                input_low,
+                input_range,
+                levels,
+                level_low,
+                level_high);
+        case ScaleType::PER_GROUP:
+            return q_scale_per_group_cuda_backward(
                 grad_output,
                 input,
                 input_low,
