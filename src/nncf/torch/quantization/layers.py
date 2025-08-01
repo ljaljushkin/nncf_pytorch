@@ -1016,7 +1016,6 @@ class AsymmetricQuantizer(BaseQuantizer):
             self.to(x.device)
         return asymmetric_quantize(
             x,
-            self._weight_group_shape,
             self.levels,
             self.level_low,
             self.level_high,

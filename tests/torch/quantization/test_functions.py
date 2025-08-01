@@ -584,7 +584,6 @@ class BaseParametrized:
             assert scale_mode == "per_group", "TODO: hardcoded for per-group case"
             test_value = asymmetric_quantize(
                 test_input,
-                input_shape,
                 levels,
                 level_low,
                 level_high,

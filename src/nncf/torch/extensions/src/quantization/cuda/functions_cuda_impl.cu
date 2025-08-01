@@ -6,7 +6,8 @@ enum class ScaleType
 {
     SINGLE_SCALE,
     PER_WEIGHT_CHANNEL,
-    PER_ACTIVATION_CHANNEL
+    PER_ACTIVATION_CHANNEL,
+    PER_GROUP,
 };
 
 
@@ -301,7 +302,10 @@ at::Tensor q_cuda_forward(
     at::DeviceGuard guard(input.device());
     const auto quantized_elements_count = input.numel();
 
-    ScaleType scale_type = get_scale_type(input, input_low, input_range);
+    // TODO: extend get_scale_type to detect per-group case
+    // weight_shape: [Cout, Cin] -> [Cout, Cin//GS, GS]
+    // scale_shape: [Cout, Cin//GS, 1]
+    ScaleType scale_type = ScaleType::PER_GROUP;//get_scale_type(input, input_low, input_range);
 
     uint64_t contiguous_elements_per_scale = 0;
     uint64_t scale_count = input_range.numel();
@@ -312,6 +316,7 @@ at::Tensor q_cuda_forward(
             contiguous_elements_per_scale = quantized_elements_count / (input.size(0) * scale_count);
             break;
         case ScaleType::PER_WEIGHT_CHANNEL:
+        case ScaleType::PER_GROUP:
             // Scale count should be equal to 0-th input tensor dimension
             contiguous_elements_per_scale = quantized_elements_count / scale_count;
             break;

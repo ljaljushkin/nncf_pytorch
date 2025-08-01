@@ -284,7 +284,9 @@ if __name__ == "__main__":
             except:  # noqa: E722
                 run_data = {"time": -1}
         else:
-            run_data = call_fn(module, input_size, param_struct.device, num_runs, dtype=param_struct.dtype)
+            run_data = call_fn(
+                module, input_size, param_struct.device, num_runs, dtype=param_struct.dtype, forward_only=True
+            )
 
         runtime = next(iter(run_data.values()))
         # benchmark_data.append({**param_struct.to_dict(), "time_ms": runtime})

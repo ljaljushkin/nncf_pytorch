@@ -10,9 +10,11 @@
 # limitations under the License.
 
 import os.path
+import subprocess
 
 import torch
 
+import nncf
 from nncf import nncf_logger
 from nncf.definitions import NNCF_PACKAGE_ROOT_DIR
 from nncf.torch.extensions import EXTENSIONS
@@ -81,27 +83,27 @@ class QuantizedFunctionsCUDALoader(ExtensionLoader):
 
     @classmethod
     def load(cls):
-        print("load torch.COMPILE!!!")
-        return ReferenceQuantizedFunctions
-        # try:
-        #     return torch.utils.cpp_extension.load(
-        #         cls.name(),
-        #         CUDA_EXT_SRC_LIST,
-        #         extra_include_paths=EXT_INCLUDE_DIRS,
-        #         build_directory=cls.get_build_dir(),
-        #         verbose=False,
-        #     )
-        # except ExtensionLoaderTimeoutException as e:
-        #     raise e
-        # except (subprocess.CalledProcessError, OSError, RuntimeError) as e:
-        #     assert torch.cuda.is_available()
-        #     msg = (
-        #         "CUDA is available for PyTorch, but NNCF could not compile "
-        #         "GPU quantization extensions. Make sure that you have installed CUDA development "
-        #         "tools (see https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html for "
-        #         "guidance) and that 'nvcc' is available on your system's PATH variable.\n"
-        #     )
-        #     raise nncf.InstallationError(msg) from e
+        # print("load torch.COMPILE!!!")
+        # return ReferenceQuantizedFunctions
+        try:
+            return torch.utils.cpp_extension.load(
+                cls.name(),
+                CUDA_EXT_SRC_LIST,
+                extra_include_paths=EXT_INCLUDE_DIRS,
+                build_directory=cls.get_build_dir(),
+                verbose=False,
+            )
+        except ExtensionLoaderTimeoutException as e:
+            raise e
+        except (subprocess.CalledProcessError, OSError, RuntimeError) as e:
+            assert torch.cuda.is_available()
+            msg = (
+                "CUDA is available for PyTorch, but NNCF could not compile "
+                "GPU quantization extensions. Make sure that you have installed CUDA development "
+                "tools (see https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html for "
+                "guidance) and that 'nvcc' is available on your system's PATH variable.\n"
+            )
+            raise nncf.InstallationError(msg) from e
 
     @classmethod
     def name(cls) -> str:
