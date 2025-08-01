@@ -53,8 +53,17 @@ class ReferenceQuantize:
         return torch.reciprocal(tensor)
 
     def forward(
-        self, input_: GeneralizedTensor, input_low: GeneralizedTensor, input_range: GeneralizedTensor, levels: int
+        self,
+        input_: GeneralizedTensor,
+        input_shape,
+        input_low: GeneralizedTensor,
+        input_range: GeneralizedTensor,
+        levels: int,
     ) -> GeneralizedTensor:
+        original_shape = input_.shape
+        # TODO: is check really needed? if original_shape != input_shape:
+        # TODO: to view from 2d to 3d need to do unsqueeze
+        input_ = input_.reshape(input_shape)
         scale = (levels - 1) / input_range
         output = input_.clip(min=input_low, max=input_low + input_range)
         zero_point = (-input_low * scale).round()
@@ -63,12 +72,14 @@ class ReferenceQuantize:
         output -= zero_point
         output = output.round()
         output = output / scale
+        output = output.reshape(original_shape)
         return output
 
     def backward(
         self,
         grad_output: GeneralizedTensor,
         input_: GeneralizedTensor,
+        input_shape,
         input_low: GeneralizedTensor,
         input_range: GeneralizedTensor,
         levels: int,
@@ -76,6 +87,9 @@ class ReferenceQuantize:
         level_high: int,
         is_asymmetric: bool = False,
     ) -> list[GeneralizedTensor]:
+        orig_shape = grad_output.shape
+        input_ = input_.reshape(input_shape)
+        grad_output = grad_output.reshape(input_shape)
         # is_asymmetric is unused, present only to correspond to the CPU signature of calling "backward"
         mask_hi = input_ > (input_low + input_range)
         mask_hi = self._astype(mask_hi, input_.dtype)
@@ -84,7 +98,7 @@ class ReferenceQuantize:
 
         mask_in = 1 - mask_hi - mask_lo
         range_sign = self._sign(input_range)
-        output = self.forward(input_, input_low, input_range, levels)
+        output = self.forward(input_, input_shape, input_low, input_range, levels)
         err = (output - input_) * self._reciprocal(input_range * range_sign)
         grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
         grad_range = sum_like(grad_range, input_range)
@@ -93,6 +107,7 @@ class ReferenceQuantize:
 
         grad_low = grad_output * (mask_hi + mask_lo)
         grad_low = sum_like(grad_low, input_low)
+        grad_input = grad_input.reshape(orig_shape)
         return [grad_input, grad_low, grad_range]
 
     def tune_range(

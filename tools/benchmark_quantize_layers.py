@@ -86,8 +86,8 @@ TEST_TENSOR_TYPES: list[TensorType] = [
 ]
 TEST_GRANULARITY: list[GranularityType] = [
     # GranularityType.PER_TENSOR,
-    GranularityType.PER_CHANNEL,
-    # GranularityType.PER_GROUP
+    # GranularityType.PER_CHANNEL,
+    GranularityType.PER_GROUP
 ]
 TEST_SYMMETRIC: list[bool] = [
     # True,
@@ -100,16 +100,16 @@ TEST_DEVICES: list[torch.device] = [
 ]
 
 TEST_BATCHES: list[BatchDescriptor] = [
-    BatchDescriptor(
-        mode=BatchMode.LOW,
-        input_size=LOW_BATCH_INPUT_SIZE,
-        num_runs={torch.device("cuda"): GPU_RUNS_LOW_BATCH, torch.device("cpu"): CPU_RUNS},
-    ),
-    BatchDescriptor(
-        mode=BatchMode.HIGH,
-        input_size=HIGH_BATCH_INPUT_SIZE,
-        num_runs={torch.device("cuda"): GPU_RUNS_HIGH_BATCH, torch.device("cpu"): CPU_RUNS},
-    ),
+    # BatchDescriptor(
+    #     mode=BatchMode.LOW,
+    #     input_size=LOW_BATCH_INPUT_SIZE,
+    #     num_runs={torch.device("cuda"): GPU_RUNS_LOW_BATCH, torch.device("cpu"): CPU_RUNS},
+    # ),
+    # BatchDescriptor(
+    #     mode=BatchMode.HIGH,
+    #     input_size=HIGH_BATCH_INPUT_SIZE,
+    #     num_runs={torch.device("cuda"): GPU_RUNS_HIGH_BATCH, torch.device("cpu"): CPU_RUNS},
+    # ),
     BatchDescriptor(
         mode=BatchMode.LOW,
         input_size=LOW_BATCH_INPUT_SIZE_2D,
@@ -232,7 +232,9 @@ def get_module(params_struct: ParamStruct) -> BaseQuantizer:
         assert len(weight_shape) == 2, "Weight shape must have exactly two dimensions"
         assert weight_shape[channel_axis] % GROUP_SIZE == 0, "Number of channels must be divisible by GROUP_SIZE"
         num_groups = weight_shape[channel_axis] // GROUP_SIZE
+        # weight: [2048, 4096] -> [2048, 4096//128, 128]
         weight_shape[channel_axis : channel_axis + 1] = (num_groups, GROUP_SIZE)
+        # scale: [2048, 4096//128, 1]
         scale_shape = list(weight_shape)
         scale_shape[channel_axis + 1] = 1
     elif params_struct.granularity == GranularityType.PER_CHANNEL:

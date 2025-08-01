@@ -560,6 +560,7 @@ def backward(
             use_2d_grid = True
             is_activation = True
 
+    use_2d_grid = False
     with torch.cuda.device(input_.device):
         if use_2d_grid:
             if is_activation:  # Use 2D grid for per-channel cases

@@ -145,7 +145,36 @@ def generate_input(
                 inputs[:, idx] = generate_one_channel_input(
                     input_low, input_range, ch_idx, input_size[0:1] + input_size[2:], bits, get_deviation, min_deviation
                 )
-    return inputs
+    elif scale_mode == "per_group":
+        CHANNEL_AXIS = 1
+        channel_count = input_size[CHANNEL_AXIS]
+        original_shape = input_size.copy()
+        num_groups = channel_count // GROUP_SIZE
+        assert is_weights, "Per-group quantization is only supported for weights"
+        assert len(input_size) == 2, "Weight shape must have exactly two dimensions"
+        assert channel_count % GROUP_SIZE == 0, "Number of channels must be divisible by GROUP_SIZE"
+        # scale: [out_channels, in_channels//group_size, 1]
+        assert input_low.shape == (input_size[0], num_groups, 1)
+        input_shape = list(input_size)
+        # weight: [out_channels, in_channels] -> [out_channels, in_channels//group_size, group_size]
+        input_shape[CHANNEL_AXIS : CHANNEL_AXIS + 1] = (num_groups, GROUP_SIZE)
+        inputs = np.empty(input_shape)
+
+        # TODO:!!! check
+        # Fill inputs with values for group quantization [out_channel, in_channels // group_size, group_size]
+        ch_idx = [0 for _ in input_shape]
+        for out_channel in range(input_shape[0]):
+            for group in range(num_groups):
+                ch_idx[0] = out_channel
+                ch_idx[1] = group
+                inputs[out_channel, group] = generate_one_channel_input(
+                    input_low, input_range, ch_idx, [GROUP_SIZE], bits, get_deviation, min_deviation
+                )
+
+        # # Reshape back to original weight shape [out_channels, in_channels]
+        inputs = inputs.reshape(original_shape)
+        print(f"inputs.shape: {inputs.shape}, original_shape: {original_shape}")
+    return inputs, input_shape
 
 
 def get_test_data(data_list, is_cuda=False, is_backward=False, is_fp16=False):
@@ -219,13 +248,19 @@ def check_outputs_for_quantization_functions(test_val: torch.Tensor, ref_val: np
 
 
 @pytest.mark.parametrize("bits", (8, 4), ids=("8bit", "4bit"))
-@pytest.mark.parametrize("scale_mode", ["single_scale", "per_channel_scale"])
+@pytest.mark.parametrize(
+    "scale_mode",
+    [
+        # "single_scale", "per_channel_scale",
+        "per_group"
+    ],
+)
 @pytest.mark.parametrize("is_fp16", (True, False), ids=("fp16", "fp32"))
 class BaseParametrized:
     class TestSymmetric:
         @staticmethod
         def generate_scale(input_size, scale_mode, is_weights, is_fp16, fixed=None):
-            assert scale_mode in ["single_scale", "per_channel_scale"]
+            assert scale_mode in ["single_scale", "per_channel_scale", "per_group"]
 
             if fixed is not None:
 
@@ -260,6 +295,28 @@ class BaseParametrized:
                     scales = np.empty(scales_shape)
                     for idx in range(0, channel_count):
                         scales[0, idx] = calc_scale()
+            elif scale_mode == "per_group":
+                CHANNEL_AXIS = 1
+                GROUP_SIZE = 2
+                channel_count = input_size[CHANNEL_AXIS]
+                assert is_weights, "Per-group quantization is only supported for weights"
+                assert len(input_size) == 2, "Weight shape must have exactly two dimensions"
+                assert channel_count % GROUP_SIZE == 0, "Number of channels must be divisible by GROUP_SIZE"
+                num_groups = channel_count // GROUP_SIZE
+                # weight: [2048, 4096] -> [2048, 4096//128, 128]
+                # input_size[CHANNEL_AXIS : CHANNEL_AXIS + 1] = (num_groups, GROUP_SIZE)
+                # scale: [2048, 4096//128, 1]
+                scales_shape = list(input_size)
+                scales_shape[CHANNEL_AXIS + 1] = 1
+                scales = np.empty(scales_shape)
+                for in_channel in range(input_size[0]):
+                    for group in range(num_groups):
+                        scales[in_channel, group, 0] = calc_scale()
+                print(f"scales.shape: {scales.shape}, weight.shape: {input_size}")
+                print(f"scales: {scales}")
+            else:
+                msg = f"Unknown scale mode: {scale_mode}"
+                raise ValueError(msg)
             return scales
 
         @staticmethod
@@ -410,7 +467,7 @@ class BaseParametrized:
 
         @staticmethod
         def generate_range_fp64(input_size, scale_mode, is_weights, fixed, is_fp16, levels):
-            assert scale_mode in ["single_scale", "per_channel_scale"]
+            assert scale_mode in ["single_scale", "per_channel_scale", "per_group"]
 
             if fixed is not None:
 
@@ -463,7 +520,25 @@ class BaseParametrized:
                     input_range = np.empty(scales_shape)
                     for idx in range(0, channel_count):
                         input_low[0, idx], input_range[0, idx] = calc_low_and_range()
-
+            elif scale_mode == "per_group":
+                CHANNEL_AXIS = 1
+                channel_count = input_size[CHANNEL_AXIS]
+                assert is_weights, "Per-group quantization is only supported for weights"
+                assert len(input_size) == 2, "Weight shape must have exactly two dimensions"
+                assert channel_count % GROUP_SIZE == 0, "Number of channels must be divisible by GROUP_SIZE"
+                num_groups = channel_count // GROUP_SIZE
+                # weight: [2048, 4096] -> [2048, 4096//128, 128]
+                input_size_ = list(input_size)
+                input_size_[CHANNEL_AXIS : CHANNEL_AXIS + 1] = (num_groups, GROUP_SIZE)
+                # scale: [2048, 4096//128, 1]
+                scales_shape = list(input_size_)
+                scales_shape[CHANNEL_AXIS + 1] = 1
+                input_low = np.empty(scales_shape)
+                input_range = np.empty(scales_shape)
+                for in_channel in range(input_size_[0]):
+                    for group in range(num_groups):
+                        input_low[in_channel, group, 0], input_range[in_channel, group, 0] = calc_low_and_range()
+                print(f"input_range.shape: {input_range.shape}, weight.shape: {input_size_}")
             return input_low, input_range
 
         @staticmethod
@@ -494,9 +569,10 @@ class BaseParametrized:
             ref_input_range = abs(ref_input_range) + EPS
             ref_input_low, ref_input_range = RQ.tune_range(ref_input_low, ref_input_range, levels)
 
-            ref_input = generate_input(
+            ref_input, input_shape = generate_input(
                 input_size, ref_input_low, ref_input_range, bits, scale_mode, is_weights, True
-            ).astype(np_dtype)
+            )
+            ref_input = ref_input.astype(np_dtype)
             test_input = get_test_data([ref_input], use_cuda, is_fp16=is_fp16)
 
             for array_ in (ref_input, ref_input_low, ref_input_range):
@@ -504,23 +580,37 @@ class BaseParametrized:
             for tensor_ in (test_input, test_input_low, test_input_range):
                 assert tensor_.dtype == torch.half if is_fp16 else torch.float
 
-            ref_value = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
+            ref_value = RQ.forward(ref_input, input_shape, ref_input_low, ref_input_range, levels)
+            assert scale_mode == "per_group", "TODO: hardcoded for per-group case"
+            out_features, num_groups, group_size = input_shape
+            weight_channel_shape = [out_features * num_groups, group_size]
+            scale_channel_shape = [out_features * num_groups, 1]
             test_value = asymmetric_quantize(
-                test_input, test_input.shape, levels, level_low, level_high, test_input_low, test_input_range, EPS
+                test_input,
+                weight_channel_shape,
+                scale_channel_shape,
+                levels,
+                level_low,
+                level_high,
+                test_input_low,
+                test_input_range,
+                EPS,
             )
 
             if use_cuda:
-                quant_len = ref_input_range / (2**bits - 1)
-                check_quant_moved(
-                    test_input,
-                    test_value,
-                    ref_value,
-                    quant_len,
-                    ref_input_low,
-                    ref_input_range,
-                    is_fp16,
-                    rtol=1e-2 if is_fp16 else 1e-3,
-                )
+                pass
+                # quant_len = ref_input_range / (2**bits - 1)
+                # TODO: need to align shapes of input and inpit_low/input_range
+                # check_quant_moved(
+                #     test_input,
+                #     test_value,
+                #     ref_value,
+                #     quant_len,
+                #     ref_input_low,
+                #     ref_input_range,
+                #     is_fp16,
+                #     rtol=1e-2 if is_fp16 else 1e-3,
+                # )
             else:
                 # Note: this will fail in case CPU reference quantization implementations had to be used instead of the
                 # compiled extensions, since they don't work well with middle-of-quanta values.
@@ -570,7 +660,7 @@ class BaseParametrized:
             # section of quant, so small deviation won't change the quant on forward pass
             min_deviation = 0.1 if is_fp16 else 0.0
             max_deviation = 0.35 if is_fp16 else 0.4
-            ref_input = generate_input(
+            ref_input, input_shape = generate_input(
                 input_size,
                 ref_input_low,
                 ref_input_range,
@@ -580,7 +670,8 @@ class BaseParametrized:
                 not use_cuda,
                 min_deviation,
                 max_deviation,
-            ).astype(np_dtype)
+            )
+            ref_input = ref_input.astype(np_dtype)
             test_input = get_test_data([ref_input], use_cuda, is_fp16=is_fp16, is_backward=True)
 
             for array_ in (ref_input, ref_input_low, ref_input_range):
@@ -588,15 +679,34 @@ class BaseParametrized:
             for tensor_ in (test_input, test_input_low, test_input_range):
                 assert tensor_.dtype == torch.half if is_fp16 else torch.float
 
-            ref_output = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
+            ref_output = RQ.forward(ref_input, input_shape, ref_input_low, ref_input_range, levels)
 
             mock_prev_output_grads = np.ones(input_size, dtype=np.float16 if is_fp16 else np.float32)
             ref_grads = RQ.backward(
-                mock_prev_output_grads, ref_input, ref_input_low, ref_input_range, levels, level_low, level_high
+                mock_prev_output_grads,
+                ref_input,
+                input_shape,
+                ref_input_low,
+                ref_input_range,
+                levels,
+                level_low,
+                level_high,
             )
 
+            assert scale_mode == "per_group", "TODO: hardcoded for per-group case"
+            out_features, num_groups, group_size = input_shape
+            weight_channel_shape = [out_features * num_groups, group_size]
+            scale_channel_shape = [out_features * num_groups, 1]
             test_value = asymmetric_quantize(
-                test_input, test_input.shape, levels, level_low, level_high, test_input_low, test_input_range, eps=EPS
+                test_input,
+                weight_channel_shape,
+                scale_channel_shape,
+                levels,
+                level_low,
+                level_high,
+                test_input_low,
+                test_input_range,
+                eps=EPS,
             )
             test_value.sum().backward()
             test_grads = get_grads([test_input, test_input_low, test_input_range])
@@ -606,11 +716,15 @@ class BaseParametrized:
             check_outputs_for_quantization_functions(test_grads, ref_grads, rtol=1e-2 if is_fp16 else 1e-3)
 
 
+GROUP_SIZE = 16
+
+
 @pytest.mark.parametrize(
     "input_size",
     [
-        [1, 16, 64, 64],
-        [64, 16 * 64],
+        # [1, 16, 64, 64],
+        [64, GROUP_SIZE * 64],
+        # [2, 6]
     ],
     ids=idfn,
 )

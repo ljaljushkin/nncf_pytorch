@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from abc import ABC
 from abc import abstractmethod
 from enum import Enum
@@ -367,8 +368,23 @@ class BaseQuantizer(nn.Module, StatefulModuleInterface, ABC):
         OPTIONAL_PARAMETERS_REGISTRY.register(ENABLED_VAR_NAME)
         self.initialized = False
         self.call_count = 0
+
+        # in per-group case:
+        # scale: [out_features, in_features // group_size, 1],
+        # weight: [out_features, in_features // group_size, group_size]
+        # in per-channel case:
+        # scale: [num_channels, 1],
+        # weight: [num_channels, in_features]
         self._scale_shape = qspec.scale_shape
+        self._scale_numel = math.prod(self._scale_shape)
         self._weight_shape = qspec.weight_shape
+        self._weight_numel = math.prod(self._weight_shape)
+
+        # TODO: hardcoded for per-group case
+        out_features, num_groups, group_size = qspec.weight_shape
+        self._weight_channel_shape = [out_features * num_groups, group_size]
+        self._scale_channel_shape = [out_features * num_groups, 1]
+
         self._export_mode = QuantizerExportMode.FAKE_QUANTIZE
 
         class LoadStateListener:
@@ -999,7 +1015,8 @@ class AsymmetricQuantizer(BaseQuantizer):
             self.to(x.device)
         return asymmetric_quantize(
             x,
-            self._weight_shape,
+            self._weight_channel_shape,
+            self._scale_channel_shape,
             self.levels,
             self.level_low,
             self.level_high,
