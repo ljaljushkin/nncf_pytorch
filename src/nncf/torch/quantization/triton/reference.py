@@ -451,7 +451,9 @@ def backward_kernel_per_channel_2d(
     tl.store(grad_range_ptr + offsets, grad_range, mask=mask)
 
 
-def forward(input_: torch.tensor, input_low: torch.tensor, input_range: torch.tensor, levels: int) -> torch.tensor:
+def forward(
+    input_: torch.tensor, input_shape, input_low: torch.tensor, input_range: torch.tensor, levels: int
+) -> torch.tensor:
     """
     Wrapper for the forward kernel.
     It contains preparation steps like output memory allocation via tensor creation,
@@ -463,6 +465,8 @@ def forward(input_: torch.tensor, input_low: torch.tensor, input_range: torch.te
     :return: Calculated output value as torch.tensor.
     """
     output = torch.empty_like(input_)
+    original_shape = input_.shape
+    input_ = input_.reshape(input_shape)
 
     input__meta = get_4d_tensor_meta(input_)
     input_low_meta = get_4d_tensor_meta(input_low)
@@ -480,13 +484,14 @@ def forward(input_: torch.tensor, input_low: torch.tensor, input_range: torch.te
             levels,
             output,
         )
-
+    output = output.reshape(original_shape)
     return output
 
 
 def backward(
     grad_output: torch.tensor,
     input_: torch.tensor,
+    input_shape,
     input_low: torch.tensor,
     input_range: torch.tensor,
     levels: int,
@@ -505,6 +510,10 @@ def backward(
     :param levels: Levels value.
     :return: Calculated grad_input, grad_low and grad_range as tuple of torch.tensor values.
     """
+    orig_shape = grad_output.shape
+    input_ = input_.reshape(input_shape)
+    grad_output = grad_output.reshape(input_shape)
+
     grad_input = torch.empty_like(input_)
     grad_low = torch.empty_like(input_)
     grad_range = torch.empty_like(input_)
@@ -628,6 +637,7 @@ def backward(
         grad_low = sum_like(grad_low, input_low)
         grad_range = sum_like(grad_range, input_range)
 
+    grad_input = grad_input.reshape(orig_shape)
     return grad_input, grad_low, grad_range
 
 

@@ -382,6 +382,7 @@ class BaseQuantizer(nn.Module, StatefulModuleInterface, ABC):
 
         # TODO: hardcoded for per-group case
         out_features, num_groups, group_size = qspec.weight_shape
+        self._weight_group_shape = qspec.weight_shape
         self._weight_channel_shape = [out_features * num_groups, group_size]
         self._scale_channel_shape = [out_features * num_groups, 1]
 
@@ -1015,8 +1016,7 @@ class AsymmetricQuantizer(BaseQuantizer):
             self.to(x.device)
         return asymmetric_quantize(
             x,
-            self._weight_channel_shape,
-            self._scale_channel_shape,
+            self._weight_group_shape,
             self.levels,
             self.level_low,
             self.level_high,

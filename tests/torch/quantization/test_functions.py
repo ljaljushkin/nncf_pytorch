@@ -582,13 +582,9 @@ class BaseParametrized:
 
             ref_value = RQ.forward(ref_input, input_shape, ref_input_low, ref_input_range, levels)
             assert scale_mode == "per_group", "TODO: hardcoded for per-group case"
-            out_features, num_groups, group_size = input_shape
-            weight_channel_shape = [out_features * num_groups, group_size]
-            scale_channel_shape = [out_features * num_groups, 1]
             test_value = asymmetric_quantize(
                 test_input,
-                weight_channel_shape,
-                scale_channel_shape,
+                input_shape,
                 levels,
                 level_low,
                 level_high,
@@ -694,13 +690,9 @@ class BaseParametrized:
             )
 
             assert scale_mode == "per_group", "TODO: hardcoded for per-group case"
-            out_features, num_groups, group_size = input_shape
-            weight_channel_shape = [out_features * num_groups, group_size]
-            scale_channel_shape = [out_features * num_groups, 1]
             test_value = asymmetric_quantize(
                 test_input,
-                weight_channel_shape,
-                scale_channel_shape,
+                input_shape,
                 levels,
                 level_low,
                 level_high,

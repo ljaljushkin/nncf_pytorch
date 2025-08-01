@@ -106,6 +106,14 @@ class ReferenceQuantize:
         grad_input = grad_output * mask_in
 
         grad_low = grad_output * (mask_hi + mask_lo)
+        print(
+            f"input_low shape: {input_low.shape},grad_low shape: {grad_low.shape}, grad_range shape: {grad_range.shape}"
+        )
+        # print pythonic type of input_low, grad_low, grad_range
+        print(
+            f"input_low type: {type(input_low)}, grad_low type: {type(grad_low)}, grad_range type: {type(grad_range)}"
+        )
+
         grad_low = sum_like(grad_low, input_low)
         grad_input = grad_input.reshape(orig_shape)
         return [grad_input, grad_low, grad_range]

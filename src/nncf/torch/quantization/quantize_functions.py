@@ -18,10 +18,10 @@ from nncf.common.logging import nncf_logger
 from nncf.errors import ValidationError
 from nncf.torch.dynamic_graph.patch_pytorch import register_operator
 from nncf.torch.quantization.extensions import QuantizedFunctionsCPU
-from nncf.torch.quantization.extensions import QuantizedFunctionsCUDA
-from nncf.torch.quantization.reference import ReferenceQuantizedFunctions as RQ
 
-# from nncf.torch.quantization.triton import QuantizedFunctionsCUDA
+# from nncf.torch.quantization.extensions import QuantizedFunctionsCUDA
+from nncf.torch.quantization.reference import ReferenceQuantizedFunctions as RQ
+from nncf.torch.quantization.triton import QuantizedFunctionsCUDA
 from nncf.torch.utils import add_domain
 
 
@@ -84,36 +84,29 @@ class QuantizeSymmetric(torch.autograd.Function):
 
 class QuantizeAsymmetric(torch.autograd.Function):
     @staticmethod
-    def forward(
-        ctx, input_, input_channel_shape, scale_channel_shape, input_low, input_range, level_low, level_high, levels
-    ):
+    def forward(ctx, input_, input_group_shape, input_low, input_range, level_low, level_high, levels):
         # Required to support both torch.amp.autocast and models that perform explicit type casting
         # inside their forward calls.
         if input_.dtype in [torch.bfloat16, torch.float16]:
             input_low = input_low.type(input_.dtype)
             input_range = input_range.type(input_.dtype)
-        original_input_shape = input_.shape
-        original_scale_shape = input_low.shape
-        # TODO: is check really needed? if original_shape != input_shape:
-        input_ = input_.view(input_channel_shape)
-        input_low = input_low.view(scale_channel_shape)
-        input_range = input_range.view(scale_channel_shape)
         if input_.is_cuda:
             if not input_.is_contiguous():
                 nncf_logger.debug("input_ is not contiguous!")
                 input_ = input_.contiguous()
-            output = QuantizedFunctionsCUDA.get("Quantize_forward")(input_, input_low, input_range, levels)
+            output = QuantizedFunctionsCUDA.get("Quantize_forward")(
+                input_, input_group_shape, input_low, input_range, levels
+            )
         else:
-            output = QuantizedFunctionsCPU.get("Quantize_forward")(input_, input_low, input_range, levels)
+            output = QuantizedFunctionsCPU.get("Quantize_forward")(
+                input_, input_group_shape, input_low, input_range, levels
+            )
 
         ctx.save_for_backward(input_, input_low, input_range)
         ctx.levels = levels
         ctx.level_low = level_low
         ctx.level_high = level_high
-        ctx.original_scale_shape = original_scale_shape
-        output = output.view(original_input_shape)
-        input_low = input_low.view(original_scale_shape)
-        input_range = input_range.view(original_scale_shape)
+        ctx.input_group_shape = input_group_shape
         return output
 
     @staticmethod
@@ -123,10 +116,7 @@ class QuantizeAsymmetric(torch.autograd.Function):
         levels = ctx.levels
         level_low = ctx.level_low
         level_high = ctx.level_high
-        original_scale_shape = ctx.original_scale_shape
-        input_shape = input_.shape
-        orig_shape = grad_output.shape
-        grad_output = grad_output.view(input_shape)
+        input_group_shape = ctx.input_group_shape
 
         if grad_output.is_cuda:
             if not grad_output.is_contiguous():
@@ -134,16 +124,13 @@ class QuantizeAsymmetric(torch.autograd.Function):
                 grad_output = grad_output.contiguous()
 
             grad_input, grad_input_low, grad_input_range = QuantizedFunctionsCUDA.get("Quantize_backward")(
-                grad_output, input_, input_low, input_range, levels, level_low, level_high
+                grad_output, input_, input_group_shape, input_low, input_range, levels, level_low, level_high
             )
         else:
             grad_input, grad_input_low, grad_input_range = QuantizedFunctionsCPU.get("Quantize_backward")(
-                grad_output, input_, input_low, input_range, levels, level_low, level_high, True
+                grad_output, input_, input_group_shape, input_low, input_range, levels, level_low, level_high, True
             )
-        grad_input = grad_input.view(orig_shape)
-        grad_input_low = grad_input_low.view(original_scale_shape)
-        grad_input_range = grad_input_range.view(original_scale_shape)
-        return grad_input, None, None, grad_input_low, grad_input_range, None, None, None
+        return grad_input, None, grad_input_low, grad_input_range, None, None, None
 
 
 class QuantizeSymmetricTorch(torch.autograd.Function):
@@ -317,8 +304,7 @@ def symmetric_quantize(input_, input_shape, levels, level_low, level_high, scale
 @register_operator()
 def asymmetric_quantize(
     input_,
-    input_channel_shape,
-    scale_channel_shape,
+    input_group_shape,
     levels,
     level_low,
     level_high,
@@ -332,8 +318,7 @@ def asymmetric_quantize(
             asymmetric_quantize,
             (input_,),
             input_,
-            input_channel_shape,
-            scale_channel_shape,
+            input_group_shape,
             levels,
             level_low,
             level_high,
@@ -348,8 +333,7 @@ def asymmetric_quantize(
     input_low_tuned, input_range_tuned = TuneRange.apply(input_low, input_range_safe, levels)
     return QuantizeAsymmetric.apply(
         input_,
-        input_channel_shape,
-        scale_channel_shape,
+        input_group_shape,
         input_low_tuned,
         input_range_tuned,
         level_low,
