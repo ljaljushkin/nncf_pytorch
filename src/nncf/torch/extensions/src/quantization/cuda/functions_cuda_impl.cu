@@ -303,12 +303,54 @@ __global__ void q_scale_per_group_cuda_backward_kernel(
     reduce_with_shared_memory<scalar_t, scalar_accum_t>(sh_grad_low, per_thread_grad_sum_low, tidx, per_scale_block_idx, dev_tmp_low, dev_last_block_counter_low, grad_input_low, total_blocks_per_scale);
 }
 
-// OPTIMIZED PER-GROUP KERNEL: Triton-style optimized kernel - writes per-element gradients instead of accumulating
+// Custom atomic add function that handles different data types
+template <typename T>
+__device__ __forceinline__ void custom_atomic_add(T* address, T val) {
+    if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>) {
+        atomicAdd(address, val);
+    } else if constexpr (std::is_same_v<T, c10::Half>) {
+        // For half precision, use compare-and-swap loop
+        unsigned int* address_as_ui = (unsigned int*)((char*)address - ((size_t)address & 2));
+        unsigned int old = *address_as_ui;
+        unsigned int assumed;
+        do {
+            assumed = old;
+            __half_raw old_as_h;
+            old_as_h.x = (size_t)address & 2 ? old >> 16 : old & 0xffff;
+            __half old_as_half = __half_raw(old_as_h);
+            __half new_val = __hadd(old_as_half, *(__half*)&val);
+            __half_raw new_as_h = __half_raw(new_val);
+            old = (size_t)address & 2 ? (old & 0x0000ffff) | (new_as_h.x << 16) : (old & 0xffff0000) | new_as_h.x;
+            old = atomicCAS(address_as_ui, assumed, old);
+        } while (assumed != old);
+    } else if constexpr (std::is_same_v<T, c10::BFloat16>) {
+        // For bfloat16, use compare-and-swap loop similar to half
+        unsigned int* address_as_ui = (unsigned int*)((char*)address - ((size_t)address & 2));
+        unsigned int old = *address_as_ui;
+        unsigned int assumed;
+        do {
+            assumed = old;
+            __nv_bfloat16_raw old_as_b;
+            old_as_b.x = (size_t)address & 2 ? old >> 16 : old & 0xffff;
+            __nv_bfloat16 old_as_bf16 = __nv_bfloat16_raw(old_as_b);
+            __nv_bfloat16 new_val = __hadd(old_as_bf16, *(__nv_bfloat16*)&val);
+            __nv_bfloat16_raw new_as_b = __nv_bfloat16_raw(new_val);
+            old = (size_t)address & 2 ? (old & 0x0000ffff) | (new_as_b.x << 16) : (old & 0xffff0000) | new_as_b.x;
+            old = atomicCAS(address_as_ui, assumed, old);
+        } while (assumed != old);
+    }
+}
+
+// OPTIMIZED PER-GROUP KERNEL: Simple and working version based on previous successful approach
 template <typename scalar_t, typename scalar_accum_t>
 __global__ void q_scale_per_group_cuda_backward_kernel_optimized(
         scalar_t* __restrict__ grad_input,
         scalar_t* __restrict__ grad_input_low,
         scalar_t* __restrict__ grad_input_range,
+        scalar_accum_t* __restrict__ dev_tmp_range,
+        scalar_accum_t* __restrict__ dev_tmp_low,
+        int32_t* __restrict__ dev_last_block_counter_range,
+        int32_t* __restrict__ dev_last_block_counter_low,
         const scalar_t* __restrict__ grad_output,
         const scalar_t* __restrict__ input,
         const scalar_t* __restrict__ input_low,
@@ -317,18 +359,18 @@ __global__ void q_scale_per_group_cuda_backward_kernel_optimized(
         const scalar_t level_low,
         const scalar_t level_high,
         const int64_t total_elements,
-        const int64_t group_size,
-        const int64_t num_groups) {
+        const int64_t elements_per_scale,
+        const int64_t scale_count) {
 
-    // Triton-style 1D grid processing
+    // Use simple 1D grid approach similar to Triton for large tensors
     int64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     int64_t stride = gridDim.x * blockDim.x;
 
-    // Process elements in chunks like Triton does
+    // Process elements with stride
     for (int64_t i = idx; i < total_elements; i += stride) {
         // Determine which group this element belongs to
-        int group_idx = i / group_size;
-        if (group_idx >= num_groups) continue;
+        int group_idx = i / elements_per_scale;
+        if (group_idx >= scale_count) continue;
 
         // Get scale parameters for this group
         scalar_t low_val = input_low[group_idx];
@@ -340,21 +382,28 @@ __global__ void q_scale_per_group_cuda_backward_kernel_optimized(
         scalar_t input_val = input[i];
         scalar_t grad_out = grad_output[i];
 
-        // Fake quantization (same as original)
+        // Fake quantization
         scalar_t output;
         fakeQuantize<scalar_t>(&output, &input_val, &low_val, &range_val, levels);
 
-        // Calculate gradients (same as original)
+        // Calculate gradients
         scalar_t val_grad_input_low, val_grad_input_range;
         calcGrad<scalar_t>(&grad_input[i], &val_grad_input_low, &val_grad_input_range,
                          &grad_out, &input_val, &output, low_val, high_val, reverted_range, alpha);
 
-        // KEY CHANGE: Write per-element gradients like Triton, not accumulate!
-        // This will be summed later by a separate reduction operation
-        grad_input_low[i] = val_grad_input_low;
-        grad_input_range[i] = val_grad_input_range;
+        // Thread-safe atomic accumulation to fix race conditions
+        if (val_grad_input_range != 0) {
+            // Use custom atomic add that handles all data types
+            custom_atomic_add(&grad_input_range[group_idx], val_grad_input_range);
+        }
+        if (val_grad_input_low != 0) {
+            // Use custom atomic add that handles all data types
+            custom_atomic_add(&grad_input_low[group_idx], val_grad_input_low);
+        }
     }
-}template <typename scalar_t, typename scalar_accum_t>
+}
+
+template <typename scalar_t, typename scalar_accum_t>
 __global__ void q_scale_per_activation_channel_cuda_backward_kernel(
         scalar_t* __restrict__ grad_input,
         scalar_t* __restrict__ grad_input_low,
@@ -638,7 +687,7 @@ std::vector<at::Tensor> q_scale_per_group_cuda_backward(at::Tensor grad_output,
     return {grad_input, grad_input_low, grad_input_range};
 }
 
-// OPTIMIZED PER-GROUP BACKWARD: Dramatically reduced grid size for better performance
+// OPTIMIZED PER-GROUP BACKWARD: Simple working version with 1D grid
 std::vector<at::Tensor> q_scale_per_group_cuda_backward_optimized(at::Tensor grad_output,
         at::Tensor input,
         at::Tensor input_low,
@@ -654,14 +703,11 @@ std::vector<at::Tensor> q_scale_per_group_cuda_backward_optimized(at::Tensor gra
     const auto total_elements = input.numel();
 
     auto grad_input = at::empty_like(grad_output);
+    auto grad_input_low = at::zeros_like(input_range);
+    auto grad_input_range = at::zeros_like(input_range);
 
-    // Create temporary per-element gradient tensors (like Triton does)
-    auto temp_grad_low = at::empty_like(input);
-    auto temp_grad_range = at::empty_like(input);
-
-    // Triton-inspired approach: Use optimal 1D grid
-    // Use block size similar to Triton's autotuned values
-    const int block_size = 1024;  // Triton's preferred large block size
+    // Use 1D grid with optimal block size (similar to successful Triton approach)
+    const int block_size = 1024;
     const int num_blocks = std::min(65535, (int)((total_elements + block_size - 1) / block_size));
 
     dim3 grid_size(num_blocks);
@@ -671,8 +717,12 @@ std::vector<at::Tensor> q_scale_per_group_cuda_backward_optimized(at::Tensor gra
         using scalar_accum_t = ACCUM_TYPE_FOR(scalar_t);
         q_scale_per_group_cuda_backward_kernel_optimized<scalar_t, scalar_accum_t><<<grid_size, block_dim, 0, at::cuda::getCurrentCUDAStream()>>>(
             grad_input.data_ptr<scalar_t>(),
-            temp_grad_low.data_ptr<scalar_t>(),
-            temp_grad_range.data_ptr<scalar_t>(),
+            grad_input_low.data_ptr<scalar_t>(),
+            grad_input_range.data_ptr<scalar_t>(),
+            nullptr, // dev_tmp_range - not needed for this simple approach
+            nullptr, // dev_tmp_low - not needed for this simple approach
+            nullptr, // dev_last_block_counter_range - not needed
+            nullptr, // dev_last_block_counter_low - not needed
             grad_output.data_ptr<scalar_t>(),
             input.data_ptr<scalar_t>(),
             input_low.data_ptr<scalar_t>(),
@@ -684,19 +734,6 @@ std::vector<at::Tensor> q_scale_per_group_cuda_backward_optimized(at::Tensor gra
             elements_per_scale,
             scale_count);
     }));
-
-    // Now reduce the per-element gradients to per-group gradients (like Triton's sum_like)
-    // Reshape temp tensors to [num_groups, group_size] for easy reduction
-    auto temp_grad_low_reshaped = temp_grad_low.view({scale_count, elements_per_scale});
-    auto temp_grad_range_reshaped = temp_grad_range.view({scale_count, elements_per_scale});
-
-    // Sum along the group dimension (dim=1) to get final gradients
-    auto grad_input_low = temp_grad_low_reshaped.sum(/*dim=*/1, /*keepdim=*/false);
-    auto grad_input_range = temp_grad_range_reshaped.sum(/*dim=*/1, /*keepdim=*/false);
-
-    // Ensure output shapes match input_range shape
-    grad_input_low = grad_input_low.view_as(input_range);
-    grad_input_range = grad_input_range.view_as(input_range);
 
     return {grad_input, grad_input_low, grad_input_range};
 }
