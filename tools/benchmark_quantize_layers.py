@@ -110,21 +110,21 @@ TEST_BATCHES: list[BatchDescriptor] = [
     #     input_size=HIGH_BATCH_INPUT_SIZE,
     #     num_runs={torch.device("cuda"): GPU_RUNS_HIGH_BATCH, torch.device("cpu"): CPU_RUNS},
     # ),
-    # BatchDescriptor(
-    #     mode=BatchMode.LOW,
-    #     input_size=LOW_BATCH_INPUT_SIZE_2D,
-    #     num_runs={torch.device("cuda"): GPU_RUNS_LOW_BATCH, torch.device("cpu"): CPU_RUNS},
-    # ),
+    BatchDescriptor(
+        mode=BatchMode.LOW,
+        input_size=LOW_BATCH_INPUT_SIZE_2D,
+        num_runs={torch.device("cuda"): GPU_RUNS_LOW_BATCH, torch.device("cpu"): CPU_RUNS},
+    ),
     BatchDescriptor(
         mode=BatchMode.HIGH,
         input_size=HIGH_BATCH_INPUT_SIZE_2D,
         num_runs={torch.device("cuda"): GPU_RUNS_HIGH_BATCH, torch.device("cpu"): CPU_RUNS},
     ),
-    # BatchDescriptor(
-    #     mode=BatchMode.HIGH,
-    #     input_size=TYPICAL_INPUT_SIZE_2D,
-    #     num_runs={torch.device("cuda"): GPU_RUNS_HIGH_BATCH, torch.device("cpu"): CPU_RUNS},
-    # ),
+    BatchDescriptor(
+        mode=BatchMode.HIGH,
+        input_size=TYPICAL_INPUT_SIZE_2D,
+        num_runs={torch.device("cuda"): GPU_RUNS_HIGH_BATCH, torch.device("cpu"): CPU_RUNS},
+    ),
 ]
 TEST_DTYPES: list[torch.dtype] = [
     # torch.float,
