@@ -1,0 +1,48 @@
+Embedding Outlier Analysis Results
+Model: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+Compression: int8_asym, ratio=0.8, group_size=128
+Outlier method: zscore
+
+TOP OUTLIERS (Original Model):
+ 1. "                         (idx:    37, score: 6.929300)
+ 2. )                         (idx:    44, score: 6.929300)
+ 3.                          (idx:    16, score: 6.929300)
+ 4. 4                         (idx:    55, score: 6.929300)
+ 5. 3                         (idx:    54, score: 6.929300)
+ 6. 2                         (idx:    53, score: 6.929300)
+ 7. 1                         (idx:    52, score: 6.929300)
+ 8. 0                         (idx:    51, score: 6.929300)
+ 9. /                         (idx:    50, score: 6.929300)
+10. .                         (idx:    49, score: 6.929300)
+11. -                         (idx:    48, score: 6.929300)
+12. C                         (idx:    70, score: 6.929300)
+13. B                         (idx:    69, score: 6.929300)
+14. A                         (idx:    68, score: 6.929300)
+15. G                         (idx:    74, score: 6.929300)
+16. F                         (idx:    73, score: 6.929300)
+17. �                         (idx:   249, score: 6.929300)
+18. �                         (idx:   248, score: 6.929300)
+19. �                         (idx:   255, score: 6.929300)
+20. �                         (idx:   253, score: 6.929300)
+
+TOP OUTLIERS (Compressed Model):
+ 1. 0                         (idx:    51, score: 6.929891)
+ 2.                           (idx:    35, score: 6.929891)
+ 3. 8                         (idx:    59, score: 6.929891)
+ 4. 7                         (idx:    58, score: 6.929891)
+ 5. '                         (idx:    42, score: 6.929891)
+ 6. ,                         (idx:    47, score: 6.929891)
+ 7. +                         (idx:    46, score: 6.929891)
+ 8. *                         (idx:    45, score: 6.929891)
+ 9. )                         (idx:    44, score: 6.929891)
+10. (                         (idx:    43, score: 6.929891)
+11. �                         (idx:   198, score: 6.929891)
+12. =                         (idx:    64, score: 6.929891)
+13. Y                         (idx:    92, score: 6.929891)
+14. D                         (idx:    71, score: 6.929891)
+15. .                         (idx:    49, score: 6.929891)
+16. -                         (idx:    48, score: 6.929891)
+17. <                         (idx:    63, score: 6.929891)
+18. ;                         (idx:    62, score: 6.929891)
+19. :                         (idx:    61, score: 6.929891)
+20. U                         (idx:    88, score: 6.929891)

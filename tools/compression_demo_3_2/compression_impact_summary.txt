@@ -1,0 +1,47 @@
+COMPRESSION IMPACT ANALYSIS SUMMARY
+Compression Mode: INT4_SYM
+Analysis Date: 2025-07-30 16:28:54
+============================================================
+
+OVERALL STATISTICS:
+Total tokens analyzed: 128,256
+Mean impact score: 0.140520
+Std impact score: 0.031721
+Max impact score: 0.730962
+95th percentile: 0.198820
+Highly affected tokens (>95th percentile): 6,413
+
+DISTANCE METRICS:
+l2_distance: mean=0.008872, std=0.001133, max=0.033482
+cosine_distance: mean=0.000042, std=0.000017, max=0.000752
+magnitude_change: mean=0.000248, std=0.000182, max=0.002015
+mse: mean=0.000000, std=0.000000, max=0.000001
+variance_change: mean=0.000000, std=0.000000, max=0.000002
+
+TOP 20 MOST AFFECTED TOKENS BY IMPACT SCORE:
+------------------------------------------------------------
+ 1. Token: <|begin_of_text|>    | Score: 0.730962 | ID: 128000
+ 2. Token: respons              | Score: 0.462832 | ID: 82689
+ 3. Token: weigh                | Score: 0.443622 | ID: 57740
+ 4. Token: a                    | Score: 0.384824 | ID: 64
+ 5. Token: <LM                  | Score: 0.376009 | ID: 27958
+ 6. Token: ://                  | Score: 0.368116 | ID: 1129
+ 7. Token: /books               | Score: 0.361364 | ID: 72363
+ 8. Token: KANJI                | Score: 0.358384 | ID: 97710
+ 9. Token: /DD                  | Score: 0.357282 | ID: 83061
+10. Token: _();
+                | Score: 0.357029 | ID: 97160
+11. Token: 'ồi'                 | Score: 0.352962 | ID: 102490
+12. Token: eriod                | Score: 0.350905 | ID: 113682
+13. Token: massage              | Score: 0.348840 | ID: 79685
+14. Token: mental               | Score: 0.346817 | ID: 93221
+15. Token:  ",
+                | Score: 0.345897 | ID: 91510
+16. Token: popular              | Score: 0.340952 | ID: 44348
+17. Token: plx                  | Score: 0.340335 | ID: 79954
+18. Token: $MESS                | Score: 0.336494 | ID: 40969
+19. Token: 'ıyorlar'            | Score: 0.333314 | ID: 120869
+20. Token: .tel                 | Score: 0.332834 | ID: 96313
+
+============================================================
+For detailed per-token analysis, see: compression_impact_detailed.csv

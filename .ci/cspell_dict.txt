@@ -108,6 +108,7 @@ dequantizes
 descr
 descs
 desynchronization
+dialo
 distilbert
 dlyakhov
 dnnl
