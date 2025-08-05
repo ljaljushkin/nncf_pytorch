@@ -94,10 +94,12 @@ def main():
     # Example 5: Export to Excel with formatting and create plots
     print("Example 5: Export results to Excel with formatting and create performance plots")
     run_analysis(
-        ref_file="benchmark_reference_22.csv",
-        pattern=r"benchmark.*_22.csv|benchmark_cuda_22_100k.*",
+        # ref_file="benchmark_reference_22.csv",
+        # pattern=r"benchmark.*_22.csv|benchmark_cuda_22_100k.*",
         # ref_file="benchmark_cuda_22_all_not_optimized.csv",
         # pattern=r"benchmark_cuda_22_.*.csv",
+        ref_file="benchmark_triton_22.csv",
+        pattern=r"benchmark_cuda_22_100k_optimized.csv",
         excel=True,
         plot=True,
         output_prefix="comprehensive_analysis",
