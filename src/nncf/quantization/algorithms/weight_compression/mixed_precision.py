@@ -132,12 +132,6 @@ class MixedPrecisionCriterion(Algorithm):
             num_weights_in_4bit += weight_param.num_weights
         return primary_precision_weight_params
 
-        # Print the names of layers that don't have primary config
-        print("\nLayers NOT compressed with primary config:")
-        for i, wp in enumerate(weight_params):
-            if wp.compression_config != self._primary_config:
-                print(f"  - {wp.node_with_weight.node_name} (sensitivity score: {scores[i]:.6f})")
-
     @abstractmethod
     def _set_backend_entity(self, model: TModel) -> None:
         """

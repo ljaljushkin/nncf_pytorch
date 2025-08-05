@@ -16,10 +16,8 @@ Finds top-k rows with largest differences for specified layers.
 """
 
 import argparse
-import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
 
 import numpy as np
 import torch

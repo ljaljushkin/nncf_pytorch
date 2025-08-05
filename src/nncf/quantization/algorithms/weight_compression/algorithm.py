@@ -531,6 +531,12 @@ class WeightCompression(Algorithm):
         else:
             primary_precision_weight_params = ratio_defining_params
 
+        # Print the names of layers that don't have primary config
+        print("\nLayers NOT compressed with primary config:")
+        for wp in ratio_defining_params:
+            if wp not in primary_precision_weight_params:
+                print(f"  - {wp.node_with_weight.node_name}")
+
         for weight_param in primary_precision_weight_params:
             weight_param.compression_config = self._get_primary_config(group_size_values[weight_param.weight_name])
 

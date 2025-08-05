@@ -467,7 +467,7 @@ def save_detailed_results(
     # Save summary to text file
     summary_path = os.path.join(output_dir, "compression_impact_summary.txt")
     with open(summary_path, "w", encoding="utf-8") as f:
-        f.write(f"COMPRESSION IMPACT ANALYSIS SUMMARY\n")
+        f.write("COMPRESSION IMPACT ANALYSIS SUMMARY\n")
         f.write(f"Compression Mode: {compression_mode.upper()}\n")
         f.write(f"Analysis Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write("=" * 60 + "\n\n")
@@ -497,7 +497,7 @@ def save_detailed_results(
         f.write("\n" + "=" * 60 + "\n")
         f.write("For detailed per-token analysis, see: compression_impact_detailed.csv\n")
 
-    print(f"✅ Results saved:")
+    print("✅ Results saved:")
     print(f"   - Detailed CSV: {csv_path}")
     print(f"   - Summary text: {summary_path}")
 

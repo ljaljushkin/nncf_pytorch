@@ -7,7 +7,6 @@ This helps you find which layers to analyze with the compare_model_outputs.py to
 import argparse
 
 from transformers import AutoModelForCausalLM
-from transformers import AutoTokenizer
 
 
 def list_model_layers(model_id: str, max_layers: int = 50):
@@ -42,12 +41,12 @@ def list_model_layers(model_id: str, max_layers: int = 50):
     if layer_count > max_layers:
         print(f"... and {layer_count - max_layers} more layers")
 
-    print(f"\nLayer type summary:")
+    print("\nLayer type summary:")
     print("-" * 40)
     for layer_type, count in sorted(layer_types.items()):
         print(f"{layer_type:<30} | {count:>3}")
 
-    print(f"\nCommon layer patterns to try:")
+    print("\nCommon layer patterns to try:")
     print("-" * 40)
 
     # Suggest common patterns based on layer names
