@@ -93,6 +93,48 @@ __global__ void q_cuda_forward_kernel(
     }
 }
 
+// TRITON-STYLE OPTIMIZED FORWARD KERNEL: Matches compiled Triton's approach
+template <typename scalar_t>
+__global__ void q_cuda_forward_kernel_triton_style(
+        scalar_t* __restrict__ output,
+        const scalar_t* __restrict__ input,
+        const scalar_t* __restrict__ input_low,
+        const scalar_t* __restrict__ input_range,
+        const scalar_t levels,
+        const uint64_t size,
+        const uint64_t elements_per_scale) {
+
+    // Direct element-wise processing like compiled Triton
+    uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < size) {
+        // Triton-style scale index calculation: x1 = xindex // elements_per_channel
+        uint64_t scale_idx = idx / elements_per_scale;
+
+        // Load values (matching Triton's tmp0, tmp2, tmp5)
+        scalar_t input_val = input[idx];           // tmp0 = tl.load(in_ptr0 + (x2))
+        scalar_t low_val = input_low[scale_idx];   // tmp2 = tl.load(in_ptr1 + (x1))
+        scalar_t range_val = input_range[scale_idx]; // tmp5 = tl.load(in_ptr2 + (x1))
+
+        // Triton-style quantization computation (matching the compiled kernel exactly)
+        scalar_t tmp4 = fmaxf(input_val, low_val);           // triton_helpers.maximum(tmp1, tmp3)
+        scalar_t tmp6 = low_val + range_val;                 // tmp2 + tmp5
+        scalar_t tmp8 = fminf(tmp4, tmp6);                   // triton_helpers.minimum(tmp4, tmp7)
+        scalar_t tmp10 = tmp8 - low_val;                     // tmp9 - tmp2
+        scalar_t tmp12 = 1.0f / range_val;                   // (tmp11 / tmp5)
+        scalar_t tmp14 = tmp12 * (levels - 1);               // tmp12 * 255.0 (adapted for levels)
+        scalar_t tmp15 = tmp10 * tmp14;                      // tmp10 * tmp14
+        scalar_t tmp16 = -low_val;                           // -tmp2
+        scalar_t tmp17 = tmp16 * tmp14;                      // tmp16 * tmp14
+        scalar_t tmp18 = roundf(tmp17);                      // libdevice.nearbyint(tmp17)
+        scalar_t tmp19 = tmp15 - tmp18;                      // tmp15 - tmp18
+        scalar_t tmp20 = roundf(tmp19);                      // libdevice.nearbyint(tmp19)
+        scalar_t result = tmp20 / tmp14;                     // (tmp20 / tmp14)
+
+        output[idx] = result;
+    }
+}
+
 // OPTIMIZED FORWARD KERNEL: 1D grid + stride for large tensors
 template <typename scalar_t>
 __global__ void q_cuda_forward_kernel_optimized(
@@ -547,50 +589,39 @@ at::Tensor q_cuda_forward(
 
     PROFILE(DISPATCH_TENSOR_DATA_TYPES(input.scalar_type(), "q_cuda_forward", ([&] {
         if (use_optimized_kernel) {
-            // 4.27 ms
-            // For large tensors: Ultra-aggressive block reduction to match Triton performance
-            // const int block_size = 1024;
-            // // Drastically reduce blocks - use only 16K blocks max for better memory access
-            // const int max_blocks = 16384; // 16K blocks (quarter of original)
-            // const int min_elements_per_block = 16384; // 16K elements per block minimum
-            // // Calculate optimal blocks with very high work per block
-            // int optimal_blocks = (quantized_elements_count + min_elements_per_block - 1) / min_elements_per_block;
-            // const int num_blocks = std::min(max_blocks, std::max(256, optimal_blocks));
-
-            // 5.26 ms
-            // Match Triton's approach exactly: simple grid calculation with optimal block size
-            // Triton autotuning shows optimal BLOCK_SIZE is usually 1024 for large tensors
-            // const int block_size = 1024; // Match Triton's preferred block size
-            // // Use Triton's exact grid calculation: cdiv(total_elements, block_size)
-            // const int num_blocks = (quantized_elements_count + block_size - 1) / block_size;
-
-            // 4.22 ms
-            // For large tensors: Extreme optimization to match Triton - minimize blocks maximally
+            // BEST PERFORMING: 8K blocks with Triton-inspired optimizations
             const int block_size = 1024;
-            // Extreme reduction: only 8K blocks max with huge work per block
-            const int max_blocks = 8192; // 8K blocks (eighth of original)
+            const int max_blocks = 8192; // 8K blocks (empirically optimal)
             const int min_elements_per_block = 32768; // 32K elements per block minimum
-            // Calculate optimal blocks with massive work per block
             int optimal_blocks = (quantized_elements_count + min_elements_per_block - 1) / min_elements_per_block;
             const int num_blocks = std::min(max_blocks, std::max(128, optimal_blocks));
 
-            // 4.31 ms
-            // // Fine-tuned grid: target the sweet spot between 8K (best previous) and 32K blocks
-            // const int block_size = 1024; // Match Triton's preferred block size
-            // // Use 20K blocks - empirically tuned for optimal performance
-            // const int triton_blocks = (quantized_elements_count + block_size - 1) / block_size;
-            // const int optimal_blocks = 20480; // 20K blocks - fine-tuned sweet spot
-            // const int num_blocks = std::min(triton_blocks, optimal_blocks);
-
-            q_cuda_forward_kernel_optimized<scalar_t><<<num_blocks, block_size, 0, at::cuda::getCurrentCUDAStream()>>>(
+            // Use Triton-style kernel with optimized grid size
+            q_cuda_forward_kernel_triton_style<scalar_t><<<num_blocks, block_size, 0, at::cuda::getCurrentCUDAStream()>>>(
                 output.data_ptr<scalar_t>(),
                 input.data_ptr<scalar_t>(),
                 input_low.data_ptr<scalar_t>(),
                 input_range.data_ptr<scalar_t>(),
                 levels,
                 quantized_elements_count,
-                contiguous_elements_per_scale,
-                scale_count);
+                contiguous_elements_per_scale);
+
+            // PREVIOUS BEST: 4.22ms with 8K blocks
+            // const int block_size = 1024;
+            // const int max_blocks = 8192; // 8K blocks (eighth of original)
+            // const int min_elements_per_block = 32768; // 32K elements per block minimum
+            // int optimal_blocks = (quantized_elements_count + min_elements_per_block - 1) / min_elements_per_block;
+            // const int num_blocks = std::min(max_blocks, std::max(128, optimal_blocks));
+            //
+            // q_cuda_forward_kernel_optimized<scalar_t><<<num_blocks, block_size, 0, at::cuda::getCurrentCUDAStream()>>>(
+            //     output.data_ptr<scalar_t>(),
+            //     input.data_ptr<scalar_t>(),
+            //     input_low.data_ptr<scalar_t>(),
+            //     input_range.data_ptr<scalar_t>(),
+            //     levels,
+            //     quantized_elements_count,
+            //     contiguous_elements_per_scale,
+            //     scale_count);
         } else {
             // For small tensors: Use original simple approach which works well
             q_cuda_forward_kernel<scalar_t><<<GET_BLOCKS(quantized_elements_count), CUDA_MAX_NUM_THREADS_PER_BLOCK, 0, at::cuda::getCurrentCUDAStream()>>>(
