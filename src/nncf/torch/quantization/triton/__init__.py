@@ -33,6 +33,7 @@ class TritonFunctionsWrapper:
 
 
 if torch.cuda.is_available():
+    print("load TRITON!!!")
     QuantizedFunctionsCUDA = TritonFunctionsWrapper()
 else:
     QuantizedFunctionsCUDA = CudaNotAvailableStub()

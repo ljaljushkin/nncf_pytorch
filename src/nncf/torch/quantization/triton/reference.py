@@ -16,6 +16,7 @@ from torch._inductor.runtime.triton_helpers import libdevice
 
 from nncf.torch.utils import sum_like
 
+GROUP_SIZE = 128
 # def get_optimal_grid_for_per_channel(scale_count: int, elements_per_scale: int, block_size: int) -> tuple[int, int]:
 #     """
 #     Calculate optimal 2D grid size for per-channel quantization based on empirical performance.
@@ -452,7 +453,11 @@ def backward_kernel_per_channel_2d(
 
 
 def forward(
-    input_: torch.tensor, input_shape, input_low: torch.tensor, input_range: torch.tensor, levels: int
+    # input_: torch.tensor, input_shape, input_low: torch.tensor, input_range: torch.tensor, levels: int
+    input_: torch.tensor,
+    input_low: torch.tensor,
+    input_range: torch.tensor,
+    levels: int,
 ) -> torch.tensor:
     """
     Wrapper for the forward kernel.
@@ -465,6 +470,7 @@ def forward(
     :return: Calculated output value as torch.tensor.
     """
     output = torch.empty_like(input_)
+    input_shape = (input_.shape[0], -1, GROUP_SIZE)
     original_shape = input_.shape
     input_ = input_.reshape(input_shape)
 
@@ -491,7 +497,7 @@ def forward(
 def backward(
     grad_output: torch.tensor,
     input_: torch.tensor,
-    input_shape,
+    # input_shape,
     input_low: torch.tensor,
     input_range: torch.tensor,
     levels: int,
@@ -511,6 +517,7 @@ def backward(
     :return: Calculated grad_input, grad_low and grad_range as tuple of torch.tensor values.
     """
     orig_shape = grad_output.shape
+    input_shape = (input_.shape[0], -1, GROUP_SIZE)
     input_ = input_.reshape(input_shape)
     grad_output = grad_output.reshape(input_shape)
 

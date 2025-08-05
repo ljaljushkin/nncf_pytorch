@@ -138,3 +138,4 @@ nncf-tests.xml
 compressed_graph.dot
 original_graph.dot
 tests/post_training/**/*memory_logs
+*.txt

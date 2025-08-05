@@ -86,6 +86,7 @@ class QuantizedFunctionsCUDALoader(ExtensionLoader):
         # print("load torch.COMPILE!!!")
         # return ReferenceQuantizedFunctions
         try:
+            print("load CUDA!!!")
             return torch.utils.cpp_extension.load(
                 cls.name(),
                 CUDA_EXT_SRC_LIST,
