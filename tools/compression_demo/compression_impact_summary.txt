@@ -1,0 +1,45 @@
+COMPRESSION IMPACT ANALYSIS SUMMARY
+Compression Mode: INT8_ASYM
+Analysis Date: 2025-07-31 15:15:02
+============================================================
+
+OVERALL STATISTICS:
+Total tokens analyzed: 32,000
+Mean impact score: 0.245139
+Std impact score: 0.057665
+Max impact score: 0.597195
+95th percentile: 0.354518
+Highly affected tokens (>95th percentile): 1,600
+
+DISTANCE METRICS:
+l2_distance: mean=0.005532, std=0.000928, max=0.011365
+cosine_distance: mean=0.006939, std=0.082815, max=1.000000
+magnitude_change: mean=0.000146, std=0.000111, max=0.000842
+mse: mean=0.000000, std=0.000000, max=0.000000
+variance_change: mean=0.000000, std=0.000000, max=0.000001
+
+TOP 20 MOST AFFECTED TOKENS BY IMPACT SCORE:
+------------------------------------------------------------
+ 1. Token: The                  | Score: 0.597195 | ID: 450
+ 2. Token: straightforward      | Score: 0.596014 | ID: 20837
+ 3. Token: Piet                 | Score: 0.548130 | ID: 14929
+ 4. Token: the                  | Score: 0.546848 | ID: 278
+ 5. Token: AccessorImpl         | Score: 0.540618 | ID: 20527
+ 6. Token: hurried              | Score: 0.535441 | ID: 29117
+ 7. Token: Madame               | Score: 0.530044 | ID: 18080
+ 8. Token: kallaste             | Score: 0.527996 | ID: 26675
+ 9. Token: 'ozzá'               | Score: 0.524474 | ID: 8706
+10. Token: unf                  | Score: 0.524155 | ID: 29395
+11. Token: 'równ'               | Score: 0.523463 | ID: 17805
+12. Token: tegen                | Score: 0.521956 | ID: 15212
+13. Token: 'находи'             | Score: 0.521303 | ID: 14050
+14. Token: 'elő'                | Score: 0.519862 | ID: 14427
+15. Token: 'составе'            | Score: 0.518222 | ID: 17932
+16. Token: 'выше'               | Score: 0.516614 | ID: 27252
+17. Token: 'журна'              | Score: 0.514849 | ID: 15665
+18. Token: ceux                 | Score: 0.511212 | ID: 19449
+19. Token: userId               | Score: 0.507462 | ID: 29721
+20. Token: Pent                 | Score: 0.505574 | ID: 22901
+
+============================================================
+For detailed per-token analysis, see: compression_impact_detailed.csv

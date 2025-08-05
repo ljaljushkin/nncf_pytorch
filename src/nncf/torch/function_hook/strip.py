@@ -27,6 +27,7 @@ from nncf.torch.model_graph_manager import get_module_by_name
 from nncf.torch.model_graph_manager import split_const_name
 from nncf.torch.quantization.layers import AsymmetricQuantizer
 from nncf.torch.quantization.layers import BaseQuantizer
+from nncf.torch.quantization.layers import BaseWeightsDecompressor
 from nncf.torch.quantization.layers import SymmetricQuantizer
 from nncf.torch.quantization.strip import asym_fq_to_decompressor
 from nncf.torch.quantization.strip import convert_to_torch_fakequantizer
@@ -163,11 +164,12 @@ def apply_compression_in_place(model: TModel, graph: NNCFGraph) -> TModel:
     :param graph: The model graph.
     :return: The modified NNCF network.
     """
+    print("\n\n IN_PLACE STRIP \n\n")
     hook_storage = get_hook_storage(model)
 
     hooks_to_delete = []
     for name, hook in hook_storage.named_hooks():
-        if not isinstance(hook, (SymmetricQuantizer, AsymmetricQuantizer)):
+        if not isinstance(hook, (SymmetricQuantizer, AsymmetricQuantizer, BaseWeightsDecompressor)):
             continue
         _, op_name, _ = decode_hook_name(name)
         weight_node = graph.get_node_by_name(op_name)
@@ -181,7 +183,11 @@ def apply_compression_in_place(model: TModel, graph: NNCFGraph) -> TModel:
             raise nncf.InternalError(msg)
 
         weight = get_const_data(weight_node, model)
-        fq_weight = hook.quantize(weight)
+        if isinstance(hook, (SymmetricQuantizer, AsymmetricQuantizer)):
+            fq_weight = hook.quantize(weight)
+        if isinstance(hook, (BaseWeightsDecompressor)):
+            fq_weight = hook(weight)
+        print(f"\n\n STRIP \n\n Quantize {name}")
 
         module_name, weight_attr_name = split_const_name(weight_node.layer_attributes.name)
         module = get_module_by_name(module_name, model)

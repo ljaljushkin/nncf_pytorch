@@ -8,10 +8,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 from abc import ABC
 from abc import abstractmethod
+from pathlib import Path
 from typing import Iterable, Optional, TypeVar
+
+import numpy as np
 
 import nncf
 from nncf import Dataset
@@ -85,6 +87,35 @@ class MixedPrecisionCriterion(Algorithm):
         self._set_backend_entity(model)
 
         scores = self._calc_sensitivity(model, graph, weight_params, statistic_points)
+        import matplotlib.pyplot as plt
+
+        # Create directory for saving plots if it doesn't exist
+        plot_dir = Path(
+            "/home/nlyaly/projects/nncf/tests/post_training/data/wwb_ref_answers/TinyLlama__TinyLlama_v1.1/plots"
+        )
+        plot_dir.mkdir(exist_ok=True)
+
+        # Plot the sensitivity scores
+        plt.figure(figsize=(10, 6))
+        # plt.bar(range(len(scores)), sorted(scores))
+        # plt.xlabel("Layer index (sorted by sensitivity)")
+        plt.bar(range(len(scores)), scores)
+        plt.xlabel("Layer index")
+        plt.ylabel("Sensitivity score")
+        plt.title(f"Layer Sensitivity Scores - {self.__class__.__name__}")
+        plt.tight_layout()
+
+        # Add horizontal line at mean score for reference
+        plt.axhline(y=np.mean(scores), color="r", linestyle="--", label=f"Mean: {np.mean(scores):.4f}")
+        plt.legend()
+
+        # Save the plot
+        plot_path = plot_dir / f"{self.__class__.__name__}_sensitivity_scores.png"
+        plt.savefig(plot_path)
+        plt.close()
+        # Print information about the plot
+        print(f"Sensitivity scores plot saved to {plot_path}")
+
         num_all_weights = sum(wp.num_weights for wp in weight_params)
 
         primary_precision_weight_params = []
@@ -100,6 +131,12 @@ class MixedPrecisionCriterion(Algorithm):
             primary_precision_weight_params.append(weight_param)
             num_weights_in_4bit += weight_param.num_weights
         return primary_precision_weight_params
+
+        # Print the names of layers that don't have primary config
+        print("\nLayers NOT compressed with primary config:")
+        for i, wp in enumerate(weight_params):
+            if wp.compression_config != self._primary_config:
+                print(f"  - {wp.node_with_weight.node_name} (sensitivity score: {scores[i]:.6f})")
 
     @abstractmethod
     def _set_backend_entity(self, model: TModel) -> None:
@@ -172,6 +209,7 @@ class DataFreeCriterion(MixedPrecisionCriterion):
             model,
             graph,
         )
+        # TODO: can backup config be ??
         backup_config = WeightCompressionConfig()
         reduction_axes = weight_param.reduction_axes
         int_error = get_integer_quantization_error(weight, reduction_axes, backup_config)

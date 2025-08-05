@@ -1,0 +1,3 @@
+Model,Backend,Metric name,Metric value,Metric diff,Num int8,Num int4,Compr. time,Total time,RAM MiB,Status,Build url
+tinyllama_int4_data_free,TORCH,,,,,,,0:00:01,,"Regression: The number of int4 ops is different than reference 114 != None
+Regression: The number of int8 ops is differe",
