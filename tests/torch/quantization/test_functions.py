@@ -580,8 +580,8 @@ class BaseParametrized:
             for tensor_ in (test_input, test_input_low, test_input_range):
                 assert tensor_.dtype == torch.half if is_fp16 else torch.float
 
-            # ref_value = RQ.forward(ref_input, input_shape, ref_input_low, ref_input_range, levels)
-            ref_value = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
+            ref_value = RQ.forward(ref_input, input_shape, ref_input_low, ref_input_range, levels)
+            # ref_value = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
             assert scale_mode == "per_group", "TODO: hardcoded for per-group case"
             test_value = asymmetric_quantize(
                 test_input,
@@ -675,14 +675,14 @@ class BaseParametrized:
             for tensor_ in (test_input, test_input_low, test_input_range):
                 assert tensor_.dtype == torch.half if is_fp16 else torch.float
 
-            # ref_output = RQ.forward(ref_input, input_shape, ref_input_low, ref_input_range, levels)
-            ref_output = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
+            ref_output = RQ.forward(ref_input, input_shape, ref_input_low, ref_input_range, levels)
+            # ref_output = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
 
             mock_prev_output_grads = np.ones(input_size, dtype=np.float16 if is_fp16 else np.float32)
             ref_grads = RQ.backward(
                 mock_prev_output_grads,
                 ref_input,
-                # input_shape,
+                input_shape,
                 ref_input_low,
                 ref_input_range,
                 levels,

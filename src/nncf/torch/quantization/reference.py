@@ -58,7 +58,7 @@ class ReferenceQuantize:
     def forward(
         self,
         input_: GeneralizedTensor,
-        # input_shape,
+        input_shape,
         input_low: GeneralizedTensor,
         input_range: GeneralizedTensor,
         levels: int,
@@ -66,7 +66,7 @@ class ReferenceQuantize:
         original_shape = input_.shape
         # TODO: is check really needed? if original_shape != input_shape:
         # TODO: to view from 2d to 3d need to do unsqueeze
-        input_shape = (input_.shape[0], -1, GROUP_SIZE)
+        # input_shape = (input_.shape[0], -1, GROUP_SIZE)
         input_ = input_.reshape(input_shape)
         scale = (levels - 1) / input_range
         output = input_.clip(min=input_low, max=input_low + input_range)
@@ -83,7 +83,7 @@ class ReferenceQuantize:
         self,
         grad_output: GeneralizedTensor,
         input_: GeneralizedTensor,
-        # input_shape,
+        input_shape,
         input_low: GeneralizedTensor,
         input_range: GeneralizedTensor,
         levels: int,
@@ -92,7 +92,7 @@ class ReferenceQuantize:
         is_asymmetric: bool = False,
     ) -> list[GeneralizedTensor]:
         orig_shape = grad_output.shape
-        input_shape = (input_.shape[0], -1, GROUP_SIZE)
+        # input_shape = (input_.shape[0], -1, GROUP_SIZE)
         input_ = input_.reshape(input_shape)
         grad_output = grad_output.reshape(input_shape)
         # is_asymmetric is unused, present only to correspond to the CPU signature of calling "backward"
@@ -103,8 +103,8 @@ class ReferenceQuantize:
 
         mask_in = 1 - mask_hi - mask_lo
         range_sign = self._sign(input_range)
-        # output = self.forward(input_, input_shape, input_low, input_range, levels)
-        output = self.forward(input_, input_low, input_range, levels)
+        output = self.forward(input_, input_shape, input_low, input_range, levels)
+        # output = self.forward(input_, input_low, input_range, levels)
         err = (output - input_) * self._reciprocal(input_range * range_sign)
         grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
         grad_range = sum_like(grad_range, input_range)
