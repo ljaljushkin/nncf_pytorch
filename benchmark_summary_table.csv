@@ -1,4 +1,4 @@
-name,tensor_type,input_size,forward_avg_cuda,forward_avg_triton,forward_avg_rel,backward_avg_cuda,backward_avg_triton,backward_avg_rel,forward_mb_avg_cuda,forward_mb_avg_triton,forward_mb_avg_rel,backward_mb_avg_cuda,backward_mb_avg_triton,backward_mb_avg_rel
+name,tensor_type,input_size,forward_avg_cuda,forward_avg_triton,forward_avg_rel,backward_avg_cuda,backward_avg_triton,backward_avg_rel,forward_gb_avg_cuda,forward_gb_avg_triton,forward_gb_avg_rel,backward_gb_avg_cuda,backward_gb_avg_triton,backward_gb_avg_rel
 cuda_507d96,TensorType.WEIGHTS,"[128, 2048]",0.93,,,0.90,,,0.00,,,0.00,,
 cuda_507d96,TensorType.ACTIVATIONS,"[128, 2048]",1.04,,,0.96,,,0.00,,,0.00,,
 cuda_507d96,TensorType.WEIGHTS,"[2048, 128256]",4.64,,,6.25,,,1.97,,,2.45,,

@@ -49,8 +49,8 @@ def load_and_process_data():
                         "input_size": row["input_size"],
                         "forward_avg": row["forward_avg"],
                         "backward_avg": row["backward_avg"],
-                        "forward_mb_avg": row["forward_mb_avg"],
-                        "backward_mb_avg": row["backward_mb_avg"],
+                        "forward_gb_avg": row["forward_gb_avg"],
+                        "backward_gb_avg": row["backward_gb_avg"],
                     }
                 )
 
@@ -116,8 +116,8 @@ def main():
     metrics = [
         ("forward_avg", "Forward Average Time"),
         ("backward_avg", "Backward Average Time"),
-        ("forward_mb_avg", "Forward Memory Bandwidth Average"),
-        ("backward_mb_avg", "Backward Memory Bandwidth Average"),
+        ("forward_gb_avg", "Forward Memory Bandwidth Average"),
+        ("backward_gb_avg", "Backward Memory Bandwidth Average"),
     ]
 
     all_results = {}

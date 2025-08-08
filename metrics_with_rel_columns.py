@@ -2,8 +2,8 @@
 """
 Benchmark analysis script with relative performance columns for each metric.
 Format: name tensor_type input_size forward_avg forward_avg_impr backward_avg
-        backward_avg_impr forward_mb_avg forward_mb_avg_impr backward_mb_avg
-        backward_mb_avg_impr
+        backward_avg_impr forward_gb_avg forward_gb_avg_impr backward_gb_avg
+        backward_gb_avg_impr
 """
 
 import glob
@@ -51,8 +51,8 @@ def load_and_process_data():
                         "input_size": row["input_size"],
                         "forward_avg": row["forward_avg"],
                         "backward_avg": row["backward_avg"],
-                        "forward_mb_avg": row["forward_mb_avg"],
-                        "backward_mb_avg": row["backward_mb_avg"],
+                        "forward_gb_avg": row["forward_gb_avg"],
+                        "backward_gb_avg": row["backward_gb_avg"],
                     }
                 )
 
@@ -73,7 +73,7 @@ def calculate_relative_performance(df):
         return df
 
     # Create lookup dictionaries for CUDA times for each metric
-    metrics = ["forward_avg", "backward_avg", "forward_mb_avg", "backward_mb_avg"]
+    metrics = ["forward_avg", "backward_avg", "forward_gb_avg", "backward_gb_avg"]
     cuda_lookups = {}
 
     for metric in metrics:
@@ -113,8 +113,8 @@ def format_results_with_rel_columns(df):
     lines = []
     header = (
         "name tensor_type input_size forward_avg forward_avg_impr backward_avg "
-        "backward_avg_impr forward_mb_avg forward_mb_avg_impr backward_mb_avg "
-        "backward_mb_avg_impr"
+        "backward_avg_impr forward_gb_avg forward_gb_avg_impr backward_gb_avg "
+        "backward_gb_avg_impr"
     )
     lines.append(header)
 
@@ -129,15 +129,15 @@ def format_results_with_rel_columns(df):
         forward_avg_impr = row["forward_avg_impr"]
         backward_avg = f"{row['backward_avg']:.2f}"
         backward_avg_impr = row["backward_avg_impr"]
-        forward_mb_avg = f"{row['forward_mb_avg']:.2f}"
-        forward_mb_avg_impr = row["forward_mb_avg_impr"]
-        backward_mb_avg = f"{row['backward_mb_avg']:.2f}"
-        backward_mb_avg_impr = row["backward_mb_avg_impr"]
+        forward_gb_avg = f"{row['forward_gb_avg']:.2f}"
+        forward_gb_avg_impr = row["forward_gb_avg_impr"]
+        backward_gb_avg = f"{row['backward_gb_avg']:.2f}"
+        backward_gb_avg_impr = row["backward_gb_avg_impr"]
 
         line = (
             f"{name} {tensor_type} {input_size} {forward_avg} {forward_avg_impr} "
-            f"{backward_avg} {backward_avg_impr} {forward_mb_avg} {forward_mb_avg_impr} "
-            f"{backward_mb_avg} {backward_mb_avg_impr}"
+            f"{backward_avg} {backward_avg_impr} {forward_gb_avg} {forward_gb_avg_impr} "
+            f"{backward_gb_avg} {backward_gb_avg_impr}"
         )
         lines.append(line)
 
@@ -158,10 +158,10 @@ def create_csv_output(df):
         "forward_avg_impr",
         "backward_avg",
         "backward_avg_impr",
-        "forward_mb_avg",
-        "forward_mb_avg_impr",
-        "backward_mb_avg",
-        "backward_mb_avg_impr",
+        "forward_gb_avg",
+        "forward_gb_avg_impr",
+        "backward_gb_avg",
+        "backward_gb_avg_impr",
     ]
     output_df = df_sorted[columns].copy()
 
@@ -169,7 +169,7 @@ def create_csv_output(df):
     time_cols = ["forward_avg", "backward_avg"]
     for col in time_cols:
         output_df[col] = output_df[col].round(2)
-    mb_cols = ["forward_mb_avg", "backward_mb_avg"]
+    mb_cols = ["forward_gb_avg", "backward_gb_avg"]
     for col in mb_cols:
         output_df[col] = output_df[col].round(4)
 

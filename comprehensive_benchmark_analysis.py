@@ -2,7 +2,7 @@
 """
 Comprehensive benchmark analysis script to compare CUDA vs Triton performance.
 Calculates relative performance as (cuda - triton) / cuda for all metrics.
-Handles: forward_avg, backward_avg, forward_mb_avg, backward_mb_avg
+Handles: forward_avg, backward_avg, forward_gb_avg, backward_gb_avg
 """
 
 import glob
@@ -50,8 +50,8 @@ def load_and_process_data():
                         "input_size": row["input_size"],
                         "forward_avg": row["forward_avg"],
                         "backward_avg": row["backward_avg"],
-                        "forward_mb_avg": row["forward_mb_avg"],
-                        "backward_mb_avg": row["backward_mb_avg"],
+                        "forward_gb_avg": row["forward_gb_avg"],
+                        "backward_gb_avg": row["backward_gb_avg"],
                     }
                 )
 
@@ -122,7 +122,7 @@ def calculate_relative_performance_for_metric(df, metric_name):
 
 def process_all_metrics(df):
     """Process all metrics and combine results."""
-    metrics = ["forward_avg", "backward_avg", "forward_mb_avg", "backward_mb_avg"]
+    metrics = ["forward_avg", "backward_avg", "forward_gb_avg", "backward_gb_avg"]
 
     all_results = []
 
@@ -139,7 +139,7 @@ def process_all_metrics(df):
 def format_and_display_by_metric(df):
     """Format and display results grouped by metric."""
 
-    metrics = ["forward_avg", "backward_avg", "forward_mb_avg", "backward_mb_avg"]
+    metrics = ["forward_avg", "backward_avg", "forward_gb_avg", "backward_gb_avg"]
 
     for metric in metrics:
         print(f"\n{'=' * 20} {metric.upper()} {'=' * 20}")
@@ -181,7 +181,7 @@ def create_summary_table(df):
         }
 
         # Add metrics
-        for metric in ["forward_avg", "backward_avg", "forward_mb_avg", "backward_mb_avg"]:
+        for metric in ["forward_avg", "backward_avg", "forward_gb_avg", "backward_gb_avg"]:
             metric_data = combo_data[combo_data["metric"] == metric]
             if not metric_data.empty:
                 metric_row = metric_data.iloc[0]

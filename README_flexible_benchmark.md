@@ -6,7 +6,7 @@ This script (`flexible_benchmark_analysis.py`) is a flexible version of the orig
 
 - **Flexible reference selection**: Choose any benchmark file as your reference/baseline
 - **Regex pattern matching**: Use regex patterns to select which files to compare
-- **Multiple metrics**: Analyze forward_avg, backward_avg, forward_mb_avg, backward_mb_avg, or all metrics
+- **Multiple metrics**: Analyze forward_avg, backward_avg, forward_gb_avg, backward_gb_avg, or all metrics
 - **Optional output files**: Save results to files with custom prefixes
 - **Excel export**: Save results to formatted Excel files with proper number formatting and color coding
 - **Clean formatted output**: Results in the format: `name tensor_type input_size ref_value comparison_value rel_performance`
@@ -34,7 +34,7 @@ python flexible_benchmark_analysis.py \
 
 - `--ref`: **(Required)** Reference file to compare against
 - `--pattern`: **(Required)** Regex pattern to match comparison files
-- `--metric`: Metric to analyze (choices: forward_avg, backward_avg, forward_mb_avg, backward_mb_avg, all) [default: all]
+- `--metric`: Metric to analyze (choices: forward_avg, backward_avg, forward_gb_avg, backward_gb_avg, all) [default: all]
 - `--output`: Output file prefix (optional)
 - `--excel`: Save results to Excel file with formatting (requires openpyxl)
 
