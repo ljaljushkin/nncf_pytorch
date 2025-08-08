@@ -147,22 +147,60 @@ __global__ void q_cuda_forward_kernel_optimized(
         const uint64_t contiguous_elements_per_scale,
         const uint64_t scale_count) {
 
-    // Ultra-optimized 1D grid with aggressive stride processing
+    // Ultra-optimized 1D grid with adaptive ILP based on workload
     uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     uint64_t stride = gridDim.x * blockDim.x;
 
-    // Unroll the loop and process multiple elements per thread for better ILP
-    for (uint64_t i = idx; i < size; i += stride) {
-        // Calculate scale index for this element
-        uint64_t scale_idx = static_cast<uint64_t>(i / contiguous_elements_per_scale) % scale_count;
+    // Calculate elements per thread to determine optimal ILP factor
+    uint64_t total_threads = stride;
+    uint64_t elements_per_thread = (size + total_threads - 1) / total_threads;
 
-        // Inline fake quantization for better performance
-        scalar_t input_val = input[i];
-        scalar_t low_val = input_low[scale_idx];
-        scalar_t range_val = input_range[scale_idx];
-        scalar_t s = (levels - 1) / range_val;
-        scalar_t zero_point = round((-low_val * s));
-        output[i] = round((min(max(input_val, low_val), low_val + range_val) - low_val) * s - zero_point) / s;
+    // Adaptive ILP: Use higher ILP for threads with more work
+    if (elements_per_thread >= 4) {
+        // High ILP for large workloads - process 4 elements at once
+        const int ILP_FACTOR = 4;
+        for (uint64_t i = idx; i < size; i += stride) {
+            // Process up to 4 consecutive elements starting from current position
+            scalar_t input_vals[ILP_FACTOR];
+            scalar_t low_vals[ILP_FACTOR];
+            scalar_t range_vals[ILP_FACTOR];
+            uint64_t scale_idxs[ILP_FACTOR];
+
+            // Load batch of elements
+            #pragma unroll
+            for (int j = 0; j < ILP_FACTOR; j++) {
+                uint64_t elem_idx = i + j * stride;
+                if (elem_idx < size) {
+                    scale_idxs[j] = static_cast<uint64_t>(elem_idx / contiguous_elements_per_scale) % scale_count;
+                    input_vals[j] = input[elem_idx];
+                    low_vals[j] = input_low[scale_idxs[j]];
+                    range_vals[j] = input_range[scale_idxs[j]];
+                }
+            }
+
+            // Compute batch in parallel
+            #pragma unroll
+            for (int j = 0; j < ILP_FACTOR; j++) {
+                uint64_t elem_idx = i + j * stride;
+                if (elem_idx < size) {
+                    scalar_t s = (levels - 1) / range_vals[j];
+                    scalar_t zero_point = round((-low_vals[j] * s));
+                    output[elem_idx] = round((min(max(input_vals[j], low_vals[j]), low_vals[j] + range_vals[j]) - low_vals[j]) * s - zero_point) / s;
+                }
+            }
+        }
+    } else {
+        // Low ILP for small workloads - simple single element processing
+        for (uint64_t i = idx; i < size; i += stride) {
+            uint64_t scale_idx = static_cast<uint64_t>(i / contiguous_elements_per_scale) % scale_count;
+
+            scalar_t input_val = input[i];
+            scalar_t low_val = input_low[scale_idx];
+            scalar_t range_val = input_range[scale_idx];
+            scalar_t s = (levels - 1) / range_val;
+            scalar_t zero_point = round((-low_val * s));
+            output[i] = round((min(max(input_val, low_val), low_val + range_val) - low_val) * s - zero_point) / s;
+        }
     }
 }template <typename scalar_t>
 __device__ void calcGrad(
@@ -590,38 +628,38 @@ at::Tensor q_cuda_forward(
     PROFILE(DISPATCH_TENSOR_DATA_TYPES(input.scalar_type(), "q_cuda_forward", ([&] {
         if (use_optimized_kernel) {
             // BEST PERFORMING: 8K blocks with Triton-inspired optimizations
-            const int block_size = 1024;
-            const int max_blocks = 8192; // 8K blocks (empirically optimal)
-            const int min_elements_per_block = 32768; // 32K elements per block minimum
-            int optimal_blocks = (quantized_elements_count + min_elements_per_block - 1) / min_elements_per_block;
-            const int num_blocks = std::min(max_blocks, std::max(128, optimal_blocks));
-
-            // Use Triton-style kernel with optimized grid size
-            q_cuda_forward_kernel_triton_style<scalar_t><<<num_blocks, block_size, 0, at::cuda::getCurrentCUDAStream()>>>(
-                output.data_ptr<scalar_t>(),
-                input.data_ptr<scalar_t>(),
-                input_low.data_ptr<scalar_t>(),
-                input_range.data_ptr<scalar_t>(),
-                levels,
-                quantized_elements_count,
-                contiguous_elements_per_scale);
-
-            // PREVIOUS BEST: 4.22ms with 8K blocks
             // const int block_size = 1024;
-            // const int max_blocks = 8192; // 8K blocks (eighth of original)
+            // const int max_blocks = 8192; // 8K blocks (empirically optimal)
             // const int min_elements_per_block = 32768; // 32K elements per block minimum
             // int optimal_blocks = (quantized_elements_count + min_elements_per_block - 1) / min_elements_per_block;
             // const int num_blocks = std::min(max_blocks, std::max(128, optimal_blocks));
-            //
-            // q_cuda_forward_kernel_optimized<scalar_t><<<num_blocks, block_size, 0, at::cuda::getCurrentCUDAStream()>>>(
+
+            // // Use Triton-style kernel with optimized grid size
+            // q_cuda_forward_kernel_triton_style<scalar_t><<<num_blocks, block_size, 0, at::cuda::getCurrentCUDAStream()>>>(
             //     output.data_ptr<scalar_t>(),
             //     input.data_ptr<scalar_t>(),
             //     input_low.data_ptr<scalar_t>(),
             //     input_range.data_ptr<scalar_t>(),
             //     levels,
             //     quantized_elements_count,
-            //     contiguous_elements_per_scale,
-            //     scale_count);
+            //     contiguous_elements_per_scale);
+
+            // PREVIOUS BEST: 4.22ms with 8K blocks
+            const int block_size = 1024;
+            const int max_blocks = 8192; // 8K blocks (eighth of original)
+            const int min_elements_per_block = 32768; // 32K elements per block minimum
+            int optimal_blocks = (quantized_elements_count + min_elements_per_block - 1) / min_elements_per_block;
+            const int num_blocks = std::min(max_blocks, std::max(128, optimal_blocks));
+
+            q_cuda_forward_kernel_optimized<scalar_t><<<num_blocks, block_size, 0, at::cuda::getCurrentCUDAStream()>>>(
+                output.data_ptr<scalar_t>(),
+                input.data_ptr<scalar_t>(),
+                input_low.data_ptr<scalar_t>(),
+                input_range.data_ptr<scalar_t>(),
+                levels,
+                quantized_elements_count,
+                contiguous_elements_per_scale,
+                scale_count);
         } else {
             // For small tensors: Use original simple approach which works well
             q_cuda_forward_kernel<scalar_t><<<GET_BLOCKS(quantized_elements_count), CUDA_MAX_NUM_THREADS_PER_BLOCK, 0, at::cuda::getCurrentCUDAStream()>>>(

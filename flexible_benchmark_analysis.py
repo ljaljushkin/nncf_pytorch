@@ -203,7 +203,7 @@ def aggregate_performance_data(all_structured_data, metrics):
     return pd.concat(aggregated_results, ignore_index=True)
 
 
-def create_performance_plots(aggregated_data, all_structured_data, metrics, output_prefix=""):
+def create_performance_plots(aggregated_data, all_structured_data, metrics, output_prefix="", baseline_name=""):
     """Create visualization plots for performance data."""
 
     if not PLOTTING_AVAILABLE:
@@ -225,7 +225,8 @@ def create_performance_plots(aggregated_data, all_structured_data, metrics, outp
 
         # Create figure with subplots - only 2 plots now
         fig, axes = plt.subplots(1, 2, figsize=(15, 6))
-        fig.suptitle("Benchmark Performance Analysis", fontsize=16, fontweight="bold")
+        baseline_text = f" (Baseline: {baseline_name})" if baseline_name else ""
+        fig.suptitle(f"Benchmark Performance Analysis{baseline_text}", fontsize=16, fontweight="bold")
 
         # Plot 1: Mean Performance by Implementation (Bar Chart)
         ax1 = axes[0]
@@ -284,7 +285,8 @@ def create_performance_plots(aggregated_data, all_structured_data, metrics, outp
                 ax=ax,
                 cbar_kws={"label": "Relative Performance"},
             )
-            ax.set_title("Performance Heatmap: Implementation vs Metric")
+            heatmap_title = f"Performance Heatmap: Implementation vs Metric{baseline_text}"
+            ax.set_title(heatmap_title)
             ax.set_xlabel("Metric")
             ax.set_ylabel("Implementation")
 
@@ -612,7 +614,8 @@ def main():
 
             # Create visualizations
             output_prefix = args.output if args.output else "benchmark"
-            create_performance_plots(aggregated_data, all_structured_data, metrics, output_prefix)
+            baseline_name = extract_short_name(args.ref)
+            create_performance_plots(aggregated_data, all_structured_data, metrics, output_prefix, baseline_name)
         else:
             print("No performance data available for visualization.")
             print("Make sure you have comparison files that match the reference file structure.")

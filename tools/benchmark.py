@@ -51,6 +51,7 @@ def run_wall(layer, input_size_, device, runs, is_print=True, dtype=torch.float)
 
 
 def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torch.float) -> dict[str, float]:
+    torch.cuda.reset_max_memory_allocated()
     input_ = torch.randn(input_size_, device=torch.device(device), dtype=dtype)
     input_.requires_grad_(True)
 
