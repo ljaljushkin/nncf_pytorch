@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from enum import Enum
 from typing import TypeVar
 
@@ -27,7 +28,7 @@ class ReferenceBackendType(Enum):
     TORCH = "torch"
 
 
-GROUP_SIZE = 128
+GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 128))
 
 
 class ReferenceQuantize:
@@ -147,6 +148,18 @@ torch_forward = CompilationWrapper(torch_executor.forward)
 torch_backward = CompilationWrapper(torch_executor.backward)
 
 
-class ReferenceQuantizedFunctions:
+class ReferenceGetter:
+    @classmethod
+    def get(cls, value):
+        return getattr(cls, value)
+
+
+class ReferenceQuantizedFunctionsNotCompile(ReferenceGetter):
+    _executor = ReferenceQuantize(backend_type=ReferenceBackendType.TORCH)
+    Quantize_forward = _executor.forward
+    Quantize_backward = _executor.backward
+
+
+class ReferenceQuantizedFunctions(ReferenceGetter):
     Quantize_forward = torch_forward
     Quantize_backward = torch_backward

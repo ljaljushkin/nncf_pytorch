@@ -9,14 +9,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import torch
 import triton
 import triton.language as tl
 from torch._inductor.runtime.triton_helpers import libdevice
 
+from nncf.torch.quantization.reference import ReferenceGetter
 from nncf.torch.utils import sum_like
 
-GROUP_SIZE = 128
+GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 128))
 # def get_optimal_grid_for_per_channel(scale_count: int, elements_per_scale: int, block_size: int) -> tuple[int, int]:
 #     """
 #     Calculate optimal 2D grid size for per-channel quantization based on empirical performance.
@@ -737,3 +740,8 @@ def backward_kernel_per_activation_channel(
     tl.store(grad_input_ptr + final_offsets, grad_input, mask=mask)
     tl.store(grad_low_ptr + final_offsets, grad_low, mask=mask)
     tl.store(grad_range_ptr + final_offsets, grad_range, mask=mask)
+
+
+class TritonQuantizedFunctions(ReferenceGetter):
+    Quantize_forward = forward
+    Quantize_backward = backward

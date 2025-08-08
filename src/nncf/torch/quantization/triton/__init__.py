@@ -9,31 +9,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable
+# from typing import Callable
 
-import torch
+# import torch
 
-from nncf.torch.utils import CudaNotAvailableStub
-
-
-class TritonFunctionsWrapper:
-    def __init__(self):
-        """
-        Wrapper that handles Triton kernel imports since it would trigger compilation.
-        To prevent issues with non-CUDA environment.
-        """
-        from nncf.torch.quantization.triton.reference import backward
-        from nncf.torch.quantization.triton.reference import forward
-
-        self.Quantize_forward = forward
-        self.Quantize_backward = backward
-
-    def get(self, fn_name: str) -> Callable:
-        return getattr(self, fn_name)
+# from nncf.torch.quantization.reference import ReferenceGetter
+# from nncf.torch.utils import CudaNotAvailableStub
 
 
-if torch.cuda.is_available():
-    print("load TRITON!!!")
-    QuantizedFunctionsCUDA = TritonFunctionsWrapper()
-else:
-    QuantizedFunctionsCUDA = CudaNotAvailableStub()
+# class TritonFunctionsWrapper:
+#     def __init__(self):
+#         """
+#         Wrapper that handles Triton kernel imports since it would trigger compilation.
+#         To prevent issues with non-CUDA environment.
+#         """
+#         from nncf.torch.quantization.triton.reference import backward
+#         from nncf.torch.quantization.triton.reference import forward
+
+#         self.Quantize_forward = forward
+#         self.Quantize_backward = backward
+
+#     def get(self, fn_name: str) -> Callable:
+#         return getattr(self, fn_name)
+
+
+# if torch.cuda.is_available():
+#     QuantizedFunctionsCUDA = TritonFunctionsWrapper()
+# else:
+#     QuantizedFunctionsCUDA = CudaNotAvailableStub()

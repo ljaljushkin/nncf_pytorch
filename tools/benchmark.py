@@ -92,11 +92,11 @@ def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torc
     backward_min *= scale
     forward_average = forward_time / runs * scale
     backward_average = backward_time / runs * scale
-    forward_mb_avg = forward_mb / runs
-    backward_mb_avg = backward_mb / runs
+    forward_gb_avg = forward_mb / runs
+    backward_gb_avg = backward_mb / runs
     print(
-        f"Forward: min {forward_min:.3f}{ctime} / avg {forward_average:.3f}{ctime} |"
-        f" Backward: min {backward_min:.3f}{ctime} / avg {backward_average:.3f}{ctime}"
+        f"Forward: mem {forward_gb_avg:.3f}Gb / avg {forward_average:.3f}{ctime} |"
+        f" Backward: mem {backward_gb_avg:.3f}Gb / avg {backward_average:.3f}{ctime}"
     )
 
     return {
@@ -104,8 +104,8 @@ def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torc
         "forward_avg": forward_average,
         # "backward_min": backward_min,
         "backward_avg": backward_average,
-        "forward_mb_avg": forward_mb_avg,
-        "backward_mb_avg": backward_mb_avg,
+        "forward_gb_avg": forward_gb_avg,
+        "backward_gb_avg": backward_gb_avg,
     }
 
 

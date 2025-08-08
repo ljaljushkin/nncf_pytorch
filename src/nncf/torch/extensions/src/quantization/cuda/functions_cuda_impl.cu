@@ -147,62 +147,26 @@ __global__ void q_cuda_forward_kernel_optimized(
         const uint64_t contiguous_elements_per_scale,
         const uint64_t scale_count) {
 
-    // Ultra-optimized 1D grid with adaptive ILP based on workload
+    // Ultra-optimized 1D grid with aggressive stride processing
     uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     uint64_t stride = gridDim.x * blockDim.x;
 
-    // Calculate elements per thread to determine optimal ILP factor
-    uint64_t total_threads = stride;
-    uint64_t elements_per_thread = (size + total_threads - 1) / total_threads;
+    // Unroll the loop and process multiple elements per thread for better ILP
+    for (uint64_t i = idx; i < size; i += stride) {
+        // Calculate scale index for this element
+        uint64_t scale_idx = static_cast<uint64_t>(i / contiguous_elements_per_scale) % scale_count;
 
-    // Adaptive ILP: Use higher ILP for threads with more work
-    if (elements_per_thread >= 4) {
-        // High ILP for large workloads - process 4 elements at once
-        const int ILP_FACTOR = 4;
-        for (uint64_t i = idx; i < size; i += stride) {
-            // Process up to 4 consecutive elements starting from current position
-            scalar_t input_vals[ILP_FACTOR];
-            scalar_t low_vals[ILP_FACTOR];
-            scalar_t range_vals[ILP_FACTOR];
-            uint64_t scale_idxs[ILP_FACTOR];
-
-            // Load batch of elements
-            #pragma unroll
-            for (int j = 0; j < ILP_FACTOR; j++) {
-                uint64_t elem_idx = i + j * stride;
-                if (elem_idx < size) {
-                    scale_idxs[j] = static_cast<uint64_t>(elem_idx / contiguous_elements_per_scale) % scale_count;
-                    input_vals[j] = input[elem_idx];
-                    low_vals[j] = input_low[scale_idxs[j]];
-                    range_vals[j] = input_range[scale_idxs[j]];
-                }
-            }
-
-            // Compute batch in parallel
-            #pragma unroll
-            for (int j = 0; j < ILP_FACTOR; j++) {
-                uint64_t elem_idx = i + j * stride;
-                if (elem_idx < size) {
-                    scalar_t s = (levels - 1) / range_vals[j];
-                    scalar_t zero_point = round((-low_vals[j] * s));
-                    output[elem_idx] = round((min(max(input_vals[j], low_vals[j]), low_vals[j] + range_vals[j]) - low_vals[j]) * s - zero_point) / s;
-                }
-            }
-        }
-    } else {
-        // Low ILP for small workloads - simple single element processing
-        for (uint64_t i = idx; i < size; i += stride) {
-            uint64_t scale_idx = static_cast<uint64_t>(i / contiguous_elements_per_scale) % scale_count;
-
-            scalar_t input_val = input[i];
-            scalar_t low_val = input_low[scale_idx];
-            scalar_t range_val = input_range[scale_idx];
-            scalar_t s = (levels - 1) / range_val;
-            scalar_t zero_point = round((-low_val * s));
-            output[i] = round((min(max(input_val, low_val), low_val + range_val) - low_val) * s - zero_point) / s;
-        }
+        // Inline fake quantization for better performance
+        scalar_t input_val = input[i];
+        scalar_t low_val = input_low[scale_idx];
+        scalar_t range_val = input_range[scale_idx];
+        scalar_t s = (levels - 1) / range_val;
+        scalar_t zero_point = round((-low_val * s));
+        output[i] = round((min(max(input_val, low_val), low_val + range_val) - low_val) * s - zero_point) / s;
     }
-}template <typename scalar_t>
+}
+
+template <typename scalar_t>
 __device__ void calcGrad(
         scalar_t* __restrict__ val_grad_input,
         scalar_t* __restrict__ val_grad_input_low,
@@ -623,7 +587,7 @@ at::Tensor q_cuda_forward(
     // Optimization: Use optimized kernel for large tensors to avoid over-parallelization
     // Very aggressive threshold to catch most medium/large tensors
     const uint64_t LARGE_TENSOR_THRESHOLD = 100000; // 100K elements (very low threshold)
-    const bool use_optimized_kernel = quantized_elements_count > LARGE_TENSOR_THRESHOLD;
+    const bool use_optimized_kernel = true;//quantized_elements_count > LARGE_TENSOR_THRESHOLD;
 
     PROFILE(DISPATCH_TENSOR_DATA_TYPES(input.scalar_type(), "q_cuda_forward", ([&] {
         if (use_optimized_kernel) {

@@ -106,7 +106,7 @@ def main():
         # pattern=r"benchmark_cuda_24_all_optimized.csv",
         excel=True,
         plot=True,
-        output_prefix="comprehensive_analysis_24_gs32",
+        output_prefix="comprehensive_analysis_24_gs64",
     )
 
 

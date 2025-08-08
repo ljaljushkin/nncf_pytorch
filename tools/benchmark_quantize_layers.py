@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import sys
 from dataclasses import asdict
 from dataclasses import dataclass
@@ -38,7 +39,7 @@ NBITS = 8
 GPU_RUNS_LOW_BATCH = 3000
 GPU_RUNS_HIGH_BATCH = 300
 CPU_RUNS = 100
-GROUP_SIZE = 128
+GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 128))
 LOW_BATCH_INPUT_SIZE_2D = [128, 2048]
 TYPICAL_INPUT_SIZE_2D = [2048, 4096]
 HIGH_BATCH_INPUT_SIZE_2D = [2048, 128256]

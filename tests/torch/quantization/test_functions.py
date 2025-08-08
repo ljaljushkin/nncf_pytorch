@@ -8,6 +8,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 from typing import Callable, Optional
 
 import numpy as np
@@ -708,7 +709,7 @@ class BaseParametrized:
             check_outputs_for_quantization_functions(test_grads, ref_grads, rtol=1e-2 if is_fp16 else 1e-3)
 
 
-GROUP_SIZE = 16
+GROUP_SIZE = os.environ.get("GROUP_SIZE", "16")
 
 
 @pytest.mark.parametrize(
