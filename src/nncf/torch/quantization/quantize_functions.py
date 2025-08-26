@@ -25,10 +25,10 @@ from nncf.torch.quantization.reference import ReferenceQuantizedFunctionsNotComp
 from nncf.torch.quantization.triton.reference import TritonQuantizedFunctions as TQ
 from nncf.torch.utils import add_domain
 
-mode = os.environ.get("BENCHMARK_MODE", "COMPILE")
+mode = os.environ.get("BENCHMARK_MODE", "CUDA")
 cuda_map = {
     "COMPILE": RQ,
-    "EXTENSION": QuantizedFunctionsCUDA,
+    "CUDA": QuantizedFunctionsCUDA,
     "REFERENCE": RQnC,
     "TRITON": TQ,
 }

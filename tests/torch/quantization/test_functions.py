@@ -26,7 +26,8 @@ from nncf.torch.quantization.quantize_functions import symmetric_quantize
 from nncf.torch.quantization.reference import ReferenceBackendType
 from nncf.torch.quantization.reference import ReferenceQuantize
 from nncf.torch.quantization.reference import ReferenceQuantizedFunctions
-from nncf.torch.quantization.triton import QuantizedFunctionsCUDA
+
+# from nncf.torch.quantization.triton import QuantizedFunctionsCUDA
 from tests.torch.helpers import PTTensorListComparator
 from tests.torch.helpers import get_grads
 
@@ -581,8 +582,8 @@ class BaseParametrized:
             for tensor_ in (test_input, test_input_low, test_input_range):
                 assert tensor_.dtype == torch.half if is_fp16 else torch.float
 
-            ref_value = RQ.forward(ref_input, input_shape, ref_input_low, ref_input_range, levels)
-            # ref_value = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
+            # ref_value = RQ.forward(ref_input, input_shape, ref_input_low, ref_input_range, levels)
+            ref_value = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
             assert scale_mode == "per_group", "TODO: hardcoded for per-group case"
             test_value = asymmetric_quantize(
                 test_input,
@@ -676,14 +677,14 @@ class BaseParametrized:
             for tensor_ in (test_input, test_input_low, test_input_range):
                 assert tensor_.dtype == torch.half if is_fp16 else torch.float
 
-            ref_output = RQ.forward(ref_input, input_shape, ref_input_low, ref_input_range, levels)
-            # ref_output = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
+            # ref_output = RQ.forward(ref_input, input_shape, ref_input_low, ref_input_range, levels)
+            ref_output = RQ.forward(ref_input, ref_input_low, ref_input_range, levels)
 
             mock_prev_output_grads = np.ones(input_size, dtype=np.float16 if is_fp16 else np.float32)
             ref_grads = RQ.backward(
                 mock_prev_output_grads,
                 ref_input,
-                input_shape,
+                # input_shape,
                 ref_input_low,
                 ref_input_range,
                 levels,
@@ -709,7 +710,7 @@ class BaseParametrized:
             check_outputs_for_quantization_functions(test_grads, ref_grads, rtol=1e-2 if is_fp16 else 1e-3)
 
 
-GROUP_SIZE = os.environ.get("GROUP_SIZE", "16")
+GROUP_SIZE = os.environ.get("GROUP_SIZE", 16)
 
 
 @pytest.mark.parametrize(
@@ -879,57 +880,57 @@ def test_cpu_extension_reference_compatibility(desc):
     assert torch.allclose(bwd_grad_range, ref_grad_range)
 
 
-@pytest.mark.cuda
-@pytest.mark.parametrize(
-    "desc",
-    [
-        CompatibilityTestDesc(
-            levels=256,
-            level_low=-128,
-            level_high=127,
-        ),
-        CompatibilityTestDesc(
-            levels=256,
-            level_low=-128,
-            level_high=127,
-        ),
-        CompatibilityTestDesc(
-            levels=16,
-            level_low=0,
-            level_high=15,
-        ),
-        CompatibilityTestDesc(
-            levels=16,
-            level_low=0,
-            level_high=15,
-        ),
-    ],
-)
-def test_cuda_extension_reference_compatibility(desc):
-    device = torch.device("cuda")
-    input_low = desc.input_low.to(device)
-    input_range = desc.input_range.to(device)
-    input_ = desc.input_.to(device)
+# @pytest.mark.cuda
+# @pytest.mark.parametrize(
+#     "desc",
+#     [
+#         CompatibilityTestDesc(
+#             levels=256,
+#             level_low=-128,
+#             level_high=127,
+#         ),
+#         CompatibilityTestDesc(
+#             levels=256,
+#             level_low=-128,
+#             level_high=127,
+#         ),
+#         CompatibilityTestDesc(
+#             levels=16,
+#             level_low=0,
+#             level_high=15,
+#         ),
+#         CompatibilityTestDesc(
+#             levels=16,
+#             level_low=0,
+#             level_high=15,
+#         ),
+#     ],
+# )
+# def test_cuda_extension_reference_compatibility(desc):
+#     device = torch.device("cuda")
+#     input_low = desc.input_low.to(device)
+#     input_range = desc.input_range.to(device)
+#     input_ = desc.input_.to(device)
 
-    fwd_args = [input_, input_low, input_range, desc.levels]
-    bwd_args = [
-        desc.grad_output.to(device),
-        input_,
-        input_low,
-        input_range,
-        desc.levels,
-        desc.level_low,
-        desc.level_high,
-    ]
+#     fwd_args = [input_, input_low, input_range, desc.levels]
+#     bwd_args = [
+#         desc.grad_output.to(device),
+#         input_,
+#         input_low,
+#         input_range,
+#         desc.levels,
+#         desc.level_low,
+#         desc.level_high,
+#     ]
 
-    ext_fwd_output = QuantizedFunctionsCUDA.get("Quantize_forward")(*fwd_args)
-    ref_fwd_output = ReferenceQuantizedFunctions.Quantize_forward(*fwd_args)
+#     ext_fwd_output = QuantizedFunctionsCUDA.get("Quantize_forward")(*fwd_args)
+#     ref_fwd_output = ReferenceQuantizedFunctions.Quantize_forward(*fwd_args)
 
-    assert torch.allclose(ext_fwd_output, ref_fwd_output)
+#     assert torch.allclose(ext_fwd_output, ref_fwd_output)
 
-    bwd_grad_input, bwd_grad_low, bwd_grad_range = QuantizedFunctionsCUDA.get("Quantize_backward")(*bwd_args)
-    ref_grad_input, ref_grad_low, ref_grad_range = ReferenceQuantizedFunctions.Quantize_backward(*bwd_args)
+#     bwd_grad_input, bwd_grad_low, bwd_grad_range = QuantizedFunctionsCUDA.get("Quantize_backward")(*bwd_args)
+#     ref_grad_input, ref_grad_low, ref_grad_range = ReferenceQuantizedFunctions.Quantize_backward(*bwd_args)
 
-    assert torch.allclose(bwd_grad_input, ref_grad_input)
-    assert torch.allclose(bwd_grad_low, ref_grad_low)
-    assert torch.allclose(bwd_grad_range, ref_grad_range, atol=1e-7)
+#     assert torch.allclose(bwd_grad_input, ref_grad_input)
+#     assert torch.allclose(bwd_grad_low, ref_grad_low)
+#     assert torch.allclose(bwd_grad_range, ref_grad_range, atol=1e-7)

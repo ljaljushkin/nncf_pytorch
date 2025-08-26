@@ -19,7 +19,7 @@ from torch._inductor.runtime.triton_helpers import libdevice
 from nncf.torch.quantization.reference import ReferenceGetter
 from nncf.torch.utils import sum_like
 
-GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 128))
+GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 16))
 # def get_optimal_grid_for_per_channel(scale_count: int, elements_per_scale: int, block_size: int) -> tuple[int, int]:
 #     """
 #     Calculate optimal 2D grid size for per-channel quantization based on empirical performance.

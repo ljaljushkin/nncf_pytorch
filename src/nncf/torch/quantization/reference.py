@@ -28,7 +28,7 @@ class ReferenceBackendType(Enum):
     TORCH = "torch"
 
 
-GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 128))
+GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 16))
 
 
 class ReferenceQuantize:
