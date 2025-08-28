@@ -383,6 +383,7 @@ class WeightCompression(Algorithm):
         ignored_names = get_ignored_node_names_from_ignored_scope(
             self._ignored_scope, nncf_graph, strict=self._ignored_scope.validate
         )
+        # print(ignored_names, sep="\n")
         for node in nncf_graph.topological_sort():
             is_node_with_weights = self._backend_entity.is_node_with_weights(node, nncf_graph)
             is_within_scope = should_consider_scope(node.node_name, ignored_names)

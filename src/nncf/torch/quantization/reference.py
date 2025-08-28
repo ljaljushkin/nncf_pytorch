@@ -17,6 +17,7 @@ import numpy as np
 import torch
 
 import nncf
+from nncf.common.logging import nncf_logger
 from nncf.torch.utils import CompilationWrapper
 from nncf.torch.utils import sum_like
 
@@ -29,6 +30,7 @@ class ReferenceBackendType(Enum):
 
 
 GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 16))
+nncf_logger.error(f"Current GROUP_SIZE is: {GROUP_SIZE}")
 
 
 class ReferenceQuantize:
@@ -68,9 +70,8 @@ class ReferenceQuantize:
         # TODO: is check really needed? if original_shape != input_shape:
         # TODO: to view from 2d to 3d need to do unsqueeze
         input_shape = (input_.shape[0], -1, GROUP_SIZE)
-        input_ = input_.reshape(input_shape)
         scale = (levels - 1) / input_range
-        output = input_.clip(min=input_low, max=input_low + input_range)
+        output = input_.reshape(input_shape).clip(min=input_low, max=input_low + input_range)
         zero_point = (-input_low * scale).round()
         output -= input_low
         output *= scale
@@ -94,19 +95,19 @@ class ReferenceQuantize:
     ) -> list[GeneralizedTensor]:
         orig_shape = grad_output.shape
         input_shape = (input_.shape[0], -1, GROUP_SIZE)
-        input_ = input_.reshape(input_shape)
+        input_reshaped = input_.reshape(input_shape)
         grad_output = grad_output.reshape(input_shape)
         # is_asymmetric is unused, present only to correspond to the CPU signature of calling "backward"
-        mask_hi = input_ > (input_low + input_range)
+        mask_hi = input_reshaped > (input_low + input_range)
         mask_hi = self._astype(mask_hi, input_.dtype)
-        mask_lo = input_ < input_low
+        mask_lo = input_reshaped < input_low
         mask_lo = self._astype(mask_lo, input_.dtype)
 
         mask_in = 1 - mask_hi - mask_lo
         range_sign = self._sign(input_range)
         # output = self.forward(input_, input_shape, input_low, input_range, levels)
         output = self.forward(input_, input_low, input_range, levels)
-        err = (output - input_) * self._reciprocal(input_range * range_sign)
+        err = (output - input_).reshape(input_shape) * self._reciprocal(input_range * range_sign)
         grad_range = grad_output * (err * mask_in + range_sign * (level_low / level_high) * mask_lo + mask_hi)
         grad_range = sum_like(grad_range, input_range)
 

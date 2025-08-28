@@ -124,7 +124,7 @@ def compress_weights_impl(
         advanced_parameters,
     )
     graph = NNCFGraphFactory.create(model)
-
+    # graph.visualize_graph("nncf_graph")
     compressed_model = compression_algorithm.apply(model, graph, dataset=dataset)
     if isinstance(compressed_model, GraphModelWrapper):
         compressed_model = compressed_model.model

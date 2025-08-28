@@ -26,7 +26,9 @@ def warmup(layer, input_, runs, forward_only=False):
             new_i[0].sum().backward()
 
 
-def run_wall(layer, input_size_, device, runs, is_print=True, dtype=torch.float) -> dict[str, float]:
+def run_wall(
+    layer, input_size_, device, runs, is_print=True, dtype=torch.float, forward_only=False
+) -> dict[str, float]:
     input_ = torch.randn(input_size_, device=torch.device(device), dtype=dtype)
     input_.requires_grad_(True)
 
@@ -47,11 +49,10 @@ def run_wall(layer, input_size_, device, runs, is_print=True, dtype=torch.float)
 
     if is_print:
         print(f"Forward&Backward: {fbtime:.3f} {ctime}")
-    return {"forward + backward": fbtime}
+    return {"forward_backward": fbtime}
 
 
 def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torch.float) -> dict[str, float]:
-    torch.cuda.reset_max_memory_allocated()
     input_ = torch.randn(input_size_, device=torch.device(device), dtype=dtype)
     input_.requires_grad_(True)
 
@@ -59,12 +60,21 @@ def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torc
     warmup(layer, input_, 100, forward_only)
 
     forward_min = math.inf
-    forward_time, forward_mb = 0, 0
+    forward_time = 0
     backward_min = math.inf
-    backward_time, backward_mb = 0, 0
-    for _ in range(runs):
-        layer.zero_grad()
+    backward_time = 0
 
+    # Memory measurement: collect peak memory for each iteration
+    forward_memory_peaks = []
+    backward_memory_peaks = []
+
+    for _ in range(runs):
+        # Clear all cached memory and gradients before each measurement
+        layer.zero_grad()
+        torch.cuda.empty_cache()
+        torch.cuda.reset_max_memory_allocated()
+
+        # Measure forward pass
         torch.cuda.synchronize()
         start = time.time()
         new_i = layer(input_)
@@ -73,10 +83,13 @@ def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torc
         forward_min = min(forward_min, elapsed)
         forward_time += elapsed
 
-        forward_mb += torch.cuda.max_memory_allocated() / (1024**3)
+        # Record peak memory for this forward pass
+        forward_peak_mb = torch.cuda.max_memory_allocated() / (1024**3)
+        forward_memory_peaks.append(forward_peak_mb)
         torch.cuda.reset_max_memory_allocated()
 
         if not forward_only:
+            # Measure backward pass
             torch.cuda.synchronize()
             start = time.time()
             new_i[0].sum().backward()
@@ -84,28 +97,45 @@ def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torc
             elapsed = time.time() - start
             backward_min = min(backward_min, elapsed)
             backward_time += elapsed
-            backward_mb += torch.cuda.max_memory_allocated() / (1024**3)
-            torch.cuda.reset_max_memory_allocated()
+
+            # Record peak memory for this backward pass
+            backward_peak_mb = torch.cuda.max_memory_allocated() / (1024**3)
+            backward_memory_peaks.append(backward_peak_mb)
 
     ctime, scale = list(TIME_SCALES.items())[0]
     forward_min *= scale
     backward_min *= scale
     forward_average = forward_time / runs * scale
     backward_average = backward_time / runs * scale
-    forward_gb_avg = forward_mb / runs
-    backward_gb_avg = backward_mb / runs
+
+    # Calculate meaningful memory statistics
+    forward_gb_avg = sum(forward_memory_peaks) / len(forward_memory_peaks)
+    forward_gb_max = max(forward_memory_peaks)
+    forward_gb_min = min(forward_memory_peaks)
+
+    if backward_memory_peaks:
+        backward_gb_avg = sum(backward_memory_peaks) / len(backward_memory_peaks)
+        backward_gb_max = max(backward_memory_peaks)
+        backward_gb_min = min(backward_memory_peaks)
+    else:
+        backward_gb_avg = backward_gb_max = backward_gb_min = 0
+
     print(
-        f"Forward: mem {forward_gb_avg:.3f}Gb / avg {forward_average:.3f}{ctime} |"
-        f" Backward: mem {backward_gb_avg:.3f}Gb / avg {backward_average:.3f}{ctime}"
+        f"Forward: mem avg {forward_gb_avg:.3f}GB (max {forward_gb_max:.3f}GB) / "
+        f"time avg {forward_average:.3f}{ctime} | "
+        f"Backward: mem avg {backward_gb_avg:.3f}GB (max {backward_gb_max:.3f}GB) / "
+        f"time avg {backward_average:.3f}{ctime}"
     )
 
     return {
-        # "forward_min": forward_min,
         "forward_avg": forward_average,
-        # "backward_min": backward_min,
         "backward_avg": backward_average,
         "forward_gb_avg": forward_gb_avg,
+        "forward_gb_max": forward_gb_max,
+        "forward_gb_min": forward_gb_min,
         "backward_gb_avg": backward_gb_avg,
+        "backward_gb_max": backward_gb_max,
+        "backward_gb_min": backward_gb_min,
     }
 
 

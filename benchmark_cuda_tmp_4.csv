@@ -1,0 +1,7 @@
+dtype,device,exec_type,tensor_type,granularity,symmetric,narrow_range,timing_mode,ref,num_runs,input_size,forward_avg,backward_avg,forward_gb_avg,backward_gb_avg
+torch.bfloat16,cuda,ExecutionType.REGULAR,TensorType.WEIGHTS,GranularityType.PER_GROUP,False,False,TimingMode.KERNEL,False,5000,"[2048, 4096]",1.0421515464782716,0.8458099365234375,0.06592314777374268,0.08130168914794922
+torch.bfloat16,cuda,ExecutionType.REGULAR,TensorType.WEIGHTS,GranularityType.PER_GROUP,False,False,TimingMode.KERNEL,False,500,"[2048, 128256]",5.216283798217773,8.093676567077637,2.0729620990753173,2.5548601150512695
+torch.bfloat16,cuda,ExecutionType.REGULAR,TensorType.WEIGHTS,GranularityType.PER_GROUP,False,False,TimingMode.KERNEL,False,10000,"[128, 2048]",0.7817718267440795,0.7466665029525756,0.06651883478164673,0.0670003890991211
+torch.bfloat16,cuda,ExecutionType.REGULAR,TensorType.WEIGHTS,GranularityType.PER_GROUP,False,False,TimingMode.KERNEL,False,5000,"[2048, 2048]",0.8984883785247803,0.8471351146697997,0.09748240985870361,0.10517215728759766
+torch.bfloat16,cuda,ExecutionType.REGULAR,TensorType.WEIGHTS,GranularityType.PER_GROUP,False,False,TimingMode.KERNEL,False,1000,"[8192, 2048]",1.0028076171875,1.0204756259918213,0.19736891269683837,0.22809886932373047
+torch.bfloat16,cuda,ExecutionType.REGULAR,TensorType.WEIGHTS,GranularityType.PER_GROUP,False,False,TimingMode.KERNEL,False,1000,"[2048, 8192]",0.9367215633392334,0.9962537288665773,0.20127707004547118,0.23200702667236328

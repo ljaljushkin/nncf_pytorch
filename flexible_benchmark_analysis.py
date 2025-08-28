@@ -80,6 +80,7 @@ def load_file_data(filename):
                     "name": name,
                     "tensor_type": row["tensor_type"],
                     "input_size": row["input_size"],
+                    # "forward_backward": row["forward_backward"],
                     "forward_avg": row["forward_avg"],
                     "backward_avg": row["backward_avg"],
                     "forward_gb_avg": row["forward_gb_avg"],
@@ -509,7 +510,7 @@ def main():
     parser.add_argument(
         "--metric",
         default="all",
-        choices=["forward_avg", "backward_avg", "forward_gb_avg", "backward_gb_avg", "all"],
+        choices=["forward_backward", "forward_avg", "backward_avg", "forward_gb_avg", "backward_gb_avg", "all"],
         help="Which metric to analyze (default: all)",
     )
     parser.add_argument("--output", help="Output file prefix (optional)")
@@ -546,6 +547,7 @@ def main():
     # Define metrics to analyze
     if args.metric == "all":
         metrics = [
+            # ("forward_backward", "Forward + Backward Time"),
             ("forward_avg", "Forward Average Time"),
             ("backward_avg", "Backward Average Time"),
             ("forward_gb_avg", "Forward Memory Bandwidth Average"),
@@ -553,6 +555,7 @@ def main():
         ]
     else:
         metric_titles = {
+            # "forward_backward": "Forward + Backward Time",
             "forward_avg": "Forward Average Time",
             "backward_avg": "Backward Average Time",
             "forward_gb_avg": "Forward Memory Bandwidth Average",

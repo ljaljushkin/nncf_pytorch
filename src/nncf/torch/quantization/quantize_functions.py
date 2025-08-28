@@ -192,15 +192,23 @@ class QuantizeSymmetricTorch(torch.autograd.Function):
 
 class QuantizeAsymmetricTorch(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input_, input_shape, input_low, input_range, level_low, level_high, levels):
+    # def forward(ctx, input_, input_shape, input_low, input_range, level_low, level_high, levels):
+    def forward(ctx, input_, input_low, input_range, level_low, level_high, levels):
         dtype = input_.dtype
-        original_shape = input_.shape
-        input_ = input_.reshape(input_shape)
+        # original_shape = input_.shape
+        # input_ = input_.reshape(input_shape)
+        # TODO: temp!!!! old not accurate behavior! but for performance checking with pure bfloat16
+        if input_.dtype in [torch.bfloat16, torch.float16]:
+            input_low = input_low.type(input_.dtype)
+            input_range = input_range.type(input_.dtype)
+        output = cuda_quantizer.get("Quantize_forward")(input_, input_low, input_range, levels)
 
-        if input_.is_cuda:
-            output = cuda_quantizer.get("Quantize_forward")(input_, input_low, input_range, levels)
-        else:
-            output = RQ.Quantize_forward(input_.type(torch.float32), input_low, input_range, levels)
+        # if input_.is_cuda:
+        # TODO: cast to float32 inside kernels to be aligned with torch.compile
+        # output = cuda_quantizer.get("Quantize_forward")(input_.type(torch.float32), input_low, input_range, levels)
+
+        # else:
+        # output = RQ.Quantize_forward(input_.type(torch.float32), input_low, input_range, levels)
 
         # Save tensors for backward pass
         ctx.save_for_backward(input_, input_low, input_range)
@@ -208,7 +216,7 @@ class QuantizeAsymmetricTorch(torch.autograd.Function):
         ctx.level_high = level_high
         ctx.levels = levels
 
-        output = output.reshape(original_shape)
+        # output = output.reshape(original_shape)
         return output.type(dtype)
 
     @staticmethod
@@ -217,24 +225,34 @@ class QuantizeAsymmetricTorch(torch.autograd.Function):
         levels = ctx.levels
         level_low = ctx.level_low
         level_high = ctx.level_high
-        input_shape = input_.shape
-        orig_shape = grad_output.shape
-        grad_output = grad_output.reshape(input_shape)
+        # input_shape = input_.shape
+        # orig_shape = grad_output.shape
+        # grad_output = grad_output.reshape(input_shape)
 
-        if input_.is_cuda:
-            grad_input, grad_low, grad_range = cuda_quantizer.get("Quantize_backward")(
-                grad_output, input_, input_low, input_range, levels, level_low, level_high
-            )
-        else:
-            grad_input, _, grad_range = RQ.Quantize_backward(
-                grad_output, input_, input_low, input_range, levels, level_low, level_high
-            )
+        # if input_.is_cuda:
+        # TODO: reproduce previous mixed precision. input - bfloat16, scale - float32.
+        grad_input, grad_low, grad_range = cuda_quantizer.get("Quantize_backward")(
+            # grad_output, input_.type(torch.float32), input_low, input_range, levels, level_low, level_high\
+            # TODO: temp!!!! old not accurate behavior! but for performance checking with pure bfloat16
+            grad_output,
+            input_,
+            input_low,
+            input_range,
+            levels,
+            level_low,
+            level_high,
+        )
+        # else:
+        #     grad_input, _, grad_range = RQ.Quantize_backward(
+        #         grad_output, input_, input_low, input_range, levels, level_low, level_high
+        #     )
 
-        grad_input = grad_input.reshape(orig_shape)
+        # grad_input = grad_input.reshape(orig_shape)
         grad_low = grad_low.float()
         grad_range = grad_range.float()
         # input, input_size, input_low, input_range, level_low, level_high, levels
-        return grad_input, None, grad_low, grad_range, None, None, None
+        # return grad_input, None, grad_low, grad_range, None, None, None
+        return grad_input, grad_low, grad_range, None, None, None
 
 
 class ExportQuantizeToFakeQuantize(torch.autograd.Function):
@@ -348,16 +366,26 @@ def asymmetric_quantize(
 
 @register_operator()
 def asymmetric_quantize_lora(
-    input_, input_shape, A, B, input_low_, input_range_, level_low, level_high, levels, eps, skip: bool = False
+    # input_, input_shape, A, B, input_low_, input_range_, level_low, level_high, levels, eps, skip: bool = False
+    input_,
+    # A,
+    # B,
+    input_low_,
+    input_range_,
+    level_low,
+    level_high,
+    levels,
+    eps,
+    skip: bool = False,
 ):
     if has_torch_function_unary(input_):
         return handle_torch_function(
             asymmetric_quantize_lora,
             (input_,),
             input_,
-            input_shape,
-            A,
-            B,
+            # input_shape,
+            # A,
+            # B,
             input_low_,
             input_range_,
             level_low,
@@ -370,10 +398,11 @@ def asymmetric_quantize_lora(
         return input_
     input_range_safe = abs(input_range_) + eps
     input_low, input_range = TuneRange.apply(input_low_, input_range_safe, levels)
-    input_ = (input_ + B @ A).type(input_.dtype)  # input(float16) + lora(bfloat16) = float32, need a cast to float16
-    return QuantizeAsymmetricTorch.apply(
+    # input_ = (input_ + B @ A).type(input_.dtype)  # input(float16) + lora(bfloat16) = float32, need a cast to float16
+    # return QuantizeAsymmetricTorch.apply(
+    return QuantizeAsymmetric.apply(
         input_,
-        input_shape,
+        # input_shape,
         input_low,
         input_range,
         level_low,

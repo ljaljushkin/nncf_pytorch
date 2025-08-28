@@ -20,41 +20,41 @@ ScaleType get_scale_type(const at::Tensor& input, const at::Tensor& input_low, c
         TORCH_CHECK(input_low.size(i) == input_range.size(i), "input_low and input_range have different dimension sizes");
     }
 
-    uint64_t scale_count = input_range.numel();
+    // uint64_t scale_count = input_range.numel();
 
-    if (scale_dim > 0)
-    {
-        // For per-group quantization, scale tensor has shape [Cout, Cin//GS, 1] (3D)
-        // For per-channel quantization, scale tensor has shape [Cout, 1] or [1, Cin] (2D or effectively 1D)
-        if (scale_dim >= 3 || (scale_dim == 2 && input_range.size(0) > 1 && input_range.size(1) > 1))
-        {
-            // This indicates per-group quantization: scale shape is [Cout, Cin//GS, 1] or similar multi-dimensional
-            return ScaleType::PER_GROUP;
-        }
+    // if (scale_dim > 0)
+    // {
+    //     // For per-group quantization, scale tensor has shape [Cout, Cin//GS, 1] (3D)
+    //     // For per-channel quantization, scale tensor has shape [Cout, 1] or [1, Cin] (2D or effectively 1D)
+    //     if (scale_dim >= 3 || (scale_dim == 2 && input_range.size(0) > 1 && input_range.size(1) > 1))
+    //     {
+    //         // This indicates per-group quantization: scale shape is [Cout, Cin//GS, 1] or similar multi-dimensional
+    //         return ScaleType::PER_GROUP;
+    //     }
 
-        // For (NxCxHxW) input/output tensors, it is assumed that input_range is
-        // either (1) for single-scale quantization, or (Nx1x1x1) for
-        // per-channel scale weights quantization, or (1xCx1x1) for per-channel
-        // activation quantization
-        if (input_range.size(0) > 1)
-        {
-            TORCH_CHECK(input_range.size(0) == input.size(0), "Scale count and weights input channel count is different");
-            TORCH_CHECK(input_range.size(0) == scale_count, "Scale shape is not flat");
-            return ScaleType::PER_WEIGHT_CHANNEL;
-        }
-        else if (scale_dim >= 2 && input_range.size(1) > 1)
-        {
-            TORCH_CHECK(input_range.size(1) == input.size(1), "Scale count and activations channel count is different");
-            TORCH_CHECK(input_range.size(1) == scale_count, "Scale shape is not flat");
-            return  ScaleType::PER_ACTIVATION_CHANNEL;
-        }
-        // For (1x1x1x1) input/output tensors, it is assumed that input_range
-        // should be PER_WEIGHT_CHANNEL
-        if (scale_count == 1)
-            return ScaleType::PER_WEIGHT_CHANNEL;
-    }
+    //     // For (NxCxHxW) input/output tensors, it is assumed that input_range is
+    //     // either (1) for single-scale quantization, or (Nx1x1x1) for
+    //     // per-channel scale weights quantization, or (1xCx1x1) for per-channel
+    //     // activation quantization
+    //     if (input_range.size(0) > 1)
+    //     {
+    //         TORCH_CHECK(input_range.size(0) == input.size(0), "Scale count and weights input channel count is different");
+    //         TORCH_CHECK(input_range.size(0) == scale_count, "Scale shape is not flat");
+    //         return ScaleType::PER_WEIGHT_CHANNEL;
+    //     }
+    //     else if (scale_dim >= 2 && input_range.size(1) > 1)
+    //     {
+    //         TORCH_CHECK(input_range.size(1) == input.size(1), "Scale count and activations channel count is different");
+    //         TORCH_CHECK(input_range.size(1) == scale_count, "Scale shape is not flat");
+    //         return  ScaleType::PER_ACTIVATION_CHANNEL;
+    //     }
+    //     // For (1x1x1x1) input/output tensors, it is assumed that input_range
+    //     // should be PER_WEIGHT_CHANNEL
+    //     if (scale_count == 1)
+    //         return ScaleType::PER_WEIGHT_CHANNEL;
+    // }
 
-    return ScaleType::SINGLE_SCALE;
+    return ScaleType::PER_GROUP;//ScaleType::SINGLE_SCALE;
 }
 
 
@@ -587,7 +587,7 @@ at::Tensor q_cuda_forward(
     // Optimization: Use optimized kernel for large tensors to avoid over-parallelization
     // Very aggressive threshold to catch most medium/large tensors
     const uint64_t LARGE_TENSOR_THRESHOLD = 100000; // 100K elements (very low threshold)
-    const bool use_optimized_kernel = true;//quantized_elements_count > LARGE_TENSOR_THRESHOLD;
+    const bool use_optimized_kernel = false; //quantized_elements_count > LARGE_TENSOR_THRESHOLD;
 
     PROFILE(DISPATCH_TENSOR_DATA_TYPES(input.scalar_type(), "q_cuda_forward", ([&] {
         if (use_optimized_kernel) {
@@ -936,7 +936,8 @@ std::vector<at::Tensor> q_cuda_backward(
                 level_low,
                 level_high);
         case ScaleType::PER_GROUP:
-            return q_scale_per_group_cuda_backward_optimized(
+            // return q_scale_per_group_cuda_backward_optimized(
+            return q_scale_per_group_cuda_backward(
                 grad_output,
                 input,
                 input_low,

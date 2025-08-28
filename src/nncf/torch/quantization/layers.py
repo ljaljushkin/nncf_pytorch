@@ -81,7 +81,7 @@ class PTQuantizerSpec(QuantizerSpec):
         "narrow_range",
         "half_range",
         "scale_shape",
-        "weight_shape",
+        # "weight_shape",
         "logarithm_scale",
         "is_quantized_on_export",
         "compression_lr_multiplier",
@@ -95,7 +95,7 @@ class PTQuantizerSpec(QuantizerSpec):
         narrow_range: bool,
         half_range: bool,
         scale_shape: tuple[int, ...],
-        weight_shape: tuple[int, ...],
+        # weight_shape: tuple[int, ...],
         logarithm_scale: bool,
         is_quantized_on_export: bool = False,
         compression_lr_multiplier: Optional[float] = None,
@@ -119,7 +119,7 @@ class PTQuantizerSpec(QuantizerSpec):
         super().__init__(num_bits, mode, signedness_to_force, narrow_range, half_range)
         self.per_channel = scale_shape != (1,)
         self.scale_shape = scale_shape
-        self.weight_shape = weight_shape
+        # self.weight_shape = weight_shape
         self.logarithm_scale = logarithm_scale
         self.compression_lr_multiplier = compression_lr_multiplier
         self.is_quantized_on_export = is_quantized_on_export
@@ -131,7 +131,7 @@ class PTQuantizerSpec(QuantizerSpec):
         narrow_range: bool,
         half_range: bool,
         scale_shape: tuple[int, ...],
-        weight_shape: tuple[int, ...],
+        # weight_shape: tuple[int, ...],
         logarithm_scale: bool,
         is_quantized_on_export: bool,
         compression_lr_multiplier: Optional[float],
@@ -143,7 +143,7 @@ class PTQuantizerSpec(QuantizerSpec):
             narrow_range,
             half_range,
             scale_shape,
-            weight_shape,
+            # weight_shape,
             logarithm_scale,
             is_quantized_on_export,
             compression_lr_multiplier,
@@ -377,14 +377,14 @@ class BaseQuantizer(nn.Module, StatefulModuleInterface, ABC):
         # weight: [num_channels, in_features]
         self._scale_shape = qspec.scale_shape
         self._scale_numel = math.prod(self._scale_shape)
-        self._weight_shape = qspec.weight_shape
-        self._weight_numel = math.prod(self._weight_shape)
+        # self._weight_shape = qspec.weight_shape
+        # self._weight_numel = math.prod(self._weight_shape)
 
         # TODO: hardcoded for per-group case
-        out_features, num_groups, group_size = qspec.weight_shape
-        self._weight_group_shape = qspec.weight_shape
-        self._weight_channel_shape = [out_features * num_groups, group_size]
-        self._scale_channel_shape = [out_features * num_groups, 1]
+        # out_features, num_groups, group_size = qspec.weight_shape
+        # self._weight_group_shape = qspec.weight_shape
+        # self._weight_channel_shape = [out_features * num_groups, group_size]
+        # self._scale_channel_shape = [out_features * num_groups, 1]
 
         self._export_mode = QuantizerExportMode.FAKE_QUANTIZE
 
@@ -818,7 +818,8 @@ class SymmetricQuantizer(BaseQuantizer):
             self.to(x.device)
         return symmetric_quantize(
             x,
-            self._weight_shape,
+            # TODO: need to adapt
+            # self._weight_shape,
             self.levels,
             self.level_low,
             self.level_high,
@@ -1138,9 +1139,11 @@ class LoraMixin:
         self.lora_A = torch.nn.Parameter(torch.ones((rank, in_features), dtype=default_lora_dtype))
         self.lora_B = torch.nn.Parameter(torch.zeros((out_features, rank), dtype=default_lora_dtype))
 
+    @abstractmethod
     def enable_gradients(self):
-        self.lora_A.requires_grad = True
-        self.lora_B.requires_grad = True
+        pass
+        # self.lora_A.requires_grad = True
+        # self.lora_B.requires_grad = True
 
     @abstractmethod
     def disable_gradients(self):
@@ -1194,7 +1197,7 @@ class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
 
     def __init__(self, qspec: PTQuantizerSpec, lspec: PTLoraSpec):
         super().__init__(qspec)
-        self.init_lora(lspec)
+        # self.init_lora(lspec)
 
     def quantize(self, x: torch.Tensor, execute_traced_op_as_identity: bool = False):
         # TODO: (dokuchaev) remove within new tracing (ticket-163869)
@@ -1203,9 +1206,9 @@ class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
             self.to(x.device)
         return asymmetric_quantize_lora(
             x,
-            self._lspec.weight_shape,
-            self.lora_A,
-            self.lora_B,
+            # self._lspec.weight_shape,
+            # self.lora_A,
+            # self.lora_B,
             self.input_low,
             self.input_range,
             self.level_low,
@@ -1225,7 +1228,7 @@ class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
 
     def get_trainable_params(self) -> dict[str, torch.nn.Parameter]:
         params = super().get_trainable_params()
-        params.update(LoraMixin.get_adapters(self))
+        # params.update(LoraMixin.get_adapters(self))
         return params
 
     def get_config(self) -> dict[str, Any]:

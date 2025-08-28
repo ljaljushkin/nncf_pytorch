@@ -11,6 +11,7 @@
 import argparse
 import shutil
 import sys
+import time
 import warnings
 from contextlib import contextmanager
 from datetime import datetime
@@ -39,6 +40,7 @@ import nncf
 import nncf.torch
 from nncf.common.logging.track_progress import track
 from nncf.data.dataset import Dataset
+from nncf.parameters import BackupMode
 from nncf.parameters import CompressionFormat
 from nncf.parameters import CompressWeightsMode
 from nncf.parameters import StripFormat
@@ -46,8 +48,8 @@ from nncf.quantization.advanced_parameters import AdvancedCompressionParameters
 from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.function_hook.wrapper import get_hook_storage
 from nncf.torch.model_creation import load_from_config
-from nncf.torch.quantization.layers import AsymmetricLoraQuantizer
-from nncf.torch.quantization.layers import SymmetricLoraQuantizer
+from nncf.torch.quantization.layers import AsymmetricQuantizer
+from nncf.torch.quantization.layers import SymmetricQuantizer
 
 warnings.filterwarnings("ignore", category=TracerWarning)
 
@@ -201,14 +203,14 @@ def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[s
     """
     model.requires_grad_(False)
     scales_to_train = []
-    adapters_to_train = []
+    # adapters_to_train = []
     hook_storage = get_hook_storage(model)
     for _, module in hook_storage.named_hooks():
-        if isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer)) and (module.num_bits == 4):
+        if isinstance(module, (AsymmetricQuantizer, SymmetricQuantizer)) and (module.num_bits == 4):
             module.enable_gradients()
             params = module.get_trainable_params()
-            adapters = module.get_adapters()
-            adapters_to_train.extend(adapters.values())
+            adapters = {}  # module.get_adapters()
+            # adapters_to_train.extend(adapters.values())
             scales_to_train.extend(param for name, param in params.items() if name not in adapters)
 
     params = list(model.parameters())
@@ -220,7 +222,10 @@ def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[s
         f"trainable%: {100 * trainable_params / all_param:.4f}"
     )
     model.train()
-    return [{"params": adapters_to_train, "lr": lora_lr}, {"params": scales_to_train, "lr": fq_lr}]
+    return [
+        # {"params": adapters_to_train, "lr": lora_lr},
+        {"params": scales_to_train, "lr": fq_lr}
+    ]
 
 
 def save_checkpoint(model: nn.Module, ckpt_file: Path) -> None:
@@ -289,7 +294,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pretrained",
         type=str,
-        default="HuggingFaceTB/SmolLM-1.7B-Instruct",
+        default="unsloth/SmolLM-360M-Instruct",
         help="The model id or path of a pretrained HF model configuration.",
     )
     parser.add_argument(
@@ -360,6 +365,10 @@ def main(argv) -> float:
         mode=CompressWeightsMode.INT4_ASYM,
         group_size=64,
         compression_format=CompressionFormat.FQ_LORA,
+        # compression_format=CompressionFormat.FQ,
+        backup_mode=BackupMode.NONE,
+        # all_layers=True,
+        # ignored_scope=IgnoredScope(patterns=[r"^(?!.*mlp/down_proj/linear/0).*$"]),
         advanced_parameters=AdvancedCompressionParameters(lora_adapter_rank=args.lora_rank),
     )
 
@@ -375,17 +384,23 @@ def main(argv) -> float:
     ckpt_file = last_dir / "nncf_checkpoint.pth"
     print(f"To visualize the loss and validation metrics, open Tensorboard using the logs from: {tensorboard_dir}")
     tb = SummaryWriter(tensorboard_dir, "QAT with absorbable LoRA")
-    task_manager = TaskManager(include_path=str(Path(__file__).resolve().parent / "custom_eval_tasks"))
+    # task_manager = TaskManager(include_path=str(Path(__file__).resolve().parent / "custom_eval_tasks"))
 
     # Load original model and tokenizer.
     model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch_dtype, device_map="auto")
+    # print(model)
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
 
     # Prepare training data and pre-compute hiddens of teacher model for distillation loss.
     train_loader = get_wikitext2(
         num_samples=args.num_train_samples, seqlen=args.calib_seqlen, tokenizer=tokenizer, device=device
     )
-    orig_hiddens = calc_hiddens(model, train_loader)
+    cached_file = Path("cached_hiddens.pth")
+    if cached_file.exists():
+        orig_hiddens = torch.load(cached_file)
+    else:
+        orig_hiddens = calc_hiddens(model, train_loader)
+        torch.save(orig_hiddens, cached_file)
 
     # Create or load model to tune with Fake Quantizers and absorbable LoRA adapters.
     example_input = {k: v.to(device) for k, v in model.dummy_inputs.items()}
@@ -393,18 +408,18 @@ def main(argv) -> float:
         model = load_checkpoint(model, ckpt_file)
     else:
         model = compress_weights(model, dataset=Dataset([example_input]), **compression_config)
-        save_checkpoint(model, ckpt_file)
+        # save_checkpoint(model, ckpt_file)
     fq_lr = args.lr / 10
     weight_decay = args.lr
     param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr)
     opt = torch.optim.AdamW(param_to_train, weight_decay=weight_decay)
 
-    with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
-        initial_perplexity = best_perplexity = measure_perplexity(
-            eval_model, task_manager, args.eval_seqlen, args.limit
-        )
-    tb.add_scalar("perplexity", best_perplexity, 0)
-    print(f"Initial word perplexity on wikitext (validation) = {best_perplexity:.4f}")
+    # with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
+    #     initial_perplexity = best_perplexity = measure_perplexity(
+    #         eval_model, task_manager, args.eval_seqlen, args.limit
+    #     )
+    # tb.add_scalar("perplexity", best_perplexity, 0)
+    # print(f"Initial word perplexity on wikitext (validation) = {best_perplexity:.4f}")
 
     # Run tuning with distillation loss and validation after each epoch.
     grad_accumulation_steps = args.batch_size // args.microbatch_size
@@ -413,6 +428,7 @@ def main(argv) -> float:
     microbatches_per_epoch = epoch_samples // args.microbatch_size
     aggregated_loss = float("nan")
     loss_numerator = grad_steps = total_steps = 0
+    start_time = time.time()
     for epoch in range(args.epochs):
         batch_indices_epoch = torch.randperm(num_samples)[:epoch_samples].chunk(microbatches_per_epoch)
         for indices in track(batch_indices_epoch, description=f"Train epoch {epoch}"):
@@ -451,27 +467,30 @@ def main(argv) -> float:
                 tb.add_scalar("loss", aggregated_loss, total_steps)
 
         # Keep the best checkpoint with the lowest perplexity.
-        save_checkpoint(model, ckpt_file)
-        with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
-            perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit)
-            tb.add_scalar("perplexity", perplexity, total_steps)
-            print(f"[Epoch {epoch}], word perplexity on wikitext (validation) = {perplexity:.4f}")
-            if perplexity < best_perplexity:
-                print(f"New best word perplexity = {perplexity:.4f}")
-                best_perplexity = perplexity
-                shutil.copytree(last_dir, best_dir, dirs_exist_ok=True)
+        # save_checkpoint(model, ckpt_file)
+        # with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
+        #     perplexity = measure_perplexity(eval_model, task_manager, args.eval_seqlen, args.limit)
+        #     tb.add_scalar("perplexity", perplexity, total_steps)
+        #     print(f"[Epoch {epoch}], word perplexity on wikitext (validation) = {perplexity:.4f}")
+        #     if perplexity < best_perplexity:
+        #         print(f"New best word perplexity = {perplexity:.4f}")
+        #         best_perplexity = perplexity
+        #         shutil.copytree(last_dir, best_dir, dirs_exist_ok=True)
 
-    del model
-    # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
-    best_ckpt_file = best_dir / "nncf_checkpoint.pth"
-    model_for_eval = export_to_openvino(args.pretrained, best_ckpt_file, best_dir)
-    ov_perplexity = measure_perplexity(model_for_eval, task_manager, args.eval_seqlen, args.limit, task="wikitext")
-    tb.add_scalar("ov_perplexity", ov_perplexity, 0)
-    print(
-        f"The finetuned model has been exported to OpenVINO and saved to: {best_dir}\n"
-        f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
-    )
-    return initial_perplexity - best_perplexity, ov_perplexity
+    # del model
+    # # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
+    # best_ckpt_file = best_dir / "nncf_checkpoint.pth"
+    # model_for_eval = export_to_openvino(args.pretrained, best_ckpt_file, best_dir)
+    # ov_perplexity = measure_perplexity(model_for_eval, task_manager, args.eval_seqlen, args.limit, task="wikitext")
+    # tb.add_scalar("ov_perplexity", ov_perplexity, 0)
+    # print(
+    #     f"The finetuned model has been exported to OpenVINO and saved to: {best_dir}\n"
+    #     f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
+    # )
+    # return initial_perplexity - best_perplexity, ov_perplexity
+    time_elapsed = time.time() - start_time
+    print(f"Elapsed time: {time_elapsed // 60:2.0f} min {time_elapsed % 60:02.0f} sec")
+    print(f"Max memory allocated: {torch.cuda.max_memory_allocated() / (1024**3):3.3f} GB")
 
 
 if __name__ == "__main__":
