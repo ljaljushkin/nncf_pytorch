@@ -936,8 +936,8 @@ std::vector<at::Tensor> q_cuda_backward(
                 level_low,
                 level_high);
         case ScaleType::PER_GROUP:
-            // return q_scale_per_group_cuda_backward_optimized(
-            return q_scale_per_group_cuda_backward(
+            return q_scale_per_group_cuda_backward_optimized(
+            // return q_scale_per_group_cuda_backward(
                 grad_output,
                 input,
                 input_low,
