@@ -982,6 +982,9 @@ class WeightCompression(Algorithm):
             self._advanced_parameters,
         )
 
+        from nncf.torch.function_hook.strip import apply_compression_in_place
+        transformed_model = apply_compression_in_place(transformed_model.model, graph)
+
         self._backend_entity.dump_parameters(
             model,
             parameters={
