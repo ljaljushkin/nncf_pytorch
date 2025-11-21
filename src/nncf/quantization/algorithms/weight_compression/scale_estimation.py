@@ -139,6 +139,7 @@ class ScaleEstimation:
                 continue
             _, weight_port_id = weight_data[0]
 
+            # TODO: NEED SEETING DECOMPRESSED WEIGHT BEFORE: it's NOT valid to merge scale to MXFP4 decompression and set!!!!
             weight = self._backend_entity.get_weight(wp.node_with_weight, weight_port_id, model, graph)
 
             scale, zero_point = self.calculate_quantization_params(

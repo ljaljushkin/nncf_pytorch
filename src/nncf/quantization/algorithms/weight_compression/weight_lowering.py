@@ -444,6 +444,15 @@ def do_integer_quantization(
         )
         raise ValueError(msg)
 
+    # TODO: hack
+    if isinstance(weight, tuple):
+        from nncf.openvino.optimized_functions import (
+            do_mxfp4_to_integer_quantization as do_mxfp4_to_integer_quantization_ov,
+        )
+
+        # TODO: need a reference implementation for torch, onnx?
+        return do_mxfp4_to_integer_quantization_ov(weight, config, reduction_axes)
+
     # When reduction axes are not provided, assuming that the weights are already reshaped
     if config.group_size != -1 and reduction_axes is not None:
         # weights are reshaped from [a1, r, a2] to [a1, r//gs, gs, a2]

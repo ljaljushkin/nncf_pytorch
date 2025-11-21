@@ -15,6 +15,7 @@ from nncf import CompressWeightsMode
 from nncf.common.utils.caching import disable_results_caching
 from nncf.openvino.optimized_functions.models import OV_MODEL_CACHE
 from nncf.openvino.optimized_functions.models import OVModelParameters
+from nncf.openvino.optimized_functions.models import _build_mxfp4_decompress_model
 from nncf.openvino.optimized_functions.models import get_astype_model
 from nncf.openvino.optimized_functions.models import get_float_quantization_model
 from nncf.openvino.optimized_functions.models import get_float_quantize_dequantize_weight_model
@@ -96,6 +97,64 @@ def do_integer_quantization(
         )
         compressed_weight = model(inputs)[0]
         scale, zero_point = precomputed_scale, precomputed_zero_point
+
+    return compressed_weight, scale, zero_point
+
+
+def do_mxfp4_to_integer_quantization(
+    weight: tuple[list, Tensor, Tensor],
+    config: WeightCompressionConfig,
+    reduction_axes: Optional[ReductionAxes] = None,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """
+    Quantizes the given weight tensor to an integer data type.
+
+    :param weight: The weight tensor to quantize.
+    :param config: The weight compression configuration.
+    :param reduction_axes: Axes along which to reduce (collect) statistics (e.g., min, max). Not required if
+        precomputed scale (and zero point) are provided.
+    :param precomputed_scale: Optional precomputed scale tensor.
+    :param precomputed_zero_point: Optional precomputed zero point tensor.
+    :return: A tuple containing the compressed weights, scale, and zero point tensors.
+    """
+    orig_shape, [weight_ov, scale_ov] = weight
+    ov_parameters, ov_results, old_ov_model_params = _build_mxfp4_decompress_model(
+        weight_ov.shape, scale_ov.shape, orig_shape, return_nodes=True
+    )
+
+    # ov_model_params = OVModelParameters()
+    # TODO: take from old ov_parameters
+    # ov_model_params.input_dtypes["weight"] = old_ov_model_params.output_dtypes["decompressed_weight"]
+    old_ov_model_params.output_dtypes = {}
+    ov_model_params = old_ov_model_params
+    if config.num_bits == 4:  # weight.backend == TensorBackend.ov:
+        # Return ov tensors in target precision to seamlessly insert them into openvino model later
+        ov_model_params.return_ov_tensors = True
+        compressed_weight_dtype = TensorDataType.uint4 if config.is_asym_mode else TensorDataType.int4
+        ov_model_params.output_dtypes.update(
+            {"compressed_weight": compressed_weight_dtype, "zero_point": compressed_weight_dtype}
+        )
+
+    model = get_integer_quantization_model(
+        ov_model_params,
+        config,
+        reduction_axes=reduction_axes,
+        weight_shape=None,
+        scale_shape=None,
+        zero_point_shape=None,
+        input_output_nodes=(ov_parameters, ov_results),
+    )
+    # weight -> compressed_weight, scale, (zero_point)
+    results = model([weight_ov, scale_ov])
+    if config.is_asym_mode:
+        compressed_weight, scale, zero_point = results
+    else:
+        compressed_weight, scale = results
+        zero_point = None
+
+    # Scale is always in fp32 so there is no need to store it in ov.Tensor
+    if scale.backend == TensorBackend.ov:
+        scale = scale.as_numpy_tensor()
 
     return compressed_weight, scale, zero_point
 

@@ -125,6 +125,7 @@ def get_linear_input_layout(input_shape: tuple[int, ...], transpose: bool, port_
             input_layout += [OVLayoutElem.C_OUT, OVLayoutElem.C_IN]
     else:
         input_layout += [OVLayoutElem.C_IN]
+    # TODO: for MXFP4 returns [C_OUT, C_IN/NUM_GROUPS, 32] or [SPATIAL, C_OUT, C_IN/NUM_GROUPS, 32] or transposed
     return tuple(input_layout)
 
 

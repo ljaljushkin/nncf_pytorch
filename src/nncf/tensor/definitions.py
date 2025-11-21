@@ -65,6 +65,8 @@ class TensorDataType(StrEnum):
             TensorDataType.float64,
             TensorDataType.f8e4m3,
             TensorDataType.f8e5m2,
+            TensorDataType.f8e8m0,
+            TensorDataType.f4e2m1,
             TensorDataType.nf4,
         ]
 
@@ -78,8 +80,10 @@ class TensorDataType(StrEnum):
             TensorDataType.nf4: 4,
             TensorDataType.uint4: 4,
             TensorDataType.int4: 4,
+            TensorDataType.f4e2m1: 4,
             TensorDataType.f8e4m3: 8,
             TensorDataType.f8e5m2: 8,
+            TensorDataType.f8e8m0: 8,
             TensorDataType.int8: 8,
             TensorDataType.uint8: 8,
             TensorDataType.float16: 16,

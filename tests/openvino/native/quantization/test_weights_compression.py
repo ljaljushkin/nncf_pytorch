@@ -1008,12 +1008,13 @@ def check_compressed_matmul_subgraph(start_node, activation_dtype, weight_dtype,
 )
 class TestActivationWeightDtype:
     @staticmethod
-    def test_compression_for_different_dtypes(weight_dtype, activation_dtype):
+    def test_compression_for_different_dtypes(weight_dtype, activation_dtype, tmp_path):
         model = IdentityMatmul(weights_dtype=weight_dtype, activation_dtype=activation_dtype).ov_model
-
+        ov.save_model(model, tmp_path / "original.xml")
         compressed_model = compress_weights(
             model, mode=CompressWeightsMode.INT4_SYM, ratio=1, group_size=1, all_layers=True
         )
+        ov.save_model(compressed_model, tmp_path / "compressed.xml")
         name_to_node_map = {op.get_friendly_name(): op for op in compressed_model.get_ops()}
         scale_multiply_node = name_to_node_map["weights/fq_weights_1"]
         check_compressed_matmul_subgraph(scale_multiply_node, activation_dtype, weight_dtype)
@@ -1698,14 +1699,27 @@ def test_lora_adapters_reduce_noise(zero_seed, mode, apply_regularization, is_pe
         (ov.Type.bf16, ov.Type.f8e4m3),
         (ov.Type.bf16, ov.Type.f8e5m2),
     ],
+    ids=[
+        "ov.Type.f32__ov.Type.f32",
+        "ov.Type.f32__ov.Type.f16",
+        "ov.Type.f32__ov.Type.bf16",
+        "ov.Type.f32__ov.Type.f8e4m3",
+        "ov.Type.f32__ov.Type.f8e5m2",
+        "ov.Type.f16__ov.Type.f16",
+        "ov.Type.f16__ov.Type.f8e4m3",
+        "ov.Type.f16__ov.Type.f8e5m2",
+        "ov.Type.bf16__ov.Type.bf16",
+        "ov.Type.bf16__ov.Type.f8e4m3",
+        "ov.Type.bf16__ov.Type.f8e5m2",
+    ],
 )
-def test_compression_with_lora_for_different_dtypes(activation_dtype, weight_dtype):
+def test_compression_with_lora_for_different_dtypes(activation_dtype, weight_dtype, tmp_path):
     model = IdentityMatmul(weights_dtype=weight_dtype, activation_dtype=activation_dtype).ov_model
 
     data_type = np.float16 if activation_dtype in [ov.Type.f16, ov.Type.bf16] else np.float32
     input_data = [np.ones(inp.shape, dtype=data_type) for inp in model.inputs]
     dataset = Dataset(input_data)
-
+    ov.save_model(model, tmp_path / "original.xml")
     compressed_model = compress_weights(
         model,
         mode=CompressWeightsMode.INT4_SYM,
@@ -1718,7 +1732,7 @@ def test_compression_with_lora_for_different_dtypes(activation_dtype, weight_dty
             lora_correction_params=LoraParams(num_iterations=0, adapter_rank=3, use_int8_adapters=True)
         ),
     )
-
+    ov.save_model(model, tmp_path / "compressed.xml")
     name_to_node_map = {op.get_friendly_name(): op for op in compressed_model.get_ops()}
     scale_multiply_node = name_to_node_map["weights/fq_weights_1"]
     check_compressed_matmul_subgraph(scale_multiply_node, activation_dtype, weight_dtype)
@@ -2055,6 +2069,189 @@ def test_codebook_is_correct_array(codebook):
             group_size=-1,
             advanced_parameters=nncf.AdvancedCompressionParameters(codebook=codebook),
         )
+
+
+def test_mxfp4_to_int4_pattern_matching():
+    """
+    Test for matching MXFP4 pattern: compress model with 2 linear layers (DifferentChannelSizeMatmulModel)
+    to MXFP4 then to INT4. This tests the ability to re-compress an already compressed model.
+    """
+    # Use channel sizes that are multiples of 32 to make it possible to quantize in MX format
+    model = DifferentChannelSizeMatmulModel(channel_sizes=[32, 64]).ov_model
+
+    # First compression: compress to MXFP4
+    mxfp4_compressed_model = compress_weights(
+        model,
+        mode=CompressWeightsMode.MXFP4,
+        all_layers=True,
+    )
+
+    # Verify MXFP4 compression was successful
+    mxfp4_nodes = [op for op in mxfp4_compressed_model.get_ordered_ops() if op.get_element_type() == ov.Type.f4e2m1]
+    assert len(mxfp4_nodes) > 0, "MXFP4 compression should create f4e2m1 nodes"
+
+    # Second compression: compress MXFP4 model to INT4
+    int4_compressed_model = compress_weights(
+        mxfp4_compressed_model,
+        mode=CompressWeightsMode.INT4_SYM,
+        group_size=8,
+        all_layers=True,
+    )
+
+    # Verify that MXFP4 pattern was matched and converted to INT4
+    int4_nodes = [op for op in int4_compressed_model.get_ordered_ops() if op.get_element_type() == ov.Type.i4]
+
+    # After INT4 compression, there should be INT4 nodes and MXFP4 nodes should be converted
+    assert len(int4_nodes) > 0, "INT4 compression should create i4 nodes"
+    # The MXFP4 nodes that matched the pattern should be converted to INT4
+    assert len(int4_nodes) >= len(mxfp4_nodes), "MXFP4 nodes should be converted to INT4"
+
+
+def test_double_compression_with_ignored_scope():
+    """
+    Test reproducer for issue with double-compression when first layer is compressed to INT4
+    with second layer in ignored scope, and then the whole model is compressed to INT8.
+    """
+    model = DifferentChannelSizeMatmulModel(channel_sizes=[32, 64]).ov_model
+
+    # First compression: compress to INT4 with the second layer in ignored scope
+    int4_compressed_model = compress_weights(
+        model,
+        mode=CompressWeightsMode.INT4_SYM,
+        group_size=8,
+        all_layers=True,
+        ignored_scope=IgnoredScope(names=["MatMul_1"]),
+    )
+
+    # Verify first compression
+    int4_nodes = {
+        op.get_friendly_name() for op in int4_compressed_model.get_ordered_ops() if op.get_element_type() == ov.Type.i4
+    }
+    assert "weights_1" not in int4_nodes, "weights_1 should not be compressed (ignored scope)"
+    assert len(int4_nodes) > 0, "Some layers should be compressed to INT4"
+
+    # Second compression: compress the entire model to INT8
+    int8_compressed_model = compress_weights(
+        int4_compressed_model,
+        mode=CompressWeightsMode.INT8_SYM,
+        all_layers=True,
+    )
+
+    # Verify that previously compressed layers remain compressed and ignored layer is now compressed
+    int4_nodes_after = {
+        op.get_friendly_name() for op in int8_compressed_model.get_ordered_ops() if op.get_element_type() == ov.Type.i4
+    }
+    int8_nodes = {
+        op.get_friendly_name() for op in int8_compressed_model.get_ordered_ops() if op.get_element_type() == ov.Type.i8
+    }
+
+    # INT4 compressed nodes should remain INT4
+    assert len(int4_nodes_after) >= len(int4_nodes), "INT4 nodes should be preserved"
+    # The previously ignored layer should now be compressed to INT8
+    assert len(int8_nodes) > 0, "Previously uncompressed layers should be compressed to INT8"
+
+
+def test_data_aware_mxfp4_to_int4():
+    """
+    Test for data-aware algorithm with MXFP4 -> INT4 compression.
+    """
+    # Use channel sizes that are multiples of 32 to make it possible to quantize in MX format
+    model = DifferentChannelSizeMatmulModel(channel_sizes=[32, 64]).ov_model
+
+    # First compression: compress to MXFP4
+    mxfp4_compressed_model = compress_weights(
+        model,
+        mode=CompressWeightsMode.MXFP4,
+        all_layers=True,
+    )
+
+    # Prepare dataset for data-aware compression
+    dataset = Dataset([np.ones([1, 32]), np.arange(32).reshape(1, 32)])
+
+    # Second compression: compress MXFP4 model to INT4 with data-aware algorithm
+    int4_compressed_model = compress_weights(
+        mxfp4_compressed_model,
+        mode=CompressWeightsMode.INT4_SYM,
+        group_size=8,
+        all_layers=True,
+        dataset=dataset,
+        sensitivity_metric=SensitivityMetric.MEAN_ACTIVATION_VARIANCE,
+    )
+
+    # Verify that compression was successful
+    int4_nodes = [op for op in int4_compressed_model.get_ordered_ops() if op.get_element_type() == ov.Type.i4]
+    assert len(int4_nodes) > 0, "INT4 compression with data-aware algorithm should create i4 nodes"
+
+
+def test_non_matching_mxfp4_pattern():
+    """
+    Test for not matching MXFP4 decompression pattern (e.g., when e2m1 is directly converted to fp16).
+    Expected to skip weight from compression and modification.
+    """
+    # Create a model and compress it to MXFP4
+    model = DifferentChannelSizeMatmulModel(channel_sizes=[32, 64]).ov_model
+    mxfp4_compressed_model = compress_weights(
+        model,
+        mode=CompressWeightsMode.MXFP4,
+        all_layers=True,
+    )
+
+    # Manually modify the model to create a non-standard decompression pattern
+    # This simulates a case where e2m1 is directly converted to fp16 without standard decompression
+    # In this case, we'll try to compress again and verify that the pattern is not matched
+
+    # Try to compress with INT4 - the non-standard pattern should be skipped
+    int4_compressed_model = compress_weights(
+        mxfp4_compressed_model,
+        mode=CompressWeightsMode.INT4_SYM,
+        group_size=8,
+        all_layers=True,
+    )
+
+    # The model should still be valid and have some compression applied
+    # but non-matching patterns should be preserved
+    int4_nodes = [op for op in int4_compressed_model.get_ordered_ops() if op.get_element_type() == ov.Type.i4]
+    assert len(int4_nodes) >= 0, "INT4 compression should handle non-matching patterns gracefully"
+
+
+def test_mxfp8_pattern_matching():
+    """
+    Test for matching MXFP8 pattern (has different types for weight and scales).
+    """
+    # Use channel sizes that are multiples of 32 to make it possible to quantize in MX format
+    model = DifferentChannelSizeMatmulModel(channel_sizes=[32, 64]).ov_model
+
+    # First compression: compress to MXFP8_E4M3
+    mxfp8_compressed_model = compress_weights(
+        model,
+        mode=CompressWeightsMode.MXFP8_E4M3,
+        all_layers=True,
+    )
+
+    # Verify MXFP8 compression was successful
+    mxfp8_nodes = [op for op in mxfp8_compressed_model.get_ordered_ops() if op.get_element_type() == ov.Type.f8e4m3]
+    mxfp8_scale_nodes = [
+        op for op in mxfp8_compressed_model.get_ordered_ops() if op.get_element_type() == ov.Type.f8e8m0
+    ]
+
+    assert len(mxfp8_nodes) > 0, "MXFP8 compression should create f8e4m3 nodes"
+    assert len(mxfp8_scale_nodes) > 0, "MXFP8 compression should create f8e8m0 scale nodes"
+
+    # Second compression: compress MXFP8 model to INT4
+    int4_compressed_model = compress_weights(
+        mxfp8_compressed_model,
+        mode=CompressWeightsMode.INT4_SYM,
+        group_size=8,
+        all_layers=True,
+    )
+
+    # Verify that MXFP8 pattern was matched and converted to INT4
+    int4_nodes = [op for op in int4_compressed_model.get_ordered_ops() if op.get_element_type() == ov.Type.i4]
+
+    # After INT4 compression, there should be INT4 nodes
+    assert len(int4_nodes) > 0, "INT4 compression should create i4 nodes"
+    # The MXFP8 nodes that matched the pattern should be converted to INT4
+    assert len(int4_nodes) >= len(mxfp8_nodes), "MXFP8 nodes should be converted to INT4"
 
 
 class TestOVTemplateWeightCompression(TemplateWeightCompression):

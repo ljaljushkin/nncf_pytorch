@@ -768,11 +768,16 @@ def get_operation_const_op(operation: ov.Node, const_port_id: int) -> Optional[o
     # (Constant) -> (Convert) -> (Operation)
     # (Constant) -> (Convert) -> (FakeQuantize, FakeConvert) -> (Operation)
     # (Constant) -> (Convert) -> (FakeQuantize, FakeConvert) -> (Reshape) -> (Operation)
+    # TODO: why is it weight and not scale??
+    # (Constant Weight) -> (Convert) -> (Multiply) -> (Reshape) -> (Convert) -> (Operation)      | MXFP4 decompression
+    #                               /
+    # (Constant Scale) -> (Convert)
     #  and etc. We need properly find the constant node. So we start with
     # `node` and traverse up until the constant node is not found.
     queue = deque([node])
     constant_node = None
-    allowed_propagation_types_list = ["Convert", "FakeQuantize", "FakeConvert", "Reshape"]
+    # TODO: isn't too much operations? Will it break quantization of compressed model? or compression in 2 stages??
+    allowed_propagation_types_list = ["Convert", "FakeQuantize", "FakeConvert", "Reshape", "Multiply"]
 
     while len(queue) != 0:
         curr_node = queue.popleft()

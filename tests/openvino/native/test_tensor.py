@@ -31,8 +31,10 @@ class TestOVNNCFTensorOperators:
             TensorDataType.uint4,
             TensorDataType.int4,
             TensorDataType.nf4,
+            TensorDataType.f4e2m1,
             TensorDataType.f8e5m2,
             TensorDataType.f8e4m3,
+            TensorDataType.f8e8m0,
         ]
 
         if backend == TensorBackend.ov:

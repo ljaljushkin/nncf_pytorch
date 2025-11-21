@@ -228,6 +228,7 @@ def _validate_input_dtypes(
         TensorDataType.bfloat16,
         TensorDataType.f8e4m3,
         TensorDataType.f8e5m2,
+        TensorDataType.f4e2m1,
     ]
     if weight_dtype not in valid_weight_dtypes:
         msg = f"Weight must be one of the following data types: {valid_weight_dtypes}. But found: {weight_dtype}."
@@ -247,6 +248,7 @@ def get_integer_quantization_model(
     scale_shape: Optional[tuple] = None,
     zero_point_shape: Optional[tuple] = None,
     reduction_axes: Optional[ReductionAxes] = None,
+    input_output_nodes=None,
 ) -> Union[ModelCallable, ModelAsNodes]:
     """
     Get a model that compresses weights using the given configuration.
@@ -264,9 +266,10 @@ def get_integer_quantization_model(
     :return: A model callable that compresses weights using the given configuration. Or a model as nodes, if
         `return_nodes` is True.
     """
-    weight_shape, scale_shape, zero_point_shape = _prepare_quantization_model_inputs(
-        ov_model_params, weight_shape, scale_shape, zero_point_shape, reduction_axes
-    )
+    if input_output_nodes is None:
+        weight_shape, scale_shape, zero_point_shape = _prepare_quantization_model_inputs(
+            ov_model_params, weight_shape, scale_shape, zero_point_shape, reduction_axes
+        )
 
     return _build_integer_quantization_model(
         config,
@@ -275,6 +278,7 @@ def get_integer_quantization_model(
         scale_shape,
         zero_point_shape,
         reduction_axes,
+        input_output_nodes=input_output_nodes,
     )
 
 
@@ -417,6 +421,45 @@ def get_integer_quantization_error_model(
 
 
 @cache_results(OV_MODEL_CACHE)
+def _build_mxfp4_decompress_model(weight_shape, scale_shape, orig_shape, return_nodes=False):
+    from nncf.openvino.optimized_functions.models import OVModelParameters
+    from nncf.tensor.definitions import TensorDataType
+    from nncf.tensor.functions.openvino_numeric import DTYPE_MAP as DTYPE_MAP_OV
+
+    # TODO: should be mapping
+    compressed_weight_dtype = TensorDataType.f4e2m1
+    scale_dtype = TensorDataType.f8e8m0
+    default_input_dtypes = {
+        "scale": scale_dtype,
+        "weight": compressed_weight_dtype,
+    }
+    default_output_dtypes = {
+        "decompressed_weight": TensorDataType.float16,
+    }
+
+    # Update input and output dtypes with the default values
+    ov_model_params = OVModelParameters(share_outputs=False, return_ov_tensors=True)
+    ov_model_params.input_dtypes = {**default_input_dtypes, **ov_model_params.input_dtypes}
+    ov_model_params.output_dtypes = {**default_output_dtypes, **ov_model_params.output_dtypes}
+
+    compressed_weight_op = opset.parameter(weight_shape, name="weight", dtype=DTYPE_MAP_OV[compressed_weight_dtype])
+    scale_op = opset.parameter(scale_shape, name="scale", dtype=DTYPE_MAP_OV[scale_dtype])
+    ov_parameters = [compressed_weight_op, scale_op]
+    convert_w_op = opset.convert(compressed_weight_op, ov.Type.f16)
+    convert_s_op = opset.convert(scale_op, ov.Type.f16)
+    multiply_op = opset.multiply(convert_w_op, convert_s_op)
+    reshape_op = opset.reshape(multiply_op, output_shape=orig_shape, special_zero=False)
+    ov_results = [reshape_op]
+    if return_nodes:
+        return ov_parameters, ov_results, ov_model_params
+
+    model = ov.Model(ov_results, ov_parameters)
+    # ov.save_model(model, "mxfp4_to_fp16.xml")
+    compiled_model = ov.compile_model(model, device_name="CPU", config={inference_precision(): ov.Type.f32})
+    return partial(_infer_ov_model, ov_model_params, compiled_model)
+
+
+@cache_results(OV_MODEL_CACHE)
 def _build_integer_quantization_model(
     config: WeightCompressionConfig,
     ov_model_params: OVModelParameters,
@@ -425,6 +468,7 @@ def _build_integer_quantization_model(
     zero_point_shape: Optional[tuple] = None,
     reduction_axes: Optional[ReductionAxes] = None,
     return_nodes: bool = False,
+    input_output_nodes=None,
 ) -> Union[ModelCallable, ModelAsNodes]:
     is_asym_mode = config.is_asym_mode
 
@@ -487,9 +531,12 @@ def _build_integer_quantization_model(
         )
         raise ValueError(msg)
 
-    # Build OV model
-    weight = opset.parameter(weight_shape, name="weight", dtype=DTYPE_MAP_OV[weight_dtype])
-    ov_parameters = [weight]
+    if not input_output_nodes:
+        # Build OV model
+        weight = opset.parameter(weight_shape, name="weight", dtype=DTYPE_MAP_OV[weight_dtype])
+        ov_parameters = [weight]
+    else:
+        ov_parameters, [weight] = input_output_nodes
 
     num_bits = config.num_bits
     eps = np.finfo(np.float32).eps
@@ -547,7 +594,8 @@ def _build_integer_quantization_model(
     compressed_weight = convert_op(compressed_weight, DTYPE_MAP_OV[compressed_weight_dtype])
 
     ov_results = [compressed_weight]
-    if len(ov_parameters) == 1:
+    # TODO: why is it needed? for mxfp4 weight and scale are defined.
+    if len(ov_parameters) in [1, 2]:
         ov_results.append(scale)
         if zero_point is not None:
             zero_point = convert_op(zero_point, DTYPE_MAP_OV[output_zero_point_dtype])
@@ -557,6 +605,7 @@ def _build_integer_quantization_model(
         return ov_parameters, ov_results, ov_model_params
 
     model = ov.Model(ov_results, ov_parameters)
+    # ov.save_model(model, "mxfp4_to_int4.xml")
     compiled_model = _compile_ov_model(model, device_name="CPU", config={inference_precision(): ov.Type.f32})
 
     return partial(_infer_ov_model, ov_model_params, compiled_model)

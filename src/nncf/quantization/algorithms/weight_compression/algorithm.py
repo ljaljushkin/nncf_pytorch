@@ -69,6 +69,7 @@ SUPPORTED_DATA_TYPES = [
     TensorDataType.float64,
     TensorDataType.f8e4m3,
     TensorDataType.f8e5m2,
+    TensorDataType.f4e2m1,
 ]
 
 
@@ -382,12 +383,13 @@ class WeightCompression(Algorithm):
         self._data_aware_mixed_precision = (
             self._sensitivity_metric != SensitivityMetric.WEIGHT_QUANTIZATION_ERROR and self._ratio != 1.0
         )
-        self._data_aware_compression = (
-            (self._awq and self._advanced_parameters.awq_params.prefer_data_aware_scaling)
-            or self._scale_estimation
-            or self._lora_correction
-            or self._gptq
-        )
+        self._data_aware_compression = False
+        # (
+        #     (self._awq and self._advanced_parameters.awq_params.prefer_data_aware_scaling)
+        #     or self._scale_estimation
+        #     or self._lora_correction
+        #     or self._gptq
+        # )
 
     @property
     def available_backends(self) -> list[BackendType]:
@@ -462,6 +464,10 @@ class WeightCompression(Algorithm):
 
         ordered_nodes_to_compress = []
         for node in nncf_graph.topological_sort():
+            # if node.metatype in self._backend_entity.embedding_metatypes:
+            #     print("Embedding: ", node.node_name, node.layer_attributes, node.layer_attributes.constant_attributes)
+            # if "lm_head" in node.node_name:
+            #     print("LM_HEAD: ", node.node_name, node.layer_attributes, node.layer_attributes.constant_attributes)
             is_node_with_weights = self._backend_entity.is_node_with_weights(node, nncf_graph)
             if node.metatype in weighted_metatypes and is_node_with_weights:
                 ordered_nodes_to_compress.append(node)
@@ -773,7 +779,7 @@ class WeightCompression(Algorithm):
 
         :param weight_dtype: The data type of the weights to be compressed.
         :param compression_mode: The compression mode to be applied.
-        :return: True if the combination of wgit eight_dtype and compression_mode is supported for compression,
+        :return: True if the combination of weight_dtype and compression_mode is supported for compression,
             False otherwise. Specifically, returns False if the data type is one of the supported
             float8 types and the mode is an INT8 mode (i.e., same-bit compression is not supported).
         """
@@ -785,7 +791,7 @@ class WeightCompression(Algorithm):
         elif compression_mode == CompressWeightsMode.CODEBOOK:
             codebook_bits = Tensor(self._advanced_parameters.codebook).size.bit_length() - 1
             no_bit_reduction = codebook_bits >= weight_dtype.itemsize()
-
+        # TODO: (nlyalyus) handle MXFP4 with no_bit_reduction (INT4, NF4 is OK), E2M1 no sense
         return is_supported_dtype and not no_bit_reduction
 
     def _maybe_get_ov_major_version(self) -> Optional[str]:
@@ -840,6 +846,7 @@ class WeightCompression(Algorithm):
 
                 weight_dtype = self._backend_entity.get_weight_dtype(node, weight_port_id, model, graph)
                 weight_shape = self._backend_entity.get_weight_shape(node, weight_port_id, graph)
+                # TODO: is reduction axes applicable for already compressed weight?
                 reduction_axes = self._backend_entity.get_reduction_axes(node, weight_port_id, graph)
 
                 wc_config = None
@@ -869,10 +876,12 @@ class WeightCompression(Algorithm):
                         and ov_version
                         and version.parse(ov_version) <= version.parse("2026")
                         and node.metatype in self._backend_entity.matmul_metatypes
+                        # TODO: hack to avoid confusion of 3D MOE weights and 3D MXFP4 weights
+                        and weight_dtype != TensorDataType.f4e2m1
                     ):
                         # MoE operations are usually matmuls, so the check for matmul metatype is done
                         # This is to avoid raising the error for non-MoE cases with 3D weights.
-                        msg = f"""NNCF does not support 3D weights with current version of Openvino {ov_version} 
+                        msg = f"""NNCF does not support 3D weights with current version of Openvino {ov_version}
                                 due to a known issue in statistics collection Ticket - 176465
                                 Node with weight: {node.node_name}"""
                         raise nncf.UnsupportedModelError(msg)
@@ -1151,7 +1160,8 @@ class WeightCompression(Algorithm):
                 reduction_axes = tuple(range(n_dims - 1))
 
                 # For 3D weights, hidden dimension is the second dimension. Reduce by all other dimensions
-                reduction_axes = (1,) if any(weight_dim == 3 for weight_dim in all_weight_dims) else reduction_axes
+                # TODO: hack to avoid confusion of 3D MOE weights and 3D MXFP4 weights
+                # reduction_axes = (1,) if any(weight_dim == 3 for weight_dim in all_weight_dims) else reduction_axes
 
                 stat_collector = self._backend_entity.mean_statistic_collector(
                     reduction_axes=reduction_axes, subset_size=self._subset_size

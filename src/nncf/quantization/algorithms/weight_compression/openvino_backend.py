@@ -42,6 +42,7 @@ from nncf.openvino.graph.transformations.command_creation import OVCommandCreato
 from nncf.openvino.graph.transformations.commands import OVTargetPoint
 from nncf.openvino.optimized_functions import clear_ov_model_cache
 from nncf.openvino.optimized_functions.models import OV_MODEL_CACHE
+from nncf.openvino.optimized_functions.models import _build_mxfp4_decompress_model
 from nncf.openvino.quantization.ignored_patterns import create_rope
 from nncf.openvino.quantization.ignored_patterns import create_sam_pe
 from nncf.openvino.rt_info import dump_parameters
@@ -98,6 +99,7 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
 
     @staticmethod
     def get_reduction_axes(node_with_weight: NNCFNode, weight_port_id: int, graph: NNCFGraph) -> Optional[tuple[int]]:
+        # TODO: doesn't work right for reshaped weight for group quantization (e.g. MXFP4)
         channel_axes = get_weight_channel_axes(node_with_weight)
         const_shape = node_with_weight.layer_attributes.constant_attributes[weight_port_id]["shape"]
         return get_reduction_axes(channel_axes, const_shape)
@@ -250,7 +252,11 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             msg = f"{compression_config.mode.value} is not supported."
             raise nncf.ParameterNotSupportedError(msg)
 
-        original_shape = weight.shape
+        # TODO: demonic hack!
+        if isinstance(weight, tuple):
+            original_shape = weight[0]
+        else:
+            original_shape = weight.shape
 
         with disable_results_caching(OV_MODEL_CACHE):
             compressed_weight = compress_weight(
@@ -330,46 +336,101 @@ class OVWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         advanced_parameters: Optional[AdvancedCompressionParameters] = None,
     ) -> ov.Model:
         for wc_params in weight_compression_parameters:
-            const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[wc_params.weight_port_id]
-            const_node_name = const_attributes["name"]
-            const_node = self.name_to_node_mapping[const_node_name]
-            const_node_output = const_node.output(0)
-            const_dtype = const_node_output.get_element_type()
-            # Creation of ov.Tensor is required for two reasons:
-            #   1. To be able to process BF16 weight properly
-            #   2. To indicate that it is allowed for the compressed constant to be returned as int4/uint4 if needed
-            weight = Tensor(get_const_value_as_ov_tensor(const_node))
+            print(wc_params.compression_config.num_bits, " -- ", wc_params.node_with_weight.node_name)
+        for wc_params in weight_compression_parameters:
+            try:
+                const_attributes = wc_params.node_with_weight.layer_attributes.constant_attributes[
+                    wc_params.weight_port_id
+                ]
+                const_node_name = const_attributes["name"]
+                const_node = self.name_to_node_mapping[const_node_name]
+                const_node_output = const_node.output(0)
+                const_dtype = const_node_output.get_element_type()
 
-            should_add_convert_node = False
-            if const_dtype != ov.Type.f16:
-                for inp in const_node_output.get_target_inputs():
-                    if inp.get_node().get_type_name() != "Convert":
-                        should_add_convert_node = True
-                        break
+                # TODO: get weight from constant subgraph for MXFP4
+                # TODO: handle gracefully by matching decompression subgraph
+                #   or at least checking that it can be always calculated. e2m1->convert(fp16)->matmul (IS VALID?)
 
-            mul, compressed_weight = self._create_compression_subgraph(
-                weight=weight,
-                compression_config=wc_params.compression_config,
-                reduction_axes=wc_params.reduction_axes,
-                const_node_name=const_node_name,
-                weight_port_id=wc_params.weight_port_id,
-                const_dtype=const_dtype,
-                should_add_convert_node=should_add_convert_node,
-                precomputed_compressed_weight=None
-                if precomputed_compressed_weights is None
-                else precomputed_compressed_weights.get(wc_params.weight_name),
-            )
+                # TODO: if data-aware, decompression subgraph was replaced with fp16?? -> will lead to higher footprint!
+                if const_dtype == ov.Type.f4e2m1:
+                    # TODO: hack, need to handle it better
+                    wc_params.reduction_axes = 1
+                    layer_node_ov = self.name_to_node_mapping[wc_params.node_with_weight.node_name]
+                    # TODO: if convert go further until reshape or matmul??
+                    # TODO: in case of bf16 no need to convert from fp16 to bf16? it would be upcasted to fp32 anyway?
+                    prev_node = layer_node_ov.input_value(wc_params.weight_port_id).get_node()
+                    if False:  # compile a sub-model (slow and not memory-efficient)
+                        result = opset.result(prev_node, name="Result")
+                        result.get_output_tensor(0).set_names(set(["Result"]))
+                        subgraph_model = ov.Model([result], [])
+                        compiled_model = ov.compile_model(
+                            subgraph_model, device_name="CPU"
+                        )  # , config={inference_precision(): ov.Type.f32}) # TODO: is f32 precision needed?
+                        # TODO: is get_const_value_as_ov_tensor needed? e.g. for bf16
+                        weight = Tensor(compiled_model()["Result"])
+                    else:
+                        orig_shape = tuple(layer_node_ov.get_input_shape(1))
+                        weight_ov = Tensor(get_const_value_as_ov_tensor(const_node))
+                        scale_node_name = const_node_name + "/scale"
+                        scale_node = self.name_to_node_mapping[scale_node_name]
+                        scale_ov = Tensor(get_const_value_as_ov_tensor(scale_node))
+                        if True:  # create and cache small model - 8x faster, 30% less memory
+                            weight_shape = tuple(const_node.get_output_shape(0))
+                            scale_shape = list(weight_shape)
+                            scale_shape[-1] = 1
+                            model_tmp = _build_mxfp4_decompress_model(weight_shape, tuple(scale_shape), orig_shape)
+                            # TODO: still needed for data-aware methods
+                            weight = Tensor(model_tmp([weight_ov, scale_ov])[0])
+                        else:
+                            # TODO: demonic hack! enable for data-free scenario
+                            weight = orig_shape, [weight_ov, scale_ov]
+                    # TODO: do it only if there's convert?
+                    const_node = prev_node.input_value(0).get_node()
+                else:
+                    # Creation of ov.Tensor is required for two reasons:
+                    #   1. To be able to process BF16 weight properly
+                    #   2. To indicate that it is allowed for the compressed constant to be returned as int4/uint4 if needed
+                    weight = Tensor(get_const_value_as_ov_tensor(const_node))
 
-            self._replace_node(const_node, mul)
+                # TODO: reconsider for subgraph!
+                # here only 2 cases covered:
+                # matmul->convert->const
+                # matmul->const
+                should_add_convert_node = False
+                if const_dtype != ov.Type.f16:
+                    for inp in const_node_output.get_target_inputs():
+                        if inp.get_node().get_type_name() != "Convert":
+                            should_add_convert_node = True
+                            break
 
-            if lora_correction_algo is not None and lora_correction_algo.is_applicable(wc_params):
-                # These tensors can potentially be in ov backend
-                weight = weight.as_numpy_tensor()
-                compressed_weight.tensor = compressed_weight.tensor.as_numpy_tensor()
-                if compressed_weight.zero_point is not None:
-                    compressed_weight.zero_point = compressed_weight.zero_point.as_numpy_tensor()
-                adapters = lora_correction_algo.calculate_adapters(weight, compressed_weight, wc_params)
-                self.insert_adapters(wc_params, *adapters, int8_lora=lora_correction_algo.use_int8_adapters)
+                mul, compressed_weight = self._create_compression_subgraph(
+                    weight=weight,
+                    compression_config=wc_params.compression_config,
+                    reduction_axes=wc_params.reduction_axes,
+                    const_node_name=const_node_name,
+                    weight_port_id=wc_params.weight_port_id,
+                    const_dtype=const_dtype,
+                    should_add_convert_node=should_add_convert_node,
+                    precomputed_compressed_weight=None
+                    if precomputed_compressed_weights is None
+                    else precomputed_compressed_weights.get(wc_params.weight_name),
+                )
+
+                # TODO: const node for MXFP4 should be different, similar to mul/reshape, but for original model
+                self._replace_node(const_node, mul)
+
+                if lora_correction_algo is not None and lora_correction_algo.is_applicable(wc_params):
+                    # These tensors can potentially be in ov backend
+                    weight = weight.as_numpy_tensor()
+                    compressed_weight.tensor = compressed_weight.tensor.as_numpy_tensor()
+                    if compressed_weight.zero_point is not None:
+                        compressed_weight.zero_point = compressed_weight.zero_point.as_numpy_tensor()
+                    adapters = lora_correction_algo.calculate_adapters(weight, compressed_weight, wc_params)
+                    self.insert_adapters(wc_params, *adapters, int8_lora=lora_correction_algo.use_int8_adapters)
+            except AssertionError as e:
+                msg = f"Failed to transform node with name {wc_params.node_with_weight.node_name}"
+                raise RuntimeError(msg) from e
+
         self.name_to_node_mapping = None
 
         clear_ov_model_cache()

@@ -216,6 +216,7 @@ class GPTQ:
             msg = "Transpose is not supported"
             raise RuntimeError(msg)
 
+        # TODO: NEED SEETING DECOMPRESSED WEIGHT BEFORE: it's NOT valid to merge scale to MXFP4 decompression and set!!!!
         weight_tensor = self._backend_entity.get_weight(
             wc_params.node_with_weight, wc_params.weight_port_id, model, graph
         )

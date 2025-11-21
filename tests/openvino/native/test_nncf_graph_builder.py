@@ -39,8 +39,10 @@ def test_compare_nncf_graph_synthetic_models(model_cls_to_test):
     "model,precision",
     [
         (FPModel(const_dtype=ov.Type.nf4), "nf4"),
+        (FPModel(const_dtype=ov.Type.f4e2m1), "f4e2m1"),
         (FPModel(const_dtype=ov.Type.f8e4m3), "f8e4m3"),
         (FPModel(const_dtype=ov.Type.f8e5m2), "f8e5m2"),
+        (FPModel(const_dtype=ov.Type.f8e8m0), "f8e8m0"),
     ],
 )
 def test_compare_nncf_graph_precision_synthetic_models(model, precision):
@@ -114,8 +116,10 @@ def test_parallel_edges():
     "ov_type,expected_nncf_dtype",
     [
         (ov.Type.nf4, Dtype.FLOAT),
+        (ov.Type.f4e2m1, Dtype.FLOAT),
         (ov.Type.f8e4m3, Dtype.FLOAT),
         (ov.Type.f8e5m2, Dtype.FLOAT),
+        (ov.Type.f8e8m0, Dtype.FLOAT),
         (ov.Type.f16, Dtype.FLOAT),
         (ov.Type.f32, Dtype.FLOAT),
         (ov.Type.f64, Dtype.FLOAT),

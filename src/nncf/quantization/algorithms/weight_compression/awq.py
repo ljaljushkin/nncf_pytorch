@@ -164,6 +164,7 @@ class AWQ(Algorithm):
             nncf_logger.debug(f"{description} for: {wp.node_with_weight.node_name}")
 
             _, weight_port_id = weight_data[0]
+            # TODO: NEED SEETING DECOMPRESSED WEIGHT BEFORE: it's NOT valid to merge scale to MXFP4 decompression and set!!!!
             weight = self._backend_entity.get_weight(
                 wp.node_with_weight, weight_port_id, model, graph
             )  # get_const_value(wp.weight_node)
@@ -178,6 +179,7 @@ class AWQ(Algorithm):
                     # for MatMul->Multiply->MatMul pattern we need to use statistics from the first MatMul
                     prev_weight_data = self._backend_entity.get_weight_names_and_port_ids(merge_node, graph)
                     _, prev_weight_port_id = prev_weight_data[0]
+                    # TODO: NEED SEETING DECOMPRESSED WEIGHT BEFORE: it's NOT valid to merge scale to MXFP4 decompression and set!!!!
                     prev_weight = self._backend_entity.get_weight(merge_node, prev_weight_port_id, model, graph)
 
                     prev_statistics = statistics[merge_node.node_name]
@@ -191,6 +193,7 @@ class AWQ(Algorithm):
 
             if is_mergeable:  # for MatMul->Multiply->MatMul pattern the scale is merged to the first MatMul
                 for _, port_id in self._backend_entity.get_weight_names_and_port_ids(merge_node, graph):
+                    # TODO: NEED SEETING DECOMPRESSED WEIGHT BEFORE: it's NOT valid to merge scale to MXFP4 decompression and set!!!!
                     merge_weight = self._backend_entity.get_weight(merge_node, port_id, model, graph)
                     merge_weight = (merge_weight * a_scale).astype(weight_dtype)
                     self._backend_entity.set_weight(merge_node, port_id, model, graph, merge_weight)
