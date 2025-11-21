@@ -50,7 +50,16 @@ def get_wikitext2(num_samples: int, seqlen: int, tokenizer: Any) -> list[Tensor]
         input_ids = enc.input_ids[:, i:j]
         attention_mask = np.ones_like(input_ids)
         position_ids = np.cumsum(attention_mask, axis=1) - 1
-        trainloader.append({"input_ids": input_ids, "attention_mask": attention_mask, "position_ids": position_ids})
+        batch_size = input_ids.shape[0]
+        beam_idx = np.arange(batch_size, dtype=int)
+        trainloader.append(
+            {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "position_ids": position_ids,
+                "beam_idx": beam_idx,
+            }
+        )
     return trainloader
 
 

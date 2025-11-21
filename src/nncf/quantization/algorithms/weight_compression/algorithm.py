@@ -383,7 +383,7 @@ class WeightCompression(Algorithm):
         self._data_aware_mixed_precision = (
             self._sensitivity_metric != SensitivityMetric.WEIGHT_QUANTIZATION_ERROR and self._ratio != 1.0
         )
-        self._data_aware_compression = False
+        self._data_aware_compression = True
         # (
         #     (self._awq and self._advanced_parameters.awq_params.prefer_data_aware_scaling)
         #     or self._scale_estimation
