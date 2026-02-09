@@ -26,18 +26,18 @@ tinyllama_data_aware_awq_scale_estimation_backend_OV:
   metric_value: 0.85502
   num_int4: 94
   num_int8: 124
-tinyllama_mixed_2_4_8_bits_ratio_0.5_backend_OV:
-  metric_value: 0.85502
-  num_int4: 94
-  num_int8: 124
-tinyllama_mixed_2_4_8_bits_ratio_0.25_backend_OV:
-  metric_value: 0.85502
-  num_int4: 94
-  num_int8: 124
-tinyllama_mixed_2_4_8_bits_ratio_0.75_backend_OV:
-  metric_value: 0.85502
-  num_int4: 94
-  num_int8: 124
+tinyllama_mixed_2_4_8_bits_avg_3_backend_OV:
+  metric_value: 0
+  num_int4: 0
+  num_int8: 0
+tinyllama_mixed_2_4_8_bits_avg_4_backend_OV:
+  metric_value: 0
+  num_int4: 0
+  num_int8: 0
+tinyllama_mixed_2_4_8_bits_avg_5_backend_OV:
+  metric_value: 0
+  num_int4: 0
+  num_int8: 0
 tinyllama_data_aware_awq_scale_estimation_backend_TORCH:
   metric_value: 0.85502
   num_int4: 94

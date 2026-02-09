@@ -123,26 +123,36 @@ class MixedPrecisionCriterion(Algorithm):
 
     def __init__(
         self,
-        ratio: float,
+        avg_bits: float,
         subset_size: Optional[int] = None,
         primary_bits: int = 4,
         backup_bits: int = DEFAULT_BACKUP_BITS,
         available_bits: Optional[list[int]] = None,
+        ratio: Optional[float] = None,
+        use_dp: bool = False,
     ):
         """
-        :param ratio: The ratio defining the bit budget. Interpreted as the ratio of target bits
-            to backup precision bits. E.g., ratio=0.5 with backup_bits=8 means target avg 4 bits/weight.
+        :param avg_bits: Target average bits per weight value. The algorithm selects bit-widths
+            for each layer to achieve this target while minimizing loss. E.g., avg_bits=4.0
+            targets 4 bits per weight on average.
         :param subset_size: Size of dataset subset for statistics.
         :param primary_bits: Primary (lowest) precision bits to use (default: 4).
         :param backup_bits: Backup (highest) precision bits (default: 8).
         :param available_bits: List of available bit-widths to use. Defaults to [backup_bits, primary_bits].
+        :param ratio: Original ratio parameter for backward compatibility with FP8 modes.
+            When primary_bits == backup_bits, this ratio is used directly since avg_bits
+            cannot encode the ratio information.
+        :param use_dp: If True, force DP selection regardless of number of bit options.
+            Set to True when available_bits is explicitly provided by user.
         """
-        self._ratio = ratio
+        self._avg_bits = avg_bits
         self._subset_size = subset_size
         self._algorithm_key = f"MPC_{hash(self)}"
         self._backend_entity = None
         self._primary_bits = primary_bits
         self._backup_bits = backup_bits
+        self._ratio = ratio
+        self._use_dp = use_dp
         self._available_bits = (
             sorted(set(available_bits), reverse=True)
             if available_bits is not None
@@ -213,14 +223,26 @@ class MixedPrecisionCriterion(Algorithm):
         """
         Original greedy selection for backward compatibility with 2-bit-option cases.
 
-        Selects layers with lowest sensitivity until adding more would exceed the ratio.
-        The ratio is interpreted as the maximum fraction of weights in primary precision.
+        Selects layers with lowest sensitivity until adding more would exceed the target.
+        Uses avg_bits to compute the target ratio of weights in primary precision.
 
         :param weight_params: List of weight parameters.
         :param scores: Sensitivity scores for each layer.
         :return: List of weight parameters selected for primary precision.
         """
         num_all_weights = sum(wp.num_weights for wp in weight_params)
+
+        # Handle edge case: when primary and backup bits are the same (e.g., FP8 vs INT8),
+        # use the original ratio directly since avg_bits cannot encode ratio info
+        if self._backup_bits == self._primary_bits:
+            # For format-based mixed precision (FP8 vs INT8), use original ratio
+            target_ratio = self._ratio if self._ratio is not None else 1.0
+        else:
+            # Convert avg_bits to ratio of weights in primary precision
+            # avg_bits = ratio * primary_bits + (1 - ratio) * backup_bits
+            # ratio = (backup_bits - avg_bits) / (backup_bits - primary_bits)
+            target_ratio = (self._backup_bits - self._avg_bits) / (self._backup_bits - self._primary_bits)
+        target_ratio = max(0.0, min(1.0, target_ratio))  # Clamp to [0, 1]
 
         primary_precision_weight_params = []
         indexes_of_layers_in_ascending_order_of_scores = [
@@ -230,7 +252,7 @@ class MixedPrecisionCriterion(Algorithm):
         for index in indexes_of_layers_in_ascending_order_of_scores:
             weight_param = weight_params[index]
             current_ratio = (num_weights_in_primary + weight_param.num_weights) / num_all_weights
-            if current_ratio >= self._ratio:
+            if current_ratio >= target_ratio:
                 break
             primary_precision_weight_params.append(weight_param)
             num_weights_in_primary += weight_param.num_weights
@@ -246,7 +268,7 @@ class MixedPrecisionCriterion(Algorithm):
         Dynamic programming selection for multi-bit-option cases (3+ bit-widths).
 
         Optimizes bit-width assignment to minimize sensitivity-weighted loss within a bit budget.
-        The ratio is interpreted as: target_bits = ratio * total_weights * backup_bits.
+        The target bit budget is: avg_bits * total_weights.
 
         :param weight_params: List of weight parameters.
         :param scores: Sensitivity scores for each layer.
@@ -254,13 +276,13 @@ class MixedPrecisionCriterion(Algorithm):
         """
         total_weights = sum(int(wp.num_weights) for wp in weight_params)
         total_backup_bits = total_weights * self._backup_bits
-        target_bits = int(self._ratio * total_backup_bits)
+        target_bits = int(self._avg_bits * total_weights)
 
         nncf_logger.info(f"Mixed precision (DP): Total weights: {total_weights:,}")
         nncf_logger.info(
             f"Mixed precision (DP): Target bit budget: {target_bits:,} bits out of {total_backup_bits:,} bits"
         )
-        nncf_logger.info(f"Mixed precision (DP): Target avg bits per weight: {target_bits / total_weights:.2f}")
+        nncf_logger.info(f"Mixed precision (DP): Target avg bits per weight: {self._avg_bits:.2f}")
 
         # Build options for DP
         layer_options = self._build_layer_options(weight_params, scores)
@@ -281,7 +303,6 @@ class MixedPrecisionCriterion(Algorithm):
         # Calculate statistics
         actual_bits_used = 0
         bits_distribution = {bits: 0 for bits in self._available_bits}
-        primary_precision_weight_params = []
 
         for wp in weight_params:
             layer_name = wp.node_with_weight.node_name
@@ -293,9 +314,6 @@ class MixedPrecisionCriterion(Algorithm):
             mode = self._get_compression_mode_for_bits(selected_bits, is_asym=True)
             wp.compression_config = WeightCompressionConfig(mode=mode, group_size=wp.compression_config.group_size)
 
-            if selected_bits < self._backup_bits:
-                primary_precision_weight_params.append(wp)
-
         avg_bits = actual_bits_used / total_weights if total_weights > 0 else 0
         compression_ratio = actual_bits_used / total_backup_bits if total_backup_bits > 0 else 0
 
@@ -303,7 +321,9 @@ class MixedPrecisionCriterion(Algorithm):
         nncf_logger.info(f"Mixed precision (DP): Bit budget utilization: {compression_ratio:.2%}")
         nncf_logger.info(f"Mixed precision (DP): Layer distribution by bits: {bits_distribution}")
 
-        return layer_bits_map, primary_precision_weight_params
+        # Return all weight_params since DP sets compression config for all layers
+        # This prevents the caller from overwriting configs with backup precision
+        return layer_bits_map, weight_params
 
     def apply(
         self,
@@ -331,12 +351,16 @@ class MixedPrecisionCriterion(Algorithm):
         scores = self._calc_sensitivity(model, graph, weight_params, statistic_points)
 
         # Use greedy selection when:
-        # - Only 1-2 unique bit options (backward compatibility)
+        # - Only 1-2 unique bit options AND use_dp is False (backward compatibility)
         # - Same bit-width for primary and backup (format-based mixed precision like FP8 vs INT8)
-        if len(self._available_bits) <= 2 or self._primary_bits == self._backup_bits:
+        # Use DP when:
+        # - 3+ bit options
+        # - use_dp is True (available_bits explicitly provided by user)
+        use_greedy = (len(self._available_bits) <= 2 and not self._use_dp) or self._primary_bits == self._backup_bits
+        if use_greedy:
             return self._apply_greedy_selection(weight_params, scores)
 
-        # Use DP for 3+ bit options
+        # Use DP for explicit available_bits or 3+ bit options
         _, primary_precision_weight_params = self._apply_dp_selection(weight_params, scores)
         return primary_precision_weight_params
 

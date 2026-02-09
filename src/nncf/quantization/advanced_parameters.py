@@ -422,6 +422,11 @@ class AdvancedCompressionParameters:
         staying within the bit budget. If None or only 2 values, uses simple ratio-based selection for
         backward compatibility. Defaults to None.
     :type available_bits: Optional[list[int]]
+    :param avg_bits: Target average bits per weight value for mixed precision selection. When specified,
+        the algorithm selects bit-widths for each layer to achieve this average while minimizing loss.
+        E.g., avg_bits=4.0 targets 4 bits per weight on average. If None, uses the `ratio` parameter
+        for backward compatibility. Defaults to None.
+    :type avg_bits: Optional[float]
     :param awq_params: Advanced parameters for AWQ algorithm.
     :type awq_params: AdvancedAWQParameters
     :param scale_estimation_params: Advanced parameters for Scale Estimation algorithm.
@@ -444,6 +449,7 @@ class AdvancedCompressionParameters:
     group_size_fallback_mode: GroupSizeFallbackMode = GroupSizeFallbackMode.ERROR
     min_adjusted_group_size: int = 32
     available_bits: Optional[list[int]] = None
+    avg_bits: Optional[float] = None
     awq_params: AdvancedAWQParameters = field(default_factory=AdvancedAWQParameters)
     scale_estimation_params: AdvancedScaleEstimationParameters = field(
         default_factory=AdvancedScaleEstimationParameters

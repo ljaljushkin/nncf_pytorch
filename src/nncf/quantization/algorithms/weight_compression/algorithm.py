@@ -372,31 +372,39 @@ class WeightCompression(Algorithm):
 
         # Determine primary and backup bits based on mode
         primary_bits = self._get_mode_num_bits(mode)
-        backup_bits = 8  # Default backup is INT8
 
         # Get available bits from advanced parameters or use default [backup, primary]
-        available_bits = (
-            self._advanced_parameters.available_bits
-            if hasattr(self._advanced_parameters, "available_bits") and self._advanced_parameters.available_bits
-            else [backup_bits, primary_bits]
+        available_bits_provided = (
+            hasattr(self._advanced_parameters, "available_bits") and self._advanced_parameters.available_bits
         )
+        available_bits = self._advanced_parameters.available_bits if available_bits_provided else None
 
-        # For 2-bit-option cases (backward compatible), keep ratio as-is (greedy mode uses weight fraction)
-        # For 3+ bit options (DP mode), convert ratio to bit ratio:
-        # old_ratio=0.8 means 80% in primary-bit → avg bits = ratio*primary + (1-ratio)*backup
-        # new_ratio = avg_bits / backup_bits
-        if len(set(available_bits)) > 2:
-            bit_ratio = (self._ratio * primary_bits + (1 - self._ratio) * backup_bits) / backup_bits
+        # When available_bits is provided, derive backup_bits from max(available_bits)
+        # Otherwise use default INT8 backup
+        if available_bits is not None:
+            backup_bits = max(available_bits)
         else:
-            bit_ratio = self._ratio
+            backup_bits = 8  # Default backup is INT8
+            available_bits = [backup_bits, primary_bits]
+
+        # Use avg_bits if provided, otherwise calculate from ratio
+        # avg_bits is the target average bits per weight value
+        if hasattr(self._advanced_parameters, "avg_bits") and self._advanced_parameters.avg_bits is not None:
+            avg_bits = self._advanced_parameters.avg_bits
+        else:
+            # Backward compatibility: convert ratio to avg_bits
+            # ratio=0.8 means 80% in primary-bit → avg_bits = ratio*primary + (1-ratio)*backup
+            avg_bits = self._ratio * primary_bits + (1 - self._ratio) * backup_bits
 
         criterion_cls = MIXED_PRECISION_CRITERIA.get(self._sensitivity_metric)
         self._mixed_precision_algo = criterion_cls(
-            bit_ratio,
+            avg_bits,
             self._subset_size,
             primary_bits=primary_bits,
             backup_bits=backup_bits,
             available_bits=available_bits,
+            ratio=self._ratio,
+            use_dp=available_bits_provided,  # Force DP when available_bits is explicitly provided
         )
         self._statistics_path = self._advanced_parameters.statistics_path
 
@@ -659,18 +667,34 @@ class WeightCompression(Algorithm):
         :param graph: The model graph associated with the model.
         :param statistics_points: Statistics points.
         """
-        if self._ratio < 1 and len(ratio_defining_params) > 0:
+        # Check if mixed precision should be applied:
+        # - ratio < 1 (traditional mode)
+        # - avg_bits is explicitly provided (new mode)
+        use_mixed_precision = self._ratio < 1 or (
+            hasattr(self._advanced_parameters, "avg_bits") and self._advanced_parameters.avg_bits is not None
+        )
+
+        # Check if available_bits is explicitly provided - in this case, DP algorithm
+        # sets compression_config for all layers and we should not apply backup precision
+        available_bits_provided = (
+            hasattr(self._advanced_parameters, "available_bits") and self._advanced_parameters.available_bits
+        )
+
+        if use_mixed_precision and len(ratio_defining_params) > 0:
             primary_precision_weight_params = self._mixed_precision_algo.apply(
                 model, graph, statistics_points, weight_params=ratio_defining_params
             )
-            # At this point ratio_defining_params are all in primary precision. Below we update parameters
-            # which need to be set to the backup precision.
-            primary_precision_node_names = set(
-                param.node_with_weight.node_name for param in primary_precision_weight_params
-            )
-            for weight_param in ratio_defining_params:
-                if weight_param.node_with_weight.node_name not in primary_precision_node_names:
-                    weight_param.compression_config = self._get_backup_config(weight_param.weight_dtype)
+
+            # When available_bits is explicitly provided, DP algorithm already sets
+            # compression_config for all layers - don't override with backup precision
+            if not available_bits_provided:
+                # Traditional mode: update parameters which need to be set to the backup precision
+                primary_precision_node_names = set(
+                    param.node_with_weight.node_name for param in primary_precision_weight_params
+                )
+                for weight_param in ratio_defining_params:
+                    if weight_param.node_with_weight.node_name not in primary_precision_node_names:
+                        weight_param.compression_config = self._get_backup_config(weight_param.weight_dtype)
 
     def validate_group_size(
         self,

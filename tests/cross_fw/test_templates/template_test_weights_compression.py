@@ -248,17 +248,19 @@ class TemplateWeightCompression(ABC):
         return False
 
     @pytest.mark.parametrize(
-        ("ratio", "available_bits", "description"),
+        ("avg_bits", "available_bits", "mode", "description"),
         (
             # Test with 4/8 bits (supported by all backends)
-            (0.5, [4, 8], "ratio=0.5 with 4/8 bits: target avg = 4 bits"),
-            (0.75, [4, 8], "ratio=0.75 with 4/8 bits: mix of 4-bit and 8-bit"),
+            (6.0, [4, 8], CompressWeightsMode.INT4_SYM, "avg_bits=6.0 with 4/8 bits: mix of 4-bit and 8-bit"),
+            (5.0, [4, 8], CompressWeightsMode.INT4_SYM, "avg_bits=5.0 with 4/8 bits: more 4-bit layers"),
             # Test with 2/4/8 bits (requires INT2 support)
-            (0.5, [2, 4, 8], "ratio=0.5 with 2/4/8 bits: DP selects optimal mix"),
-            (0.375, [2, 4, 8], "ratio=0.375 with 2/4/8 bits: lower bit target"),
+            (4.0, [2, 4, 8], CompressWeightsMode.INT4_SYM, "avg_bits=4.0 with 2/4/8 bits: DP selects optimal mix"),
+            (3.0, [2, 4, 8], CompressWeightsMode.INT4_SYM, "avg_bits=3.0 with 2/4/8 bits: lower bit target"),
+            # Test with 2/4 bits and INT2 mode (requires INT2 support)
+            (3.0, [2, 4], CompressWeightsMode.INT2_SYM, "avg_bits=3.0 with 2/4 bits and INT2 mode"),
         ),
     )
-    def test_mixed_precision_multi_bit(self, ratio, available_bits, description, mocker):
+    def test_mixed_precision_multi_bit(self, avg_bits, available_bits, mode, description, mocker):
         """
         Test mixed precision with multiple bit options using dynamic programming.
 
@@ -277,28 +279,27 @@ class TemplateWeightCompression(ABC):
 
         compressed_model = compress_weights(
             model,
-            mode=CompressWeightsMode.INT4_SYM,
-            ratio=ratio,
+            mode=mode,
             group_size=1,
             all_layers=True,
             sensitivity_metric=SensitivityMetric.WEIGHT_QUANTIZATION_ERROR,
             dataset=dataset,
-            advanced_parameters=nncf.AdvancedCompressionParameters(available_bits=available_bits),
+            advanced_parameters=nncf.AdvancedCompressionParameters(available_bits=available_bits, avg_bits=avg_bits),
         )
 
         # Verify model is compressed (basic sanity check)
         assert compressed_model is not None
 
     @pytest.mark.parametrize(
-        ("ratio", "description"),
+        ("avg_bits", "description"),
         (
             # Test case where greedy would be suboptimal but DP finds better solution
             # With different sensitivities, DP can allocate bits more efficiently
-            (0.5, "DP optimizes bit allocation across layers with varying sensitivities"),
-            (0.625, "DP balances between 4-bit and 8-bit for optimal loss"),
+            (4.0, "DP optimizes bit allocation across layers with varying sensitivities"),
+            (5.0, "DP balances between 4-bit and 8-bit for optimal loss"),
         ),
     )
-    def test_mixed_precision_dp_advantage(self, ratio, description, mocker):
+    def test_mixed_precision_dp_advantage(self, avg_bits, description, mocker):
         """
         Test that DP-based selection can find better solutions than greedy.
 
@@ -320,12 +321,11 @@ class TemplateWeightCompression(ABC):
         compressed_model = compress_weights(
             model,
             mode=CompressWeightsMode.INT4_SYM,
-            ratio=ratio,
             group_size=1,
             all_layers=True,
             sensitivity_metric=SensitivityMetric.WEIGHT_QUANTIZATION_ERROR,
             dataset=dataset,
-            advanced_parameters=nncf.AdvancedCompressionParameters(available_bits=[2, 4, 8]),
+            advanced_parameters=nncf.AdvancedCompressionParameters(available_bits=[2, 4, 8], avg_bits=avg_bits),
         )
         # Verify model is compressed (basic sanity check)
         assert compressed_model is not None
