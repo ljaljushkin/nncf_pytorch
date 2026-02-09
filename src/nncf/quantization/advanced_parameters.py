@@ -417,6 +417,11 @@ class AdvancedCompressionParameters:
     :param min_adjusted_group_size: Minimum group size for adjustable group size searching. Defaults to 32. The reason
         behind this argument is to avoid too small group size values, which may lead to performance issues.
     :type min_adjusted_group_size: int
+    :param available_bits: List of available bit-widths for mixed precision selection. When provided with more than
+        2 values (e.g., [2, 4, 8]), enables dynamic programming based bit selection to minimize loss while
+        staying within the bit budget. If None or only 2 values, uses simple ratio-based selection for
+        backward compatibility. Defaults to None.
+    :type available_bits: Optional[list[int]]
     :param awq_params: Advanced parameters for AWQ algorithm.
     :type awq_params: AdvancedAWQParameters
     :param scale_estimation_params: Advanced parameters for Scale Estimation algorithm.
@@ -438,6 +443,7 @@ class AdvancedCompressionParameters:
     lora_adapter_rank: int = 256
     group_size_fallback_mode: GroupSizeFallbackMode = GroupSizeFallbackMode.ERROR
     min_adjusted_group_size: int = 32
+    available_bits: Optional[list[int]] = None
     awq_params: AdvancedAWQParameters = field(default_factory=AdvancedAWQParameters)
     scale_estimation_params: AdvancedScaleEstimationParameters = field(
         default_factory=AdvancedScaleEstimationParameters

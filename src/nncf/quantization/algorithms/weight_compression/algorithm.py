@@ -370,8 +370,34 @@ class WeightCompression(Algorithm):
             advanced_parameters if advanced_parameters is not None else AdvancedCompressionParameters()
         )
 
+        # Determine primary and backup bits based on mode
+        primary_bits = self._get_mode_num_bits(mode)
+        backup_bits = 8  # Default backup is INT8
+
+        # Get available bits from advanced parameters or use default [backup, primary]
+        available_bits = (
+            self._advanced_parameters.available_bits
+            if hasattr(self._advanced_parameters, "available_bits") and self._advanced_parameters.available_bits
+            else [backup_bits, primary_bits]
+        )
+
+        # For 2-bit-option cases (backward compatible), keep ratio as-is (greedy mode uses weight fraction)
+        # For 3+ bit options (DP mode), convert ratio to bit ratio:
+        # old_ratio=0.8 means 80% in primary-bit → avg bits = ratio*primary + (1-ratio)*backup
+        # new_ratio = avg_bits / backup_bits
+        if len(set(available_bits)) > 2:
+            bit_ratio = (self._ratio * primary_bits + (1 - self._ratio) * backup_bits) / backup_bits
+        else:
+            bit_ratio = self._ratio
+
         criterion_cls = MIXED_PRECISION_CRITERIA.get(self._sensitivity_metric)
-        self._mixed_precision_algo = criterion_cls(self._ratio, self._subset_size)
+        self._mixed_precision_algo = criterion_cls(
+            bit_ratio,
+            self._subset_size,
+            primary_bits=primary_bits,
+            backup_bits=backup_bits,
+            available_bits=available_bits,
+        )
         self._statistics_path = self._advanced_parameters.statistics_path
 
         self._group_size_fallback_mode = self._advanced_parameters.group_size_fallback_mode
@@ -442,6 +468,30 @@ class WeightCompression(Algorithm):
     @property
     def backup_mode(self) -> CompressWeightsMode:
         return self._backup_mode
+
+    @staticmethod
+    def _get_mode_num_bits(mode: CompressWeightsMode) -> int:
+        """
+        Get the number of bits for a given compression mode.
+
+        :param mode: Compression mode.
+        :return: Number of bits.
+        """
+        if mode in [
+            CompressWeightsMode.INT8_SYM,
+            CompressWeightsMode.INT8_ASYM,
+            CompressWeightsMode.FP8_E4M3,
+            CompressWeightsMode.MXFP8_E4M3,
+            CompressWeightsMode.INT8,
+        ]:
+            return 8
+        if mode in [
+            CompressWeightsMode.INT2_SYM,
+            CompressWeightsMode.INT2_ASYM,
+        ]:
+            return 2
+        # INT4_SYM, INT4_ASYM, NF4, MXFP4, FP4, CB4, etc.
+        return 4
 
     def set_ignored_scope(self, ignored_scope: IgnoredScope) -> None:
         """
@@ -546,8 +596,10 @@ class WeightCompression(Algorithm):
         if self._all_layers:
             embedding_params = list(
                 filter(
-                    lambda wp: wp.node_with_weight.metatype in self._backend_entity.embedding_metatypes
-                    and len(wp.reduction_axes) == 1,
+                    lambda wp: (
+                        wp.node_with_weight.metatype in self._backend_entity.embedding_metatypes
+                        and len(wp.reduction_axes) == 1
+                    ),
                     all_weight_params,
                 )
             )

@@ -611,6 +611,46 @@ WEIGHT_COMPRESSION_MODELS = [
         },
         "backends": [BackendType.OV, BackendType.TORCH, BackendType.FX_TORCH, BackendType.ONNX],
     },
+    # TinyLlama with 2/4/8 bits mixed precision using dynamic programming
+    {
+        "reported_name": "tinyllama_mixed_2_4_8_bits_ratio_0.5",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "group_size": 64,
+            "ratio": 0.5,
+            "mode": CompressWeightsMode.INT4_SYM,
+            "sensitivity_metric": SensitivityMetric.WEIGHT_QUANTIZATION_ERROR,
+            "advanced_parameters": AdvancedCompressionParameters(available_bits=[2, 4, 8]),
+        },
+        "backends": [BackendType.OV],
+    },
+    {
+        "reported_name": "tinyllama_mixed_2_4_8_bits_ratio_0.25",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "group_size": 64,
+            "ratio": 0.25,
+            "mode": CompressWeightsMode.INT4_SYM,
+            "sensitivity_metric": SensitivityMetric.WEIGHT_QUANTIZATION_ERROR,
+            "advanced_parameters": AdvancedCompressionParameters(available_bits=[2, 4, 8]),
+        },
+        "backends": [BackendType.OV],
+    },
+    {
+        "reported_name": "tinyllama_mixed_2_4_8_bits_ratio_0.75",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "group_size": 64,
+            "ratio": 0.75,
+            "mode": CompressWeightsMode.INT4_SYM,
+            "sensitivity_metric": SensitivityMetric.WEIGHT_QUANTIZATION_ERROR,
+            "advanced_parameters": AdvancedCompressionParameters(available_bits=[2, 4, 8]),
+        },
+        "backends": [BackendType.OV],
+    },
 ]
 
 

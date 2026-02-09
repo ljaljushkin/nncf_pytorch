@@ -72,6 +72,9 @@ class ONNXWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
         CompressWeightsMode.INT8_ASYM: onnx.TensorProto.UINT8,
         CompressWeightsMode.INT4_SYM: onnx.TensorProto.INT4,
         CompressWeightsMode.INT4_ASYM: onnx.TensorProto.UINT4,
+        # INT2 values are stored using INT4 format (simpler than proper 2-bit packing)
+        CompressWeightsMode.INT2_SYM: onnx.TensorProto.INT4,
+        CompressWeightsMode.INT2_ASYM: onnx.TensorProto.UINT4,
     }
 
     def __init__(self, model: onnx.ModelProto):
