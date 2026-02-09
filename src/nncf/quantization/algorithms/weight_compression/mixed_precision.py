@@ -300,15 +300,19 @@ class MixedPrecisionCriterion(Algorithm):
         # Create mapping from layer name to selected bits
         layer_bits_map = {layer_name: bits for layer_name, bits in best_path}
 
-        # Calculate statistics
+        # Calculate statistics and collect per-layer info
         actual_bits_used = 0
         bits_distribution = {bits: 0 for bits in self._available_bits}
+        weights_per_bits = {bits: 0 for bits in self._available_bits}
+        per_layer_info = []  # List of (num_weights, precision) tuples per layer
 
         for wp in weight_params:
             layer_name = wp.node_with_weight.node_name
             selected_bits = layer_bits_map.get(layer_name, self._backup_bits)
             actual_bits_used += int(wp.num_weights) * selected_bits
             bits_distribution[selected_bits] += 1
+            weights_per_bits[selected_bits] += int(wp.num_weights)
+            per_layer_info.append((int(wp.num_weights), selected_bits))
 
             # Assign compression config based on selected bits
             mode = self._get_compression_mode_for_bits(selected_bits, is_asym=True)
@@ -320,6 +324,8 @@ class MixedPrecisionCriterion(Algorithm):
         nncf_logger.info(f"Mixed precision (DP): Actual avg bits per weight: {avg_bits:.3f}")
         nncf_logger.info(f"Mixed precision (DP): Bit budget utilization: {compression_ratio:.2%}")
         nncf_logger.info(f"Mixed precision (DP): Layer distribution by bits: {bits_distribution}")
+        nncf_logger.debug(f"Mixed precision (DP): Weights per bit-width: {weights_per_bits}")
+        nncf_logger.debug(f"Mixed precision (DP): Per-layer (num_weights, bits): {per_layer_info}")
 
         # Return all weight_params since DP sets compression config for all layers
         # This prevents the caller from overwriting configs with backup precision
