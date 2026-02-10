@@ -41,7 +41,6 @@ from nncf.parameters import CompressWeightsMode
 from nncf.parameters import StripFormat
 from nncf.quantization.advanced_parameters import AdvancedAWQParameters
 from nncf.quantization.advanced_parameters import AdvancedCompressionParameters
-from nncf.quantization.advanced_parameters import AdvancedScaleEstimationParameters
 from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.function_hook.wrapper import get_hook_storage
 from nncf.torch.model_creation import load_from_config
@@ -331,7 +330,7 @@ def main(argv) -> float:
     pprint({"CLI arguments": vars(args), "Major compression parameters": compression_config})
     compression_config["advanced_parameters"] = AdvancedCompressionParameters(
         awq_params=AdvancedAWQParameters(prefer_data_aware_scaling=not args.basic_init),
-        scale_estimation_params=AdvancedScaleEstimationParameters(subset_size=-1, initial_steps=10, scale_steps=10),
+        # scale_estimation_params=AdvancedScaleEstimationParameters(subset_size=-1, initial_steps=10, scale_steps=10),
         lora_adapter_rank=args.lora_rank,
     )
     # Configure output and log files.

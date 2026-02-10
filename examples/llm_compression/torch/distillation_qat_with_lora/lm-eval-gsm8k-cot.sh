@@ -196,14 +196,39 @@ OUT_DIR="$ROOT_DIR/output"
 # --apply_chat_template \
 # --batch_size auto
 
-# sm=
-# fm=
+# fm=0.3707
+# sm=0.3632
 # SE, lora_rank=64, gs=32
-CKPT_DIR="$OUT_DIR/initial_rank64_gs32/stripped"
-lm_eval \
---model vllm \
---model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
---tasks gsm8k \
---fewshot_as_multiturn \
---apply_chat_template \
---batch_size auto
+# CKPT_DIR="$OUT_DIR/initial_rank64_gs32/stripped"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+# fm=0.0265
+# sm=0.0061
+# SE, lora_rank=64, gs=32 (SE2)
+# CKPT_DIR="$OUT_DIR/initial_rank64_gs32_SE2/stripped"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+
+# fm=0.4579
+# sm=0.4481
+# https://huggingface.co/kaitchup/Qwen3-8B-autoround-2bit-gptq
+# CKPT_DIR=kaitchup/Qwen3-8B-autoround-2bit-gptq
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
