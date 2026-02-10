@@ -428,7 +428,9 @@ def main(argv) -> float:
             save_checkpoint(model, ckpt_file, model_state=not args.basic_init)
 
     model = nncf.strip(model, strip_format=nncf.StripFormat.IN_PLACE)
-    model.save_pretrained(output_dir / "stripped")
+    model.save_pretrained(last_dir / "stripped")
+    tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
+    tokenizer.save_pretrained(last_dir / "stripped")
     # del model
     # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
     # model_for_eval = export_to_openvino(args.pretrained, ckpt_file, ckpt_file.parent)
