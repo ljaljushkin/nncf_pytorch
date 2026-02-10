@@ -53,7 +53,7 @@ class WeightCompressionConfig:
             CompressWeightsMode.MXFP8_E4M3,
         ]:
             return 8
-        return 4
+        return 2
 
     @property
     def is_asym_mode(self):

@@ -41,6 +41,7 @@ from nncf.parameters import CompressWeightsMode
 from nncf.parameters import StripFormat
 from nncf.quantization.advanced_parameters import AdvancedAWQParameters
 from nncf.quantization.advanced_parameters import AdvancedCompressionParameters
+from nncf.quantization.advanced_parameters import AdvancedScaleEstimationParameters
 from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.function_hook.wrapper import get_hook_storage
 from nncf.torch.model_creation import load_from_config
@@ -162,7 +163,7 @@ def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[s
     adapters_to_train = []
     hook_storage = get_hook_storage(model)
     for _, module in hook_storage.named_hooks():
-        if isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer)) and (module.num_bits == 4):
+        if isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer)) and (module.num_bits in [4, 2]):
             module.enable_gradients()
             params = module.get_trainable_params()
             adapters = module.get_adapters()
@@ -253,7 +254,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pretrained",
         type=str,
-        default="HuggingFaceTB/SmolLM-1.7B-Instruct",
+        default="Qwen/Qwen3-8B",
         help="The model id or path of a pretrained HF model configuration.",
     )
     parser.add_argument(
@@ -268,7 +269,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
         help="Whether to start from previously saved checkpoint. If not specified or checkpoint does not exist, "
         "start from scratch by post-training weight compression initialization.",
     )
-    parser.add_argument("--lora_rank", type=int, default=256, help="Rank of lora adapters")
+    parser.add_argument("--lora_rank", type=int, default=64, help="Rank of lora adapters")
     parser.add_argument(
         "--basic_init",
         action="store_true",
@@ -279,8 +280,8 @@ def get_argument_parser() -> argparse.ArgumentParser:
     )
 
     # Data params
-    parser.add_argument("--num_train_samples", type=int, default=1024, help="Number of training samples")
-    parser.add_argument("--train_seqlen", type=int, default=1024, help="Train data context length.")
+    parser.add_argument("--num_train_samples", type=int, default=512, help="Number of training samples")
+    parser.add_argument("--train_seqlen", type=int, default=512, help="Train data context length.")
     parser.add_argument("--eval_seqlen", type=int, default=2048, help="Evaluation data context length.")
     parser.add_argument(
         "--limit",
@@ -298,12 +299,12 @@ def get_argument_parser() -> argparse.ArgumentParser:
         help="Learning rate for fine-tuning. "
         "For larger models (over 3 billion parameters), a learning rate of 5e-5 is recommended.",
     )
-    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs.")
-    parser.add_argument("--batch_size", type=int, default=32, help="Size of training batch.")
+    parser.add_argument("--epochs", type=int, default=1, help="Number of epochs.")
+    parser.add_argument("--batch_size", type=int, default=8, help="Size of training batch.")
     parser.add_argument(
         "--microbatch_size",
         type=int,
-        default=2,
+        default=1,
         help="Size of each training microbatch. Gradients will be accumulated until the batch size is reached.",
     )
     return parser
@@ -322,7 +323,7 @@ def main(argv) -> float:
     torch_dtype = torch.bfloat16
     compression_config = dict(
         mode=CompressWeightsMode.INT4_ASYM,
-        group_size=64,
+        group_size=32,
         awq=not args.basic_init,
         scale_estimation=not args.basic_init,
         compression_format=CompressionFormat.FQ_LORA,
@@ -330,6 +331,7 @@ def main(argv) -> float:
     pprint({"CLI arguments": vars(args), "Major compression parameters": compression_config})
     compression_config["advanced_parameters"] = AdvancedCompressionParameters(
         awq_params=AdvancedAWQParameters(prefer_data_aware_scaling=not args.basic_init),
+        scale_estimation_params=AdvancedScaleEstimationParameters(subset_size=-1, initial_steps=10, scale_steps=10),
         lora_adapter_rank=args.lora_rank,
     )
     # Configure output and log files.
@@ -341,6 +343,7 @@ def main(argv) -> float:
     for path in [output_dir, tensorboard_dir, last_dir]:
         path.mkdir(exist_ok=True, parents=True)
     ckpt_file = last_dir / "nncf_checkpoint.pth"
+    hidden_file = output_dir / "hiddens.pth"
     print(f"To visualize the loss and validation metrics, open Tensorboard using the logs from: {tensorboard_dir}")
     tb = SummaryWriter(tensorboard_dir, "QAT with absorbable LoRA")
 
@@ -360,7 +363,11 @@ def main(argv) -> float:
         dataset = Dataset(map(get_model_input, calib_loader))
 
     # Pre-compute hiddens of teacher model for distillation loss.
-    orig_hiddens = calc_hiddens(model, train_loader)
+    if hidden_file.exists():
+        orig_hiddens = torch.load(hidden_file, weights_only=False, map_location="cpu")
+    else:
+        orig_hiddens = calc_hiddens(model, train_loader)
+        torch.save(orig_hiddens, hidden_file)
 
     # Create or load model to tune with Fake Quantizers and absorbable LoRA adapters.
     if args.resume and ckpt_file.exists():
@@ -416,19 +423,23 @@ def main(argv) -> float:
                 loss_numerator = grad_steps = 0
                 total_steps += 1
                 tb.add_scalar("loss", aggregated_loss, total_steps)
+        if epoch == 0:
+            save_checkpoint(model, last_dir / "nncf_checkpoint_0.pth", model_state=not args.basic_init)
+        else:
+            save_checkpoint(model, ckpt_file, model_state=not args.basic_init)
 
-        save_checkpoint(model, ckpt_file, model_state=not args.basic_init)
-
-    del model
+    model = nncf.strip(model, strip_format=nncf.StripFormat.IN_PLACE)
+    model.save_pretrained(output_dir / "stripped")
+    # del model
     # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
-    model_for_eval = export_to_openvino(args.pretrained, ckpt_file, ckpt_file.parent)
-    ov_perplexity = measure_perplexity(model_for_eval, args.eval_seqlen, args.limit)
-    tb.add_scalar("ov_perplexity", ov_perplexity, 0)
-    print(
-        f"The finetuned model has been exported to OpenVINO and saved to: {last_dir}\n"
-        f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
-    )
-    return ov_perplexity
+    # model_for_eval = export_to_openvino(args.pretrained, ckpt_file, ckpt_file.parent)
+    # ov_perplexity = measure_perplexity(model_for_eval, args.eval_seqlen, args.limit)
+    # tb.add_scalar("ov_perplexity", ov_perplexity, 0)
+    # print(
+    #     f"The finetuned model has been exported to OpenVINO and saved to: {last_dir}\n"
+    #     f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
+    # )
+    # return ov_perplexity
 
 
 if __name__ == "__main__":
