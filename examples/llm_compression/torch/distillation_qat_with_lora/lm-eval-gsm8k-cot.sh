@@ -258,3 +258,15 @@ OUT_DIR="$ROOT_DIR/output"
 # --fewshot_as_multiturn \
 # --apply_chat_template \
 # --batch_size auto
+
+# fm=
+# sm=
+# 15 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=64/128, avg 3 (ar config)
+CKPT_DIR="$OUT_DIR/last/stripped"
+lm_eval \
+--model vllm \
+--model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+--tasks gsm8k \
+--fewshot_as_multiturn \
+--apply_chat_template \
+--batch_size auto

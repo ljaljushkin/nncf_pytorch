@@ -1099,15 +1099,31 @@ class WeightCompression(Algorithm):
         self.apply_mixed_precision(ratio_defining_params, model, graph, statistic_points)
         self.validate_group_size(ratio_defining_params)
 
-        # TEMP HACK: Set num_bits=4 for all v_proj and first 5 down_proj layers
-        down_proj_count = 0
-        for w_params in ratio_defining_params:
-            weight_name = w_params.weight_name
-            if "v_proj" in weight_name:
-                w_params.compression_config._num_bits = 4
-            elif "down_proj" in weight_name and down_proj_count < 5:
-                w_params.compression_config._num_bits = 4
-                down_proj_count += 1
+        # TEMP HACK: Override group_size and num_bits from ar_config.json
+        import json
+
+        ar_config_path = (
+            "/home/nlyaly/projects/nncf/examples/llm_compression/torch/distillation_qat_with_lora/ar_config.json"
+        )
+        try:
+            with open(ar_config_path) as f:
+                ar_config = json.load(f)
+            for w_params in ratio_defining_params:
+                weight_name = w_params.weight_name
+                # Try to match weight name with config keys (check if config key is in weight name)
+                for config_key, config_values in ar_config.items():
+                    if config_key in weight_name:
+                        w_params.compression_config._num_bits = config_values["bits"]
+                        w_params.compression_config.group_size = config_values["group_size"]
+                        nncf_logger.debug(
+                            f"Overriding {weight_name}: bits={config_values['bits']}, group_size={config_values['group_size']}"  # noqa: E501
+                        )
+                        break
+            nncf_logger.info(f"Applied ar_config.json overrides from {ar_config_path}")
+        except FileNotFoundError:
+            nncf_logger.warning(f"ar_config.json not found at {ar_config_path}, skipping overrides")
+        except Exception as e:
+            nncf_logger.warning(f"Failed to apply ar_config.json overrides: {e}")
         # END TEMP HACK
 
         # Print statistics
@@ -1167,6 +1183,7 @@ class WeightCompression(Algorithm):
                 num_bits = w_params.compression_config.num_bits
                 weight_name = w_params.weight_name
                 clear_weight_name = "".join(filter(lambda x: x.isalpha(), weight_name))
+                clear_weight_name.replace("model", "").replace("weight", "").replace("layers", "")
                 num_bits_clear_name_stats[num_bits][clear_weight_name] += 1
         # Log the statistics by clear weight names
         if num_bits_clear_name_stats:
