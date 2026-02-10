@@ -53,7 +53,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-c",
         "--ckpt_file",
-        default="output/last/nncf_checkpoint_0.pth",
+        default="output/last/nncf_checkpoint.pth",
         type=str,
     )
     return parser
@@ -68,13 +68,13 @@ def main(argv) -> float:
     args = parser.parse_args(argv)
 
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
-    save_dir = Path(args.ckpt_file).parent / "stripped_0epoch"
+    save_dir = Path(args.ckpt_file).parent / "stripped_5epoch"
     tokenizer.save_pretrained(save_dir)
 
-    model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch.bfloat16, device_map="cpu")
-    model = load_checkpoint(model, args.ckpt_file)
-    model = nncf.strip(model, strip_format=nncf.StripFormat.IN_PLACE)
-    model.save_pretrained(save_dir)
+    # model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch.bfloat16, device_map="cpu")
+    # model = load_checkpoint(model, args.ckpt_file)
+    # model = nncf.strip(model, strip_format=nncf.StripFormat.IN_PLACE)
+    # model.save_pretrained(save_dir)
 
 
 if __name__ == "__main__":

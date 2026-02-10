@@ -381,7 +381,7 @@ class WeightCompression(Algorithm):
         )
 
         # Determine primary and backup bits based on mode
-        primary_bits = self._get_mode_num_bits(mode)
+        primary_bits = WeightCompressionConfig(mode=mode).num_bits
 
         # Get available bits from advanced parameters or use default [backup, primary]
         available_bits_provided = (
@@ -456,8 +456,8 @@ class WeightCompression(Algorithm):
                 codebook_estimation_params.num_elements,
             )
 
-        self._data_aware_mixed_precision = (
-            self._sensitivity_metric != SensitivityMetric.WEIGHT_QUANTIZATION_ERROR and self._ratio != 1.0
+        self._data_aware_mixed_precision = self._sensitivity_metric != SensitivityMetric.WEIGHT_QUANTIZATION_ERROR and (
+            self._ratio != 1.0 or available_bits_provided
         )
         self._data_aware_compression = (
             (self._awq and self._advanced_parameters.awq_params.prefer_data_aware_scaling)
@@ -486,30 +486,6 @@ class WeightCompression(Algorithm):
     @property
     def backup_mode(self) -> CompressWeightsMode:
         return self._backup_mode
-
-    @staticmethod
-    def _get_mode_num_bits(mode: CompressWeightsMode) -> int:
-        """
-        Get the number of bits for a given compression mode.
-
-        :param mode: Compression mode.
-        :return: Number of bits.
-        """
-        if mode in [
-            CompressWeightsMode.INT8_SYM,
-            CompressWeightsMode.INT8_ASYM,
-            CompressWeightsMode.FP8_E4M3,
-            CompressWeightsMode.MXFP8_E4M3,
-            CompressWeightsMode.INT8,
-        ]:
-            return 8
-        if mode in [
-            CompressWeightsMode.INT2_SYM,
-            CompressWeightsMode.INT2_ASYM,
-        ]:
-            return 2
-        # INT4_SYM, INT4_ASYM, NF4, MXFP4, FP4, CB4, etc.
-        return 4
 
     def set_ignored_scope(self, ignored_scope: IgnoredScope) -> None:
         """
@@ -1174,14 +1150,14 @@ class WeightCompression(Algorithm):
         self.validate_group_size(ratio_defining_params)
 
         # TEMP HACK: Set num_bits=4 for all v_proj and first 5 down_proj layers
-        down_proj_count = 0
-        for w_params in ratio_defining_params:
-            weight_name = w_params.weight_name
-            if "v_proj" in weight_name:
-                w_params.compression_config._num_bits = 4
-            elif "down_proj" in weight_name and down_proj_count < 5:
-                w_params.compression_config._num_bits = 4
-                down_proj_count += 1
+        # down_proj_count = 0
+        # for w_params in ratio_defining_params:
+        #     weight_name = w_params.weight_name
+        #     if "v_proj" in weight_name:
+        #         w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
+        #     elif "down_proj" in weight_name and down_proj_count < 5:
+        #         w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
+        #         down_proj_count += 1
         # END TEMP HACK
 
         # Print statistics

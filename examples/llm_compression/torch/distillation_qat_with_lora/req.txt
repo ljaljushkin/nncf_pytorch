@@ -139,7 +139,6 @@ nest-asyncio==1.6.0
 networkx==3.4.2
 ninja==1.13.0
 nltk==3.9.2
--e git+https://github.com/openvinotoolkit/nncf.git@2aa0aef82a005046c155d62a712da52662a82e05#egg=nncf
 numba==0.61.2
 numexpr==2.14.1
 numpy==2.2.6
@@ -216,7 +215,7 @@ pymoo==0.6.1.6
 pyparsing==3.2.5
 PyPcre==0.2.5
 pytablewriter==1.2.1
-pytest==8.0.2
+pytest
 pytest-cov==4.1.0
 pytest-dependency==0.6.0
 pytest-forked==1.6.0
@@ -296,7 +295,7 @@ wcwidth==0.6.0
 websockets==15.0.1
 Werkzeug==3.1.5
 wheel==0.46.3
-whowhatbench @ file:///home/nlyaly/projects/openvino.genai/tools/who_what_benchmark
+#whowhatbench @ file:///home/nlyaly/projects/openvino.genai/tools/who_what_benchmark
 word2number==1.1
 wrapt==2.0.1
 xformers==0.0.33.post1

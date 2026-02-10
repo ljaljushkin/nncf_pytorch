@@ -40,7 +40,6 @@ class WeightCompressionConfig:
     mode: Optional[CompressWeightsMode] = CompressWeightsMode.INT8_ASYM
     group_size: Optional[int] = -1
     codebook_values: Optional[TTensor] = None
-    _num_bits: int = 2
 
     @property
     def num_bits(self):
@@ -50,6 +49,7 @@ class WeightCompressionConfig:
         if self.mode in [
             CompressWeightsMode.INT8_SYM,
             CompressWeightsMode.INT8_ASYM,
+            CompressWeightsMode.INT8,
             CompressWeightsMode.FP8_E4M3,
             CompressWeightsMode.MXFP8_E4M3,
         ]:
@@ -59,6 +59,11 @@ class WeightCompressionConfig:
             CompressWeightsMode.INT2_ASYM,
         ]:
             return 2
+        if self.mode in [CompressWeightsMode.CODEBOOK, CompressWeightsMode.ADAPTIVE_CODEBOOK]:
+            n_quants = self.codebook_values.size
+            return int(np.log2(n_quants))
+
+        # INT4_SYM, INT4_ASYM, NF4, CB4, MXFP4, FP4
         return 4
 
     @property

@@ -315,7 +315,7 @@ class MixedPrecisionCriterion(Algorithm):
             per_layer_info.append((int(wp.num_weights), selected_bits))
 
             # Assign compression config based on selected bits
-            mode = self._get_compression_mode_for_bits(selected_bits, is_asym=True)
+            mode = self._get_compression_mode_for_bits(selected_bits, is_asym=wp.compression_config.is_asym_mode)
             wp.compression_config = WeightCompressionConfig(mode=mode, group_size=wp.compression_config.group_size)
 
         avg_bits = actual_bits_used / total_weights if total_weights > 0 else 0

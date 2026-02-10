@@ -321,7 +321,7 @@ def main(argv) -> float:
     device = "cuda"
     torch_dtype = torch.bfloat16
     compression_config = dict(
-        mode=CompressWeightsMode.INT4_ASYM,
+        mode=CompressWeightsMode.INT2_SYM,
         group_size=32,
         awq=not args.basic_init,
         scale_estimation=not args.basic_init,
@@ -329,6 +329,8 @@ def main(argv) -> float:
     )
     pprint({"CLI arguments": vars(args), "Major compression parameters": compression_config})
     compression_config["advanced_parameters"] = AdvancedCompressionParameters(
+        available_bits=[2, 4],
+        avg_bits=3,
         awq_params=AdvancedAWQParameters(prefer_data_aware_scaling=not args.basic_init),
         # scale_estimation_params=AdvancedScaleEstimationParameters(subset_size=-1, initial_steps=10, scale_steps=10),
         lora_adapter_rank=args.lora_rank,
