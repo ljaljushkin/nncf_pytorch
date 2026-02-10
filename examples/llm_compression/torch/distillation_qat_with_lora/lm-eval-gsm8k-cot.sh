@@ -272,9 +272,10 @@ OUT_DIR="$ROOT_DIR/output"
 # --apply_chat_template \
 # --batch_size auto
 
-# fm=
-# sm=
-# epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=32, mostly int2
+# fm=0.1289
+# sm=0
+# 0 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=32, avg 3bit, sym
+# OUT_DIR="$ROOT_DIR/output_avg3"
 # CKPT_DIR="$OUT_DIR/last/stripped"
 # lm_eval \
 # --model vllm \
@@ -283,3 +284,42 @@ OUT_DIR="$ROOT_DIR/output"
 # --fewshot_as_multiturn \
 # --apply_chat_template \
 # --batch_size auto
+
+# fm=0.2002
+# sm=0.0099
+# 1 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=32, avg 3bit, sym
+# OUT_DIR="$ROOT_DIR/output_avg3"
+# CKPT_DIR="$OUT_DIR/last/stripped"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+# fm=0.1289
+# sm=0
+# 0 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=32, avg 3bit, Asym
+# OUT_DIR="$ROOT_DIR/output_avg3"
+# CKPT_DIR="$OUT_DIR/last/stripped"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+
+# fm=
+# sm=
+# 10 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=32, mostly int2
+CKPT_DIR="$OUT_DIR/last/stripped"
+lm_eval \
+--model vllm \
+--model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+--tasks gsm8k \
+--fewshot_as_multiturn \
+--apply_chat_template \
+--batch_size auto
