@@ -423,7 +423,7 @@ def main(argv) -> float:
                 total_steps += 1
                 tb.add_scalar("loss", aggregated_loss, total_steps)
         if epoch == 0:
-            save_checkpoint(model, last_dir / "nncf_checkpoint_0.pth", model_state=not args.basic_init)
+            save_checkpoint(model, last_dir / "nncf_checkpoint_after_first_epoch.pth", model_state=not args.basic_init)
         else:
             save_checkpoint(model, ckpt_file, model_state=not args.basic_init)
 

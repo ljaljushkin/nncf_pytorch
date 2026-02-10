@@ -40,6 +40,7 @@ class WeightCompressionConfig:
     mode: Optional[CompressWeightsMode] = CompressWeightsMode.INT8_ASYM
     group_size: Optional[int] = -1
     codebook_values: Optional[TTensor] = None
+    _num_bits: int = 2
 
     @property
     def num_bits(self):
@@ -53,7 +54,7 @@ class WeightCompressionConfig:
             CompressWeightsMode.MXFP8_E4M3,
         ]:
             return 8
-        return 2
+        return self._num_bits
 
     @property
     def is_asym_mode(self):

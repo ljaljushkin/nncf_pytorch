@@ -20,6 +20,7 @@ from transformers import AutoTokenizer
 import nncf
 from nncf.torch.function_hook.wrapper import get_hook_storage
 from nncf.torch.model_creation import load_from_config
+from nncf.torch.quantization.layers import AsymmetricLoraQuantizer  # noqa: F401
 
 
 def load_checkpoint(model: nn.Module, ckpt_file: Path) -> nn.Module:
@@ -52,7 +53,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-c",
         "--ckpt_file",
-        default="output/last/nncf_checkpoint.pth",
+        default="output/last/nncf_checkpoint_0.pth",
         type=str,
     )
     return parser
@@ -67,7 +68,7 @@ def main(argv) -> float:
     args = parser.parse_args(argv)
 
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
-    save_dir = Path(args.ckpt_file).parent / "stripped"
+    save_dir = Path(args.ckpt_file).parent / "stripped_0epoch"
     tokenizer.save_pretrained(save_dir)
 
     model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch.bfloat16, device_map="cpu")

@@ -556,8 +556,10 @@ class WeightCompression(Algorithm):
         if self._all_layers:
             embedding_params = list(
                 filter(
-                    lambda wp: wp.node_with_weight.metatype in self._backend_entity.embedding_metatypes
-                    and len(wp.reduction_axes) == 1,
+                    lambda wp: (
+                        wp.node_with_weight.metatype in self._backend_entity.embedding_metatypes
+                        and len(wp.reduction_axes) == 1
+                    ),
                     all_weight_params,
                 )
             )
@@ -1088,6 +1090,7 @@ class WeightCompression(Algorithm):
         all_weight_params, ratio_defining_params, skipped_weight_params = self.get_weight_compression_parameters(
             model, graph
         )
+
         # Collect statistics for the weights compression
         statistics, statistic_points = self.collect_statistics_and_statistic_points(
             model, graph, statistic_points, dataset, ratio_defining_params, all_weight_params
@@ -1095,6 +1098,17 @@ class WeightCompression(Algorithm):
         # Apply Mixed precision algorithm to ratio defining parameters
         self.apply_mixed_precision(ratio_defining_params, model, graph, statistic_points)
         self.validate_group_size(ratio_defining_params)
+
+        # TEMP HACK: Set num_bits=4 for all v_proj and first 5 down_proj layers
+        down_proj_count = 0
+        for w_params in ratio_defining_params:
+            weight_name = w_params.weight_name
+            if "v_proj" in weight_name:
+                w_params.compression_config._num_bits = 4
+            elif "down_proj" in weight_name and down_proj_count < 5:
+                w_params.compression_config._num_bits = 4
+                down_proj_count += 1
+        # END TEMP HACK
 
         # Print statistics
         nncf_logger.info(
@@ -1133,6 +1147,36 @@ class WeightCompression(Algorithm):
         :param all_weight_params: List of all weight parameters.
         :return: Transformed model with compressed weights and inserted backend-specific decompressor.
         """
+        # Calculate statistics of layers by number of bits
+        num_bits_stats = defaultdict(int)
+        for w_params in all_weight_params:
+            if w_params.compression_config is not None:
+                num_bits = w_params.compression_config.num_bits
+                num_bits_stats[num_bits] += 1
+
+        # Log the statistics
+        if num_bits_stats:
+            nncf_logger.info("Layer distribution by number of bits:")
+            for num_bits in sorted(num_bits_stats.keys()):
+                nncf_logger.info(f"  {num_bits}-bit: {num_bits_stats[num_bits]} layers")
+
+        # Calculate statistics of layers by number of bits and clear weight names
+        num_bits_clear_name_stats = defaultdict(lambda: defaultdict(int))
+        for w_params in all_weight_params:
+            if w_params.compression_config is not None:
+                num_bits = w_params.compression_config.num_bits
+                weight_name = w_params.weight_name
+                clear_weight_name = "".join(filter(lambda x: x.isalpha(), weight_name))
+                num_bits_clear_name_stats[num_bits][clear_weight_name] += 1
+        # Log the statistics by clear weight names
+        if num_bits_clear_name_stats:
+            nncf_logger.info("Layer distribution by number of bits and clear weight names:")
+            for num_bits in sorted(num_bits_clear_name_stats.keys()):
+                nncf_logger.info(f"  {num_bits}-bit:")
+                for clear_name in sorted(num_bits_clear_name_stats[num_bits].keys()):
+                    count = num_bits_clear_name_stats[num_bits][clear_name]
+                    nncf_logger.info(f"    {clear_name}: {count} layers")
+
         if self._awq:
             model = self.awq_algo.apply(model, graph, all_weight_params, statistics, self._backend_entity)
             # After applying AWQ we need to update statistics since AWQ alters the activations
