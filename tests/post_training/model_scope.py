@@ -611,6 +611,56 @@ WEIGHT_COMPRESSION_MODELS = [
         },
         "backends": [BackendType.OV, BackendType.TORCH, BackendType.FX_TORCH, BackendType.ONNX],
     },
+    # TinyLlama with 2/4/8 bits mixed precision using dynamic programming
+    {
+        "reported_name": "tinyllama_mixed_2_4_8_bits_avg_4",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "group_size": 64,
+            "mode": CompressWeightsMode.INT4_SYM,
+            "sensitivity_metric": SensitivityMetric.WEIGHT_QUANTIZATION_ERROR,
+            "advanced_parameters": AdvancedCompressionParameters(available_bits=[2, 4, 8], avg_bits=4.0),
+        },
+        "backends": [BackendType.OV],
+    },
+    {
+        "reported_name": "tinyllama_mixed_2_4_8_bits_avg_3",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "group_size": 64,
+            "mode": CompressWeightsMode.INT2_SYM,
+            "sensitivity_metric": SensitivityMetric.WEIGHT_QUANTIZATION_ERROR,
+            "advanced_parameters": AdvancedCompressionParameters(available_bits=[2, 4], avg_bits=3.0),
+        },
+        "backends": [BackendType.OV],
+    },
+    {
+        "reported_name": "tinyllama_mixed_2_4_8_bits_avg_5",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "group_size": 64,
+            "mode": CompressWeightsMode.INT4_SYM,
+            "sensitivity_metric": SensitivityMetric.WEIGHT_QUANTIZATION_ERROR,
+            "advanced_parameters": AdvancedCompressionParameters(available_bits=[2, 4, 8], avg_bits=5.0),
+        },
+        "backends": [BackendType.OV],
+    },
+    {
+        "reported_name": "tinyllama_mixed_2_4_bits_backup_int8_avg_3",
+        "model_id": "tinyllama/tinyllama-1.1b-step-50k-105b",
+        "pipeline_cls": LMWeightCompression,
+        "compression_params": {
+            "group_size": 64,
+            "mode": CompressWeightsMode.INT2_SYM,
+            "backup_mode": BackupMode.INT8_ASYM,
+            "sensitivity_metric": SensitivityMetric.WEIGHT_QUANTIZATION_ERROR,
+            "advanced_parameters": AdvancedCompressionParameters(available_bits=[2, 4], avg_bits=3.0),
+        },
+        "backends": [BackendType.OV],
+    },
 ]
 
 

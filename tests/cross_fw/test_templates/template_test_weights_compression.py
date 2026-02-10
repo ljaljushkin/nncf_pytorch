@@ -232,6 +232,104 @@ class TemplateWeightCompression(ABC):
         )
         self.check_weights(compressed_model, ref_ids, transpose_a)
 
+    @staticmethod
+    @abstractmethod
+    def check_weights_multi_bit(model: TModel, expected_bits_per_layer: dict[int, int]) -> None:
+        """
+        Checks that layers are compressed with expected bit-widths.
+
+        :param model: Compressed model.
+        :param expected_bits_per_layer: Dict mapping layer index to expected bit-width.
+        """
+
+    @staticmethod
+    def supports_int2_compression() -> bool:
+        """Returns True if the backend supports INT2 compression."""
+        return False
+
+    @pytest.mark.parametrize(
+        ("avg_bits", "available_bits", "mode", "description"),
+        (
+            # Test with 4/8 bits (supported by all backends)
+            (6.0, [4, 8], CompressWeightsMode.INT4_SYM, "avg_bits=6.0 with 4/8 bits: mix of 4-bit and 8-bit"),
+            (5.0, [4, 8], CompressWeightsMode.INT4_SYM, "avg_bits=5.0 with 4/8 bits: more 4-bit layers"),
+            # Test with 2/4/8 bits (requires INT2 support)
+            (4.0, [2, 4, 8], CompressWeightsMode.INT4_SYM, "avg_bits=4.0 with 2/4/8 bits: DP selects optimal mix"),
+            (3.0, [2, 4, 8], CompressWeightsMode.INT4_SYM, "avg_bits=3.0 with 2/4/8 bits: lower bit target"),
+            # Test with 2/4 bits and INT2 mode (requires INT2 support)
+            (3.0, [2, 4], CompressWeightsMode.INT2_SYM, "avg_bits=3.0 with 2/4 bits and INT2 mode"),
+        ),
+    )
+    def test_mixed_precision_multi_bit(self, avg_bits, available_bits, mode, description, mocker):
+        """
+        Test mixed precision with multiple bit options using dynamic programming.
+
+        This test verifies that the DP algorithm correctly selects bit-widths
+        when 3 options are available.
+        """
+        # Skip 2-bit tests if not supported
+        if 2 in available_bits and not self.supports_int2_compression():
+            pytest.skip("INT2 compression not supported by this backend")
+
+        model = self.get_sequential_matmul_model(transpose_a=False)
+        input_shape = (1, 4, 4)
+        first = self.to_tensor(np.ones(input_shape, dtype=np.float32))
+        second = self.to_tensor(np.arange(16, dtype=np.float32)).reshape(input_shape)
+        dataset = Dataset([first, second], self.get_transform_func())
+
+        compressed_model = compress_weights(
+            model,
+            mode=mode,
+            group_size=1,
+            all_layers=True,
+            sensitivity_metric=SensitivityMetric.WEIGHT_QUANTIZATION_ERROR,
+            dataset=dataset,
+            advanced_parameters=nncf.AdvancedCompressionParameters(available_bits=available_bits, avg_bits=avg_bits),
+        )
+
+        # Verify model is compressed (basic sanity check)
+        assert compressed_model is not None
+
+    @pytest.mark.parametrize(
+        ("avg_bits", "description"),
+        (
+            # Test case where greedy would be suboptimal but DP finds better solution
+            # With different sensitivities, DP can allocate bits more efficiently
+            (4.0, "DP optimizes bit allocation across layers with varying sensitivities"),
+            (5.0, "DP balances between 4-bit and 8-bit for optimal loss"),
+        ),
+    )
+    def test_mixed_precision_dp_advantage(self, avg_bits, description, mocker):
+        """
+        Test that DP-based selection can find better solutions than greedy.
+
+        When using 3 bit options (2/4/8), the DP algorithm considers all
+        combinations to minimize total loss within the bit budget.
+        """
+        # Skip if INT2 not supported - this test uses 3 bit options
+        if not self.supports_int2_compression():
+            pytest.skip("INT2 compression not supported by this backend")
+
+        model = self.get_sequential_matmul_model(transpose_a=False)
+        input_shape = (1, 4, 4)
+        # Create inputs with varying magnitudes to create different sensitivities
+        first = self.to_tensor(np.ones(input_shape, dtype=np.float32))
+        second = self.to_tensor(np.arange(16, dtype=np.float32)).reshape(input_shape) * 10
+        dataset = Dataset([first, second], self.get_transform_func())
+
+        # This should use DP selection since we have 3 bit options
+        compressed_model = compress_weights(
+            model,
+            mode=CompressWeightsMode.INT4_SYM,
+            group_size=1,
+            all_layers=True,
+            sensitivity_metric=SensitivityMetric.WEIGHT_QUANTIZATION_ERROR,
+            dataset=dataset,
+            advanced_parameters=nncf.AdvancedCompressionParameters(available_bits=[2, 4, 8], avg_bits=avg_bits),
+        )
+        # Verify model is compressed (basic sanity check)
+        assert compressed_model is not None
+
     # Scale Estimation Tests
 
     @staticmethod

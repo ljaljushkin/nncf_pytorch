@@ -39,6 +39,9 @@ DTYPE_MAP: dict[TensorDataType, ov.Type] = {
     TensorDataType.uint8: ov.Type.u8,
     TensorDataType.uint4: ov.Type.u4,
     TensorDataType.int4: ov.Type.i4,
+    # INT2 values stored using INT4 format (OpenVINO doesn't have native i2/u2 types)
+    TensorDataType.uint2: ov.Type.u4,
+    TensorDataType.int2: ov.Type.i4,
 }
 
 NATIVE_OV_CAST_DTYPES = [

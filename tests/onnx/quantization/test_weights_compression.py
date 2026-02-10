@@ -485,6 +485,32 @@ class TestONNXTemplateWeightCompression(TemplateWeightCompression):
         assert low_precision_nodes == names
 
     @staticmethod
+    def check_weights_multi_bit(model: onnx.ModelProto, expected_bits_per_layer: dict[int, int]) -> None:
+        """Check that layers are compressed with expected bit-widths."""
+        bit_to_dtype = {
+            2: onnx.TensorProto.INT2,
+            4: onnx.TensorProto.INT4,
+            8: onnx.TensorProto.INT8,
+        }
+        for layer_idx, expected_bits in expected_bits_per_layer.items():
+            expected_dtype = bit_to_dtype[expected_bits]
+            weight_name = f"W_{layer_idx}_quantized"
+            found = False
+            for init in model.graph.initializer:
+                if init.name == weight_name:
+                    assert init.data_type == expected_dtype, (
+                        f"Layer {layer_idx}: expected {expected_bits}-bit, got dtype {init.data_type}"
+                    )
+                    found = True
+                    break
+            # For 8-bit, weights might not be renamed to _quantized
+            if not found and expected_bits == 8:
+                # 8-bit layers may keep original name or be per-channel
+                continue
+            if not found:
+                raise AssertionError(f"Weight {weight_name} not found in model")
+
+    @staticmethod
     def get_not_supported_algorithms() -> list[str]:
         return ["gptq", "lora_correction"]
 

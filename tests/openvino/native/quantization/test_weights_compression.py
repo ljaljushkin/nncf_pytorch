@@ -2307,6 +2307,47 @@ class TestOVTemplateWeightCompression(TemplateWeightCompression):
         assert low_precision_nodes == names
 
     @staticmethod
+    def check_weights_multi_bit(model: ov.Model, expected_bits_per_layer: dict[int, int]) -> None:
+        """Check that layers are compressed with expected bit-widths."""
+        # INT2 values are stored using INT4 format (OpenVINO doesn't have native i2/u2 types)
+        bit_to_ov_type = {
+            2: ov.Type.i4,  # INT2 stored in INT4
+            4: ov.Type.i4,
+            8: ov.Type.i8,
+        }
+        for layer_idx, expected_bits in expected_bits_per_layer.items():
+            expected_type = bit_to_ov_type[expected_bits]
+            weight_name = f"weights_{layer_idx}"
+            found = False
+            for op in model.get_ordered_ops():
+                if op.get_friendly_name() == weight_name:
+                    assert op.get_element_type() == expected_type, (
+                        f"Layer {layer_idx}: expected {expected_bits}-bit ({expected_type}), "
+                        f"got {op.get_element_type()}"
+                    )
+                    found = True
+                    break
+            # For 8-bit, weights might be u8 instead of i8
+            if not found and expected_bits == 8:
+                # Check for unsigned 8-bit as well
+                for op in model.get_ordered_ops():
+                    if op.get_friendly_name() == weight_name:
+                        assert op.get_element_type() in (ov.Type.i8, ov.Type.u8), (
+                            f"Layer {layer_idx}: expected 8-bit, got {op.get_element_type()}"
+                        )
+                        found = True
+                        break
+            # 8-bit layers may not have quantized weights with this naming
+            if not found and expected_bits != 8:
+                msg = f"Weight {weight_name} not found in model"
+                raise AssertionError(msg)
+
+    @staticmethod
+    def supports_int2_compression() -> bool:
+        """OpenVINO supports INT2 compression (stored in INT4 format)."""
+        return True
+
+    @staticmethod
     def get_not_supported_algorithms() -> list[str]:
         return []
 
