@@ -9,7 +9,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import argparse
+import gc
+import json
+import os
 import shutil
+import subprocess
 import sys
 import warnings
 from datetime import datetime
@@ -93,6 +97,94 @@ def measure_perplexity(
     lm_obj = OptimumLM(pretrained=optimum_model, max_length=max_length)
     results = simple_evaluate(lm_obj, tasks=[task], limit=limit, log_samples=False)
     return results["results"][task]["word_perplexity,none"]
+
+
+def evaluate_with_vllm(
+    checkpoint_dir: Union[str, Path],
+    tasks: list[str],
+    tensor_parallel_size: int = 2,
+    dtype: str = "auto",
+    fewshot_as_multiturn: bool = True,
+    apply_chat_template: bool = True,
+    batch_size: str = "auto",
+    limit: Optional[Union[int, float]] = None,
+    cuda_devices: str = "1,2",
+) -> dict:
+    """
+    Evaluate a model using lm_eval with vLLM backend in a subprocess.
+
+    Runs evaluation in a subprocess to ensure CUDA_VISIBLE_DEVICES is set before
+    CUDA initialization, which is required for proper GPU memory management.
+
+    :param checkpoint_dir: Path to the model checkpoint directory.
+    :param tasks: List of evaluation tasks (e.g., ["gsm8k"]).
+    :param tensor_parallel_size: Number of GPUs for tensor parallelism.
+    :param dtype: Data type for the model (e.g., "auto", "float16", "bfloat16").
+    :param fewshot_as_multiturn: Whether to use fewshot examples as multi-turn conversation.
+    :param apply_chat_template: Whether to apply the chat template.
+    :param batch_size: Batch size for evaluation ("auto" for automatic).
+    :param limit: Limit the number of examples per task (only use this for testing).
+    :param cuda_devices: Comma-separated GPU IDs for CUDA_VISIBLE_DEVICES.
+    :return: Dictionary containing evaluation results.
+    """
+    print("#" * 50 + " Evaluate via lm-eval-harness (vLLM) " + "#" * 50)
+
+    checkpoint_path = str(checkpoint_dir)
+    model_args = f"pretrained={checkpoint_path},dtype={dtype},tensor_parallel_size={tensor_parallel_size}"
+
+    cmd = [
+        "lm_eval",
+        "--model",
+        "vllm",
+        "--model_args",
+        model_args,
+        "--tasks",
+        ",".join(tasks),
+        "--batch_size",
+        str(batch_size),
+        "--output_path",
+        str(checkpoint_dir / "lm_eval_results"),
+    ]
+    if fewshot_as_multiturn:
+        cmd.append("--fewshot_as_multiturn")
+    if apply_chat_template:
+        cmd.append("--apply_chat_template")
+    if limit is not None:
+        cmd.extend(["--limit", str(limit)])
+
+    # Set CUDA_VISIBLE_DEVICES in subprocess environment
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = cuda_devices
+
+    print(f"Running: CUDA_VISIBLE_DEVICES={cuda_devices} {' '.join(cmd)}")
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"STDOUT: {result.stdout}")
+        print(f"STDERR: {result.stderr}")
+        msg = f"lm_eval failed with return code {result.returncode}"
+        raise RuntimeError(msg)
+
+    # Parse results from the output JSON file
+    results_dir = checkpoint_dir / "lm_eval_results"
+    # Find the most recent results file
+    result_files = list(results_dir.glob("**/results.json"))
+    if not result_files:
+        msg = f"No results.json found in {results_dir}"
+        raise FileNotFoundError(msg)
+    latest_result = max(result_files, key=lambda p: p.stat().st_mtime)
+    with open(latest_result) as f:
+        results = json.load(f)
+
+    # Print results summary
+    print("\nEvaluation Results:")
+    for task_name, task_results in results["results"].items():
+        print(f"\n{task_name}:")
+        for metric, value in task_results.items():
+            if not metric.endswith("_stderr"):
+                print(f"  {metric}: {value}")
+
+    return results
 
 
 @torch.no_grad()
@@ -321,7 +413,7 @@ def main(argv) -> float:
     device = "cuda"
     torch_dtype = torch.bfloat16
     compression_config = dict(
-        mode=CompressWeightsMode.INT4_SYM,
+        mode=CompressWeightsMode.INT4_ASYM,
         group_size=64,
         awq=not args.basic_init,
         scale_estimation=not args.basic_init,
@@ -373,7 +465,7 @@ def main(argv) -> float:
         model = load_checkpoint(model, ckpt_file)
     else:
         model = compress_weights(model, dataset=dataset, **compression_config)
-        save_checkpoint(model, ckpt_file, model_state=not args.basic_init)
+        save_checkpoint(model, last_dir / "nncf_checkpoint_init.pth", model_state=not args.basic_init)
     fq_lr = args.lr / 10
     weight_decay = args.lr
     param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr)
@@ -431,6 +523,33 @@ def main(argv) -> float:
     model.save_pretrained(last_dir / "stripped")
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
     tokenizer.save_pretrained(last_dir / "stripped")
+
+    # Evaluate using lm_eval with vLLM backend (runs in subprocess for clean CUDA state)
+    # del model
+    # del opt
+    # del orig_hiddens
+    # del train_loader
+    # del dataset
+    # gc.collect()
+    # torch.cuda.synchronize()
+    # torch.cuda.empty_cache()
+    # torch.cuda.ipc_collect()
+    # stripped_dir = last_dir / "stripped"
+    # eval_results = evaluate_with_vllm(
+    #     checkpoint_dir=stripped_dir,
+    #     tasks=["gsm8k"],
+    #     tensor_parallel_size=2,
+    #     dtype="auto",
+    #     fewshot_as_multiturn=True,
+    #     cuda_devices="1,2",
+    #     apply_chat_template=True,
+    #     batch_size="auto",
+    #     limit=args.limit,
+    # )
+    # gsm8k_acc = eval_results["results"]["gsm8k"]["exact_match,strict-match"]
+    # tb.add_scalar("gsm8k_exact_match", gsm8k_acc, 0)
+    # print(f"GSM8K exact match accuracy: {gsm8k_acc:.4f}")
+
     # del model
     # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
     # model_for_eval = export_to_openvino(args.pretrained, ckpt_file, ckpt_file.parent)
@@ -441,6 +560,7 @@ def main(argv) -> float:
     #     f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
     # )
     # return ov_perplexity
+    # return gsm8k_acc
 
 
 if __name__ == "__main__":

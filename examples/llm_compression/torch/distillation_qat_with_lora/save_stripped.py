@@ -53,8 +53,16 @@ def get_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-c",
         "--ckpt_file",
-        default="output/last/nncf_checkpoint_0.pth",
+        default=None,
         type=str,
+        help="Single checkpoint file to process",
+    )
+    parser.add_argument(
+        "-o",
+        "--output_dir",
+        default="stripped",
+        type=str,
+        help="output directory",
     )
     return parser
 
@@ -67,14 +75,22 @@ def main(argv) -> float:
     parser = get_argument_parser()
     args = parser.parse_args(argv)
 
+    ckpt_file = Path(args.ckpt_file)
+    if not ckpt_file.exists():
+        msg = f"not found checkpoint: {ckpt_file}"
+        raise FileNotFoundError(msg)
+    print(f"Processing checkpoint: {ckpt_file}")
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
-    save_dir = Path(args.ckpt_file).parent / "stripped_0epoch"
+    save_dir = Path(args.output_dir)
+    if not save_dir.exists():
+        save_dir.mkdir(parents=True, exist_ok=True)
     tokenizer.save_pretrained(save_dir)
 
-    model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch.bfloat16, device_map="cpu")
-    model = load_checkpoint(model, args.ckpt_file)
+    model = AutoModelForCausalLM.from_pretrained(args.pretrained, device_map="cpu")
+    model = load_checkpoint(model, ckpt_file)
     model = nncf.strip(model, strip_format=nncf.StripFormat.IN_PLACE)
     model.save_pretrained(save_dir)
+    print(f"Saved stripped model to: {save_dir}")
 
 
 if __name__ == "__main__":

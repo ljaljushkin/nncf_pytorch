@@ -259,14 +259,159 @@ OUT_DIR="$ROOT_DIR/output"
 # --apply_chat_template \
 # --batch_size auto
 
-# fm=
-# sm=
+# fm=0.2199
+# sm=0.3306
 # 15 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=64/128, avg 3 (ar config)
-CKPT_DIR="$OUT_DIR/last/stripped"
+# OUT_DIR="$ROOT_DIR/output_avg3_ar"
+# CKPT_DIR="$OUT_DIR/last/stripped"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+
+# fm=0.2214
+# fm=0.1296
+# lora_rank=64, gs=64/128, avg 3 (ar config)
+# OUT_DIR="$ROOT_DIR/output_avg3_ar"
+# CKPT_DIR="$OUT_DIR/last/stripped_init"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+# fm=0.3146
+# sm=0.2843
+# 1 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=64/128, avg 3 (ar config)
+# OUT_DIR="$ROOT_DIR/output_avg3_ar"
+# CKPT_DIR="$OUT_DIR/last/stripped_after_first_epoch"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+# fm=0.2153
+# sm=0.0121
+# 0 epoch, lora_rank=64, gs=32, avg 3 (ar config)
+# OUT_DIR="$ROOT_DIR/output_avg3_ar"
+# CKPT_DIR="$OUT_DIR/last/stripped"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+
+# fm=0.2646
+# sm=0.0417
+# 2 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=32, avg 3 (ar config)
+# OUT_DIR="$ROOT_DIR/output_avg3_ar"
+# CKPT_DIR="$OUT_DIR/last/stripped"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+
+# fm=0.5504
+# sm=0.5383
+# 2 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=32, sym, mostly int2
+# CKPT_DIR="$OUT_DIR/last/stripped"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+# fm=0.533
+# sm=0.533
+# 1 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=32, sym, mostly int2
+# CKPT_DIR="$OUT_DIR/last/stripped_after_first_epoch"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+
+# fm=0.3207
+# sm=0.2229
+# 2 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=64/128, sym, mostly int2
+# fm=0.3692
+# sm=0.3359
+# 1 epoch
+# fm=0.0167
+# sm=0.0008
+# 0 epoch
+# CKPT_DIR="$OUT_DIR/last/stripped"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+#### 20 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=64/128, sym, all down/v-proj
+# fm=0.4549
+# sm=0.3760
+#### 1 epoch
+# fm=0.4284
+# sm=0.3677
+#### 0 epoch
+# fm=0.0743
+# sm=0.0758
+# CKPT_DIR="$OUT_DIR/last/stripped"
+# lm_eval \
+# --model vllm \
+# --model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+# --tasks gsm8k \
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --batch_size auto
+
+#### 2 epoch, num_samples=512, seq_len=512, lora_rank=64, nbs=1, bs=8, gs=128, sym, all int4
+# fm=0.1948
+# sm=0.0136
+#### 1 epoch
+# fm=0.2062
+# sm=0.0121
+#### 0 epoch
+# fm=0.1842
+# sm=0.0114
+
+
+
+# --fewshot_as_multiturn \
+# --apply_chat_template \
+# --model_args "{\"pretrained\":\"${MODEL_DIR}\",\"enable_thinking\":false,\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
+# --model_args pretrained=Qwen/Qwen3-8B,dtype=auto,tensor_parallel_size=2 \
+
+MODEL_DIR=Qwen/Qwen3-8B
+# MODEL_DIR=output/last/stripped
 lm_eval \
 --model vllm \
---model_args pretrained=$CKPT_DIR,dtype=auto,tensor_parallel_size=2 \
+--model_args "{\"pretrained\":\"${MODEL_DIR}\",\"enable_thinking\":false,\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
 --tasks gsm8k \
+--batch_size auto \
 --fewshot_as_multiturn \
 --apply_chat_template \
---batch_size auto
+--gen_kwargs do_sample=True,temperature=0.7,top_p=0.8,top_k=20,min_p=0,max_new_tokens=32768

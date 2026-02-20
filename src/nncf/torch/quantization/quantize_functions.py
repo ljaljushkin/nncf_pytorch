@@ -121,10 +121,16 @@ class QuantizeAsymmetric(torch.autograd.Function):
 class QuantizeSymmetricTorch(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_, input_shape, scale, level_low, level_high, levels):
+        # Old formula with signed scale.
         # range: [-scale, 7/8 * scale] if scale > 0 else [7/8 * scale, -scale]
         input_low = torch.where(scale > 0, -scale, -scale / level_low * level_high)
         # 15/8 * scale or (2-1/8) * scale
         input_range = torch.abs((2 + 1 / level_low) * scale)
+
+        # Same formula as QuantizeSymmetric - works for any bit-width
+        # range: [scale * level_low / level_high, scale]
+        # input_low = scale * (level_low / level_high)
+        # input_range = scale - input_low
         dtype = input_.dtype
         original_shape = input_.shape
         input_ = input_.reshape(input_shape)
