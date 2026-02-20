@@ -12,7 +12,6 @@
 Simple test for 2-bit symmetric quantization to verify the formula.
 """
 
-import pytest
 import torch
 
 
@@ -271,7 +270,7 @@ def analyze_formula_difference():
     input_low_orig = scale * (level_low / level_high)  # scale * (-2/1) = -2
     input_range_orig = scale - input_low_orig  # 1 - (-2) = 3
 
-    print(f"\nQuantizeSymmetric formula (WITH ZERO levels: {{-2, -1, 0, 1}}):")
+    print("\nQuantizeSymmetric formula (WITH ZERO levels: {-2, -1, 0, 1}):")
     print(f"  input_low = scale * (level_low / level_high) = {scale} * ({level_low}/{level_high}) = {input_low_orig}")
     print(f"  input_range = scale - input_low = {scale} - ({input_low_orig}) = {input_range_orig}")
     print(f"  Range: [{input_low_orig}, {input_low_orig + input_range_orig}]")
@@ -280,7 +279,7 @@ def analyze_formula_difference():
     input_low_torch = -scale  # -1
     input_range_torch = abs((2 + 1 / level_low) * scale)  # |(2 - 0.5) * 1| = 1.5
 
-    print(f"\nQuantizeSymmetricTorch formula (BROKEN for 2-bit):")
+    print("\nQuantizeSymmetricTorch formula (BROKEN for 2-bit):")
     print(f"  input_low = -scale = {input_low_torch}")
     print(f"  input_range = |(2 + 1/level_low) * scale| = |(2 + 1/{level_low}) * {scale}| = {input_range_torch}")
     print(f"  Range: [{input_low_torch}, {input_low_torch + input_range_torch}]")
@@ -289,16 +288,16 @@ def analyze_formula_difference():
     input_low_nozero = -1.5 * scale  # -1.5
     input_range_nozero = 3.0 * scale  # 3.0
 
-    print(f"\nNO ZERO formula (levels: {{-1.5, -0.5, 0.5, 1.5}}):")
+    print("\nNO ZERO formula (levels: {-1.5, -0.5, 0.5, 1.5}):")
     print(f"  input_low = -1.5 * scale = {input_low_nozero}")
     print(f"  input_range = 3.0 * scale = {input_range_nozero}")
     print(f"  Range: [{input_low_nozero}, {input_low_nozero + input_range_nozero}]")
-    print(f"  zero_point = -0.5 (offset to avoid zero in output)")
-    print(f"  ")
-    print(f"  Generic formula for no-zero symmetric:")
-    print(f"    input_low = (level_low + 0.5) * scale / level_high")
+    print("  zero_point = -0.5 (offset to avoid zero in output)")
+    print("  ")
+    print("  Generic formula for no-zero symmetric:")
+    print("    input_low = (level_low + 0.5) * scale / level_high")
     print(f"             = ({level_low} + 0.5) * {scale} / {level_high} = {(level_low + 0.5) * scale / level_high}")
-    print(f"    input_range = scale * (level_high - level_low) / level_high")
+    print("    input_range = scale * (level_high - level_low) / level_high")
     print(
         f"               = {scale} * ({level_high} - {level_low}) / {level_high} = {scale * (level_high - level_low) / level_high}"
     )

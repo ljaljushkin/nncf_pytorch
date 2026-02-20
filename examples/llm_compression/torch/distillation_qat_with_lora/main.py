@@ -9,7 +9,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import argparse
-import gc
 import json
 import os
 import shutil
@@ -433,7 +432,7 @@ def main(argv) -> float:
         shutil.rmtree(last_dir, ignore_errors=True)
     for path in [output_dir, tensorboard_dir, last_dir]:
         path.mkdir(exist_ok=True, parents=True)
-    ckpt_file = last_dir / "nncf_checkpoint.pth"
+    ckpt_file = last_dir / "nncf_checkpoint_zero_lora.pth"
     hidden_file = output_dir / "hiddens.pth"
     print(f"To visualize the loss and validation metrics, open Tensorboard using the logs from: {tensorboard_dir}")
     tb = SummaryWriter(tensorboard_dir, "QAT with absorbable LoRA")
@@ -465,11 +464,31 @@ def main(argv) -> float:
         model = load_checkpoint(model, ckpt_file)
     else:
         model = compress_weights(model, dataset=dataset, **compression_config)
-        save_checkpoint(model, last_dir / "nncf_checkpoint_init.pth", model_state=not args.basic_init)
+        save_checkpoint(model, last_dir / "nncf_checkpoint_zero_lora.pth", model_state=not args.basic_init)
+    from nncf_layerwise_ptq_tuner import ScaleTuner
+
+    model.requires_grad_(False)
+    tuner = ScaleTuner(model)
+    # tuner.tune(tb, num_steps=100, learning_rate_2bit=1e-3, learning_rate_4bit=1e-3, verbose=True)
+    tuner.tune(
+        tb,
+        num_steps=1000,
+        learning_rate_4bit=1e-3,  # Reasonable LR for SGD
+        learning_rate_2bit=1e-3,
+        layer_patterns=["layers:4:mlp:down_proj"],  # , "layers:15:mlp:down_proj"],
+        early_stop_patience=1000,
+        warmup_steps=0,  # 20 steps of linear warmup
+        min_lr_ratio=0.1,  # Anneal down to 1% of max LR
+        restore_best=True,
+    )
+    tuner.print_summary()
+    # save_checkpoint(model, last_dir / "nncf_checkpoint_tune_scales.pth", model_state=not args.basic_init)
+    exit()
+
     fq_lr = args.lr / 10
     weight_decay = args.lr
     param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr)
-    opt = torch.optim.AdamW(param_to_train, weight_decay=weight_decay)
+    opt = torch.optim.SGD(param_to_train, weight_decay=weight_decay)
 
     # Run tuning with distillation loss and validation after each epoch.
     grad_accumulation_steps = args.batch_size // args.microbatch_size

@@ -1100,48 +1100,49 @@ class WeightCompression(Algorithm):
         self.validate_group_size(ratio_defining_params)
 
         # # TEMP AR-HACK: Override group_size and num_bits from ar_config.json
-        # import json
+        import json
 
-        # ar_config_path = (
-        #     "/home/nlyaly/projects/nncf/examples/llm_compression/torch/distillation_qat_with_lora/ar_config.json"
-        # )
-        # try:
-        #     with open(ar_config_path) as f:
-        #         ar_config = json.load(f)
-        #     for w_params in ratio_defining_params:
-        #         weight_name = w_params.weight_name
-        #         # Try to match weight name with config keys (check if config key is in weight name)
-        #         for config_key, config_values in ar_config.items():
-        #             if config_key in weight_name:
-        #                 w_params.compression_config._num_bits = config_values["bits"]
-        #                 w_params.compression_config.group_size = 32  # config_values["group_size"]
-        #                 nncf_logger.debug(
-        #                     f"Overriding {weight_name}: bits={config_values['bits']}, group_size={config_values['group_size']}"  # noqa: E501
-        #                 )
-        #                 break
-        #     nncf_logger.info(f"Applied ar_config.json overrides from {ar_config_path}")
-        # except FileNotFoundError:
-        #     nncf_logger.warning(f"ar_config.json not found at {ar_config_path}, skipping overrides")
-        # except Exception as e:
-        #     nncf_logger.warning(f"Failed to apply ar_config.json overrides: {e}")
-        # # END TEMP AR-HACK
+        ar_config_path = (
+            "/home/nlyaly/projects/nncf/examples/llm_compression/torch/distillation_qat_with_lora/ar_config.json"
+        )
+        try:
+            with open(ar_config_path) as f:
+                ar_config = json.load(f)
+            for w_params in ratio_defining_params:
+                weight_name = w_params.weight_name
+                # Try to match weight name with config keys (check if config key is in weight name)
+                for config_key, config_values in ar_config.items():
+                    if config_key in weight_name:
+                        w_params.compression_config._num_bits = config_values["bits"]
+                        w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
+                        w_params.compression_config.group_size = 128  # config_values["group_size"]
+                        nncf_logger.debug(
+                            f"Overriding {weight_name}: bits={config_values['bits']}, group_size={config_values['group_size']}"  # noqa: E501
+                        )
+                        break
+            nncf_logger.info(f"Applied ar_config.json overrides from {ar_config_path}")
+        except FileNotFoundError:
+            nncf_logger.warning(f"ar_config.json not found at {ar_config_path}, skipping overrides")
+        except Exception as e:
+            nncf_logger.warning(f"Failed to apply ar_config.json overrides: {e}")
+        # END TEMP AR-HACK
 
         # TEMP GGUF-HACK: Set num_bits=4 for all v_proj and first 5 down_proj layers
-        down_proj_count = 0
-        for w_params in ratio_defining_params:
-            # w_params.compression_config._num_bits = 4
-            # w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
-            # w_params.compression_config.group_size = 128
-            weight_name = w_params.weight_name
-            if "v_proj" in weight_name:
-                w_params.compression_config._num_bits = 4
-                w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
-                w_params.compression_config.group_size = 128
-            elif "down_proj" in weight_name:  # and (down_proj_count < 5 or down_proj_count > 31):
-                w_params.compression_config._num_bits = 4
-                w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
-                w_params.compression_config.group_size = 128
-                down_proj_count += 1
+        # down_proj_count = 0
+        # for w_params in ratio_defining_params:
+        #     # w_params.compression_config._num_bits = 4
+        #     # w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
+        #     # w_params.compression_config.group_size = 128
+        #     weight_name = w_params.weight_name
+        #     if "v_proj" in weight_name:
+        #         w_params.compression_config._num_bits = 4
+        #         w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
+        #         w_params.compression_config.group_size = 128
+        #     elif "down_proj" in weight_name:  # and (down_proj_count < 5 or down_proj_count > 31):
+        #         w_params.compression_config._num_bits = 4
+        #         w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
+        #         w_params.compression_config.group_size = 128
+        #         down_proj_count += 1
         # END TEMP GGUF-HACK
 
         # Print statistics

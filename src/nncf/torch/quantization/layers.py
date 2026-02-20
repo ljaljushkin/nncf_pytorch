@@ -1119,7 +1119,7 @@ class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
 
     def enable_gradients(self) -> None:
         super().enable_gradients()
-        LoraMixin.enable_gradients(self)
+        # LoraMixin.enable_gradients(self)
 
     def disable_gradients(self) -> None:
         super().disable_gradients()
@@ -1127,7 +1127,7 @@ class AsymmetricLoraQuantizer(AsymmetricQuantizer, LoraMixin):
 
     def get_trainable_params(self) -> dict[str, torch.nn.Parameter]:
         params = super().get_trainable_params()
-        params.update(LoraMixin.get_adapters(self))
+        # params.update(LoraMixin.get_adapters(self))
         return params
 
     def get_config(self) -> dict[str, Any]:
@@ -1197,7 +1197,7 @@ class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
 
     def enable_gradients(self) -> None:
         super().enable_gradients()
-        LoraMixin.enable_gradients(self)
+        # LoraMixin.enable_gradients(self)
 
     def disable_gradients(self) -> None:
         super().disable_gradients()
@@ -1205,7 +1205,7 @@ class SymmetricLoraQuantizer(SymmetricQuantizer, LoraMixin):
 
     def get_trainable_params(self) -> dict[str, torch.Tensor]:
         params = super().get_trainable_params()
-        params.update(LoraMixin.get_adapters(self))
+        # params.update(LoraMixin.get_adapters(self))
         return params
 
     def get_config(self) -> dict[str, Any]:

@@ -414,4 +414,4 @@ lm_eval \
 --batch_size auto \
 --fewshot_as_multiturn \
 --apply_chat_template \
---gen_kwargs do_sample=True,temperature=0.7,top_p=0.8,top_k=20,min_p=0,max_new_tokens=32768
+--gen_kwargs do_sample=True,temperature=0.7,top_p=0.8,top_k=20,min_p=0
