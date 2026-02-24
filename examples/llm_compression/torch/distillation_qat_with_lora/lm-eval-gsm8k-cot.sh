@@ -405,8 +405,8 @@ OUT_DIR="$ROOT_DIR/output"
 # --model_args "{\"pretrained\":\"${MODEL_DIR}\",\"enable_thinking\":false,\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
 # --model_args pretrained=Qwen/Qwen3-8B,dtype=auto,tensor_parallel_size=2 \
 
-MODEL_DIR=Qwen/Qwen3-8B
-# MODEL_DIR=output/last/stripped
+# MODEL_DIR=Qwen/Qwen3-8B
+MODEL_DIR=output/last/stripped
 lm_eval \
 --model vllm \
 --model_args "{\"pretrained\":\"${MODEL_DIR}\",\"enable_thinking\":false,\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \

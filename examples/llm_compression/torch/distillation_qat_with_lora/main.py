@@ -432,7 +432,7 @@ def main(argv) -> float:
         shutil.rmtree(last_dir, ignore_errors=True)
     for path in [output_dir, tensorboard_dir, last_dir]:
         path.mkdir(exist_ok=True, parents=True)
-    ckpt_file = last_dir / "nncf_checkpoint_zero_lora.pth"
+    ckpt_file = last_dir / "nncf_checkpoint_svd_lora_se.pth"
     hidden_file = output_dir / "hiddens.pth"
     print(f"To visualize the loss and validation metrics, open Tensorboard using the logs from: {tensorboard_dir}")
     tb = SummaryWriter(tensorboard_dir, "QAT with absorbable LoRA")
@@ -464,26 +464,58 @@ def main(argv) -> float:
         model = load_checkpoint(model, ckpt_file)
     else:
         model = compress_weights(model, dataset=dataset, **compression_config)
-        save_checkpoint(model, last_dir / "nncf_checkpoint_zero_lora.pth", model_state=not args.basic_init)
+        save_checkpoint(model, last_dir / "nncf_checkpoint_svd_lora_se.pth", model_state=not args.basic_init)
+
     from nncf_layerwise_ptq_tuner import ScaleTuner
 
     model.requires_grad_(False)
     tuner = ScaleTuner(model)
-    # tuner.tune(tb, num_steps=100, learning_rate_2bit=1e-3, learning_rate_4bit=1e-3, verbose=True)
+
+    # Find optimal LR for LoRA params
+    # result = tuner.lr_find(
+    #     layer_pattern="gate_proj",  # First matching layer
+    #     min_lr=1e-7,
+    #     max_lr=1e6,  # Wide range for your case
+    #     num_steps=100,
+    #     loss_type="nmse",  # Better gradient signal
+    #     param_type="lora",  # Test LoRA params specifically
+    # )
+
+    # Result contains:
+    #   suggested_lr - where loss decreases fastest
+    #   safe_lr - 1/10 of min loss point (conservative)
+    #   lr_at_min_loss - LR at minimum loss
+
+    # Plot results (requires matplotlib)
+    # tuner.plot_lr_find(result, save_path="lr_find.png")
+
+    # Then tune with the found LR:
     tuner.tune(
         tb,
-        num_steps=1000,
-        learning_rate_4bit=1e-3,  # Reasonable LR for SGD
-        learning_rate_2bit=1e-3,
-        layer_patterns=["layers:4:mlp:down_proj"],  # , "layers:15:mlp:down_proj"],
+        learning_rate_lora=0,  # result["suggested_lr"], 2e-3
+        # learning_rate_lora=1e-2,
+        loss_type="mse",
+        num_steps=5000,
+        learning_rate_4bit=10000,
+        learning_rate_2bit=0,
+        scheduler_type_scale="const",  # warmup + cosine annealing
+        scheduler_type_lora="cosine",  # no decay
+        # layer_patterns=["layers:4:mlp:down_proj", "layers:15:mlp:down_proj"],
+        # layer_patterns=["layers:20:mlp:down_proj"],
+        layer_patterns=["layers:0:mlp:gate_proj"],
+        # [1/1] post_hooks.model:layers:0:mlp:gate_proj:weight__0.0
+        # Type: sym_lora, Bits: 4, LR: 100000
+        # INFO:nncf:Autograd-based quantization enabled
         early_stop_patience=1000,
-        warmup_steps=0,  # 20 steps of linear warmup
+        warmup_steps=0,
         min_lr_ratio=0.1,  # Anneal down to 1% of max LR
         restore_best=True,
+        use_autograd_quantize=True,
+        outlier_ratio=0,
     )
     tuner.print_summary()
-    # save_checkpoint(model, last_dir / "nncf_checkpoint_tune_scales.pth", model_state=not args.basic_init)
     exit()
+    save_checkpoint(model, last_dir / "nncf_checkpoint_svd_lora_se_tune_scales.pth", model_state=not args.basic_init)
 
     fq_lr = args.lr / 10
     weight_decay = args.lr

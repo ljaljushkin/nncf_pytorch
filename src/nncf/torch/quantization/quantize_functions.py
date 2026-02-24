@@ -19,7 +19,37 @@ from nncf.errors import ValidationError
 from nncf.torch.quantization.extensions import QuantizedFunctionsCPU
 from nncf.torch.quantization.extensions import QuantizedFunctionsCUDA
 from nncf.torch.quantization.reference import ReferenceQuantizedFunctions as RQ
+from nncf.torch.quantization.reference import autograd_quantize_forward
+from nncf.torch.quantization.reference import ste_clamp
+from nncf.torch.quantization.reference import ste_round
 from nncf.torch.utils import add_ov_domain
+
+# =============================================================================
+# Configuration for autograd-based quantization
+# When True, uses automatic differentiation with STE instead of hand-written backward
+# This provides cleaner gradient computation without manual precision handling
+# =============================================================================
+USE_AUTOGRAD_QUANTIZE = False
+
+
+def set_use_autograd_quantize(enabled: bool) -> None:
+    """
+    Enable or disable autograd-based quantization with STE.
+
+    When enabled, quantization gradients are computed automatically by PyTorch
+    using Straight-Through Estimator for non-differentiable operations.
+
+    Args:
+        enabled: True to use autograd-based quantization, False for manual backward
+    """
+    global USE_AUTOGRAD_QUANTIZE
+    USE_AUTOGRAD_QUANTIZE = enabled
+    nncf_logger.info(f"Autograd-based quantization {'enabled' if enabled else 'disabled'}")
+
+
+def get_use_autograd_quantize() -> bool:
+    """Return current state of autograd-based quantization setting."""
+    return USE_AUTOGRAD_QUANTIZE
 
 
 class QuantizeSymmetric(torch.autograd.Function):
@@ -205,6 +235,112 @@ class QuantizeAsymmetricTorch(torch.autograd.Function):
         return grad_input, None, grad_low, grad_range, None, None, None
 
 
+# =============================================================================
+# Autograd-based Quantization with STE (Straight-Through Estimator)
+# These functions rely on PyTorch's autograd instead of hand-written backward
+# =============================================================================
+
+
+def quantize_symmetric_autograd(
+    input_: torch.Tensor, scale: torch.Tensor, level_low: int, level_high: int, levels: int
+) -> torch.Tensor:
+    """
+    Symmetric quantization using autograd with STE.
+
+    This function is differentiable w.r.t. scale - no manual backward needed.
+    Uses Straight-Through Estimator for round and clamp operations.
+    """
+    # Compute input_low and input_range from scale (same formula as QuantizeSymmetricTorch)
+    input_low = torch.where(scale > 0, -scale, -scale / level_low * level_high)
+    input_range = torch.abs((2 + 1 / level_low) * scale)
+
+    # Quantization with STE
+    scale_factor = (levels - 1) / input_range
+    output = ste_clamp(input_, input_low, input_low + input_range)
+    zero_point = ste_round(-input_low * scale_factor)
+    output = output - input_low
+    output = output * scale_factor
+    output = output - zero_point
+    output = ste_round(output)
+    output = output / scale_factor
+
+    return output
+
+
+def quantize_asymmetric_autograd(
+    input_: torch.Tensor, input_low: torch.Tensor, input_range: torch.Tensor, levels: int
+) -> torch.Tensor:
+    """
+    Asymmetric quantization using autograd with STE.
+
+    This function is differentiable w.r.t. input_low and input_range - no manual backward needed.
+    Uses Straight-Through Estimator for round and clamp operations.
+    """
+    # Quantization with STE
+    scale = (levels - 1) / input_range
+    output = ste_clamp(input_, input_low, input_low + input_range)
+    zero_point = ste_round(-input_low * scale)
+    output = output - input_low
+    output = output * scale
+    output = output - zero_point
+    output = ste_round(output)
+    output = output / scale
+
+    return output
+
+
+class QuantizeSymmetricTorchAutograd:
+    """
+    Symmetric quantization wrapper using autograd with STE.
+
+    Unlike QuantizeSymmetricTorch, this doesn't subclass torch.autograd.Function.
+    Gradients are computed automatically by PyTorch.
+    """
+
+    @staticmethod
+    def apply(
+        input_: torch.Tensor, input_shape: tuple, scale: torch.Tensor, level_low: int, level_high: int, levels: int
+    ) -> torch.Tensor:
+        dtype = input_.dtype
+        original_shape = input_.shape
+        input_ = input_.reshape(input_shape)
+
+        # Convert to fp32 for quantization, then back
+        output = quantize_symmetric_autograd(input_.float(), scale, level_low, level_high, levels)
+
+        output = output.reshape(original_shape)
+        return output.to(dtype)
+
+
+class QuantizeAsymmetricTorchAutograd:
+    """
+    Asymmetric quantization wrapper using autograd with STE.
+
+    Unlike QuantizeAsymmetricTorch, this doesn't subclass torch.autograd.Function.
+    Gradients are computed automatically by PyTorch.
+    """
+
+    @staticmethod
+    def apply(
+        input_: torch.Tensor,
+        input_shape: tuple,
+        input_low: torch.Tensor,
+        input_range: torch.Tensor,
+        level_low: int,
+        level_high: int,
+        levels: int,
+    ) -> torch.Tensor:
+        dtype = input_.dtype
+        original_shape = input_.shape
+        input_ = input_.reshape(input_shape)
+
+        # Convert to fp32 for quantization, then back
+        output = quantize_asymmetric_autograd(input_.float(), input_low, input_range, levels)
+
+        output = output.reshape(original_shape)
+        return output.to(dtype)
+
+
 class ExportQuantizeToFakeQuantize(torch.autograd.Function):
     @staticmethod
     def symbolic(
@@ -309,8 +445,20 @@ def asymmetric_quantize_lora(
     if skip:
         return input_
     input_range_safe = abs(input_range_) + eps
-    input_low, input_range = TuneRange.apply(input_low_, input_range_safe, levels)
+    # doesn't allow for small changes of scale
+    # input_low, input_range = TuneRange.apply(input_low_, input_range_safe, levels)
+    input_low, input_range = input_low_, input_range_safe
     input_ = (input_ + B @ A).type(input_.dtype)  # input(float16) + lora(bfloat16) = float32, need a cast to float16
+
+    if USE_AUTOGRAD_QUANTIZE:
+        # Use ReferenceQuantizeAutograd with STE - simpler API, automatic gradients
+        dtype = input_.dtype
+        original_shape = input_.shape
+        input_reshaped = input_.reshape(input_shape)
+        # output = ReferenceQuantizeAutograd.forward(input_reshaped.float(), input_low, input_range, levels)
+        # output = autograd_quantize_forward(input_reshaped.float(), input_low, input_range, levels)
+        output = autograd_quantize_forward(input_reshaped, input_low, input_range, levels)
+        return output.reshape(original_shape).to(dtype)
     return QuantizeAsymmetricTorch.apply(
         input_,
         input_shape,
@@ -342,6 +490,16 @@ def symmetric_quantize_lora(input_, input_shape, A, B, scale, level_low, level_h
         return input_
     scale_safe = torch.where(torch.abs(scale) < eps, eps, scale)
     input_ = (input_ + B @ A).type(input_.dtype)  # input(float16) + lora(bfloat16) = float32, need a cast to float16
+
+    if USE_AUTOGRAD_QUANTIZE:
+        return QuantizeSymmetricTorchAutograd.apply(
+            input_,
+            input_shape,
+            scale_safe,
+            level_low,
+            level_high,
+            levels,
+        )
     return QuantizeSymmetricTorch.apply(
         input_,
         input_shape,
