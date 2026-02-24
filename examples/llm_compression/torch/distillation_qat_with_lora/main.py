@@ -492,21 +492,22 @@ def main(argv) -> float:
     # Then tune with the found LR:
     tuner.tune(
         tb,
-        learning_rate_lora=0,  # result["suggested_lr"], 2e-3
-        # learning_rate_lora=1e-2,
+        # learning_rate_lora=0,  # result["suggested_lr"], 2e-3
+        learning_rate_lora=0,
         loss_type="nmse",
         num_steps=5000,
-        learning_rate_4bit=5,
-        learning_rate_2bit=0,
-        scheduler_type_scale="const",  # warmup + cosine annealing
-        scheduler_type_lora="cosine",  # no decay
+        scheduler_type_scale="constant",  # warmup + cosine annealing
+        scheduler_type_lora="constant",  # no decay
         # layer_patterns=["layers:4:mlp:down_proj", "layers:15:mlp:down_proj"],
+        learning_rate_2bit=1e-2,
+        # learning_rate_2bit=0,
         # layer_patterns=["layers:20:mlp:down_proj"],
-        layer_patterns=["layers:0:mlp:gate_proj"],
+        learning_rate_4bit=5,
+        # layer_patterns=["layers:0:mlp:gate_proj"],
         # [1/1] post_hooks.model:layers:0:mlp:gate_proj:weight__0.0
         # Type: sym_lora, Bits: 4, LR: 100000
         # INFO:nncf:Autograd-based quantization enabled
-        early_stop_patience=50,
+        early_stop_patience=1000,
         warmup_steps=0,
         min_lr_ratio=0.1,  # Anneal down to 1% of max LR
         restore_best=True,
@@ -514,7 +515,6 @@ def main(argv) -> float:
         outlier_ratio=0,
     )
     tuner.print_summary()
-    exit()
     save_checkpoint(model, last_dir / "nncf_checkpoint_svd_lora_se_tune_scales.pth", model_state=not args.basic_init)
 
     fq_lr = args.lr / 10

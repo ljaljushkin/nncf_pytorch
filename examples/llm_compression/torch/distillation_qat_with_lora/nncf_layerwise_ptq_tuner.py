@@ -157,8 +157,13 @@ def compute_loss(
     if loss_type == "nmse":
         # Normalized MSE: error scaled by weight magnitude
         # This gives ~constant relative gradient regardless of weight magnitude
-        eps = 1e-8
-        se = ((output_f - target_f) / (target_f.abs() + eps)).pow(2)
+        # Use larger eps and clamping for 2-bit stability
+        eps = 1e-4  # Larger eps: prevents huge relative errors on near-zero weights
+        denom = target_f.abs().clamp(min=eps)  # Clamp denominator
+        se = ((output_f - target_f) / denom).pow(2)
+        # Clamp individual squared errors to prevent spike from affecting mean
+        se = se.clamp(max=10.0)  # Max ~3x relative error before clipping
+
         n = se.numel()
         if outlier_ratio > 0 and n > 1:
             k = max(1, int(n * outlier_ratio))
@@ -372,8 +377,40 @@ def tune_quantizer_scale(
         quantizer.enable_quantization()
         q_weight = quantizer(orig_weight)
 
+        # Check for NaN/Inf in quantized output
+        if torch.isnan(q_weight).any() or torch.isinf(q_weight).any():
+            if config.verbose:
+                print(f"    WARNING step {step}: q_weight contains NaN/Inf!")
+                if isinstance(quantizer, (AsymmetricQuantizer, AsymmetricLoraQuantizer)):
+                    print(f"      input_low range: [{quantizer.input_low.min():.4e}, {quantizer.input_low.max():.4e}]")
+                    print(
+                        f"      input_range range: [{quantizer.input_range.min():.4e}, {quantizer.input_range.max():.4e}]"
+                    )
+                elif isinstance(quantizer, (SymmetricQuantizer, SymmetricLoraQuantizer)):
+                    print(f"      scale range: [{quantizer.scale.min():.4e}, {quantizer.scale.max():.4e}]")
+            # Restore best params and break
+            if best_scale_values is not None:
+                for p, best_val in zip(fq_params, best_scale_values):
+                    p.data.copy_(best_val)
+            break
+
         # Compute loss using selected loss type
         loss = compute_loss(q_weight, orig_weight, config.loss_type, config.outlier_ratio)
+
+        # Check for NaN loss
+        if torch.isnan(loss) or torch.isinf(loss):
+            if config.verbose:
+                print(f"    WARNING step {step}: loss is NaN/Inf!")
+                if isinstance(quantizer, (AsymmetricQuantizer, AsymmetricLoraQuantizer)):
+                    print(f"      input_low range: [{quantizer.input_low.min():.4e}, {quantizer.input_low.max():.4e}]")
+                    print(
+                        f"      input_range range: [{quantizer.input_range.min():.4e}, {quantizer.input_range.max():.4e}]"
+                    )
+            # Restore best params and break
+            if best_scale_values is not None:
+                for p, best_val in zip(fq_params, best_scale_values):
+                    p.data.copy_(best_val)
+            break
 
         # Zero gradients for both optimizers
         if scale_optimizer:
@@ -383,6 +420,15 @@ def tune_quantizer_scale(
 
         # Backward pass
         scaler.scale(loss).backward()
+
+        # Unscale gradients for clipping
+        if scale_optimizer:
+            scaler.unscale_(scale_optimizer)
+        if lora_optimizer:
+            scaler.unscale_(lora_optimizer)
+
+        # Gradient clipping to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(fq_params, max_norm=1.0)
 
         # Step both optimizers
         if scale_optimizer:
@@ -397,6 +443,12 @@ def tune_quantizer_scale(
         if lora_scheduler:
             lora_scheduler.step()
 
+        # Clamp params to prevent invalid values
+        with torch.no_grad():
+            if isinstance(quantizer, (AsymmetricQuantizer, AsymmetricLoraQuantizer)):
+                # input_range must be positive for valid quantization
+                quantizer.input_range.data.clamp_(min=1e-6)
+
         # Debug: print LR after scheduler step for first few iterations
         if config.verbose and step < 3:
             scale_lr_after = scale_optimizer.param_groups[0]["lr"] if scale_optimizer else 0.0
@@ -404,23 +456,6 @@ def tune_quantizer_scale(
             print(
                 f"    DEBUG step {step}: after scheduler.step() -> scale_lr={scale_lr_after:.2e}, lora_lr={lora_lr_after:.2e}"
             )
-
-        # Clamp params - only clamp absolute value away from zero, preserving sign
-        # with torch.no_grad():
-        #     if isinstance(quantizer, (SymmetricQuantizer, SymmetricLoraQuantizer)):
-        #         if not quantizer._is_using_log_scale_storage:
-        #             # Preserve sign but prevent absolute value from being too small
-        #             scale_data = quantizer._scale_param_storage.data
-        #             min_abs_scale = 1e-8
-        #             # For very small values, set to min_abs_scale with original sign (or positive if zero)
-        #             small_mask = scale_data.abs() < min_abs_scale
-        #             scale_data[small_mask] = torch.where(
-        #                 scale_data[small_mask] >= 0,
-        #                 torch.tensor(min_abs_scale, device=scale_data.device, dtype=scale_data.dtype),
-        #                 torch.tensor(-min_abs_scale, device=scale_data.device, dtype=scale_data.dtype),
-        #             )
-        #     elif isinstance(quantizer, (AsymmetricQuantizer, AsymmetricLoraQuantizer)):
-        #         quantizer.input_range.data.clamp_(min=1e-8)
 
         loss_val = loss.item()
 
