@@ -494,9 +494,9 @@ def main(argv) -> float:
         tb,
         learning_rate_lora=0,  # result["suggested_lr"], 2e-3
         # learning_rate_lora=1e-2,
-        loss_type="mse",
+        loss_type="nmse",
         num_steps=5000,
-        learning_rate_4bit=10000,
+        learning_rate_4bit=5,
         learning_rate_2bit=0,
         scheduler_type_scale="const",  # warmup + cosine annealing
         scheduler_type_lora="cosine",  # no decay
@@ -506,7 +506,7 @@ def main(argv) -> float:
         # [1/1] post_hooks.model:layers:0:mlp:gate_proj:weight__0.0
         # Type: sym_lora, Bits: 4, LR: 100000
         # INFO:nncf:Autograd-based quantization enabled
-        early_stop_patience=1000,
+        early_stop_patience=50,
         warmup_steps=0,
         min_lr_ratio=0.1,  # Anneal down to 1% of max LR
         restore_best=True,
