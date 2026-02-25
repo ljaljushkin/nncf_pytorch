@@ -10,6 +10,7 @@
 # limitations under the License.
 import argparse
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -32,6 +33,7 @@ from optimum.modeling_base import OptimizedModel
 from torch import Tensor
 from torch import nn
 from torch.jit import TracerWarning
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
@@ -229,7 +231,7 @@ def kl_div(student_hiddens: torch.Tensor, teacher_hiddens: torch.Tensor) -> torc
     return F.kl_div(
         input=F.log_softmax(student_hiddens.view(-1, num_classes), dim=-1),
         target=F.log_softmax(teacher_hiddens.view(-1, num_classes), dim=-1),
-        log_target=True,
+        log_target=True,  # TODO: try without log for teacher with log_target=False
         reduction="batchmean",
     )
 
@@ -325,14 +327,31 @@ def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[s
     model.requires_grad_(False)
     scales_to_train = []
     adapters_to_train = []
+    train_lora = lora_lr > 0
+    train_scales = fq_lr > 0
     hook_storage = get_hook_storage(model)
     for _, module in hook_storage.named_hooks():
         if isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer)) and (module.num_bits in [4, 2]):
-            module.enable_gradients()
-            params = module.get_trainable_params()
-            adapters = module.get_adapters()
-            adapters_to_train.extend(adapters.values())
-            scales_to_train.extend(param for name, param in params.items() if name not in adapters)
+            # Only enable gradients for param groups that will actually be trained.
+            if train_lora:
+                module.lora_A.requires_grad = True
+                module.lora_B.requires_grad = True
+                adapters_to_train.extend(module.get_adapters().values())
+            if train_scales:
+                if isinstance(module, AsymmetricLoraQuantizer):
+                    module.input_low.requires_grad = True
+                    module._input_range_param_storage.requires_grad = True
+                elif isinstance(module, SymmetricLoraQuantizer):
+                    module._scale_param_storage.requires_grad = True
+                params = module.get_trainable_params()
+                adapters = module.get_adapters()
+                scales_to_train.extend(param for name, param in params.items() if name not in adapters)
+
+    param_groups = []
+    if train_lora:
+        param_groups.append({"params": adapters_to_train, "lr": lora_lr, "weight_decay": 1e-4})
+    if train_scales:
+        param_groups.append({"params": scales_to_train, "lr": fq_lr, "weight_decay": 0.0})
 
     params = list(model.parameters())
     trainable_params = sum(p.numel() for p in params if p.requires_grad)
@@ -341,9 +360,10 @@ def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[s
         f"trainable params: {trainable_params:,d} || "
         f"all params: {all_param:,d} || "
         f"trainable%: {100 * trainable_params / all_param:.4f}"
+        f" (lora={'ON' if train_lora else 'OFF'}, scales={'ON' if train_scales else 'OFF'})"
     )
     model.train()
-    return [{"params": adapters_to_train, "lr": lora_lr}, {"params": scales_to_train, "lr": fq_lr}]
+    return param_groups
 
 
 def save_checkpoint(model: nn.Module, ckpt_file: Path, model_state: bool = True) -> None:
@@ -464,13 +484,41 @@ def get_argument_parser() -> argparse.ArgumentParser:
         help="Learning rate for fine-tuning. "
         "For larger models (over 3 billion parameters), a learning rate of 5e-5 is recommended.",
     )
-    parser.add_argument("--epochs", type=int, default=1, help="Number of epochs.")
     parser.add_argument("--batch_size", type=int, default=8, help="Size of training batch.")
     parser.add_argument(
         "--microbatch_size",
         type=int,
         default=1,
         help="Size of each training microbatch. Gradients will be accumulated until the batch size is reached.",
+    )
+    parser.add_argument(
+        "--constant_epochs",
+        type=int,
+        default=0,
+        help="Number of epochs with constant LR (always the first phase). "
+        "If >0 and cosine_epochs==0, training uses only constant LR.",
+    )
+    parser.add_argument(
+        "--cosine_epochs",
+        type=int,
+        default=1,
+        help="Number of epochs with cosine annealing LR (always the second phase). "
+        "If >0 and constant_epochs==0, training uses only cosine annealing.",
+    )
+    parser.add_argument(
+        "--min_lr_ratio",
+        type=float,
+        default=0.0,
+        help="Minimum LR at end of cosine annealing, expressed as a fraction of the initial LR. "
+        "0.0 means LR decays to zero; 0.1 means it decays to 10%% of peak. "
+        "Ignored when cosine_epochs==0.",
+    )
+    parser.add_argument(
+        "--warmup_ratio",
+        type=float,
+        default=0.0,
+        help="Proportion of total training steps used for linear warmup (LR ramps from 0 to peak). "
+        "E.g. 0.05 means 5%% of steps. Applied before the constant/cosine schedule. 0 disables warmup.",
     )
     return parser
 
@@ -597,17 +645,52 @@ def main(argv) -> float:
     # tuner.print_summary()
     # save_checkpoint(model, last_dir / "nncf_checkpoint_svd_lora_se_tune_scales.pth", model_state=not args.basic_init)
 
-    fq_lr = args.lr / 10
-    weight_decay = args.lr
-    args.lr = 1e-4
+    fq_lr = args.lr
+    args.lr = 0
     param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr)
-    opt = torch.optim.AdamW(param_to_train, weight_decay=weight_decay)
+    opt = torch.optim.AdamW(param_to_train)
 
     # Run tuning with distillation loss and validation after each epoch.
+    args.epochs = args.constant_epochs + args.cosine_epochs
+    assert args.epochs > 0, "At least one of --constant_epochs or --cosine_epochs must be > 0."
     grad_accumulation_steps = args.batch_size // args.microbatch_size
     num_samples = len(train_loader)
     epoch_samples = num_samples - num_samples % args.microbatch_size
     microbatches_per_epoch = epoch_samples // args.microbatch_size
+    # Compute step counts from total microbatches (not per-epoch * epochs) because
+    # grad_steps carries over across epoch boundaries when microbatches don't divide evenly.
+    total_training_steps = (microbatches_per_epoch * args.epochs) // grad_accumulation_steps
+    constant_steps = (microbatches_per_epoch * args.constant_epochs) // grad_accumulation_steps
+    cosine_steps = total_training_steps - constant_steps
+
+    # Build LR scheduler: [linear warmup] -> [constant phase] -> [cosine annealing phase].
+    # Uses LambdaLR so that cosine smoothly decays from 1.0 to min_lr_ratio per param group
+    # (no floor-clipping artifacts).
+    warmup_steps = int(total_training_steps * args.warmup_ratio)
+
+    def _make_lr_lambda(warmup_steps: int, constant_steps: int, cosine_steps: int, min_lr_ratio: float):
+        def lr_lambda(step: int) -> float:
+            if warmup_steps > 0 and step < warmup_steps:
+                return step / warmup_steps
+            adjusted_step = step - warmup_steps
+            if adjusted_step < constant_steps:
+                return 1.0
+            if cosine_steps <= 0:
+                return 1.0
+            progress = (adjusted_step - constant_steps) / cosine_steps
+            return min_lr_ratio + (1.0 - min_lr_ratio) * (1.0 + math.cos(math.pi * progress)) / 2.0
+
+        return lr_lambda
+
+    scheduler = LambdaLR(opt, lr_lambda=_make_lr_lambda(warmup_steps, constant_steps, cosine_steps, args.min_lr_ratio))
+
+    print(
+        f"LR schedule: {warmup_steps} warmup steps, "
+        f"{args.constant_epochs} constant epoch(s) ({constant_steps} steps), "
+        f"then {args.cosine_epochs} cosine epoch(s) ({cosine_steps} steps, min_lr_ratio={args.min_lr_ratio}). "
+        f"Total: {args.epochs} epoch(s), {total_training_steps} steps."
+    )
+
     aggregated_loss = float("nan")
     loss_numerator = grad_steps = total_steps = 0
     for epoch in range(args.epochs):
@@ -641,6 +724,7 @@ def main(argv) -> float:
             (loss / grad_accumulation_steps).backward()
             if grad_steps == grad_accumulation_steps:
                 opt.step()
+                scheduler.step()
                 aggregated_loss = loss_numerator / grad_steps
                 loss_numerator = grad_steps = 0
                 total_steps += 1
@@ -649,6 +733,8 @@ def main(argv) -> float:
                 opt.zero_grad()
         if epoch == 0:
             save_checkpoint(model, last_dir / "nncf_checkpoint_after_first_epoch.pth", model_state=not args.basic_init)
+        if epoch == 4:
+            save_checkpoint(model, last_dir / "nncf_checkpoint_after_5th_epoch.pth", model_state=not args.basic_init)
         else:
             save_checkpoint(model, ckpt_file, model_state=not args.basic_init)
 

@@ -5,7 +5,8 @@ OUTPUT_DIRS=("output_llama_1b")
 PRETRAINED="meta-llama/Llama-3.2-1B-Instruct"
 
 # Checkpoint files to evaluate
-CKPT_FILES=("nncf_checkpoint_after_first_epoch.pth") #"nncf_checkpoint_svd_lora_se_2bit.pth") #"nncf_checkpoint_svd_lora_se_tune_scales.pth")
+CKPT_FILES=("nncf_checkpoint_after_5th_epoch.pth" "nncf_checkpoint_after_first_epoch.pth")
+# CKPT_FILES=("nncf_checkpoint_after_first_epoch.pth") #"nncf_checkpoint_svd_lora_se_2bit.pth") #"nncf_checkpoint_svd_lora_se_tune_scales.pth")
 
 LOG_FILE="tune.log"
 
@@ -41,7 +42,7 @@ for OUTPUT_DIR in "${OUTPUT_DIRS[@]}"; do
 
     # Run training
     echo "Running training with output_dir: $(realpath "$OUTPUT_DIR") and log_file: $(realpath "$LOG_FILE")"
-    python main.py --pretrained $PRETRAINED --epochs 5 --resume --output_dir "$OUTPUT_DIR" >> "$LOG_FILE" 2>&1
+    python main.py --pretrained $PRETRAINED --fq_lr 3e-4 --cosine_epochs 10 --constant_epochs 5 --warmup_ratio 0.04 --min_lr_ratio 0.1 --resume --output_dir "$OUTPUT_DIR" >> "$LOG_FILE" 2>&1
 
     # First evaluation (after training, before stripping any checkpoint)
     echo "Running lm-eval after training..."
