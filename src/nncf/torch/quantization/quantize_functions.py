@@ -29,7 +29,7 @@ from nncf.torch.utils import add_ov_domain
 # When True, uses automatic differentiation with STE instead of hand-written backward
 # This provides cleaner gradient computation without manual precision handling
 # =============================================================================
-USE_AUTOGRAD_QUANTIZE = False
+USE_AUTOGRAD_QUANTIZE = True
 
 
 def set_use_autograd_quantize(enabled: bool) -> None:

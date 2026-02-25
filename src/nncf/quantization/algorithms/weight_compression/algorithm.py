@@ -1133,11 +1133,11 @@ class WeightCompression(Algorithm):
             # w_params.compression_config._num_bits = 4
             # w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
             # w_params.compression_config.group_size = 128
-            weight_name = w_params.weight_name
-            if "layers.5.mlp.gate_proj" in weight_name:
-                w_params.compression_config._num_bits = 2
-                w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
-                w_params.compression_config.group_size = 64
+            # weight_name = w_params.weight_name
+            # if "layers.5.mlp.gate_proj" in weight_name:
+            w_params.compression_config._num_bits = 2
+            w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
+            w_params.compression_config.group_size = 64
             # if "v_proj" in weight_name:
             #     w_params.compression_config._num_bits = 4
             #     w_params.compression_config.mode = CompressWeightsMode.INT4_SYM

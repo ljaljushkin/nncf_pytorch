@@ -45,6 +45,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=True)  # noqa: F821
     parser.add_argument(
         "--pretrained",
+        "-p",
         type=str,
         default="Qwen/Qwen3-8B",
         help="The model id or path of a pretrained HF model configuration.",

@@ -234,6 +234,80 @@ def kl_div(student_hiddens: torch.Tensor, teacher_hiddens: torch.Tensor) -> torc
     )
 
 
+def log_quantizer_stats(model: nn.Module, tb: SummaryWriter, step: int, optimizer: torch.optim.Optimizer) -> None:
+    """
+    Logs per-quantizer statistics to TensorBoard: norms of lora_A, lora_B, input_low,
+    input_range (asymmetric) or scale (symmetric), gradient norms, and learning rates.
+
+    :param model: The model containing quantizers in its hook storage.
+    :param tb: TensorBoard SummaryWriter instance.
+    :param step: Current global training step.
+    :param optimizer: The optimizer, used to retrieve per-parameter learning rates.
+    """
+    # Build a mapping from parameter id to its current learning rate
+    param_id_to_lr: dict[int, float] = {}
+    for group in optimizer.param_groups:
+        lr = group["lr"]
+        for p in group["params"]:
+            param_id_to_lr[id(p)] = lr
+
+    hook_storage = get_hook_storage(model)
+    for name, module in hook_storage.named_hooks():
+        if not isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer)):
+            continue
+        if module.num_bits not in (2, 4):
+            continue
+
+        # Shorten the name for cleaner TB tags
+        short = name.replace("post_hooks.", "").replace("pre_hooks.", "").replace(".weight__0", "")
+
+        # LoRA adapter norms
+        tb.add_scalar(f"quantizers/{short}/lora_A_norm", module.lora_A.data.float().norm().item(), step)
+        tb.add_scalar(f"quantizers/{short}/lora_B_norm", module.lora_B.data.float().norm().item(), step)
+
+        # Scale / input_low / input_range norms depending on quantizer type
+        if isinstance(module, AsymmetricLoraQuantizer):
+            tb.add_scalar(f"quantizers/{short}/input_low_norm", module.input_low.data.float().norm().item(), step)
+            tb.add_scalar(f"quantizers/{short}/input_range_norm", module.input_range.data.float().norm().item(), step)
+        elif isinstance(module, SymmetricLoraQuantizer):
+            tb.add_scalar(f"quantizers/{short}/scale_norm", module.scale.data.float().norm().item(), step)
+
+        # Gradient norms
+        for param_name, param in [
+            ("lora_A", module.lora_A),
+            ("lora_B", module.lora_B),
+        ]:
+            if param.grad is not None:
+                tb.add_scalar(f"quantizers/{short}/{param_name}_grad_norm", param.grad.data.float().norm().item(), step)
+
+        if isinstance(module, AsymmetricLoraQuantizer):
+            for param_name, param in [("input_low", module.input_low), ("input_range", module.input_range)]:
+                if param.grad is not None:
+                    tb.add_scalar(
+                        f"quantizers/{short}/{param_name}_grad_norm", param.grad.data.float().norm().item(), step
+                    )
+        elif isinstance(module, SymmetricLoraQuantizer):
+            s = module._scale_param_storage
+            if s.grad is not None:
+                tb.add_scalar(f"quantizers/{short}/scale_grad_norm", s.grad.data.float().norm().item(), step)
+
+        # Learning rates
+        for param_name, param in [("lora_A", module.lora_A), ("lora_B", module.lora_B)]:
+            lr_val = param_id_to_lr.get(id(param))
+            if lr_val is not None:
+                tb.add_scalar(f"quantizers/{short}/{param_name}_lr", lr_val, step)
+
+        if isinstance(module, AsymmetricLoraQuantizer):
+            for param_name, param in [("input_low", module.input_low), ("input_range", module.input_range)]:
+                lr_val = param_id_to_lr.get(id(param))
+                if lr_val is not None:
+                    tb.add_scalar(f"quantizers/{short}/{param_name}_lr", lr_val, step)
+        elif isinstance(module, SymmetricLoraQuantizer):
+            lr_val = param_id_to_lr.get(id(module._scale_param_storage))
+            if lr_val is not None:
+                tb.add_scalar(f"quantizers/{short}/scale_lr", lr_val, step)
+
+
 def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[str, Any]]:
     """
     Sets the trainable parameters of the model for quantization-aware training with LoRA (Low-Rank Adaptation).
@@ -344,7 +418,8 @@ def get_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pretrained",
         type=str,
-        default="Qwen/Qwen3-8B",
+        # default="Qwen/Qwen3-8B",
+        default="meta-llama/Llama-3.2-1B-Instruct",
         help="The model id or path of a pretrained HF model configuration.",
     )
     parser.add_argument(
@@ -385,7 +460,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lr",
         type=float,
-        default=1e-4,
+        default=1e-3,
         help="Learning rate for fine-tuning. "
         "For larger models (over 3 billion parameters), a learning rate of 5e-5 is recommended.",
     )
@@ -418,13 +493,9 @@ def main(argv) -> float:
         backup_mode=nncf.BackupMode.NONE,
         scale_estimation=not args.basic_init,
         compression_format=CompressionFormat.FQ_LORA,
+        # ignored_scope=nncf.IgnoredScope(patterns=[r"(?!.*5.mlp.gate_proj.*).*"]),
         ignored_scope=nncf.IgnoredScope(
-            types=["Linear"],
-            subgraphs=[
-                nncf.Subgraph(
-                    inputs=["{re}(?!.*layers\\.5\\.mlp\\.gate_proj).*"],
-                ),
-            ],
+            patterns=[r"(?!model/mlp/(gate_proj|up_proj)/linear/5$|model/self_attn/(k_proj|q_proj|o_proj)/linear/5$).*"]
         ),
     )
     pprint({"CLI arguments": vars(args), "Major compression parameters": compression_config})
@@ -441,7 +512,7 @@ def main(argv) -> float:
         shutil.rmtree(last_dir, ignore_errors=True)
     for path in [output_dir, tensorboard_dir, last_dir]:
         path.mkdir(exist_ok=True, parents=True)
-    ckpt_file = last_dir / "nncf_checkpoint_svd_lora_se_5th_gate_2bit.pth"
+    ckpt_file = last_dir / "nncf_checkpoint_svd_lora_se_2bit.pth"
     hidden_file = output_dir / "hiddens.pth"
     print(f"To visualize the loss and validation metrics, open Tensorboard using the logs from: {tensorboard_dir}")
     tb = SummaryWriter(tensorboard_dir, "QAT with absorbable LoRA")
@@ -473,9 +544,7 @@ def main(argv) -> float:
         model = load_checkpoint(model, ckpt_file)
     else:
         model = compress_weights(model, dataset=dataset, **compression_config)
-        save_checkpoint(
-            model, last_dir / "nncf_checkpoint_svd_lora_se_5th_gate_2bit.pth", model_state=not args.basic_init
-        )
+        save_checkpoint(model, last_dir / "nncf_checkpoint_svd_lora_se_2bit.pth", model_state=not args.basic_init)
 
     # from nncf_layerwise_ptq_tuner import ScaleTuner
 
@@ -528,8 +597,9 @@ def main(argv) -> float:
     # tuner.print_summary()
     # save_checkpoint(model, last_dir / "nncf_checkpoint_svd_lora_se_tune_scales.pth", model_state=not args.basic_init)
 
-    fq_lr = 0  # args.lr / 10
+    fq_lr = args.lr / 10
     weight_decay = args.lr
+    args.lr = 1e-4
     param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr)
     opt = torch.optim.AdamW(param_to_train, weight_decay=weight_decay)
 
@@ -571,11 +641,12 @@ def main(argv) -> float:
             (loss / grad_accumulation_steps).backward()
             if grad_steps == grad_accumulation_steps:
                 opt.step()
-                opt.zero_grad()
                 aggregated_loss = loss_numerator / grad_steps
                 loss_numerator = grad_steps = 0
                 total_steps += 1
                 tb.add_scalar("loss", aggregated_loss, total_steps)
+                log_quantizer_stats(model, tb, total_steps, opt)
+                opt.zero_grad()
         if epoch == 0:
             save_checkpoint(model, last_dir / "nncf_checkpoint_after_first_epoch.pth", model_state=not args.basic_init)
         else:
