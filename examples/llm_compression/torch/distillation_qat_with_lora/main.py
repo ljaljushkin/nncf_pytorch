@@ -9,7 +9,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import argparse
-import gc
 import json
 import os
 import shutil
@@ -416,8 +415,17 @@ def main(argv) -> float:
         mode=CompressWeightsMode.INT4_ASYM,
         group_size=64,
         awq=not args.basic_init,
+        backup_mode=nncf.BackupMode.NONE,
         scale_estimation=not args.basic_init,
         compression_format=CompressionFormat.FQ_LORA,
+        ignored_scope=nncf.IgnoredScope(
+            types=["Linear"],
+            subgraphs=[
+                nncf.Subgraph(
+                    inputs=["{re}(?!.*layers\\.5\\.mlp\\.gate_proj).*"],
+                ),
+            ],
+        ),
     )
     pprint({"CLI arguments": vars(args), "Major compression parameters": compression_config})
     compression_config["advanced_parameters"] = AdvancedCompressionParameters(
@@ -433,7 +441,7 @@ def main(argv) -> float:
         shutil.rmtree(last_dir, ignore_errors=True)
     for path in [output_dir, tensorboard_dir, last_dir]:
         path.mkdir(exist_ok=True, parents=True)
-    ckpt_file = last_dir / "nncf_checkpoint.pth"
+    ckpt_file = last_dir / "nncf_checkpoint_svd_lora_se_5th_gate_2bit.pth"
     hidden_file = output_dir / "hiddens.pth"
     print(f"To visualize the loss and validation metrics, open Tensorboard using the logs from: {tensorboard_dir}")
     tb = SummaryWriter(tensorboard_dir, "QAT with absorbable LoRA")
@@ -465,8 +473,62 @@ def main(argv) -> float:
         model = load_checkpoint(model, ckpt_file)
     else:
         model = compress_weights(model, dataset=dataset, **compression_config)
-        save_checkpoint(model, last_dir / "nncf_checkpoint_init.pth", model_state=not args.basic_init)
-    fq_lr = args.lr / 10
+        save_checkpoint(
+            model, last_dir / "nncf_checkpoint_svd_lora_se_5th_gate_2bit.pth", model_state=not args.basic_init
+        )
+
+    # from nncf_layerwise_ptq_tuner import ScaleTuner
+
+    # model.requires_grad_(False)
+    # tuner = ScaleTuner(model)
+
+    # Find optimal LR for LoRA params
+    # result = tuner.lr_find(
+    #     layer_pattern="gate_proj",  # First matching layer
+    #     min_lr=1e-7,
+    #     max_lr=1e6,  # Wide range for your case
+    #     num_steps=100,
+    #     loss_type="nmse",  # Better gradient signal
+    #     param_type="lora",  # Test LoRA params specifically
+    # )
+
+    # Result contains:
+    #   suggested_lr - where loss decreases fastest
+    #   safe_lr - 1/10 of min loss point (conservative)
+    #   lr_at_min_loss - LR at minimum loss
+
+    # Plot results (requires matplotlib)
+    # tuner.plot_lr_find(result, save_path="lr_find.png")
+
+    # Then tune with the found LR:
+    # tuner.tune(
+    #     tb,
+    #     # learning_rate_lora=0,  # result["suggested_lr"], 2e-3
+    #     learning_rate_lora=0,
+    #     loss_type="nmse",
+    #     num_steps=5000,
+    #     scheduler_type_scale="constant",  # warmup + cosine annealing
+    #     scheduler_type_lora="constant",  # no decay
+    #     # layer_patterns=["layers:4:mlp:down_proj", "layers:15:mlp:down_proj"],
+    #     learning_rate_2bit=1e-2,
+    #     # learning_rate_2bit=0,
+    #     # layer_patterns=["layers:20:mlp:down_proj"],
+    #     learning_rate_4bit=5,
+    #     layer_patterns=["layers:0:mlp:gate_proj"],
+    #     # [1/1] post_hooks.model:layers:0:mlp:gate_proj:weight__0.0
+    #     # Type: sym_lora, Bits: 4, LR: 100000
+    #     # INFO:nncf:Autograd-based quantization enabled
+    #     early_stop_patience=1000,
+    #     warmup_steps=0,
+    #     min_lr_ratio=0.1,  # Anneal down to 1% of max LR
+    #     restore_best=True,
+    #     use_autograd_quantize=False,
+    #     outlier_ratio=0,
+    # )
+    # tuner.print_summary()
+    # save_checkpoint(model, last_dir / "nncf_checkpoint_svd_lora_se_tune_scales.pth", model_state=not args.basic_init)
+
+    fq_lr = 0  # args.lr / 10
     weight_decay = args.lr
     param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr)
     opt = torch.optim.AdamW(param_to_train, weight_decay=weight_decay)

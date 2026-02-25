@@ -405,8 +405,8 @@ OUT_DIR="$ROOT_DIR/output"
 # --model_args "{\"pretrained\":\"${MODEL_DIR}\",\"enable_thinking\":false,\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
 # --model_args pretrained=Qwen/Qwen3-8B,dtype=auto,tensor_parallel_size=2 \
 
-MODEL_DIR=Qwen/Qwen3-8B
-# MODEL_DIR=output/last/stripped
+# MODEL_DIR=Qwen/Qwen3-8B
+MODEL_DIR=output/last/stripped
 lm_eval \
 --model vllm \
 --model_args "{\"pretrained\":\"${MODEL_DIR}\",\"enable_thinking\":false,\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
@@ -414,4 +414,4 @@ lm_eval \
 --batch_size auto \
 --fewshot_as_multiturn \
 --apply_chat_template \
---gen_kwargs do_sample=True,temperature=0.7,top_p=0.8,top_k=20,min_p=0,max_new_tokens=32768
+--gen_kwargs do_sample=True,temperature=0.7,top_p=0.8,top_k=20,min_p=0

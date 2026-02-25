@@ -156,3 +156,147 @@ torch_backward = CompilationWrapper(torch_executor.backward)
 class ReferenceQuantizedFunctions:
     Quantize_forward = torch_forward
     Quantize_backward = torch_backward
+
+
+# =============================================================================
+# Autograd-based Quantization with STE (Straight-Through Estimator)
+# =============================================================================
+
+
+class STERound(torch.autograd.Function):
+    """
+    Straight-Through Estimator for rounding.
+    Forward: applies round()
+    Backward: passes gradient through unchanged (as if round was identity)
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+        return x.round()
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
+        return grad_output
+
+
+class STEClamp(torch.autograd.Function):
+    """
+    Straight-Through Estimator for clamping with boundary gradients.
+    Forward: clamps to [min_val, max_val]
+    Backward:
+        - For input: passes gradient only for values within range
+        - For min_val: accumulates gradients where input < min_val
+        - For max_val: accumulates gradients where input > max_val
+    This allows learning the clamp boundaries.
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, min_val: torch.Tensor, max_val: torch.Tensor) -> torch.Tensor:
+        ctx.save_for_backward(x, min_val, max_val)
+        return x.clamp(min=min_val, max=max_val)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        x, min_val, max_val = ctx.saved_tensors
+
+        # Masks for different regions
+        mask_below = x < min_val  # Values clamped to min
+        mask_above = x > max_val  # Values clamped to max
+        mask_in = ~mask_below & ~mask_above  # Values within range
+
+        # Gradient for input: only pass through for values within range
+        grad_input = grad_output * mask_in.to(grad_output.dtype)
+
+        # Gradient for min_val: sum of gradients where values were clamped to min
+        # (for values below min, output = min_val, so d_output/d_min_val = 1)
+        grad_min_raw = grad_output * mask_below.to(grad_output.dtype)
+
+        # Gradient for max_val: sum of gradients where values were clamped to max
+        grad_max_raw = grad_output * mask_above.to(grad_output.dtype)
+
+        # Sum-reduce to match the shape of min_val and max_val
+        # They are typically broadcastable shapes
+        def sum_like(grad: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+            """Sum grad to match target shape."""
+            # Sum over all dimensions that were broadcast
+            while grad.dim() > target.dim():
+                grad = grad.sum(0)
+            for i in range(target.dim()):
+                if target.shape[i] == 1 and grad.shape[i] > 1:
+                    grad = grad.sum(i, keepdim=True)
+            return grad
+
+        grad_min = sum_like(grad_min_raw, min_val)
+        grad_max = sum_like(grad_max_raw, max_val)
+
+        return grad_input, grad_min, grad_max
+
+
+def ste_round(x: torch.Tensor) -> torch.Tensor:
+    """Apply round with STE."""
+    return STERound.apply(x)
+
+
+def ste_clamp(x: torch.Tensor, min_val: torch.Tensor, max_val: torch.Tensor) -> torch.Tensor:
+    """Apply clamp with STE."""
+    return STEClamp.apply(x, min_val, max_val)
+
+
+class ReferenceQuantizeAutograd:
+    """
+    Quantization using PyTorch autograd with STE for non-differentiable operations.
+
+    This class only implements forward() - gradients are computed automatically by PyTorch.
+    Non-differentiable operations (round, clamp) use Straight-Through Estimator (STE).
+
+    Benefits over explicit backward:
+    - Simpler, less error-prone
+    - Automatic gradient computation
+    - Natural handling of fp16/bf16 without manual precision management
+    """
+
+    @staticmethod
+    def forward(
+        input_: torch.Tensor,
+        input_low: torch.Tensor,
+        input_range: torch.Tensor,
+        levels: int,
+    ) -> torch.Tensor:
+        """
+        Quantize input tensor.
+
+        Args:
+            input_: Input tensor to quantize
+            input_low: Lower bound of quantization range (learnable)
+            input_range: Range of quantization (learnable, input_high = input_low + input_range)
+            levels: Number of quantization levels (e.g., 4 for 2-bit)
+
+        Returns:
+            Quantized tensor
+        """
+        # Scale factor: maps range to [0, levels-1]
+        scale = (levels - 1) / input_range
+
+        # Clamp input to valid range with STE (gradient zero outside range)
+        output = ste_clamp(input_, input_low, input_low + input_range)
+
+        # Compute zero point (rounded)
+        zero_point = ste_round(-input_low * scale)
+
+        # Quantize: scale -> shift -> round -> unscale
+        output = output - input_low
+        output = output * scale
+        output = output - zero_point
+        output = ste_round(output)
+        output = output / scale
+
+        return output
+
+
+# Wrapper for compatibility with existing code
+
+autograd_quantize_forward = CompilationWrapper(ReferenceQuantizeAutograd.forward)
+
+# class ReferenceQuantizedAutogradFunctions:
+#     Quantize_forward = CompilationWrapper(ReferenceQuantizeAutograd.forward)
+#     Quantize_backward = CompilationWrapper(ReferenceQuantizeAutograd.backward)
