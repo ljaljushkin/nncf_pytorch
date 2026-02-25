@@ -21,6 +21,7 @@ from pathlib import Path
 from pprint import pprint
 from typing import Any, Optional, Union
 
+import mlflow
 import torch
 import torch.nn.functional as F
 import transformers
@@ -34,7 +35,6 @@ from torch import Tensor
 from torch import nn
 from torch.jit import TracerWarning
 from torch.optim.lr_scheduler import LambdaLR
-from torch.utils.tensorboard import SummaryWriter
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 
@@ -236,13 +236,12 @@ def kl_div(student_hiddens: torch.Tensor, teacher_hiddens: torch.Tensor) -> torc
     )
 
 
-def log_quantizer_stats(model: nn.Module, tb: SummaryWriter, step: int, optimizer: torch.optim.Optimizer) -> None:
+def log_quantizer_stats(model: nn.Module, step: int, optimizer: torch.optim.Optimizer) -> None:
     """
-    Logs per-quantizer statistics to TensorBoard: norms of lora_A, lora_B, input_low,
+    Logs per-quantizer statistics to MLflow: norms of lora_A, lora_B, input_low,
     input_range (asymmetric) or scale (symmetric), gradient norms, and learning rates.
 
     :param model: The model containing quantizers in its hook storage.
-    :param tb: TensorBoard SummaryWriter instance.
     :param step: Current global training step.
     :param optimizer: The optimizer, used to retrieve per-parameter learning rates.
     """
@@ -253,6 +252,8 @@ def log_quantizer_stats(model: nn.Module, tb: SummaryWriter, step: int, optimize
         for p in group["params"]:
             param_id_to_lr[id(p)] = lr
 
+    metrics: dict[str, float] = {}
+
     hook_storage = get_hook_storage(model)
     for name, module in hook_storage.named_hooks():
         if not isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer)):
@@ -260,54 +261,53 @@ def log_quantizer_stats(model: nn.Module, tb: SummaryWriter, step: int, optimize
         if module.num_bits not in (2, 4):
             continue
 
-        # Shorten the name for cleaner TB tags
+        # Shorten the name for cleaner metric keys (MLflow uses '.' as separator)
         short = name.replace("post_hooks.", "").replace("pre_hooks.", "").replace(".weight__0", "")
+        prefix = f"quantizers/{short}"
 
         # LoRA adapter norms
-        tb.add_scalar(f"quantizers/{short}/lora_A_norm", module.lora_A.data.float().norm().item(), step)
-        tb.add_scalar(f"quantizers/{short}/lora_B_norm", module.lora_B.data.float().norm().item(), step)
+        metrics[f"{prefix}/lora_A_norm"] = module.lora_A.data.float().norm().item()
+        metrics[f"{prefix}/lora_B_norm"] = module.lora_B.data.float().norm().item()
 
         # Scale / input_low / input_range norms depending on quantizer type
         if isinstance(module, AsymmetricLoraQuantizer):
-            tb.add_scalar(f"quantizers/{short}/input_low_norm", module.input_low.data.float().norm().item(), step)
-            tb.add_scalar(f"quantizers/{short}/input_range_norm", module.input_range.data.float().norm().item(), step)
+            metrics[f"{prefix}/input_low_norm"] = module.input_low.data.float().norm().item()
+            metrics[f"{prefix}/input_range_norm"] = module.input_range.data.float().norm().item()
         elif isinstance(module, SymmetricLoraQuantizer):
-            tb.add_scalar(f"quantizers/{short}/scale_norm", module.scale.data.float().norm().item(), step)
+            metrics[f"{prefix}/scale_norm"] = module.scale.data.float().norm().item()
 
         # Gradient norms
-        for param_name, param in [
-            ("lora_A", module.lora_A),
-            ("lora_B", module.lora_B),
-        ]:
+        for param_name, param in [("lora_A", module.lora_A), ("lora_B", module.lora_B)]:
             if param.grad is not None:
-                tb.add_scalar(f"quantizers/{short}/{param_name}_grad_norm", param.grad.data.float().norm().item(), step)
+                metrics[f"{prefix}/{param_name}_grad_norm"] = param.grad.data.float().norm().item()
 
         if isinstance(module, AsymmetricLoraQuantizer):
             for param_name, param in [("input_low", module.input_low), ("input_range", module.input_range)]:
                 if param.grad is not None:
-                    tb.add_scalar(
-                        f"quantizers/{short}/{param_name}_grad_norm", param.grad.data.float().norm().item(), step
-                    )
+                    metrics[f"{prefix}/{param_name}_grad_norm"] = param.grad.data.float().norm().item()
         elif isinstance(module, SymmetricLoraQuantizer):
             s = module._scale_param_storage
             if s.grad is not None:
-                tb.add_scalar(f"quantizers/{short}/scale_grad_norm", s.grad.data.float().norm().item(), step)
+                metrics[f"{prefix}/scale_grad_norm"] = s.grad.data.float().norm().item()
 
         # Learning rates
         for param_name, param in [("lora_A", module.lora_A), ("lora_B", module.lora_B)]:
             lr_val = param_id_to_lr.get(id(param))
             if lr_val is not None:
-                tb.add_scalar(f"quantizers/{short}/{param_name}_lr", lr_val, step)
+                metrics[f"{prefix}/{param_name}_lr"] = lr_val
 
         if isinstance(module, AsymmetricLoraQuantizer):
             for param_name, param in [("input_low", module.input_low), ("input_range", module.input_range)]:
                 lr_val = param_id_to_lr.get(id(param))
                 if lr_val is not None:
-                    tb.add_scalar(f"quantizers/{short}/{param_name}_lr", lr_val, step)
+                    metrics[f"{prefix}/{param_name}_lr"] = lr_val
         elif isinstance(module, SymmetricLoraQuantizer):
             lr_val = param_id_to_lr.get(id(module._scale_param_storage))
             if lr_val is not None:
-                tb.add_scalar(f"quantizers/{short}/scale_lr", lr_val, step)
+                metrics[f"{prefix}/scale_lr"] = lr_val
+
+    if metrics:
+        mlflow.log_metrics(metrics, step=step)
 
 
 def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[str, Any]]:
@@ -478,11 +478,17 @@ def get_argument_parser() -> argparse.ArgumentParser:
 
     # Training params
     parser.add_argument(
-        "--lr",
+        "--fq_lr",
         type=float,
         default=1e-3,
-        help="Learning rate for fine-tuning. "
-        "For larger models (over 3 billion parameters), a learning rate of 5e-5 is recommended.",
+        help="Learning rate for quantizer scales (input_low, input_range, scale). Set to 0 to freeze scales entirely.",
+    )
+    parser.add_argument(
+        "--lora_lr",
+        type=float,
+        default=0.0,
+        help="Learning rate for LoRA adapters (lora_A, lora_B). "
+        "Set to 0 to freeze LoRA (default). Typical values: 1e-5 to 1e-4.",
     )
     parser.add_argument("--batch_size", type=int, default=8, help="Size of training batch.")
     parser.add_argument(
@@ -554,16 +560,20 @@ def main(argv) -> float:
     )
     # Configure output and log files.
     output_dir = Path(args.output_dir)
-    tensorboard_dir = output_dir / "tb" / datetime.now().strftime("%Y-%m-%d__%H-%M-%S")
     last_dir = output_dir / "last"
     if not args.resume:
         shutil.rmtree(last_dir, ignore_errors=True)
-    for path in [output_dir, tensorboard_dir, last_dir]:
+    for path in [output_dir, last_dir]:
         path.mkdir(exist_ok=True, parents=True)
     ckpt_file = last_dir / "nncf_checkpoint_svd_lora_se_2bit.pth"
     hidden_file = output_dir / "hiddens.pth"
-    print(f"To visualize the loss and validation metrics, open Tensorboard using the logs from: {tensorboard_dir}")
-    tb = SummaryWriter(tensorboard_dir, "QAT with absorbable LoRA")
+
+    # Configure MLflow tracking.
+    tracking_uri = str(output_dir / "mlruns")
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(f"fqlora_{Path(args.pretrained).name}")
+    mlflow.start_run(run_name=datetime.now().strftime("%Y-%m-%d__%H-%M-%S"))
+    print(f"MLflow tracking URI: {tracking_uri}  (run `mlflow ui --backend-store-uri {tracking_uri}`)")
 
     # Load original model and tokenizer.
     model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch_dtype, device_map="auto")
@@ -645,9 +655,7 @@ def main(argv) -> float:
     # tuner.print_summary()
     # save_checkpoint(model, last_dir / "nncf_checkpoint_svd_lora_se_tune_scales.pth", model_state=not args.basic_init)
 
-    fq_lr = args.lr
-    args.lr = 0
-    param_to_train = set_trainable(model, lora_lr=args.lr, fq_lr=fq_lr)
+    param_to_train = set_trainable(model, lora_lr=args.lora_lr, fq_lr=args.fq_lr)
     opt = torch.optim.AdamW(param_to_train)
 
     # Run tuning with distillation loss and validation after each epoch.
@@ -691,6 +699,36 @@ def main(argv) -> float:
         f"Total: {args.epochs} epoch(s), {total_training_steps} steps."
     )
 
+    # Log all meaningful parameters to MLflow.
+    mlflow.log_params(
+        {
+            "pretrained": args.pretrained,
+            "lora_rank": args.lora_rank,
+            "basic_init": args.basic_init,
+            "num_train_samples": args.num_train_samples,
+            "train_seqlen": args.train_seqlen,
+            "fq_lr": args.fq_lr,
+            "lora_lr": args.lora_lr,
+            "batch_size": args.batch_size,
+            "microbatch_size": args.microbatch_size,
+            "grad_accumulation_steps": grad_accumulation_steps,
+            "constant_epochs": args.constant_epochs,
+            "cosine_epochs": args.cosine_epochs,
+            "total_epochs": args.epochs,
+            "min_lr_ratio": args.min_lr_ratio,
+            "warmup_ratio": args.warmup_ratio,
+            "warmup_steps": warmup_steps,
+            "constant_steps": constant_steps,
+            "cosine_steps": cosine_steps,
+            "total_training_steps": total_training_steps,
+            "compression_mode": str(compression_config["mode"]),
+            "group_size": compression_config["group_size"],
+            "compression_format": str(compression_config["compression_format"]),
+            "awq": compression_config["awq"],
+            "scale_estimation": compression_config["scale_estimation"],
+        }
+    )
+
     aggregated_loss = float("nan")
     loss_numerator = grad_steps = total_steps = 0
     for epoch in range(args.epochs):
@@ -728,8 +766,8 @@ def main(argv) -> float:
                 aggregated_loss = loss_numerator / grad_steps
                 loss_numerator = grad_steps = 0
                 total_steps += 1
-                tb.add_scalar("loss", aggregated_loss, total_steps)
-                log_quantizer_stats(model, tb, total_steps, opt)
+                mlflow.log_metric("loss", aggregated_loss, step=total_steps)
+                log_quantizer_stats(model, total_steps, opt)
                 opt.zero_grad()
         if epoch == 0:
             save_checkpoint(model, last_dir / "nncf_checkpoint_after_first_epoch.pth", model_state=not args.basic_init)
@@ -769,11 +807,13 @@ def main(argv) -> float:
     # tb.add_scalar("gsm8k_exact_match", gsm8k_acc, 0)
     # print(f"GSM8K exact match accuracy: {gsm8k_acc:.4f}")
 
+    mlflow.end_run()
+
     # del model
     # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
     # model_for_eval = export_to_openvino(args.pretrained, ckpt_file, ckpt_file.parent)
     # ov_perplexity = measure_perplexity(model_for_eval, args.eval_seqlen, args.limit)
-    # tb.add_scalar("ov_perplexity", ov_perplexity, 0)
+    # mlflow.log_metric("ov_perplexity", ov_perplexity, step=0)
     # print(
     #     f"The finetuned model has been exported to OpenVINO and saved to: {last_dir}\n"
     #     f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
