@@ -343,11 +343,13 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             quantizer.input_low = torch.nn.Parameter(input_low.type(dtype))
             quantizer.input_range = torch.nn.Parameter(input_range.type(dtype) - quantizer.eps)
         elif schema == QuantizationScheme.SYMMETRIC_STRETCHED_LORA:
-            # For stretched quantization, alpha is the step size.
-            # From integer quantization: scale = alpha / (2^(num_bits-1))
-            # So alpha = scale * 2^(num_bits-1)
+            # For stretched quantization, alpha must be POSITIVE (it represents the
+            # full range of the quantization grid). The signed scale from
+            # _calculate_signed_scale can be negative (encodes which tail is larger),
+            # but the stretched quantizer normalizes by alpha and needs alpha > 0.
+            # alpha = |scale| * 2^(num_bits-1) = max(|W|), matching ParetoQ init.
             n_levels = 2 ** (compression_config.num_bits - 1)
-            alpha_init = scale * n_levels
+            alpha_init = scale.abs() * n_levels
             alpha_init = alpha_init.type(quantizer.alpha.dtype)
             quantizer.alpha = torch.nn.Parameter(alpha_init)
         else:

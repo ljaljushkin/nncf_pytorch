@@ -55,7 +55,7 @@ fi
 
 # Determine short format tag for run names.
 case "$COMPRESSION_FORMAT" in
-    FQ_STRETCHED_LORA*) FMT_TAG="seq" ;;
+    FQ_STRETCHED_LORA*) FMT_TAG="seq_abs" ;;
     FQ_LORA*)           FMT_TAG="fql" ;;
     *)                  FMT_TAG="$(echo "$COMPRESSION_FORMAT" | tr '[:upper:]' '[:lower:]')" ;;
 esac
@@ -73,7 +73,7 @@ run_config() {
     echo "  fq_lr=${fq_lr}  lora_lr=${lora_lr}  fq_wd=${fq_wd}  lora_wd=${lora_wd}  warmup=${warmup}  constant=${constant}  cosine=${cosine}"
     echo "  compression_format=${COMPRESSION_FORMAT}"
     echo "  output_dir=$(realpath -m "$OUTPUT_DIR")"
-    echo "  log_file=$(realpath -m "$LOG_FILE")"
+    echo "  log_file - $(realpath -m "$LOG_FILE")"
     echo "============================================================"
 
     python main.py \
