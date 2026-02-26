@@ -69,11 +69,17 @@ if [[ -n "$USE_AUTOGRAD_QUANTIZE" ]]; then
     FMT_TAG="${FMT_TAG}_ag"
 fi
 
-# Append SE tag when using Scale Estimation init.
-if [[ "$SE_INIT" == true ]]; then
+# Determine init mode per format:
+#   --se-init + FQ_LORA*          → Scale Estimation (no --basic_init), tag "_se"
+#   --se-init + FQ_STRETCHED_LORA → ignored, always basic_init (SE is incompatible with stretched grid)
+#   (no --se-init)                → basic_init for all formats
+if [[ "$SE_INIT" == true && "$COMPRESSION_FORMAT" != FQ_STRETCHED_LORA* ]]; then
     FMT_TAG="${FMT_TAG}_se"
     BASIC_INIT_FLAG=""
 else
+    if [[ "$SE_INIT" == true ]]; then
+        echo "NOTE: --se-init ignored for $COMPRESSION_FORMAT (SE is incompatible with stretched grid)"
+    fi
     BASIC_INIT_FLAG="--basic_init"
 fi
 

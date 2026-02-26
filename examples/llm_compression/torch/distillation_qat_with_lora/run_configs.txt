@@ -1,5 +1,8 @@
 # fq_lr  lora_lr  fq_wd  lora_wd  warmup  constant  cosine
-1e-3     1e-3     0      1e-4     0       0         1      #fq1e-3_lora1e-5_fqwd0_lorawd1e-4_w0_c0_cos15
-# 1e-3     1e-3     0      1e-4     1       1         13
-# 1e-5     1e-3     1e-3   1e-4     0       0         15
+1e-3     1e-3     0      1e-4     0       0         15
+1e-3     1e-3     1e-3   1e-4     0       0         15
+1e-3     1e-3     0      1e-4     1       1         13
+1e-3     1e-3     1e-3   1e-4     1       1         13
+1e-4     1e-4     1e-4   1e-4     0       0         15
+1e-4     1e-4     1e-4   1e-4     1       1         13
 
