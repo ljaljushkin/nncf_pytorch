@@ -315,8 +315,8 @@ def set_trainable(
     model: nn.Module,
     lora_lr: float,
     fq_lr: float,
-    weight_decay_lora: float = 1e-4,
-    weight_decay_fq: float = 0.0,
+    lora_weight_decay: float = 1e-4,
+    fq_weight_decay: float = 0.0,
 ) -> list[dict[str, Any]]:
     """
     Sets the trainable parameters of the model for quantization-aware training with LoRA (Low-Rank Adaptation).
@@ -329,8 +329,8 @@ def set_trainable(
     :param model: The model to be trained.
     :param lora_lr: Learning rate for the LoRA adapters.
     :param fq_lr: Learning rate for the quantizer scales.
-    :param weight_decay_lora: Weight decay for LoRA adapter parameters.
-    :param weight_decay_fq: Weight decay for quantizer scale parameters.
+    :param lora_weight_decay: Weight decay for LoRA adapter parameters.
+    :param fq_weight_decay: Weight decay for quantizer scale parameters.
     :return: A list of dictionaries containing the parameters to be optimized and their corresponding learning rates.
     """
     model.requires_grad_(False)
@@ -358,9 +358,9 @@ def set_trainable(
 
     param_groups = []
     if train_lora:
-        param_groups.append({"params": adapters_to_train, "lr": lora_lr, "weight_decay": weight_decay_lora})
+        param_groups.append({"params": adapters_to_train, "lr": lora_lr, "weight_decay": lora_weight_decay})
     if train_scales:
-        param_groups.append({"params": scales_to_train, "lr": fq_lr, "weight_decay": weight_decay_fq})
+        param_groups.append({"params": scales_to_train, "lr": fq_lr, "weight_decay": fq_weight_decay})
 
     params = list(model.parameters())
     trainable_params = sum(p.numel() for p in params if p.requires_grad)
@@ -500,16 +500,16 @@ def get_argument_parser() -> argparse.ArgumentParser:
         "Set to 0 to freeze LoRA (default). Typical values: 1e-5 to 1e-4.",
     )
     parser.add_argument(
-        "--weight_decay_lora",
-        type=float,
-        default=1e-4,
-        help="Weight decay (L2 regularization) for LoRA adapter parameters. 0 disables.",
-    )
-    parser.add_argument(
-        "--weight_decay_fq",
+        "--fq_weight_decay",
         type=float,
         default=0.0,
         help="Weight decay (L2 regularization) for quantizer scale parameters. 0 disables.",
+    )
+    parser.add_argument(
+        "--lora_weight_decay",
+        type=float,
+        default=1e-4,
+        help="Weight decay (L2 regularization) for LoRA adapter parameters. 0 disables.",
     )
     parser.add_argument("--batch_size", type=int, default=8, help="Size of training batch.")
     parser.add_argument(
@@ -547,6 +547,21 @@ def get_argument_parser() -> argparse.ArgumentParser:
         help="Number of epochs for linear warmup (LR ramps from 0 to peak). "
         "Supports fractional values, e.g. 0.5 for half an epoch. 0 disables warmup.",
     )
+    parser.add_argument(
+        "--save_epochs",
+        type=int,
+        nargs="+",
+        default=[1, 5, 10, 15],
+        help="Epoch numbers (0-indexed) at which to save a checkpoint. "
+        "Epoch 0 means after initialization (before any training). "
+        "The last epoch always saves regardless of this list.",
+    )
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        default=None,
+        help="MLflow run name. If not specified, uses a timestamp.",
+    )
     return parser
 
 
@@ -557,6 +572,9 @@ def main(argv) -> float:
     """
     parser = get_argument_parser()
     args = parser.parse_args(argv)
+    if args.fq_lr == 0 and args.lora_lr == 0:
+        print("Both --fq_lr and --lora_lr are 0 — nothing to train. Skipping.")
+        return 0.0
     assert torch.cuda.is_available()
     transformers.set_seed(42)
     device = "cuda"
@@ -582,11 +600,11 @@ def main(argv) -> float:
     # Configure output and log files.
     output_dir = Path(args.output_dir)
     last_dir = output_dir / "last"
-    if not args.resume:
-        shutil.rmtree(last_dir, ignore_errors=True)
+    # if not args.resume:
+    shutil.rmtree(last_dir, ignore_errors=True)
     for path in [output_dir, last_dir]:
         path.mkdir(exist_ok=True, parents=True)
-    ckpt_file = last_dir / "nncf_checkpoint_svd_lora_se_2bit.pth"
+    ckpt_file = Path("nncf_checkpoint_svd_lora_se_2bit.pth")
     hidden_file = output_dir / "hiddens.pth"
 
     # Configure MLflow tracking (SQLite backend for indexing & future-proofing; file store is deprecated).
@@ -595,31 +613,62 @@ def main(argv) -> float:
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(f"fqlora_{Path(args.pretrained).name}")
     print(f"MLflow tracking URI: {tracking_uri}  (run `mlflow ui --backend-store-uri {tracking_uri}`)")
-    with mlflow.start_run(run_name=datetime.now().strftime("%Y-%m-%d__%H-%M-%S")):
+    run_name = args.run_name or datetime.now().strftime("%Y-%m-%d__%H-%M-%S")
+    with mlflow.start_run(run_name=run_name):
         _train(args, compression_config, device, torch_dtype, last_dir, output_dir, ckpt_file, hidden_file)
 
-        # Free2 GPU memory before launching vLLM evaluation subprocess.
+        # Free GPU memory before loading checkpoints for stripping & evaluation.
         gc.collect()
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
 
-        stripped_dir = last_dir / "stripped"
-        eval_results = evaluate_with_vllm(
-            checkpoint_dir=stripped_dir,
-            tasks=["lambada_openai"],
-            tensor_parallel_size=2,
-            dtype="auto",
-            fewshot_as_multiturn=False,
-            cuda_devices="1,2",
-            apply_chat_template=False,
-            batch_size="auto",
-            limit=args.limit,
+        # Find all saved epoch checkpoints sorted by epoch number.
+        epoch_ckpts = sorted(
+            last_dir.glob("nncf_checkpoint_epoch*.pth"),
+            key=lambda p: int(p.stem.replace("nncf_checkpoint_epoch", "")),
         )
-        lambada_acc = eval_results["results"]["lambada_openai"]["acc,none"]
-        lambada_ppl = eval_results["results"]["lambada_openai"]["perplexity,none"]
-        mlflow.log_metrics({"lambada_acc": lambada_acc, "lambada_ppl": lambada_ppl})
-        print(f"LAMBADA accuracy: {lambada_acc:.4f}, perplexity: {lambada_ppl:.4f}")
+        tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
+
+        for ckpt_path in epoch_ckpts:
+            epoch_num = int(ckpt_path.stem.replace("nncf_checkpoint_epoch", ""))
+            stripped_dir = last_dir / "stripped"
+            print(f"\n{'=' * 60}")
+            print(f"Stripping & evaluating checkpoint: {ckpt_path.name} -> {stripped_dir}")
+            print(f"{'=' * 60}")
+
+            # Load checkpoint into a fresh model, strip, and save (reuse same folder to save disk space).
+            model_to_strip = AutoModelForCausalLM.from_pretrained(
+                args.pretrained, torch_dtype=torch_dtype, device_map="cpu"
+            )
+            model_to_strip = load_checkpoint(model_to_strip, ckpt_path)
+            model_to_strip = nncf.strip(model_to_strip, strip_format=nncf.StripFormat.IN_PLACE)
+            if stripped_dir.exists():
+                shutil.rmtree(stripped_dir)
+            model_to_strip.save_pretrained(stripped_dir)
+            tokenizer.save_pretrained(stripped_dir)
+            del model_to_strip
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            # Evaluate with vLLM.
+            eval_results = evaluate_with_vllm(
+                checkpoint_dir=stripped_dir,
+                tasks=["lambada_openai"],
+                tensor_parallel_size=2,
+                dtype="auto",
+                fewshot_as_multiturn=False,
+                cuda_devices="1,2",
+                apply_chat_template=False,
+                batch_size="auto",
+                limit=args.limit,
+            )
+            lambada_acc = eval_results["results"]["lambada_openai"]["acc,none"]
+            lambada_ppl = eval_results["results"]["lambada_openai"]["perplexity,none"]
+            mlflow.log_metrics(
+                {f"lambada_acc_epoch{epoch_num}": lambada_acc, f"lambada_ppl_epoch{epoch_num}": lambada_ppl}
+            )
+            print(f"Epoch {epoch_num} — LAMBADA accuracy: {lambada_acc:.4f}, perplexity: {lambada_ppl:.4f}")
 
     # del model
     # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
@@ -669,8 +718,8 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
         model,
         lora_lr=args.lora_lr,
         fq_lr=args.fq_lr,
-        weight_decay_lora=args.weight_decay_lora,
-        weight_decay_fq=args.weight_decay_fq,
+        lora_weight_decay=args.lora_weight_decay,
+        fq_weight_decay=args.fq_weight_decay,
     )
     opt = torch.optim.AdamW(param_to_train)
 
@@ -725,8 +774,8 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
             "train_seqlen": args.train_seqlen,
             "fq_lr": args.fq_lr,
             "lora_lr": args.lora_lr,
-            "weight_decay_lora": args.weight_decay_lora,
-            "weight_decay_fq": args.weight_decay_fq,
+            "weight_decay_lora": args.lora_weight_decay,
+            "weight_decay_fq": args.fq_weight_decay,
             "batch_size": args.batch_size,
             "microbatch_size": args.microbatch_size,
             "grad_accumulation_steps": grad_accumulation_steps,
@@ -749,6 +798,12 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
 
     aggregated_loss = float("nan")
     loss_numerator = grad_steps = total_steps = 0
+    save_epochs = set(args.save_epochs)
+
+    # # Save epoch-0 checkpoint (after initialization, before any training).
+    # if 0 in save_epochs:
+    #     save_checkpoint(model, last_dir / "nncf_checkpoint_epoch0.pth", model_state=not args.basic_init)
+
     for epoch in range(args.epochs):
         batch_indices_epoch = torch.randperm(num_samples)[:epoch_samples].chunk(microbatches_per_epoch)
         for indices in track(batch_indices_epoch, description=f"Train epoch {epoch}"):
@@ -787,17 +842,11 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
                 mlflow.log_metric("loss", aggregated_loss, step=total_steps)
                 log_quantizer_stats(model, total_steps, opt)
                 opt.zero_grad()
-        if epoch == 0:
-            save_checkpoint(model, last_dir / "nncf_checkpoint_after_first_epoch.pth", model_state=not args.basic_init)
-        if epoch == 4:
-            save_checkpoint(model, last_dir / "nncf_checkpoint_after_5th_epoch.pth", model_state=not args.basic_init)
-        else:
-            save_checkpoint(model, ckpt_file, model_state=not args.basic_init)
-
-    model = nncf.strip(model, strip_format=nncf.StripFormat.IN_PLACE)
-    model.save_pretrained(last_dir / "stripped")
-    tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
-    tokenizer.save_pretrained(last_dir / "stripped")
+        # Save checkpoint at scheduled epochs (epoch+1 because we just finished this epoch).
+        finished_epoch = epoch + 1
+        if finished_epoch in save_epochs or epoch == args.epochs - 1:
+            ckpt_name = f"nncf_checkpoint_epoch{finished_epoch}.pth"
+            save_checkpoint(model, last_dir / ckpt_name, model_state=not args.basic_init)
 
 
 if __name__ == "__main__":

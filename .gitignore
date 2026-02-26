@@ -141,3 +141,5 @@ tests/post_training/**/*memory_logs
 
 output*
 eval_results
+mlflow.db
+*.pth
