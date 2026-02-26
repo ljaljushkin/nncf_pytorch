@@ -53,6 +53,7 @@ from nncf.torch.model_creation import load_from_config
 from nncf.torch.quantization.layers import AsymmetricLoraQuantizer
 from nncf.torch.quantization.layers import StretchedSymmetricLoraQuantizer
 from nncf.torch.quantization.layers import SymmetricLoraQuantizer
+from nncf.torch.quantization.quantize_functions import set_use_autograd_quantize
 
 warnings.filterwarnings("ignore", category=TracerWarning)
 
@@ -603,6 +604,11 @@ def get_argument_parser() -> argparse.ArgumentParser:
         "<output_dir>/nncf_init_<format>.pth (e.g. nncf_init_fq_stretched_lora.pth). "
         "This allows different formats to maintain separate init checkpoints.",
     )
+    parser.add_argument(
+        "--use_autograd_quantize",
+        action="store_true",
+        help="Use STE-based autograd for gradient computation instead of hand-written backward.",
+    )
     return parser
 
 
@@ -618,6 +624,7 @@ def main(argv) -> float:
         return 0.0
     assert torch.cuda.is_available()
     transformers.set_seed(42)
+    set_use_autograd_quantize(args.use_autograd_quantize)
     device = "cuda"
     torch_dtype = torch.bfloat16
     compression_config = dict(
@@ -864,6 +871,7 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
             "compression_format": str(compression_config["compression_format"]),
             "awq": compression_config["awq"],
             "scale_estimation": compression_config["scale_estimation"],
+            "use_autograd_quantize": args.use_autograd_quantize,
         }
     )
 

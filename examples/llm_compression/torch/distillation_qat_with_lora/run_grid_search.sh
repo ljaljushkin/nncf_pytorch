@@ -28,6 +28,8 @@ LOG_FILE="grid_search.log"
 CONFIGS_FILE=""
 DEBUG_FLAG=""
 COMPRESSION_FORMAT="FQ_STRETCHED_LORA"
+USE_AUTOGRAD_QUANTIZE=""
+SE_INIT=false
 
 # ── Parse CLI arguments ─────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -38,6 +40,8 @@ while [[ $# -gt 0 ]]; do
         --log_file)   LOG_FILE="$2"; shift 2 ;;
         --debug)      DEBUG_FLAG="--debug"; shift ;;
         --compression_format) COMPRESSION_FORMAT="$2"; shift 2 ;;
+        --use_autograd_quantize) USE_AUTOGRAD_QUANTIZE="--use_autograd_quantize"; shift ;;
+        --se-init) SE_INIT=true; shift ;;
         -h|--help)
             sed -n '3,18p' "$0"
             exit 0 ;;
@@ -59,6 +63,19 @@ case "$COMPRESSION_FORMAT" in
     FQ_LORA*)           FMT_TAG="fql" ;;
     *)                  FMT_TAG="$(echo "$COMPRESSION_FORMAT" | tr '[:upper:]' '[:lower:]')" ;;
 esac
+
+# Append autograd tag to format tag when enabled.
+if [[ -n "$USE_AUTOGRAD_QUANTIZE" ]]; then
+    FMT_TAG="${FMT_TAG}_ag"
+fi
+
+# Append SE tag when using Scale Estimation init.
+if [[ "$SE_INIT" == true ]]; then
+    FMT_TAG="${FMT_TAG}_se"
+    BASIC_INIT_FLAG=""
+else
+    BASIC_INIT_FLAG="--basic_init"
+fi
 
 # ── Helper: run a single configuration ──────────────────────────────
 run_config() {
@@ -89,7 +106,8 @@ run_config() {
         --output_dir "$OUTPUT_DIR" \
         --run_name "$RUN_NAME" \
         --compression_format "$COMPRESSION_FORMAT" \
-        --basic_init \
+        $BASIC_INIT_FLAG \
+        $USE_AUTOGRAD_QUANTIZE \
         $DEBUG_FLAG \
         >> "$LOG_FILE" 2>&1
 }
