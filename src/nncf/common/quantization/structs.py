@@ -45,6 +45,11 @@ class QuantizationScheme(StrEnum):
         the multiplication of low-rank adapters.
     :param ASYMMETRIC_LORA_NLS: Asymmetric quantization with Low-Rank Adapters (LoRA) and Neural Low-Rank Adapter Search
         (NLS), involving the sum of weights and the multiplication of low-rank adapters.
+    :param SYMMETRIC_STRETCHED: Symmetric quantization with a half-level shift (ParetoQ-style). The quantization grid
+        is shifted by 0.5 to avoid wasting a level on zero, producing uniformly spaced values symmetric around zero
+        (e.g., {-0.75, -0.25, 0.25, 0.75} for 2-bit). Particularly effective for very low bit-widths (2-bit).
+    :param SYMMETRIC_STRETCHED_LORA: Stretched symmetric quantization with Low-Rank Adapters (LoRA).
+    :param SYMMETRIC_STRETCHED_LORA_NLS: Stretched symmetric quantization with Low-Rank Adapters (LoRA) and NLS.
     """
 
     SYMMETRIC = "symmetric"
@@ -53,6 +58,8 @@ class QuantizationScheme(StrEnum):
     SYMMETRIC_LORA_NLS = "symmetric_lora_nls"
     ASYMMETRIC_LORA = "asymmetric_lora"
     ASYMMETRIC_LORA_NLS = "asymmetric_lora_nls"
+    SYMMETRIC_STRETCHED = "symmetric_stretched"
+    SYMMETRIC_STRETCHED_LORA = "symmetric_stretched_lora"
 
 
 class QuantizerConfig:

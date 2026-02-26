@@ -51,6 +51,7 @@ from nncf.quantization.quantize_model import compress_weights
 from nncf.torch.function_hook.wrapper import get_hook_storage
 from nncf.torch.model_creation import load_from_config
 from nncf.torch.quantization.layers import AsymmetricLoraQuantizer
+from nncf.torch.quantization.layers import StretchedSymmetricLoraQuantizer
 from nncf.torch.quantization.layers import SymmetricLoraQuantizer
 
 warnings.filterwarnings("ignore", category=TracerWarning)
@@ -257,7 +258,7 @@ def log_quantizer_stats(model: nn.Module, step: int, optimizer: torch.optim.Opti
 
     hook_storage = get_hook_storage(model)
     for name, module in hook_storage.named_hooks():
-        if not isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer)):
+        if not isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer, StretchedSymmetricLoraQuantizer)):
             continue
         if module.num_bits not in (2, 4):
             continue
@@ -270,10 +271,12 @@ def log_quantizer_stats(model: nn.Module, step: int, optimizer: torch.optim.Opti
         metrics[f"{prefix}/lora_A_norm"] = module.lora_A.data.float().norm().item()
         metrics[f"{prefix}/lora_B_norm"] = module.lora_B.data.float().norm().item()
 
-        # Scale / input_low / input_range norms depending on quantizer type
+        # Scale / input_low / input_range / alpha norms depending on quantizer type
         if isinstance(module, AsymmetricLoraQuantizer):
             metrics[f"{prefix}/input_low_norm"] = module.input_low.data.float().norm().item()
             metrics[f"{prefix}/input_range_norm"] = module.input_range.data.float().norm().item()
+        elif isinstance(module, StretchedSymmetricLoraQuantizer):
+            metrics[f"{prefix}/alpha_norm"] = module.alpha.data.float().norm().item()
         elif isinstance(module, SymmetricLoraQuantizer):
             metrics[f"{prefix}/scale_norm"] = module.scale.data.float().norm().item()
 
@@ -286,6 +289,10 @@ def log_quantizer_stats(model: nn.Module, step: int, optimizer: torch.optim.Opti
             for param_name, param in [("input_low", module.input_low), ("input_range", module.input_range)]:
                 if param.grad is not None:
                     metrics[f"{prefix}/{param_name}_grad_norm"] = param.grad.data.float().norm().item()
+        elif isinstance(module, StretchedSymmetricLoraQuantizer):
+            s = module._alpha_param_storage
+            if s.grad is not None:
+                metrics[f"{prefix}/alpha_grad_norm"] = s.grad.data.float().norm().item()
         elif isinstance(module, SymmetricLoraQuantizer):
             s = module._scale_param_storage
             if s.grad is not None:
@@ -302,6 +309,10 @@ def log_quantizer_stats(model: nn.Module, step: int, optimizer: torch.optim.Opti
                 lr_val = param_id_to_lr.get(id(param))
                 if lr_val is not None:
                     metrics[f"{prefix}/{param_name}_lr"] = lr_val
+        elif isinstance(module, StretchedSymmetricLoraQuantizer):
+            lr_val = param_id_to_lr.get(id(module._alpha_param_storage))
+            if lr_val is not None:
+                metrics[f"{prefix}/alpha_lr"] = lr_val
         elif isinstance(module, SymmetricLoraQuantizer):
             lr_val = param_id_to_lr.get(id(module._scale_param_storage))
             if lr_val is not None:
@@ -340,7 +351,9 @@ def set_trainable(
     train_scales = fq_lr > 0
     hook_storage = get_hook_storage(model)
     for _, module in hook_storage.named_hooks():
-        if isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer)) and (module.num_bits in [4, 2]):
+        if isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer, StretchedSymmetricLoraQuantizer)) and (
+            module.num_bits in [4, 2]
+        ):
             # Only enable gradients for param groups that will actually be trained.
             if train_lora:
                 module.lora_A.requires_grad = True
@@ -350,6 +363,8 @@ def set_trainable(
                 if isinstance(module, AsymmetricLoraQuantizer):
                     module.input_low.requires_grad = True
                     module._input_range_param_storage.requires_grad = True
+                elif isinstance(module, StretchedSymmetricLoraQuantizer):
+                    module._alpha_param_storage.requires_grad = True
                 elif isinstance(module, SymmetricLoraQuantizer):
                     module._scale_param_storage.requires_grad = True
                 params = module.get_trainable_params()
@@ -457,12 +472,6 @@ def get_argument_parser() -> argparse.ArgumentParser:
         default="output",
         help="Path to the directory for storing logs, tuning checkpoint, compressed model, validation references.",
     )
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Whether to start from previously saved checkpoint. If not specified or checkpoint does not exist, "
-        "start from scratch by post-training weight compression initialization.",
-    )
     parser.add_argument("--lora_rank", type=int, default=64, help="Rank of lora adapters")
     parser.add_argument(
         "--basic_init",
@@ -562,6 +571,38 @@ def get_argument_parser() -> argparse.ArgumentParser:
         default=None,
         help="MLflow run name. If not specified, uses a timestamp.",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Debug mode: uses a separate MLflow database (mlflow_debug.db) and experiment prefix "
+        "so that experimental runs do not pollute production results.",
+    )
+    parser.add_argument(
+        "--mlflow_db",
+        type=str,
+        default=None,
+        help="Override the MLflow SQLite database path. "
+        "By default: <output_dir>/mlflow.db (or mlflow_debug.db in --debug mode).",
+    )
+    parser.add_argument(
+        "--compression_format",
+        type=str,
+        default="FQ_STRETCHED_LORA",
+        choices=[f.name for f in CompressionFormat],
+        help="Compression format to use. Key options: "
+        "FQ_LORA (standard fake-quantize + LoRA), "
+        "FQ_STRETCHED_LORA (ParetoQ-style stretched quantization + LoRA). "
+        "Default: FQ_STRETCHED_LORA.",
+    )
+    parser.add_argument(
+        "--init_ckpt",
+        type=Path,
+        default=None,
+        help="Path to the initial compression checkpoint (.pth) to resume from. "
+        "If not specified, auto-derived from --compression_format: "
+        "<output_dir>/nncf_init_<format>.pth (e.g. nncf_init_fq_stretched_lora.pth). "
+        "This allows different formats to maintain separate init checkpoints.",
+    )
     return parser
 
 
@@ -580,12 +621,12 @@ def main(argv) -> float:
     device = "cuda"
     torch_dtype = torch.bfloat16
     compression_config = dict(
-        mode=CompressWeightsMode.INT4_ASYM,
+        mode=CompressWeightsMode.INT4_SYM,
         group_size=64,
         awq=not args.basic_init,
         backup_mode=nncf.BackupMode.NONE,
         scale_estimation=not args.basic_init,
-        compression_format=CompressionFormat.FQ_LORA,
+        compression_format=CompressionFormat[args.compression_format],
         # ignored_scope=nncf.IgnoredScope(patterns=[r"(?!.*5.mlp.gate_proj.*).*"]),
         ignored_scope=nncf.IgnoredScope(
             patterns=[r"(?!model/mlp/(gate_proj|up_proj)/linear/5$|model/self_attn/(k_proj|q_proj|o_proj)/linear/5$).*"]
@@ -600,19 +641,30 @@ def main(argv) -> float:
     # Configure output and log files.
     output_dir = Path(args.output_dir)
     last_dir = output_dir / "last"
-    # if not args.resume:
     shutil.rmtree(last_dir, ignore_errors=True)
     for path in [output_dir, last_dir]:
         path.mkdir(exist_ok=True, parents=True)
-    ckpt_file = Path("nncf_checkpoint_svd_lora_se_2bit.pth")
+    # Derive initial compression checkpoint path from format (or use explicit override).
+    if args.init_ckpt is not None:
+        ckpt_file = args.init_ckpt
+    else:
+        fmt_tag = args.compression_format.lower()
+        ckpt_file = output_dir / f"nncf_init_{fmt_tag}.pth"
     hidden_file = output_dir / "hiddens.pth"
 
     # Configure MLflow tracking (SQLite backend for indexing & future-proofing; file store is deprecated).
-    db_path = output_dir.resolve() / "mlflow.db"
+    if args.mlflow_db:
+        db_path = Path(args.mlflow_db).resolve()
+    else:
+        db_name = "mlflow_debug.db" if args.debug else "mlflow.db"
+        db_path = output_dir.resolve() / db_name
     tracking_uri = f"sqlite:///{db_path}"
     mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(f"fqlora_{Path(args.pretrained).name}")
+    experiment_prefix = "debug_" if args.debug else ""
+    mlflow.set_experiment(f"{experiment_prefix}fqlora_{Path(args.pretrained).name}")
     print(f"MLflow tracking URI: {tracking_uri}  (run `mlflow ui --backend-store-uri {tracking_uri}`)")
+    if args.debug:
+        print("  ** DEBUG MODE — results go to a separate database and experiment **")
     run_name = args.run_name or datetime.now().strftime("%Y-%m-%d__%H-%M-%S")
     with mlflow.start_run(run_name=run_name):
         _train(args, compression_config, device, torch_dtype, last_dir, output_dir, ckpt_file, hidden_file)
@@ -623,50 +675,67 @@ def main(argv) -> float:
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
 
-        # Find all saved epoch checkpoints sorted by epoch number.
+        # ── Build evaluation list: epoch 0 = init checkpoint, then trained epochs ──
+        tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
+        eval_checkpoints: list[tuple[int, Path]] = [(0, ckpt_file)]
         epoch_ckpts = sorted(
             last_dir.glob("nncf_checkpoint_epoch*.pth"),
             key=lambda p: int(p.stem.replace("nncf_checkpoint_epoch", "")),
         )
-        tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
+        for p in epoch_ckpts:
+            eval_checkpoints.append((int(p.stem.replace("nncf_checkpoint_epoch", "")), p))
 
-        for ckpt_path in epoch_ckpts:
-            epoch_num = int(ckpt_path.stem.replace("nncf_checkpoint_epoch", ""))
-            stripped_dir = last_dir / "stripped"
-            print(f"\n{'=' * 60}")
-            print(f"Stripping & evaluating checkpoint: {ckpt_path.name} -> {stripped_dir}")
-            print(f"{'=' * 60}")
+        for epoch_num, ckpt_path in eval_checkpoints:
+            # Cache eval results only for epoch 0 (initial PTQ checkpoint) — reusable across runs.
+            # Trained epoch results are always re-evaluated (caching would be error-prone with tuning).
+            cache_file = ckpt_path.with_suffix(".eval.json") if epoch_num == 0 else None
+            if cache_file and cache_file.exists():
+                with open(cache_file) as f:
+                    cached = json.load(f)
+                lambada_acc = cached["lambada_acc"]
+                lambada_ppl = cached["lambada_ppl"]
+                print(
+                    f"Epoch {epoch_num} — cached from {cache_file.name}: acc={lambada_acc:.4f}, ppl={lambada_ppl:.4f}"
+                )
+            else:
+                stripped_dir = last_dir / "stripped"
+                print(f"\n{'=' * 60}")
+                print(f"Stripping & evaluating: {ckpt_path.name} (epoch {epoch_num})")
+                print(f"{'=' * 60}")
 
-            # Load checkpoint into a fresh model, strip, and save (reuse same folder to save disk space).
-            model_to_strip = AutoModelForCausalLM.from_pretrained(
-                args.pretrained, torch_dtype=torch_dtype, device_map="cpu"
-            )
-            model_to_strip = load_checkpoint(model_to_strip, ckpt_path)
-            model_to_strip = nncf.strip(model_to_strip, strip_format=nncf.StripFormat.IN_PLACE)
-            if stripped_dir.exists():
-                shutil.rmtree(stripped_dir)
-            model_to_strip.save_pretrained(stripped_dir)
-            tokenizer.save_pretrained(stripped_dir)
-            del model_to_strip
-            gc.collect()
-            torch.cuda.empty_cache()
+                model_to_strip = AutoModelForCausalLM.from_pretrained(
+                    args.pretrained, torch_dtype=torch_dtype, device_map="cpu"
+                )
+                model_to_strip = load_checkpoint(model_to_strip, ckpt_path)
+                model_to_strip = nncf.strip(model_to_strip, strip_format=nncf.StripFormat.IN_PLACE)
+                if stripped_dir.exists():
+                    shutil.rmtree(stripped_dir)
+                model_to_strip.save_pretrained(stripped_dir)
+                tokenizer.save_pretrained(stripped_dir)
+                del model_to_strip
+                gc.collect()
+                torch.cuda.empty_cache()
 
-            # Evaluate with vLLM.
-            eval_results = evaluate_with_vllm(
-                checkpoint_dir=stripped_dir,
-                tasks=["lambada_openai"],
-                tensor_parallel_size=2,
-                dtype="auto",
-                fewshot_as_multiturn=False,
-                cuda_devices="1,2",
-                apply_chat_template=False,
-                batch_size="auto",
-                limit=args.limit,
-            )
-            lambada_acc = eval_results["results"]["lambada_openai"]["acc,none"]
-            lambada_ppl = eval_results["results"]["lambada_openai"]["perplexity,none"]
+                eval_results = evaluate_with_vllm(
+                    checkpoint_dir=stripped_dir,
+                    tasks=["lambada_openai"],
+                    tensor_parallel_size=2,
+                    dtype="auto",
+                    fewshot_as_multiturn=False,
+                    cuda_devices="1,2",
+                    apply_chat_template=False,
+                    batch_size="auto",
+                    limit=args.limit,
+                )
+                lambada_acc = eval_results["results"]["lambada_openai"]["acc,none"]
+                lambada_ppl = eval_results["results"]["lambada_openai"]["perplexity,none"]
+                if cache_file:
+                    with open(cache_file, "w") as f:
+                        json.dump({"lambada_acc": lambada_acc, "lambada_ppl": lambada_ppl}, f, indent=2)
+
             mlflow.log_metrics(
-                {f"lambada_acc_epoch{epoch_num}": lambada_acc, f"lambada_ppl_epoch{epoch_num}": lambada_ppl}
+                {"lambada_acc": lambada_acc, "lambada_ppl": lambada_ppl},
+                step=epoch_num,
             )
             print(f"Epoch {epoch_num} — LAMBADA accuracy: {lambada_acc:.4f}, perplexity: {lambada_ppl:.4f}")
 
@@ -708,11 +777,13 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
         torch.save(orig_hiddens, hidden_file)
 
     # Create or load model to tune with Fake Quantizers and absorbable LoRA adapters.
-    if args.resume and ckpt_file.exists():
+    if ckpt_file.exists():
+        print(f"Loading existing init checkpoint: {ckpt_file}")
         model = load_checkpoint(model, ckpt_file)
     else:
         model = compress_weights(model, dataset=dataset, **compression_config)
-        save_checkpoint(model, last_dir / "nncf_checkpoint_svd_lora_se_2bit.pth", model_state=not args.basic_init)
+        save_checkpoint(model, ckpt_file, model_state=not args.basic_init)
+        print(f"Saved init checkpoint: {ckpt_file}")
 
     param_to_train = set_trainable(
         model,

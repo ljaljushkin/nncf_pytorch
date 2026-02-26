@@ -30,6 +30,7 @@ from nncf.torch.model_graph_manager import split_const_name
 from nncf.torch.quantization.layers import AsymmetricQuantizer
 from nncf.torch.quantization.layers import BaseQuantizer
 from nncf.torch.quantization.layers import BaseWeightsDecompressor
+from nncf.torch.quantization.layers import StretchedSymmetricQuantizer
 from nncf.torch.quantization.layers import SymmetricQuantizer
 from nncf.torch.quantization.strip import asym_fq_to_decompressor
 from nncf.torch.quantization.strip import convert_to_torch_fakequantizer
@@ -169,6 +170,7 @@ def apply_compression_in_place(model: TModel) -> TModel:
                 UnstructuredPruningMask,
                 SymmetricQuantizer,
                 AsymmetricQuantizer,
+                StretchedSymmetricQuantizer,
                 BaseWeightsDecompressor,
                 RBPruningMask,
                 UnstructuredPruningMask,
@@ -191,7 +193,7 @@ def apply_compression_in_place(model: TModel) -> TModel:
             raise nncf.InternalError(msg)
 
         weight_param.requires_grad = False
-        if isinstance(hook_module, (SymmetricQuantizer, AsymmetricQuantizer)):
+        if isinstance(hook_module, (SymmetricQuantizer, AsymmetricQuantizer, StretchedSymmetricQuantizer)):
             weight_param.data = hook_module.quantize(weight_param)
         else:
             weight_param.data = hook_module(weight_param)

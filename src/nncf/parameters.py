@@ -139,6 +139,7 @@ class CompressionFormat(StrEnum):
     FQ = "fake_quantize"
     FQ_LORA = "fake_quantize_with_lora"
     FQ_LORA_NLS = "fake_quantize_with_lora_nls"
+    FQ_STRETCHED_LORA = "fake_quantize_stretched_with_lora"
 
 
 @api(canonical_alias="nncf.StripFormat")

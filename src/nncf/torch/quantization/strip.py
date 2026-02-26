@@ -26,7 +26,7 @@ from nncf.torch.quantization.layers import INT8SymmetricWeightsDecompressor
 from nncf.torch.quantization.layers import SymmetricQuantizer
 from nncf.torch.quantization.quantize_functions import TuneRange
 
-SUPPORTED_NUM_BITS_FOR_STRIP_MODEL = [8]
+SUPPORTED_NUM_BITS_FOR_STRIP_MODEL = [8, 4, 2]
 
 
 def convert_to_torch_fakequantizer(nncf_quantizer: BaseQuantizer) -> FakeQuantize:

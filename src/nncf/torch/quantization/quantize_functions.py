@@ -19,9 +19,11 @@ from nncf.errors import ValidationError
 from nncf.torch.quantization.extensions import QuantizedFunctionsCPU
 from nncf.torch.quantization.extensions import QuantizedFunctionsCUDA
 from nncf.torch.quantization.reference import ReferenceQuantizedFunctions as RQ
+from nncf.torch.quantization.reference import ReferenceSEQFunctions as SEQ
 from nncf.torch.quantization.reference import autograd_quantize_forward
 from nncf.torch.quantization.reference import ste_clamp
 from nncf.torch.quantization.reference import ste_round
+from nncf.torch.quantization.reference import stretched_elastic_quantize_autograd_forward
 from nncf.torch.utils import add_ov_domain
 
 # =============================================================================
@@ -29,7 +31,7 @@ from nncf.torch.utils import add_ov_domain
 # When True, uses automatic differentiation with STE instead of hand-written backward
 # This provides cleaner gradient computation without manual precision handling
 # =============================================================================
-USE_AUTOGRAD_QUANTIZE = True
+USE_AUTOGRAD_QUANTIZE = False
 
 
 def set_use_autograd_quantize(enabled: bool) -> None:
@@ -508,6 +510,122 @@ def symmetric_quantize_lora(input_, input_shape, A, B, scale, level_low, level_h
         level_high,
         levels,
     )
+
+
+# =============================================================================
+# Stretched Elastic Quantization (ParetoQ-style) dispatch functions
+# =============================================================================
+
+
+class StretchedElasticQuantizeTorch(torch.autograd.Function):
+    """
+    Stretched Elastic Quantization using compiled (torch.compile) forward/backward.
+
+    Delegates the actual computation to ReferenceSEQFunctions which wraps
+    the pure-math functions with CompilationWrapper for torch.compile acceleration.
+    """
+
+    @staticmethod
+    def forward(ctx, input_, alpha, num_bits, layerwise):
+        # Required to support both torch.amp.autocast and models that perform explicit type casting
+        if input_.dtype in [torch.bfloat16, torch.float16]:
+            alpha = alpha.type(input_.dtype)
+
+        eps = torch.tensor(0.00001, device=alpha.device, dtype=alpha.dtype)
+        alpha_safe = torch.where(alpha > eps, alpha, eps)
+
+        ctx.save_for_backward(input_, alpha_safe)
+        ctx.num_bits = num_bits
+        ctx.layerwise = layerwise
+
+        return SEQ.Quantize_forward(input_, alpha_safe, num_bits)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input_, alpha_safe = ctx.saved_tensors
+        grad_input, grad_alpha = SEQ.Quantize_backward(grad_output, input_, alpha_safe, ctx.num_bits, ctx.layerwise)
+        return grad_input, grad_alpha, None, None
+
+
+def stretched_symmetric_quantize(
+    input_: torch.Tensor, alpha: torch.Tensor, num_bits: int, layerwise: bool = True, eps: float = 1e-5
+) -> torch.Tensor:
+    """
+    Apply stretched symmetric quantization (ParetoQ-style).
+
+    This quantization scheme shifts the grid by 0.5 to avoid wasting a level on zero.
+    Particularly effective for very low bit-widths (2-bit).
+
+    :param input_: Input tensor to quantize.
+    :param alpha: Step size / scale parameter (learnable), shape [out_features, 1] for rowwise or [1] for layerwise.
+    :param num_bits: Quantization bit-width.
+    :param layerwise: If True, alpha is a scalar (layerwise quantization).
+    :param eps: Small epsilon for numerical stability.
+    :return: Quantized tensor.
+    """
+    return StretchedElasticQuantizeTorch.apply(input_, alpha, num_bits, layerwise)
+
+
+def stretched_symmetric_quantize_lora(
+    input_: torch.Tensor,
+    input_shape: tuple,
+    A: torch.Tensor,
+    B: torch.Tensor,
+    alpha: torch.Tensor,
+    num_bits: int,
+    layerwise: bool = True,
+    eps: float = 1e-5,
+    skip: bool = False,
+) -> torch.Tensor:
+    """
+    Apply stretched symmetric quantization with LoRA adapters.
+
+    First applies LoRA update (input + B @ A), then quantizes using stretched elastic quantization.
+
+    :param input_: Input tensor (weight matrix).
+    :param input_shape: Shape for reshaping input before quantization.
+    :param A: LoRA adapter A matrix, shape [rank, in_features].
+    :param B: LoRA adapter B matrix, shape [out_features, rank].
+    :param alpha: Step size / scale parameter (learnable).
+    :param num_bits: Quantization bit-width.
+    :param layerwise: If True, use layerwise (scalar) alpha; if False, use rowwise alpha.
+    :param eps: Small epsilon for numerical stability.
+    :param skip: If True, skip quantization and return input unchanged.
+    :return: Quantized tensor with LoRA update applied.
+    """
+    if has_torch_function_unary(input_):
+        return handle_torch_function(
+            stretched_symmetric_quantize_lora,
+            (input_,),
+            input_,
+            input_shape,
+            A,
+            B,
+            alpha,
+            num_bits,
+            layerwise,
+            eps,
+            skip,
+        )
+    if skip:
+        return input_
+
+    # Apply LoRA update
+    input_ = (input_ + B @ A).type(input_.dtype)
+
+    if USE_AUTOGRAD_QUANTIZE:
+        # Use autograd-based implementation
+        dtype = input_.dtype
+        original_shape = input_.shape
+        input_reshaped = input_.reshape(input_shape)
+        output = stretched_elastic_quantize_autograd_forward(input_reshaped, alpha, num_bits)
+        return output.reshape(original_shape).to(dtype)
+
+    # Use explicit backward implementation (compiled)
+    original_shape = input_.shape
+    input_reshaped = input_.reshape(input_shape)
+    output = StretchedElasticQuantizeTorch.apply(input_reshaped, alpha, num_bits, layerwise)
+    return output.reshape(original_shape)
 
 
 class TuneRange(torch.autograd.Function):

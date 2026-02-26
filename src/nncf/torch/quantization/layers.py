@@ -47,6 +47,8 @@ from nncf.torch.quantization.quantize_functions import decompress_symmetric
 from nncf.torch.quantization.quantize_functions import get_scale_zp_from_input_low_input_high
 from nncf.torch.quantization.quantize_functions import pack_int4
 from nncf.torch.quantization.quantize_functions import pack_uint4
+from nncf.torch.quantization.quantize_functions import stretched_symmetric_quantize
+from nncf.torch.quantization.quantize_functions import stretched_symmetric_quantize_lora
 from nncf.torch.quantization.quantize_functions import symmetric_quantize
 from nncf.torch.quantization.quantize_functions import symmetric_quantize_lora
 from nncf.torch.quantization.quantize_functions import unpack_int4
@@ -843,6 +845,148 @@ class SymmetricQuantizer(BaseQuantizer):
 
 
 @COMPRESSION_MODULES.register()
+@QUANTIZATION_MODULES.register(QuantizationMode.SYMMETRIC_STRETCHED)
+class StretchedSymmetricQuantizer(BaseQuantizer):
+    """
+    Stretched Symmetric Quantizer (ParetoQ-style).
+
+    Uses a half-level shift to avoid wasting a level on zero. The quantization grid is shifted
+    by 0.5, producing values like {-0.75, -0.25, 0.25, 0.75} * alpha for 2-bit instead of
+    the standard {-2, -1, 0, 1} * scale.
+    """
+
+    ALPHA_PARAM_NAME = "alpha"
+    _ALPHA_PARAM_STORAGE_ATTR = "_alpha_param_storage"
+
+    def __init__(self, qspec: PTQuantizerSpec):
+        super().__init__(qspec)
+        self.layerwise = self.scale_shape == (1,)
+
+        setattr(
+            self,
+            self._ALPHA_PARAM_STORAGE_ATTR,
+            CompressionParameter(
+                torch.ones(self.scale_shape),
+                requires_grad=True,
+                compression_lr_multiplier=qspec.compression_lr_multiplier,
+            ),
+        )
+        if self._is_using_log_scale_storage:
+            self._alpha_param_storage.data.log_()
+            self.eps = 0
+        else:
+            self.eps = 1e-16
+
+        self.set_levels()
+
+        self._register_load_state_dict_pre_hook(
+            StorageRedirectingLoadStateDictHook(
+                storage_attribute_in_module=self._ALPHA_PARAM_STORAGE_ATTR,
+                name_in_state_dict=self.ALPHA_PARAM_NAME,
+                use_log_storage_in_module=self._is_using_log_scale_storage,
+            )
+        )
+
+        self._register_state_dict_hook(
+            StorageRedirectingStateDictHook(
+                storage_attribute_in_module=self._ALPHA_PARAM_STORAGE_ATTR,
+                name_in_state_dict=self.ALPHA_PARAM_NAME,
+                use_log_storage_in_module=self._is_using_log_scale_storage,
+            )
+        )
+
+    @property
+    def alpha(self):
+        return self._alpha_param_storage.exp() if self._is_using_log_scale_storage else self._alpha_param_storage
+
+    @alpha.setter
+    def alpha(self, v):
+        self._alpha_param_storage = v
+        if self._is_using_log_scale_storage:
+            self._alpha_param_storage.data.log_()
+
+    def __setattr__(self, key, value):
+        """Handle redirect-storage attributes properly."""
+        if key == self.ALPHA_PARAM_NAME:
+            object.__setattr__(self, key, value)
+        else:
+            super().__setattr__(key, value)
+
+    def enable_gradients(self):
+        super().enable_gradients()
+        self._alpha_param_storage.requires_grad = True
+
+    def disable_gradients(self):
+        self._alpha_param_storage.requires_grad = False
+
+    def set_levels(self):
+        """For stretched quantization, we don't use standard level_low/level_high."""
+        # These are set to dummy values; the actual quantization uses shifted grid
+        self.level_low = 0
+        self.level_high = (2**self.num_bits) - 1
+
+    @property
+    def signed(self):
+        return True
+
+    def quantize(self, x, execute_traced_op_as_identity: bool = False):
+        # TODO: (dokuchaev) remove within new tracing (ticket-163869)
+        with DisableTorchFunction():
+            # in multi-device case after loading nncf checkpoint, quantizers have a different device.
+            self.to(x.device)
+        return stretched_symmetric_quantize(x, self.alpha, self.num_bits, layerwise=self.layerwise, eps=self.eps)
+
+    def get_trainable_params(self) -> dict[str, torch.Tensor]:
+        return {self.ALPHA_PARAM_NAME: self.alpha}
+
+    def broadcast_initialized_params(self, src: int = 0):
+        super().broadcast_initialized_params(src)
+        distributed.broadcast(self._alpha_param_storage, src=src)
+
+    def _get_input_low_input_high(self):
+        """Map stretched grid to standard FQ range for export."""
+        # For stretched quantization with alpha, the representable range is [-alpha * Qp, alpha * Qp]
+        # where Qp = (n_levels - 0.5) / n_levels
+        n_levels = 2 ** (self.num_bits - 1)
+        shift = 0.5
+        Qp = (n_levels - shift) / n_levels
+        input_low = -self.alpha * Qp
+        input_high = self.alpha * Qp
+        return input_low, input_high
+
+    def _prepare_export_quantization(self, x: torch.Tensor):
+        with no_jit_trace():
+            input_low, input_high = self._get_input_low_input_high()
+            level_low = self.level_low
+            level_high = self.level_high
+            if self._is_quantized_on_export:
+                x = self.quantize(x, execute_traced_op_as_identity=False)
+        return x, level_high, level_low, input_low, input_high
+
+    def get_parameters_for_torch_fq(self) -> tuple[int, int, torch.Tensor, torch.Tensor]:
+        """Get parameters for conversion to native FakeQuantize."""
+        with torch.no_grad(), no_jit_trace():
+            input_low, input_high = self._get_input_low_input_high()
+            level_low = self.level_low
+            level_high = self.level_high
+
+            scale, zero_point = get_scale_zp_from_input_low_input_high(level_low, level_high, input_low, input_high)
+
+            scale = scale.view(-1)
+            zero_point = zero_point.view(-1).to(dtype=torch.int32)
+
+        return level_low, level_high, scale, zero_point
+
+    def get_quantizer_config(self) -> QuantizerConfig:
+        return QuantizerConfig(
+            num_bits=self.num_bits,
+            mode=QuantizationMode.SYMMETRIC_STRETCHED,
+            signedness_to_force=self.signed,
+            per_channel=self.per_channel,
+        )
+
+
+@COMPRESSION_MODULES.register()
 @QUANTIZATION_MODULES.register(QuantizationMode.ASYMMETRIC)
 class AsymmetricQuantizer(BaseQuantizer):
     INPUT_LOW_PARAM_NAME = "input_low"
@@ -1244,6 +1388,57 @@ class SymmetricLoraNLSQuantizer(SymmetricLoraQuantizer, LoraNLSMixin):
     def from_config(cls, state) -> "SymmetricLoraNLSQuantizer":
         qspec = PTQuantizerSpec.from_state(state["qspec"])
         lspec = PTLoraNLSSpec.from_state(state["lspec"])
+        return cls(qspec, lspec)
+
+
+@COMPRESSION_MODULES.register()
+@QUANTIZATION_MODULES.register(QuantizationMode.SYMMETRIC_STRETCHED_LORA)
+class StretchedSymmetricLoraQuantizer(StretchedSymmetricQuantizer, LoraMixin):
+    """Stretched Symmetric Quantizer with LoRA adapters."""
+
+    _arg_names = ["qspec", "lspec"]
+
+    def __init__(self, qspec: PTQuantizerSpec, lspec: PTLoraSpec):
+        super().__init__(qspec)
+        self.init_lora(lspec)
+
+    def quantize(self, x: torch.Tensor, execute_traced_op_as_identity: bool = False):
+        # TODO: (dokuchaev) remove within new tracing (ticket-163869)
+        with DisableTorchFunction():
+            # in multi-device case after loading nncf checkpoint, quantizers have a different device.
+            self.to(x.device)
+        return stretched_symmetric_quantize_lora(
+            x,
+            self._lspec.weight_shape,
+            self.lora_A,
+            self.lora_B,
+            self.alpha,
+            self.num_bits,
+            layerwise=self.layerwise,
+            eps=self.eps,
+            skip=execute_traced_op_as_identity,
+        )
+
+    def enable_gradients(self) -> None:
+        super().enable_gradients()
+        LoraMixin.enable_gradients(self)
+
+    def disable_gradients(self) -> None:
+        super().disable_gradients()
+        LoraMixin.disable_gradients(self)
+
+    def get_trainable_params(self) -> dict[str, torch.nn.Parameter]:
+        params = super().get_trainable_params()
+        params.update(LoraMixin.get_adapters(self))
+        return params
+
+    def get_config(self) -> dict[str, Any]:
+        return {"qspec": super().get_config(), "lspec": self._lspec.get_state()}
+
+    @classmethod
+    def from_config(cls, state) -> "StretchedSymmetricLoraQuantizer":
+        qspec = PTQuantizerSpec.from_state(state["qspec"])
+        lspec = PTLoraSpec.from_state(state["lspec"])
         return cls(qspec, lspec)
 
 

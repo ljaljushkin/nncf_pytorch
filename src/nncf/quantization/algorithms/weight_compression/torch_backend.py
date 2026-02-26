@@ -276,6 +276,8 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             if is_all_8bit:
                 mode_vs_schema_map[CompressWeightsMode.INT8_ASYM] = QuantizationScheme.ASYMMETRIC_LORA_NLS
                 mode_vs_schema_map[CompressWeightsMode.INT8_SYM] = QuantizationScheme.SYMMETRIC_LORA_NLS
+        if compression_format == CompressionFormat.FQ_STRETCHED_LORA:
+            mode_vs_schema_map[CompressWeightsMode.INT4_SYM] = QuantizationScheme.SYMMETRIC_STRETCHED_LORA
 
         schema = mode_vs_schema_map[compression_config.mode]
 
@@ -300,8 +302,13 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             QuantizationScheme.ASYMMETRIC_LORA_NLS,
             QuantizationScheme.SYMMETRIC_LORA,
             QuantizationScheme.SYMMETRIC_LORA_NLS,
+            QuantizationScheme.SYMMETRIC_STRETCHED_LORA,
         ]:
-            if schema in [QuantizationScheme.ASYMMETRIC_LORA, QuantizationScheme.SYMMETRIC_LORA]:
+            if schema in [
+                QuantizationScheme.ASYMMETRIC_LORA,
+                QuantizationScheme.SYMMETRIC_LORA,
+                QuantizationScheme.SYMMETRIC_STRETCHED_LORA,
+            ]:
                 lora_spec = PTLoraSpec(
                     lora_rank=lora_adapter_rank, orig_weight_shape=orig_weight_shape, weight_shape=weight_shape
                 )
@@ -335,6 +342,14 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             input_range = scale * (levels - 1)
             quantizer.input_low = torch.nn.Parameter(input_low.type(dtype))
             quantizer.input_range = torch.nn.Parameter(input_range.type(dtype) - quantizer.eps)
+        elif schema == QuantizationScheme.SYMMETRIC_STRETCHED_LORA:
+            # For stretched quantization, alpha is the step size.
+            # From integer quantization: scale = alpha / (2^(num_bits-1))
+            # So alpha = scale * 2^(num_bits-1)
+            n_levels = 2 ** (compression_config.num_bits - 1)
+            alpha_init = scale * n_levels
+            alpha_init = alpha_init.type(quantizer.alpha.dtype)
+            quantizer.alpha = torch.nn.Parameter(alpha_init)
         else:
             scale = scale.type(quantizer.scale.dtype)
             quantizer.scale = torch.nn.Parameter(scale * levels / 2)

@@ -1127,26 +1127,11 @@ class WeightCompression(Algorithm):
         #     nncf_logger.warning(f"Failed to apply ar_config.json overrides: {e}")
         # END TEMP AR-HACK
 
-        # TEMP GGUF-HACK: Set num_bits=4 for all v_proj and first 5 down_proj layers
-        # down_proj_count = 0
-        for w_params in ratio_defining_params:
-            # w_params.compression_config._num_bits = 4
-            # w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
-            # w_params.compression_config.group_size = 128
-            # weight_name = w_params.weight_name
-            # if "layers.5.mlp.gate_proj" in weight_name:
-            w_params.compression_config._num_bits = 2
-            w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
-            w_params.compression_config.group_size = 64
-            # if "v_proj" in weight_name:
-            #     w_params.compression_config._num_bits = 4
-            #     w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
-            #     w_params.compression_config.group_size = 128
-            # elif "down_proj" in weight_name:  # and (down_proj_count < 5 or down_proj_count > 31):
-            #     w_params.compression_config._num_bits = 4
-            #     w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
-            #     w_params.compression_config.group_size = 128
-            #     down_proj_count += 1
+        # TEMP GGUF-HACK: Set num_bits=2 for stretched LoRA format
+        if self._compression_format in (CompressionFormat.FQ_STRETCHED_LORA,):
+            for w_params in ratio_defining_params:
+                w_params.compression_config._num_bits = 2
+                w_params.compression_config.mode = CompressWeightsMode.INT4_SYM
         # END TEMP GGUF-HACK
 
         # Print statistics

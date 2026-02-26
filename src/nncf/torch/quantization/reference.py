@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from enum import Enum
 from typing import TypeVar
 
@@ -297,6 +298,166 @@ class ReferenceQuantizeAutograd:
 
 autograd_quantize_forward = CompilationWrapper(ReferenceQuantizeAutograd.forward)
 
-# class ReferenceQuantizedAutogradFunctions:
-#     Quantize_forward = CompilationWrapper(ReferenceQuantizeAutograd.forward)
-#     Quantize_backward = CompilationWrapper(ReferenceQuantizeAutograd.backward)
+
+# =============================================================================
+# Stretched Elastic Quantization with STE (ParetoQ-style)
+# =============================================================================
+
+
+def _stretched_elastic_forward_math(input_: torch.Tensor, alpha_safe: torch.Tensor, num_bits: int) -> torch.Tensor:
+    """
+    Pure forward computation for stretched elastic quantization (no autograd ctx).
+
+    :param input_: Input tensor to quantize.
+    :param alpha_safe: Step size, already clamped to be > eps.
+    :param num_bits: Quantization bit-width.
+    :return: Quantized tensor.
+    """
+    n_levels = 2 ** (num_bits - 1)
+    shift = 0.5
+    clip_val = 1 - 1e-2
+
+    q_w = (torch.round(torch.clamp(input_ / alpha_safe, -clip_val, clip_val) * n_levels - shift) + shift) / n_levels
+    return q_w * alpha_safe
+
+
+def _stretched_elastic_backward_math(
+    grad_output: torch.Tensor,
+    input_: torch.Tensor,
+    alpha_safe: torch.Tensor,
+    num_bits: int,
+    layerwise: bool,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Pure backward computation for stretched elastic quantization (no autograd ctx).
+
+    :param grad_output: Gradient of the loss w.r.t. quantized output.
+    :param input_: Original input tensor (saved from forward).
+    :param alpha_safe: Step size, already clamped (saved from forward).
+    :param num_bits: Quantization bit-width.
+    :param layerwise: If True, reduce alpha gradient to scalar; if False, reduce over last dim.
+    :return: Tuple of (grad_input, grad_alpha).
+    """
+    n_levels = 2 ** (num_bits - 1)
+    shift = 0.5
+    Qp = (n_levels - shift) / n_levels
+    Qn = -Qp
+    clip_val = 1 - 1e-2
+    grad_scale = 1.0 / math.sqrt(input_.numel() * Qp)
+
+    q_w = input_ / alpha_safe
+    indicate_small = (q_w < -clip_val).float()
+    indicate_big = (q_w > clip_val).float()
+    indicate_middle = 1.0 - indicate_small - indicate_big
+
+    quantized = (torch.round(torch.clamp(q_w, -clip_val, clip_val) * n_levels - shift) + shift) / n_levels
+
+    if layerwise:
+        grad_alpha = (
+            (
+                (indicate_small * Qn + indicate_big * Qp + indicate_middle * (-q_w + quantized))
+                * grad_output
+                * grad_scale
+            )
+            .sum()
+            .unsqueeze(dim=0)
+        )
+    else:
+        grad_alpha = (
+            (indicate_small * Qn + indicate_big * Qp + indicate_middle * (-q_w + quantized)) * grad_output * grad_scale
+        )
+        grad_alpha = torch.sum(grad_alpha, dim=-1, keepdim=True)
+
+    grad_input = indicate_middle * grad_output
+    return grad_input, grad_alpha
+
+
+class StretchedElasticQuantize(torch.autograd.Function):
+    """
+    Stretched Elastic Quantization (ParetoQ-style) with explicit backward.
+
+    Modified from Learned Step-size Quantization (LSQ).
+    https://arxiv.org/abs/1902.08153
+
+    The quantization grid is shifted by 0.5 to avoid wasting a level on zero.
+    For 2-bit, the representable values are {-0.75, -0.25, 0.25, 0.75} * alpha.
+    """
+
+    @staticmethod
+    def forward(ctx, input_, alpha, num_bits, layerwise):
+        """
+        :param input_: Input tensor to be quantized.
+        :param alpha: The step size (learnable scale parameter).
+        :param num_bits: Quantization bit-width.
+        :param layerwise: If True, use layerwise (scalar) alpha; if False, use rowwise alpha.
+        :return: Quantized output tensor.
+        """
+        eps = torch.tensor(0.00001, device=alpha.device).float()
+        alpha_safe = torch.where(alpha > eps, alpha, eps)
+
+        ctx.save_for_backward(input_, alpha_safe)
+        ctx.num_bits = num_bits
+        ctx.layerwise = layerwise
+
+        return _stretched_elastic_forward_math(input_, alpha_safe, num_bits)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input_, alpha_safe = ctx.saved_tensors
+        grad_input, grad_alpha = _stretched_elastic_backward_math(
+            grad_output, input_, alpha_safe, ctx.num_bits, ctx.layerwise
+        )
+        return grad_input, grad_alpha, None, None
+
+
+class StretchedElasticQuantizeAutograd:
+    """
+    Stretched Elastic Quantization using PyTorch autograd with STE.
+
+    This version does NOT use a manual backward. Instead, it relies on ste_round/ste_clamp
+    for automatic gradient computation. Note that this version does NOT include the LSQ-style
+    gradient scaling factor (1/sqrt(numel * Qp)). Use LSQGradScale if that scaling is needed.
+    """
+
+    @staticmethod
+    def forward(input_: torch.Tensor, alpha: torch.Tensor, num_bits: int) -> torch.Tensor:
+        """
+        Quantize input using stretched elastic quantization with autograd.
+
+        :param input_: Input tensor to quantize.
+        :param alpha: Step size / scale parameter (learnable).
+        :param num_bits: Quantization bit-width.
+        :return: Quantized tensor.
+        """
+        n_levels = 2 ** (num_bits - 1)
+        shift = 0.5
+        clip_val = 1 - 1e-2
+
+        eps = torch.tensor(0.00001, device=alpha.device, dtype=alpha.dtype)
+        alpha_safe = torch.where(alpha > eps, alpha, eps)
+
+        # Normalize by alpha
+        q_w = input_ / alpha_safe
+
+        # Clamp with STE
+        q_w_clamped = ste_clamp(
+            q_w,
+            torch.tensor(-clip_val, device=q_w.device, dtype=q_w.dtype),
+            torch.tensor(clip_val, device=q_w.device, dtype=q_w.dtype),
+        )
+
+        # Stretched quantize: round(x * n_levels - shift) + shift) / n_levels
+        q_w_scaled = q_w_clamped * n_levels - shift
+        q_w_rounded = ste_round(q_w_scaled) + shift
+        q_w_normalized = q_w_rounded / n_levels
+
+        # Scale back
+        return q_w_normalized * alpha_safe
+
+
+stretched_elastic_quantize_autograd_forward = CompilationWrapper(StretchedElasticQuantizeAutograd.forward)
+
+
+class ReferenceSEQFunctions:
+    Quantize_forward = CompilationWrapper(_stretched_elastic_forward_math)
+    Quantize_backward = CompilationWrapper(_stretched_elastic_backward_math)

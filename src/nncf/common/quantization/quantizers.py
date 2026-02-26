@@ -67,3 +67,36 @@ def calculate_asymmetric_level_ranges(num_bits: int, narrow_range: bool = False)
 
 def get_num_levels(level_low: int, level_high: int) -> int:
     return level_high - level_low + 1
+
+
+def calculate_stretched_symmetric_params(num_bits: int) -> dict:
+    """
+    Calculates parameters for stretched symmetric quantization (ParetoQ-style).
+
+    In stretched quantization, the quantization grid is shifted by 0.5 to avoid
+    wasting a level on zero. For example, with 2 bits the representable values
+    are {-0.75, -0.25, 0.25, 0.75} * alpha instead of {-2, -1, 0, 1} * scale.
+
+    :param num_bits: The bitwidth of the quantization.
+    :return: A dictionary with the following keys:
+        n_levels - number of half-levels (2^(num_bits - 1))
+        shift - the half-level shift value (0.5)
+        Qp - positive clipping bound ((n_levels - shift) / n_levels)
+        Qn - negative clipping bound (-Qp)
+        clip_val - clipping threshold (1 - 1e-2)
+        levels - total number of quantization levels (2^num_bits)
+    """
+    n_levels = 2 ** (num_bits - 1)
+    shift = 0.5
+    Qp = (n_levels - shift) / n_levels
+    Qn = -Qp
+    clip_val = 1 - 1e-2
+    levels = 2**num_bits
+    return {
+        "n_levels": n_levels,
+        "shift": shift,
+        "Qp": Qp,
+        "Qn": Qn,
+        "clip_val": clip_val,
+        "levels": levels,
+    }

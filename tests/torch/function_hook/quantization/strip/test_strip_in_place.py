@@ -71,6 +71,10 @@ class ParamInPlaceStrip:
             [CompressionFormat.FQ_LORA, CompressionFormat.FQ, CompressionFormat.DQ],
             [torch.float32, torch.float16, torch.bfloat16],
         )
+    ]
+    + [
+        ParamInPlaceStrip(CompressWeightsMode.INT4_SYM, CompressionFormat.FQ_STRETCHED_LORA, torch_dtype)
+        for torch_dtype in [torch.float32, torch.float16, torch.bfloat16]
     ],
     ids=str,
 )
