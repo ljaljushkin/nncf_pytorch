@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import argparse
+import gc
 import json
 import math
 import os
@@ -168,10 +169,10 @@ def evaluate_with_vllm(
 
     # Parse results from the output JSON file
     results_dir = checkpoint_dir / "lm_eval_results"
-    # Find the most recent results file
-    result_files = list(results_dir.glob("**/results.json"))
+    # Find the most recent results file (lm_eval names them results_<timestamp>.json)
+    result_files = list(results_dir.glob("**/results_*.json"))
     if not result_files:
-        msg = f"No results.json found in {results_dir}"
+        msg = f"No results_*.json found in {results_dir}"
         raise FileNotFoundError(msg)
     latest_result = max(result_files, key=lambda p: p.stat().st_mtime)
     with open(latest_result) as f:
@@ -310,7 +311,13 @@ def log_quantizer_stats(model: nn.Module, step: int, optimizer: torch.optim.Opti
         mlflow.log_metrics(metrics, step=step)
 
 
-def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[str, Any]]:
+def set_trainable(
+    model: nn.Module,
+    lora_lr: float,
+    fq_lr: float,
+    weight_decay_lora: float = 1e-4,
+    weight_decay_fq: float = 0.0,
+) -> list[dict[str, Any]]:
     """
     Sets the trainable parameters of the model for quantization-aware training with LoRA (Low-Rank Adaptation).
 
@@ -322,6 +329,8 @@ def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[s
     :param model: The model to be trained.
     :param lora_lr: Learning rate for the LoRA adapters.
     :param fq_lr: Learning rate for the quantizer scales.
+    :param weight_decay_lora: Weight decay for LoRA adapter parameters.
+    :param weight_decay_fq: Weight decay for quantizer scale parameters.
     :return: A list of dictionaries containing the parameters to be optimized and their corresponding learning rates.
     """
     model.requires_grad_(False)
@@ -349,9 +358,9 @@ def set_trainable(model: nn.Module, lora_lr: float, fq_lr: float) -> list[dict[s
 
     param_groups = []
     if train_lora:
-        param_groups.append({"params": adapters_to_train, "lr": lora_lr, "weight_decay": 1e-4})
+        param_groups.append({"params": adapters_to_train, "lr": lora_lr, "weight_decay": weight_decay_lora})
     if train_scales:
-        param_groups.append({"params": scales_to_train, "lr": fq_lr, "weight_decay": 0.0})
+        param_groups.append({"params": scales_to_train, "lr": fq_lr, "weight_decay": weight_decay_fq})
 
     params = list(model.parameters())
     trainable_params = sum(p.numel() for p in params if p.requires_grad)
@@ -490,6 +499,18 @@ def get_argument_parser() -> argparse.ArgumentParser:
         help="Learning rate for LoRA adapters (lora_A, lora_B). "
         "Set to 0 to freeze LoRA (default). Typical values: 1e-5 to 1e-4.",
     )
+    parser.add_argument(
+        "--weight_decay_lora",
+        type=float,
+        default=1e-4,
+        help="Weight decay (L2 regularization) for LoRA adapter parameters. 0 disables.",
+    )
+    parser.add_argument(
+        "--weight_decay_fq",
+        type=float,
+        default=0.0,
+        help="Weight decay (L2 regularization) for quantizer scale parameters. 0 disables.",
+    )
     parser.add_argument("--batch_size", type=int, default=8, help="Size of training batch.")
     parser.add_argument(
         "--microbatch_size",
@@ -520,11 +541,11 @@ def get_argument_parser() -> argparse.ArgumentParser:
         "Ignored when cosine_epochs==0.",
     )
     parser.add_argument(
-        "--warmup_ratio",
+        "--warmup_epochs",
         type=float,
         default=0.0,
-        help="Proportion of total training steps used for linear warmup (LR ramps from 0 to peak). "
-        "E.g. 0.05 means 5%% of steps. Applied before the constant/cosine schedule. 0 disables warmup.",
+        help="Number of epochs for linear warmup (LR ramps from 0 to peak). "
+        "Supports fractional values, e.g. 0.5 for half an epoch. 0 disables warmup.",
     )
     return parser
 
@@ -568,13 +589,53 @@ def main(argv) -> float:
     ckpt_file = last_dir / "nncf_checkpoint_svd_lora_se_2bit.pth"
     hidden_file = output_dir / "hiddens.pth"
 
-    # Configure MLflow tracking.
-    tracking_uri = str(output_dir / "mlruns")
+    # Configure MLflow tracking (SQLite backend for indexing & future-proofing; file store is deprecated).
+    db_path = output_dir.resolve() / "mlflow.db"
+    tracking_uri = f"sqlite:///{db_path}"
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(f"fqlora_{Path(args.pretrained).name}")
-    mlflow.start_run(run_name=datetime.now().strftime("%Y-%m-%d__%H-%M-%S"))
     print(f"MLflow tracking URI: {tracking_uri}  (run `mlflow ui --backend-store-uri {tracking_uri}`)")
+    with mlflow.start_run(run_name=datetime.now().strftime("%Y-%m-%d__%H-%M-%S")):
+        _train(args, compression_config, device, torch_dtype, last_dir, output_dir, ckpt_file, hidden_file)
 
+        # Free2 GPU memory before launching vLLM evaluation subprocess.
+        gc.collect()
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+
+        stripped_dir = last_dir / "stripped"
+        eval_results = evaluate_with_vllm(
+            checkpoint_dir=stripped_dir,
+            tasks=["lambada_openai"],
+            tensor_parallel_size=2,
+            dtype="auto",
+            fewshot_as_multiturn=False,
+            cuda_devices="1,2",
+            apply_chat_template=False,
+            batch_size="auto",
+            limit=args.limit,
+        )
+        lambada_acc = eval_results["results"]["lambada_openai"]["acc,none"]
+        lambada_ppl = eval_results["results"]["lambada_openai"]["perplexity,none"]
+        mlflow.log_metrics({"lambada_acc": lambada_acc, "lambada_ppl": lambada_ppl})
+        print(f"LAMBADA accuracy: {lambada_acc:.4f}, perplexity: {lambada_ppl:.4f}")
+
+    # del model
+    # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
+    # model_for_eval = export_to_openvino(args.pretrained, ckpt_file, ckpt_file.parent)
+    # ov_perplexity = measure_perplexity(model_for_eval, args.eval_seqlen, args.limit)
+    # mlflow.log_metric("ov_perplexity", ov_perplexity, step=0)
+    # print(
+    #     f"The finetuned model has been exported to OpenVINO and saved to: {last_dir}\n"
+    #     f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
+    # )
+    # return ov_perplexity
+    # return gsm8k_acc
+
+
+def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, ckpt_file, hidden_file):
+    """Load model, prepare data, run distillation QAT, strip, and save. All heavy objects are local."""
     # Load original model and tokenizer.
     model = AutoModelForCausalLM.from_pretrained(args.pretrained, torch_dtype=torch_dtype, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
@@ -604,58 +665,13 @@ def main(argv) -> float:
         model = compress_weights(model, dataset=dataset, **compression_config)
         save_checkpoint(model, last_dir / "nncf_checkpoint_svd_lora_se_2bit.pth", model_state=not args.basic_init)
 
-    # from nncf_layerwise_ptq_tuner import ScaleTuner
-
-    # model.requires_grad_(False)
-    # tuner = ScaleTuner(model)
-
-    # Find optimal LR for LoRA params
-    # result = tuner.lr_find(
-    #     layer_pattern="gate_proj",  # First matching layer
-    #     min_lr=1e-7,
-    #     max_lr=1e6,  # Wide range for your case
-    #     num_steps=100,
-    #     loss_type="nmse",  # Better gradient signal
-    #     param_type="lora",  # Test LoRA params specifically
-    # )
-
-    # Result contains:
-    #   suggested_lr - where loss decreases fastest
-    #   safe_lr - 1/10 of min loss point (conservative)
-    #   lr_at_min_loss - LR at minimum loss
-
-    # Plot results (requires matplotlib)
-    # tuner.plot_lr_find(result, save_path="lr_find.png")
-
-    # Then tune with the found LR:
-    # tuner.tune(
-    #     tb,
-    #     # learning_rate_lora=0,  # result["suggested_lr"], 2e-3
-    #     learning_rate_lora=0,
-    #     loss_type="nmse",
-    #     num_steps=5000,
-    #     scheduler_type_scale="constant",  # warmup + cosine annealing
-    #     scheduler_type_lora="constant",  # no decay
-    #     # layer_patterns=["layers:4:mlp:down_proj", "layers:15:mlp:down_proj"],
-    #     learning_rate_2bit=1e-2,
-    #     # learning_rate_2bit=0,
-    #     # layer_patterns=["layers:20:mlp:down_proj"],
-    #     learning_rate_4bit=5,
-    #     layer_patterns=["layers:0:mlp:gate_proj"],
-    #     # [1/1] post_hooks.model:layers:0:mlp:gate_proj:weight__0.0
-    #     # Type: sym_lora, Bits: 4, LR: 100000
-    #     # INFO:nncf:Autograd-based quantization enabled
-    #     early_stop_patience=1000,
-    #     warmup_steps=0,
-    #     min_lr_ratio=0.1,  # Anneal down to 1% of max LR
-    #     restore_best=True,
-    #     use_autograd_quantize=False,
-    #     outlier_ratio=0,
-    # )
-    # tuner.print_summary()
-    # save_checkpoint(model, last_dir / "nncf_checkpoint_svd_lora_se_tune_scales.pth", model_state=not args.basic_init)
-
-    param_to_train = set_trainable(model, lora_lr=args.lora_lr, fq_lr=args.fq_lr)
+    param_to_train = set_trainable(
+        model,
+        lora_lr=args.lora_lr,
+        fq_lr=args.fq_lr,
+        weight_decay_lora=args.weight_decay_lora,
+        weight_decay_fq=args.weight_decay_fq,
+    )
     opt = torch.optim.AdamW(param_to_train)
 
     # Run tuning with distillation loss and validation after each epoch.
@@ -674,7 +690,7 @@ def main(argv) -> float:
     # Build LR scheduler: [linear warmup] -> [constant phase] -> [cosine annealing phase].
     # Uses LambdaLR so that cosine smoothly decays from 1.0 to min_lr_ratio per param group
     # (no floor-clipping artifacts).
-    warmup_steps = int(total_training_steps * args.warmup_ratio)
+    warmup_steps = int(microbatches_per_epoch * args.warmup_epochs) // grad_accumulation_steps
 
     def _make_lr_lambda(warmup_steps: int, constant_steps: int, cosine_steps: int, min_lr_ratio: float):
         def lr_lambda(step: int) -> float:
@@ -709,6 +725,8 @@ def main(argv) -> float:
             "train_seqlen": args.train_seqlen,
             "fq_lr": args.fq_lr,
             "lora_lr": args.lora_lr,
+            "weight_decay_lora": args.weight_decay_lora,
+            "weight_decay_fq": args.weight_decay_fq,
             "batch_size": args.batch_size,
             "microbatch_size": args.microbatch_size,
             "grad_accumulation_steps": grad_accumulation_steps,
@@ -716,7 +734,7 @@ def main(argv) -> float:
             "cosine_epochs": args.cosine_epochs,
             "total_epochs": args.epochs,
             "min_lr_ratio": args.min_lr_ratio,
-            "warmup_ratio": args.warmup_ratio,
+            "warmup_epochs": args.warmup_epochs,
             "warmup_steps": warmup_steps,
             "constant_steps": constant_steps,
             "cosine_steps": cosine_steps,
@@ -780,46 +798,6 @@ def main(argv) -> float:
     model.save_pretrained(last_dir / "stripped")
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
     tokenizer.save_pretrained(last_dir / "stripped")
-
-    # Evaluate using lm_eval with vLLM backend (runs in subprocess for clean CUDA state)
-    # del model
-    # del opt
-    # del orig_hiddens
-    # del train_loader
-    # del dataset
-    # gc.collect()
-    # torch.cuda.synchronize()
-    # torch.cuda.empty_cache()
-    # torch.cuda.ipc_collect()
-    # stripped_dir = last_dir / "stripped"
-    # eval_results = evaluate_with_vllm(
-    #     checkpoint_dir=stripped_dir,
-    #     tasks=["gsm8k"],
-    #     tensor_parallel_size=2,
-    #     dtype="auto",
-    #     fewshot_as_multiturn=True,
-    #     cuda_devices="1,2",
-    #     apply_chat_template=True,
-    #     batch_size="auto",
-    #     limit=args.limit,
-    # )
-    # gsm8k_acc = eval_results["results"]["gsm8k"]["exact_match,strict-match"]
-    # tb.add_scalar("gsm8k_exact_match", gsm8k_acc, 0)
-    # print(f"GSM8K exact match accuracy: {gsm8k_acc:.4f}")
-
-    mlflow.end_run()
-
-    # del model
-    # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
-    # model_for_eval = export_to_openvino(args.pretrained, ckpt_file, ckpt_file.parent)
-    # ov_perplexity = measure_perplexity(model_for_eval, args.eval_seqlen, args.limit)
-    # mlflow.log_metric("ov_perplexity", ov_perplexity, step=0)
-    # print(
-    #     f"The finetuned model has been exported to OpenVINO and saved to: {last_dir}\n"
-    #     f"The word perplexity on wikitext (test) = {ov_perplexity:.4f}"
-    # )
-    # return ov_perplexity
-    # return gsm8k_acc
 
 
 if __name__ == "__main__":

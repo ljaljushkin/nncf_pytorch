@@ -40,13 +40,13 @@ run_lm_eval() {
 for OUTPUT_DIR in "${OUTPUT_DIRS[@]}"; do
     CKPT_DIR="$OUTPUT_DIR/last/stripped"
 
-    # Run training
+    Run training
     echo "Running training with output_dir: $(realpath "$OUTPUT_DIR") and log_file: $(realpath "$LOG_FILE")"
-    python main.py --pretrained $PRETRAINED --fq_lr 3e-4 --cosine_epochs 10 --constant_epochs 5 --warmup_ratio 0.04 --min_lr_ratio 0.1 --resume --output_dir "$OUTPUT_DIR" >> "$LOG_FILE" 2>&1
+    python main.py --pretrained $PRETRAINED --fq_lr 1e-3 --weight_decay_fq 1e-3 --lora_lr 0 --cosine_epochs 0 --constant_epochs 15 --warmup_epochs 0 --min_lr_ratio 0.1 --resume --output_dir "$OUTPUT_DIR" >> "$LOG_FILE" 2>&1
 
     # First evaluation (after training, before stripping any checkpoint)
-    echo "Running lm-eval after training..."
-    run_lm_eval "$CKPT_DIR" "$LOG_FILE"
+    # echo "Running lm-eval after training..."
+    # run_lm_eval "$CKPT_DIR" "$LOG_FILE"
 
     # Loop through checkpoint files
     for CKPT_FILE in "${CKPT_FILES[@]}"; do
