@@ -428,10 +428,15 @@ def main(argv) -> float:
     microbatches_per_epoch = epoch_samples // args.microbatch_size
     aggregated_loss = float("nan")
     loss_numerator = grad_steps = total_steps = 0
+    warmup_iters = 5
     start_time = time.time()
     for epoch in range(args.epochs):
         batch_indices_epoch = torch.randperm(num_samples)[:epoch_samples].chunk(microbatches_per_epoch)
         for indices in track(batch_indices_epoch, description=f"Train epoch {epoch}"):
+            if total_steps >= warmup_iters:
+                torch.cuda.nvtx.range_push(f"iteration{total_steps}")
+            if total_steps == warmup_iters:
+                torch.cuda.cudart().cudaProfilerStart()
             indices = indices.tolist()
 
             def form_batch(inputs: list[Tensor], model_input: bool):
@@ -448,8 +453,12 @@ def main(argv) -> float:
                         targets = targets / fls
                         targets = torch.tanh(targets)
                         targets = targets * fls
+            if total_steps >= warmup_iters:
+                torch.cuda.nvtx.range_push("loss")
             outputs = model(**inputs).logits
             loss = kl_div(outputs, targets.to(dtype=torch_dtype, device=device))
+            if total_steps >= warmup_iters:
+                torch.cuda.nvtx.range_pop()
 
             # Perform an optimization step after accumulating gradients over multiple minibatches.
             loss_numerator += loss.item()
@@ -457,15 +466,26 @@ def main(argv) -> float:
             if not torch.isfinite(loss).item():
                 err = f"Fine-tuning loss is {loss}"
                 raise ValueError(err)
+
+            if total_steps >= warmup_iters:
+                torch.cuda.nvtx.range_push("backward")
             (loss / grad_accumulation_steps).backward()
+            if total_steps >= warmup_iters:
+                torch.cuda.nvtx.range_pop()
+
             if grad_steps == grad_accumulation_steps:
+                if total_steps >= warmup_iters:
+                    torch.cuda.nvtx.range_push("opt.step()")
                 opt.step()
+                if total_steps >= warmup_iters:
+                    torch.cuda.nvtx.range_pop()
                 opt.zero_grad()
                 aggregated_loss = loss_numerator / grad_steps
                 loss_numerator = grad_steps = 0
                 total_steps += 1
                 tb.add_scalar("loss", aggregated_loss, total_steps)
-
+            if total_steps >= warmup_iters:
+                torch.cuda.nvtx.range_pop()
         # Keep the best checkpoint with the lowest perplexity.
         # save_checkpoint(model, ckpt_file)
         # with create_eval_model(model, args.fast_eval, args.pretrained, torch_dtype, ckpt_file) as eval_model:
@@ -476,6 +496,8 @@ def main(argv) -> float:
         #         print(f"New best word perplexity = {perplexity:.4f}")
         #         best_perplexity = perplexity
         #         shutil.copytree(last_dir, best_dir, dirs_exist_ok=True)
+
+    torch.cuda.cudart().cudaProfilerStop()
 
     # del model
     # # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.

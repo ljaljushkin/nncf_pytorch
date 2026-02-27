@@ -98,6 +98,7 @@ class QuantizeSymmetric(torch.autograd.Function):
 class QuantizeAsymmetric(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_, input_low, input_range, level_low, level_high, levels):
+        torch.cuda.nvtx.range_push("QuantizeAsymmetric::forward")
         # Required to support both torch.amp.autocast and models that perform explicit type casting
         # inside their forward calls.
         if input_.dtype in [torch.bfloat16, torch.float16]:
@@ -107,7 +108,9 @@ class QuantizeAsymmetric(torch.autograd.Function):
             if not input_.is_contiguous():
                 nncf_logger.debug("input_ is not contiguous!")
                 input_ = input_.contiguous()
+            torch.cuda.nvtx.range_push("Quantize_forward")
             output = cuda_quantizer.get("Quantize_forward")(input_, input_low, input_range, levels)
+            torch.cuda.nvtx.range_pop()
         else:
             output = QuantizedFunctionsCPU.get("Quantize_forward")(input_, input_low, input_range, levels)
 
@@ -115,10 +118,12 @@ class QuantizeAsymmetric(torch.autograd.Function):
         ctx.levels = levels
         ctx.level_low = level_low
         ctx.level_high = level_high
+        torch.cuda.nvtx.range_pop()
         return output
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
+        torch.cuda.nvtx.range_push("QuantizeAsymmetric::backward")
         grad_output = grad_outputs[0]
         input_, input_low, input_range = ctx.saved_tensors
         levels = ctx.levels
@@ -129,14 +134,16 @@ class QuantizeAsymmetric(torch.autograd.Function):
             if not grad_output.is_contiguous():
                 nncf_logger.debug("grad_output is not contiguous!")
                 grad_output = grad_output.contiguous()
-
+            torch.cuda.nvtx.range_push("Quantize_backward")
             grad_input, grad_input_low, grad_input_range = cuda_quantizer.get("Quantize_backward")(
                 grad_output, input_, input_low, input_range, levels, level_low, level_high
             )
+            torch.cuda.nvtx.range_pop()
         else:
             grad_input, grad_input_low, grad_input_range = QuantizedFunctionsCPU.get("Quantize_backward")(
                 grad_output, input_, input_low, input_range, levels, level_low, level_high, True
             )
+        torch.cuda.nvtx.range_pop()
         return grad_input, grad_input_low, grad_input_range, None, None, None
 
 

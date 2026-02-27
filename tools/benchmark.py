@@ -54,7 +54,7 @@ def run_wall(
 
 def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torch.float) -> dict[str, float]:
     input_ = torch.randn(input_size_, device=torch.device(device), dtype=dtype)
-    input_.requires_grad_(True)
+    # input_.requires_grad_(True)
 
     # Force CUDA initialization & warm up
     warmup(layer, input_, 100, forward_only)
@@ -131,11 +131,11 @@ def run_profile(layer, input_size_, device, runs, forward_only=False, dtype=torc
         "forward_avg": forward_average,
         "backward_avg": backward_average,
         "forward_gb_avg": forward_gb_avg,
-        "forward_gb_max": forward_gb_max,
-        "forward_gb_min": forward_gb_min,
+        # "forward_gb_max": forward_gb_max,
+        # "forward_gb_min": forward_gb_min,
         "backward_gb_avg": backward_gb_avg,
-        "backward_gb_max": backward_gb_max,
-        "backward_gb_min": backward_gb_min,
+        # "backward_gb_max": backward_gb_max,
+        # "backward_gb_min": backward_gb_min,
     }
 
 
