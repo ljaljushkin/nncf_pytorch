@@ -118,6 +118,7 @@ class WeightsCompression(Algorithm):
         nncf_logger.info(
             self._algo.get_bitwidth_distribution_str(all_weight_params, ratio_defining_params, skipped_weight_params)
         )
+        nncf_logger.info(self._algo.get_checkpoint_size_str(all_weight_params, skipped_weight_params))
 
         # Filter all_weight_params by excluding nodes that should remain in their original floating-point precision
         all_weight_params = [w_params for w_params in all_weight_params if w_params.compression_config is not None]

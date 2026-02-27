@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+import traceback
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -257,12 +258,17 @@ def log_quantizer_stats(model: nn.Module, step: int, optimizer: torch.optim.Opti
 
     metrics: dict[str, float] = {}
 
+    # Only log metrics for the first layer encountered at each bit-width to reduce MLflow overhead.
+    logged_bits: set[int] = set()
     hook_storage = get_hook_storage(model)
     for name, module in hook_storage.named_hooks():
         if not isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer, StretchedSymmetricLoraQuantizer)):
             continue
         if module.num_bits not in (2, 4):
             continue
+        if module.num_bits in logged_bits:
+            continue
+        logged_bits.add(module.num_bits)
 
         # Shorten the name for cleaner metric keys (MLflow uses '.' as separator)
         short = name.replace("post_hooks.", "").replace("pre_hooks.", "").replace(".weight__0", "")
@@ -329,6 +335,7 @@ def set_trainable(
     fq_lr: float,
     lora_weight_decay: float = 1e-4,
     fq_weight_decay: float = 0.0,
+    tune_bits: Optional[list[int]] = None,
 ) -> list[dict[str, Any]]:
     """
     Sets the trainable parameters of the model for quantization-aware training with LoRA (Low-Rank Adaptation).
@@ -343,8 +350,11 @@ def set_trainable(
     :param fq_lr: Learning rate for the quantizer scales.
     :param lora_weight_decay: Weight decay for LoRA adapter parameters.
     :param fq_weight_decay: Weight decay for quantizer scale parameters.
+    :param tune_bits: List of bit-widths to tune (e.g. [2], [4], or [2, 4]). If None, tunes both 2 and 4 bit layers.
     :return: A list of dictionaries containing the parameters to be optimized and their corresponding learning rates.
     """
+    if tune_bits is None:
+        tune_bits = [2, 4]
     model.requires_grad_(False)
     scales_to_train = []
     adapters_to_train = []
@@ -353,7 +363,7 @@ def set_trainable(
     hook_storage = get_hook_storage(model)
     for _, module in hook_storage.named_hooks():
         if isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer, StretchedSymmetricLoraQuantizer)) and (
-            module.num_bits in [4, 2]
+            module.num_bits in tune_bits
         ):
             # Only enable gradients for param groups that will actually be trained.
             if train_lora:
@@ -385,7 +395,8 @@ def set_trainable(
         f"trainable params: {trainable_params:,d} || "
         f"all params: {all_param:,d} || "
         f"trainable%: {100 * trainable_params / all_param:.4f}"
-        f" (lora={'ON' if train_lora else 'OFF'}, scales={'ON' if train_scales else 'OFF'})"
+        f" (lora={'ON' if train_lora else 'OFF'}, scales={'ON' if train_scales else 'OFF'}, "
+        f"tune_bits={tune_bits})"
     )
     model.train()
     return param_groups
@@ -609,19 +620,53 @@ def get_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use STE-based autograd for gradient computation instead of hand-written backward.",
     )
+    parser.add_argument(
+        "--gradient_checkpointing",
+        action="store_true",
+        help="Enable gradient checkpointing to trade compute for memory. "
+        "Recomputes activations during backward instead of storing them, "
+        "reducing peak GPU memory at the cost of ~30%% slower training.",
+    )
+    parser.add_argument(
+        "--tune_bits",
+        type=int,
+        nargs="+",
+        default=[2, 4],
+        help="Which bit-width layers to tune. Use for 2-stage tuning: "
+        "first run with --tune_bits 2 to tune only 2-bit layers, "
+        "then run with --tune_bits 4 --init_ckpt <2bit_ckpt> to tune only 4-bit layers "
+        "while keeping 2-bit layers frozen. Default: [2, 4] (tune both).",
+    )
     return parser
 
 
-def main(argv) -> float:
+def main(argv) -> int:
     """
-    Fine-tunes the specified model and returns the difference between initial and best validation perplexity in Torch,
-    and the test perplexity for best model exported to OpenVINO.
+    Fine-tunes the specified model and returns 0 on success or 1 on failure.
+    Errors are caught and printed so that multiple sequential runs (e.g. from shell scripts)
+    are not interrupted by a single failure.
     """
     parser = get_argument_parser()
     args = parser.parse_args(argv)
+    try:
+        return _main_impl(args)
+    except Exception:
+        traceback.print_exc()
+        print(f"\n{'!' * 60}")
+        print(f"RUN FAILED: {args.run_name or 'unnamed'}")
+        print(f"{'!' * 60}\n")
+        # Clean up GPU memory so the next run can start fresh.
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return 1
+
+
+def _main_impl(args) -> int:
+    """Core implementation of main(). Raises on error."""
     if args.fq_lr == 0 and args.lora_lr == 0:
         print("Both --fq_lr and --lora_lr are 0 — nothing to train. Skipping.")
-        return 0.0
+        return 0
     assert torch.cuda.is_available()
     transformers.set_seed(42)
     set_use_autograd_quantize(args.use_autograd_quantize)
@@ -635,9 +680,9 @@ def main(argv) -> float:
         scale_estimation=not args.basic_init,
         compression_format=CompressionFormat[args.compression_format],
         # ignored_scope=nncf.IgnoredScope(patterns=[r"(?!.*5.mlp.gate_proj.*).*"]),
-        ignored_scope=nncf.IgnoredScope(
-            patterns=[r"(?!model/mlp/(gate_proj|up_proj)/linear/5$|model/self_attn/(k_proj|q_proj|o_proj)/linear/5$).*"]
-        ),
+        # ignored_scope=nncf.IgnoredScope(
+        #     patterns=[r"(?!model/mlp/(gate_proj|up_proj)/linear/5$|model/self_attn/(k_proj|q_proj|o_proj)/linear/5$).*"]
+        # ),
     )
     pprint({"CLI arguments": vars(args), "Major compression parameters": compression_config})
     compression_config["advanced_parameters"] = AdvancedCompressionParameters(
@@ -757,6 +802,7 @@ def main(argv) -> float:
     # )
     # return ov_perplexity
     # return gsm8k_acc
+    return 0
 
 
 def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, ckpt_file, hidden_file):
@@ -792,12 +838,25 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
         save_checkpoint(model, ckpt_file, model_state=not args.basic_init)
         print(f"Saved init checkpoint: {ckpt_file}")
 
+    # Enable gradient checkpointing to reduce activation memory.
+    # use_reentrant=True is required here because the quantization functions are
+    # wrapped with torch.compile (CompilationWrapper), which changes the number of
+    # tensors saved via save_for_backward between the original forward and the
+    # recomputation pass.  use_reentrant=False counts saved tensors and raises
+    # CheckpointError on a mismatch; use_reentrant=True avoids this by running the
+    # original forward under torch.no_grad() and rebuilding the graph only during
+    # the backward recomputation.
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": True})
+        print("Gradient checkpointing enabled (use_reentrant=True)")
+
     param_to_train = set_trainable(
         model,
         lora_lr=args.lora_lr,
         fq_lr=args.fq_lr,
         lora_weight_decay=args.lora_weight_decay,
         fq_weight_decay=args.fq_weight_decay,
+        tune_bits=args.tune_bits,
     )
     opt = torch.optim.AdamW(param_to_train)
 
@@ -872,6 +931,8 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
             "awq": compression_config["awq"],
             "scale_estimation": compression_config["scale_estimation"],
             "use_autograd_quantize": args.use_autograd_quantize,
+            "gradient_checkpointing": args.gradient_checkpointing,
+            "tune_bits": args.tune_bits,
         }
     )
 
@@ -929,4 +990,4 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    sys.exit(main(sys.argv[1:]))

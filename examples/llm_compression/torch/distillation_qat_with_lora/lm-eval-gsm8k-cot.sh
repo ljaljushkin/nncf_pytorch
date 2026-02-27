@@ -416,8 +416,9 @@ OUT_DIR="$ROOT_DIR/output"
 # --apply_chat_template \
 # --gen_kwargs do_sample=True,temperature=0.7,top_p=0.8,top_k=20,min_p=0
 
-MODEL_DIR=meta-llama/Llama-3.2-1B-Instruct
-# MODEL_DIR=output/last/stripped
+# MODEL_DIR=meta-llama/Llama-3.2-1B-Instruct
+# MODEL_DIR=Qwen/Qwen3-8B
+MODEL_DIR=output/last/stripped
 lm_eval \
 --model vllm \
 --model_args "{\"pretrained\":\"${MODEL_DIR}\",\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
