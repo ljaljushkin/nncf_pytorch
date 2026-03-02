@@ -36,6 +36,7 @@ LORA_RANK=64
 NUM_TRAIN_SAMPLES=512
 TRAIN_SEQLEN=512
 BATCH_SIZE=8
+DATASET="pile"
 
 # ── Parse CLI arguments ─────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -53,6 +54,7 @@ while [[ $# -gt 0 ]]; do
         --num_train_samples) NUM_TRAIN_SAMPLES="$2"; shift 2 ;;
         --train_seqlen) TRAIN_SEQLEN="$2"; shift 2 ;;
         --batch_size) BATCH_SIZE="$2"; shift 2 ;;
+        --dataset) DATASET="$2"; shift 2 ;;
         -h|--help)
             sed -n '3,18p' "$0"
             exit 0 ;;
@@ -135,6 +137,7 @@ run_config() {
         --output_dir "$OUTPUT_DIR" \
         --run_name "$RUN_NAME" \
         --compression_format "$COMPRESSION_FORMAT" \
+        --dataset "$DATASET" \
         $BASIC_INIT_FLAG \
         $USE_AUTOGRAD_QUANTIZE \
         $GRADIENT_CHECKPOINTING \

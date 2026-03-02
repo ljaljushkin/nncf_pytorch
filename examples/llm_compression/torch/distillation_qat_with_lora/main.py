@@ -83,6 +83,37 @@ def get_wikitext2(num_samples: int, seqlen: int, tokenizer: Any, device: torch.d
     return trainloader
 
 
+def get_pile(num_samples: int, seqlen: int, tokenizer: Any, device: torch.device):
+    # def preprocess_fn(example):
+    #     return {"text": tokenizer.apply_chat_template(example["text"], add_generation_prompt=False, tokenize=False)}
+    ds = load_dataset("NeelNanda/pile-10k", split="train")
+    # ds = ds.shuffle(seed=42).select(range(10 * num_samples))
+    # ds = ds.map(preprocess_fn)
+
+    trainloader = []
+    for example in ds:
+        trainenc = tokenizer(example["text"], return_tensors="pt")
+        if trainenc.input_ids.shape[1] < seqlen:
+            continue
+        if trainenc.input_ids.shape[1] > seqlen + 1:
+            i = torch.randint(0, trainenc.input_ids.shape[1] - seqlen - 1, (1,)).item()
+        else:
+            i = 0
+        j = i + seqlen
+        inp = trainenc.input_ids[:, i:j].to(device)
+        trainloader.append(inp)
+        if len(trainloader) >= num_samples:
+            break
+
+    return trainloader
+
+
+DATASET_LOADERS = {
+    "pile": get_pile,
+    "wikitext": get_wikitext2,
+}
+
+
 def measure_perplexity(
     optimum_model: OptimizedModel,
     max_length: Optional[int] = None,
@@ -412,11 +443,18 @@ def save_checkpoint(model: nn.Module, ckpt_file: Path, model_state: bool = True)
         AWQ method which fuses scaling factors into weights. When False, only NNCF configuration and state are saved,
         as they're maintained separately from the model's weights.
     """
+    was_compiled = False
+    if hasattr(model, "_orig_mod"):
+        was_compiled = True
+        model = model._orig_mod
+
     hook_storage = get_hook_storage(model)
     ckpt = {"nncf_state_dict": hook_storage.state_dict(), "nncf_config": nncf.torch.get_config(model)}
     if model_state:
         ckpt["model_state"] = model.state_dict()
     torch.save(ckpt, ckpt_file)
+    if was_compiled:
+        model = torch.compile(model)
 
 
 def load_checkpoint(model: nn.Module, ckpt_file: Path) -> nn.Module:
@@ -495,6 +533,14 @@ def get_argument_parser() -> argparse.ArgumentParser:
     )
 
     # Data params
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="pile",
+        choices=list(DATASET_LOADERS.keys()),
+        help="Training dataset to use. 'pile' = NeelNanda/pile-10k, 'wikitext' = Salesforce/wikitext-2-raw-v1. "
+        "Default: pile.",
+    )
     parser.add_argument("--num_train_samples", type=int, default=512, help="Number of training samples")
     parser.add_argument("--train_seqlen", type=int, default=512, help="Train data context length.")
     parser.add_argument("--eval_seqlen", type=int, default=2048, help="Evaluation data context length.")
@@ -572,7 +618,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
         "--save_epochs",
         type=int,
         nargs="+",
-        default=[1, 5, 10, 15],
+        default=[1, 2, 5, 10, 15],
         help="Epoch numbers (0-indexed) at which to save a checkpoint. "
         "Epoch 0 means after initialization (before any training). "
         "The last epoch always saves regardless of this list.",
@@ -722,74 +768,74 @@ def _main_impl(args) -> int:
         _train(args, compression_config, device, torch_dtype, last_dir, output_dir, ckpt_file, hidden_file)
 
         # Free GPU memory before loading checkpoints for stripping & evaluation.
-        gc.collect()
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
+        # gc.collect()
+        # torch.cuda.synchronize()
+        # torch.cuda.empty_cache()
+        # torch.cuda.ipc_collect()
 
-        # ── Build evaluation list: epoch 0 = init checkpoint, then trained epochs ──
-        tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
-        eval_checkpoints: list[tuple[int, Path]] = [(0, ckpt_file)]
-        epoch_ckpts = sorted(
-            last_dir.glob("nncf_checkpoint_epoch*.pth"),
-            key=lambda p: int(p.stem.replace("nncf_checkpoint_epoch", "")),
-        )
-        for p in epoch_ckpts:
-            eval_checkpoints.append((int(p.stem.replace("nncf_checkpoint_epoch", "")), p))
+        # # ── Build evaluation list: epoch 0 = init checkpoint, then trained epochs ──
+        # tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
+        # eval_checkpoints: list[tuple[int, Path]] = [(0, ckpt_file)]
+        # epoch_ckpts = sorted(
+        #     last_dir.glob("nncf_checkpoint_epoch*.pth"),
+        #     key=lambda p: int(p.stem.replace("nncf_checkpoint_epoch", "")),
+        # )
+        # for p in epoch_ckpts:
+        #     eval_checkpoints.append((int(p.stem.replace("nncf_checkpoint_epoch", "")), p))
 
-        for epoch_num, ckpt_path in eval_checkpoints:
-            # Cache eval results only for epoch 0 (initial PTQ checkpoint) — reusable across runs.
-            # Trained epoch results are always re-evaluated (caching would be error-prone with tuning).
-            cache_file = ckpt_path.with_suffix(".eval.json") if epoch_num == 0 else None
-            if cache_file and cache_file.exists():
-                with open(cache_file) as f:
-                    cached = json.load(f)
-                lambada_acc = cached["lambada_acc"]
-                lambada_ppl = cached["lambada_ppl"]
-                print(
-                    f"Epoch {epoch_num} — cached from {cache_file.name}: acc={lambada_acc:.4f}, ppl={lambada_ppl:.4f}"
-                )
-            else:
-                stripped_dir = last_dir / "stripped"
-                print(f"\n{'=' * 60}")
-                print(f"Stripping & evaluating: {ckpt_path.name} (epoch {epoch_num})")
-                print(f"{'=' * 60}")
+        # for epoch_num, ckpt_path in eval_checkpoints:
+        #     # Cache eval results only for epoch 0 (initial PTQ checkpoint) — reusable across runs.
+        #     # Trained epoch results are always re-evaluated (caching would be error-prone with tuning).
+        #     cache_file = ckpt_path.with_suffix(".eval.json") if epoch_num == 0 else None
+        #     if cache_file and cache_file.exists():
+        #         with open(cache_file) as f:
+        #             cached = json.load(f)
+        #         lambada_acc = cached["lambada_acc"]
+        #         lambada_ppl = cached["lambada_ppl"]
+        #         print(
+        #             f"Epoch {epoch_num} — cached from {cache_file.name}: acc={lambada_acc:.4f}, ppl={lambada_ppl:.4f}"
+        #         )
+        #     else:
+        #         stripped_dir = last_dir / "stripped"
+        #         print(f"\n{'=' * 60}")
+        #         print(f"Stripping & evaluating: {ckpt_path.name} (epoch {epoch_num})")
+        #         print(f"{'=' * 60}")
 
-                model_to_strip = AutoModelForCausalLM.from_pretrained(
-                    args.pretrained, torch_dtype=torch_dtype, device_map="cpu"
-                )
-                model_to_strip = load_checkpoint(model_to_strip, ckpt_path)
-                model_to_strip = nncf.strip(model_to_strip, strip_format=nncf.StripFormat.IN_PLACE)
-                if stripped_dir.exists():
-                    shutil.rmtree(stripped_dir)
-                model_to_strip.save_pretrained(stripped_dir)
-                tokenizer.save_pretrained(stripped_dir)
-                del model_to_strip
-                gc.collect()
-                torch.cuda.empty_cache()
+        #         model_to_strip = AutoModelForCausalLM.from_pretrained(
+        #             args.pretrained, torch_dtype=torch_dtype, device_map="cpu"
+        #         )
+        #         model_to_strip = load_checkpoint(model_to_strip, ckpt_path)
+        #         model_to_strip = nncf.strip(model_to_strip, strip_format=nncf.StripFormat.IN_PLACE)
+        #         if stripped_dir.exists():
+        #             shutil.rmtree(stripped_dir)
+        #         model_to_strip.save_pretrained(stripped_dir)
+        #         tokenizer.save_pretrained(stripped_dir)
+        #         del model_to_strip
+        #         gc.collect()
+        #         torch.cuda.empty_cache()
 
-                eval_results = evaluate_with_vllm(
-                    checkpoint_dir=stripped_dir,
-                    tasks=["lambada_openai"],
-                    tensor_parallel_size=2,
-                    dtype="auto",
-                    fewshot_as_multiturn=False,
-                    cuda_devices="1,2",
-                    apply_chat_template=False,
-                    batch_size="auto",
-                    limit=args.limit,
-                )
-                lambada_acc = eval_results["results"]["lambada_openai"]["acc,none"]
-                lambada_ppl = eval_results["results"]["lambada_openai"]["perplexity,none"]
-                if cache_file:
-                    with open(cache_file, "w") as f:
-                        json.dump({"lambada_acc": lambada_acc, "lambada_ppl": lambada_ppl}, f, indent=2)
+        #         eval_results = evaluate_with_vllm(
+        #             checkpoint_dir=stripped_dir,
+        #             tasks=["lambada_openai"],
+        #             tensor_parallel_size=2,
+        #             dtype="auto",
+        #             fewshot_as_multiturn=False,
+        #             cuda_devices="1,2",
+        #             apply_chat_template=False,
+        #             batch_size="auto",
+        #             limit=args.limit,
+        #         )
+        #         lambada_acc = eval_results["results"]["lambada_openai"]["acc,none"]
+        #         lambada_ppl = eval_results["results"]["lambada_openai"]["perplexity,none"]
+        #         if cache_file:
+        #             with open(cache_file, "w") as f:
+        #                 json.dump({"lambada_acc": lambada_acc, "lambada_ppl": lambada_ppl}, f, indent=2)
 
-            mlflow.log_metrics(
-                {"lambada_acc": lambada_acc, "lambada_ppl": lambada_ppl},
-                step=epoch_num,
-            )
-            print(f"Epoch {epoch_num} — LAMBADA accuracy: {lambada_acc:.4f}, perplexity: {lambada_ppl:.4f}")
+        #     mlflow.log_metrics(
+        #         {"lambada_acc": lambada_acc, "lambada_ppl": lambada_ppl},
+        #         step=epoch_num,
+        #     )
+        #     print(f"Epoch {epoch_num} — LAMBADA accuracy: {lambada_acc:.4f}, perplexity: {lambada_ppl:.4f}")
 
     # del model
     # Export the best tuned model to OpenVINO and evaluate it using LM-Evaluation-Harness.
@@ -812,14 +858,15 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained)
 
     # Prepare training and calibration data
-    train_loader = get_wikitext2(
+    load_fn = DATASET_LOADERS[args.dataset]
+    train_loader = load_fn(
         num_samples=args.num_train_samples, seqlen=args.train_seqlen, tokenizer=tokenizer, device=device
     )
     if args.basic_init:
         example_input = {k: v.to(device) for k, v in model.dummy_inputs.items()}
         dataset = Dataset([example_input])
     else:
-        calib_loader = get_wikitext2(num_samples=128, seqlen=128, tokenizer=tokenizer, device=device)
+        calib_loader = load_fn(num_samples=128, seqlen=128, tokenizer=tokenizer, device=device)
         dataset = Dataset(map(get_model_input, calib_loader))
 
     # Pre-compute hiddens of teacher model for distillation loss.
@@ -829,6 +876,7 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
         orig_hiddens = calc_hiddens(model, train_loader)
         torch.save(orig_hiddens, hidden_file)
 
+    # model = torch.compile(model)
     # Create or load model to tune with Fake Quantizers and absorbable LoRA adapters.
     if ckpt_file.exists():
         print(f"Loading existing init checkpoint: {ckpt_file}")
@@ -847,7 +895,7 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
     # original forward under torch.no_grad() and rebuilding the graph only during
     # the backward recomputation.
     if args.gradient_checkpointing:
-        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": True})
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
         print("Gradient checkpointing enabled (use_reentrant=True)")
 
     param_to_train = set_trainable(
@@ -933,6 +981,7 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
             "use_autograd_quantize": args.use_autograd_quantize,
             "gradient_checkpointing": args.gradient_checkpointing,
             "tune_bits": args.tune_bits,
+            "dataset": args.dataset,
         }
     )
 
@@ -942,7 +991,6 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
 
     # # Save epoch-0 checkpoint (after initialization, before any training).
     # if 0 in save_epochs:
-    #     save_checkpoint(model, last_dir / "nncf_checkpoint_epoch0.pth", model_state=not args.basic_init)
 
     for epoch in range(args.epochs):
         batch_indices_epoch = torch.randperm(num_samples)[:epoch_samples].chunk(microbatches_per_epoch)

@@ -50,6 +50,7 @@ STAGE2_MIN_LR_RATIO="0.1"
 NUM_TRAIN_SAMPLES=512
 TRAIN_SEQLEN=512
 BATCH_SIZE=8
+DATASET="pile"
 
 # Control which stages to run (0 = both, 1 = stage 1 only, 2 = stage 2 only)
 RUN_STAGE=0
@@ -74,6 +75,7 @@ while [[ $# -gt 0 ]]; do
         --num_train_samples)        NUM_TRAIN_SAMPLES="$2"; shift 2 ;;
         --train_seqlen)             TRAIN_SEQLEN="$2"; shift 2 ;;
         --batch_size)               BATCH_SIZE="$2"; shift 2 ;;
+        --dataset)                  DATASET="$2"; shift 2 ;;
         --stage)                    RUN_STAGE="$2"; shift 2 ;;
         --stage1_fq_lr)             STAGE1_FQ_LR="$2"; shift 2 ;;
         --stage1_lora_lr)           STAGE1_LORA_LR="$2"; shift 2 ;;
@@ -137,6 +139,7 @@ if [[ "$RUN_STAGE" == "0" || "$RUN_STAGE" == "1" ]]; then
         --compression_format "$COMPRESSION_FORMAT" \
         --tune_bits 2 \
         --save_epochs "$STAGE1_EPOCHS" \
+        --dataset "$DATASET" \
         $BASIC_INIT_FLAG \
         $USE_AUTOGRAD_QUANTIZE \
         $GRADIENT_CHECKPOINTING \
@@ -197,6 +200,7 @@ if [[ "$RUN_STAGE" == "0" || "$RUN_STAGE" == "2" ]]; then
         --tune_bits 4 \
         --init_ckpt "$S2_INIT_CKPT" \
         --save_epochs "$STAGE2_EPOCHS" \
+        --dataset "$DATASET" \
         $BASIC_INIT_FLAG \
         $USE_AUTOGRAD_QUANTIZE \
         $GRADIENT_CHECKPOINTING \
