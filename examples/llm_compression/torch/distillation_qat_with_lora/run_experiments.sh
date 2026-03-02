@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # Output directories to process
-OUTPUT_DIRS=("output")
+OUTPUT_DIRS=("output_pile_qwen")
 # PRETRAINED="meta-llama/Llama-3.2-1B-Instruct"
 PRETRAINED="Qwen/Qwen3-8B"
 
 # Checkpoint files to evaluate
-CKPT_FILES=("nncf_init_fq_lora.pth" "last/nncf_checkpoint_epoch1.pth" "last/nncf_checkpoint_epoch2.pth" "last/nncf_checkpoint_epoch5.pth" "last/nncf_checkpoint_epoch10.pth" "last/nncf_checkpoint_epoch15.pth")
+CKPT_FILES=("last/nncf_checkpoint_epoch1.pth" "last/nncf_checkpoint_epoch2.pth" "last/nncf_checkpoint_epoch5.pth" "last/nncf_checkpoint_epoch10.pth" "last/nncf_checkpoint_epoch15.pth")
 # CKPT_FILES=("nncf_checkpoint_after_first_epoch.pth") #"nncf_checkpoint_svd_lora_se_2bit.pth") #"nncf_checkpoint_svd_lora_se_tune_scales.pth")
 
 LOG_FILE="tune.log"
@@ -25,6 +25,17 @@ run_lm_eval_gsm8k() {
         --apply_chat_template \
         --output_path eval_results/tmp \
         --gen_kwargs do_sample=True,temperature=0.7,top_p=0.8,top_k=20,min_p=0 \
+        --batch_size auto >> "$log_file" 2>&1
+}
+
+run_lm_eval_gsm8k_andrei() {
+    local model_dir="$1"
+    local log_file="$2"
+    lm_eval \
+        --model vllm \
+        --model_args "{\"pretrained\":\"$model_dir\",\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
+        --tasks gsm8k \
+        --output_path eval_results/tmp \
         --batch_size auto >> "$log_file" 2>&1
 }
 
@@ -57,7 +68,7 @@ for OUTPUT_DIR in "${OUTPUT_DIRS[@]}"; do
         python save_stripped.py -p $PRETRAINED -c "$OUTPUT_DIR/$CKPT_FILE" -o "$CKPT_DIR"
 
         echo "Running lm-eval for $CKPT_FILE..."
-        run_lm_eval "$CKPT_DIR" "$LOG_FILE"
+        run_lm_eval_gsm8k_andrei "$CKPT_DIR" "$LOG_FILE"
     done
 done
 

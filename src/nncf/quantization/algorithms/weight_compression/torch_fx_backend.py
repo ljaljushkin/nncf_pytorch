@@ -216,14 +216,14 @@ class FXWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
                 decompressor = INT8AsymmetricWeightsDecompressor(
                     compressed_weight.scale.data, compressed_weight.zero_point.data, result_dtype=weight.data.dtype
                 )
-            elif compression_config.mode == CompressWeightsMode.INT4_SYM:
+            elif compression_config.mode in (CompressWeightsMode.INT4_SYM, CompressWeightsMode.INT2_SYM):
                 decompressor = INT4SymmetricWeightsDecompressor(
                     scale=compressed_weight.scale.data,
                     compressed_weight_shape=compressed_weight.tensor.shape,
                     result_shape=weight.shape,
                     result_dtype=weight.data.dtype,
                 )
-            elif compression_config.mode == CompressWeightsMode.INT4_ASYM:
+            elif compression_config.mode in (CompressWeightsMode.INT4_ASYM, CompressWeightsMode.INT2_ASYM):
                 decompressor = INT4AsymmetricWeightsDecompressor(
                     scale=compressed_weight.scale.data,
                     zero_point=compressed_weight.zero_point.data,

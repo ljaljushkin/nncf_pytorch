@@ -105,7 +105,7 @@ class LoraCorrectionAlgorithm:
         return self._lora_correction_params.use_int8_adapters
 
     def is_applicable(self, wc_params: WeightCompressionParameters):
-        return wc_params.compression_config.num_bits == 4
+        return wc_params.compression_config.num_bits in (2, 4)
 
     def calculate_adapters(
         self, weight: Tensor, compressed_weight: CompressedWeight, wc_params: WeightCompressionParameters
@@ -171,7 +171,12 @@ class LoraCorrectionAlgorithm:
         mode = compression_config.mode
         assert len(reduction_axes) == 1, "Assumed a single reduction axis"
         reduction_axis = reduction_axes[0] if compression_config.group_size != -1 else -1
-        if mode in (CompressWeightsMode.INT4_SYM, CompressWeightsMode.INT4_ASYM):
+        if mode in (
+            CompressWeightsMode.INT4_SYM,
+            CompressWeightsMode.INT4_ASYM,
+            CompressWeightsMode.INT2_SYM,
+            CompressWeightsMode.INT2_ASYM,
+        ):
             fq_weights = do_integer_dequantization(
                 compressed_weight.tensor,
                 compressed_weight.scale,
@@ -181,9 +186,7 @@ class LoraCorrectionAlgorithm:
         elif mode == CompressWeightsMode.NF4:
             fq_weights = do_float_dequantization(compressed_weight.tensor, compressed_weight.scale, reduction_axis)
         else:
-            msg = (
-                f"{mode.value} mode is invalid for Lora Correction algorithm. Supported modes: INT4_SYM, INT4_ASYM, NF4"
-            )
+            msg = f"{mode.value} mode is invalid for Lora Correction algorithm. Supported modes: INT4_SYM, INT4_ASYM, INT2_SYM, INT2_ASYM, NF4"
             raise nncf.InternalError(msg)
         # fq_w + residual = w   =>  residual = w - fq_w
         svd_residual = fns.astype(weight - fq_weights, TensorDataType.float32)

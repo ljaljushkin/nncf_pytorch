@@ -719,10 +719,10 @@ def _main_impl(args) -> int:
     device = "cuda"
     torch_dtype = torch.bfloat16
     compression_config = dict(
-        mode=CompressWeightsMode.INT4_SYM,
+        mode=CompressWeightsMode.INT2_SYM,
         group_size=64,
         awq=not args.basic_init,
-        backup_mode=nncf.BackupMode.NONE,
+        backup_mode=nncf.BackupMode.INT8_SYM,
         scale_estimation=not args.basic_init,
         compression_format=CompressionFormat[args.compression_format],
         # ignored_scope=nncf.IgnoredScope(patterns=[r"(?!.*5.mlp.gate_proj.*).*"]),

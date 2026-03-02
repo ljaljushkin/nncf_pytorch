@@ -109,6 +109,13 @@ LAST_DIR="${OUTPUT_DIR}/last"
 STAGE1_FAILED=false
 STAGE2_FAILED=false
 
+# Determine MLflow DB name based on debug mode.
+if [[ -n "$DEBUG_FLAG" ]]; then
+    MLFLOW_DB="mlflow_debug.db"
+else
+    MLFLOW_DB="mlflow.db"
+fi
+
 # ── Stage 1: Tune 2-bit layers ──────────────────────────────────────
 if [[ "$RUN_STAGE" == "0" || "$RUN_STAGE" == "1" ]]; then
     STAGE1_EPOCHS=$((STAGE1_CONSTANT + STAGE1_COSINE))
@@ -140,6 +147,7 @@ if [[ "$RUN_STAGE" == "0" || "$RUN_STAGE" == "1" ]]; then
         --tune_bits 2 \
         --save_epochs "$STAGE1_EPOCHS" \
         --dataset "$DATASET" \
+        --mlflow_db "${MLFLOW_DB}" \
         $BASIC_INIT_FLAG \
         $USE_AUTOGRAD_QUANTIZE \
         $GRADIENT_CHECKPOINTING \
@@ -201,6 +209,7 @@ if [[ "$RUN_STAGE" == "0" || "$RUN_STAGE" == "2" ]]; then
         --init_ckpt "$S2_INIT_CKPT" \
         --save_epochs "$STAGE2_EPOCHS" \
         --dataset "$DATASET" \
+        --mlflow_db "${MLFLOW_DB}" \
         $BASIC_INIT_FLAG \
         $USE_AUTOGRAD_QUANTIZE \
         $GRADIENT_CHECKPOINTING \

@@ -32,7 +32,7 @@ COMPRESSION_FORMAT="FQ_STRETCHED_LORA"
 USE_AUTOGRAD_QUANTIZE=""
 GRADIENT_CHECKPOINTING=""
 SE_INIT=false
-LORA_RANK=64
+LORA_RANK=128
 NUM_TRAIN_SAMPLES=512
 TRAIN_SEQLEN=512
 BATCH_SIZE=8
@@ -68,7 +68,7 @@ FAILED_RUNS=()
 # Determine MLflow DB name based on debug mode.
 if [[ -n "$DEBUG_FLAG" ]]; then
     MLFLOW_DB="mlflow_debug.db"
-    echo "** DEBUG MODE — results go to ${OUTPUT_DIR}/${MLFLOW_DB} **"
+    echo "** DEBUG MODE — results go to ${MLFLOW_DB} **"
 else
     MLFLOW_DB="mlflow.db"
 fi
@@ -138,6 +138,7 @@ run_config() {
         --run_name "$RUN_NAME" \
         --compression_format "$COMPRESSION_FORMAT" \
         --dataset "$DATASET" \
+        --mlflow_db "${MLFLOW_DB}" \
         $BASIC_INIT_FLAG \
         $USE_AUTOGRAD_QUANTIZE \
         $GRADIENT_CHECKPOINTING \
@@ -181,7 +182,7 @@ if [[ -n "$CONFIGS_FILE" ]]; then
         echo "WARNING: ${#FAILED_RUNS[@]} run(s) FAILED:"
         for f in "${FAILED_RUNS[@]}"; do echo "  - $f"; done
     fi
-    echo "View MLflow UI:  mlflow ui --backend-store-uri sqlite:///$(realpath -m "${OUTPUT_DIR}/${MLFLOW_DB}")"
+    echo "View MLflow UI:  mlflow ui --backend-store-uri sqlite:///$(realpath -m "${MLFLOW_DB}")"
     exit 0
 fi
 
@@ -251,4 +252,4 @@ if [[ ${#FAILED_RUNS[@]} -gt 0 ]]; then
     echo "WARNING: ${#FAILED_RUNS[@]} run(s) FAILED:"
     for f in "${FAILED_RUNS[@]}"; do echo "  - $f"; done
 fi
-echo "View MLflow UI:  mlflow ui --backend-store-uri sqlite:///$(realpath -m "${OUTPUT_DIR}/${MLFLOW_DB}")"
+echo "View MLflow UI:  mlflow ui --backend-store-uri sqlite:///$(realpath -m "${MLFLOW_DB}")"

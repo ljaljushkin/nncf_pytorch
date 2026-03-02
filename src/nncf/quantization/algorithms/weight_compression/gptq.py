@@ -315,7 +315,7 @@ class GPTQ:
                         )
                         scales.append(scale)
                     else:
-                        if self._scale_estimation and block_compression_config.num_bits == 4:
+                        if self._scale_estimation and block_compression_config.num_bits in (2, 4):
                             activations = [inp[..., (i1 + i) : (i1 + i + group_size)] for inp in inputs]
                             wc_statistics = ScaleEstimation.activations_to_wc_statistics(activations)
                             scale, zero_point = ScaleEstimation.calculate_quantization_params(
@@ -369,6 +369,7 @@ class GPTQ:
         if wc_params.compression_config.mode in [
             CompressWeightsMode.INT8_ASYM,
             CompressWeightsMode.INT4_ASYM,
+            CompressWeightsMode.INT2_ASYM,
         ]:
             zero_points = fns.stack(zero_points, axis=1)
             if wc_params.compression_config.group_size == -1:
