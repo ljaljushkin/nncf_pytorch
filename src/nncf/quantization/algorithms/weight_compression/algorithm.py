@@ -1244,9 +1244,7 @@ class WeightCompression(Algorithm):
         # # TEMP AR-HACK: Override group_size and num_bits from ar_config.json
         import json
 
-        ar_config_path = (
-            "/home/nlyaly/projects/nncf/examples/llm_compression/torch/distillation_qat_with_lora/ar_config.json"
-        )
+        ar_config_path = "/home/nlyaly/projects/nncf/examples/llm_compression/torch/distillation_qat_with_lora/ar_config_q34b_avg3bit.json"
         try:
             with open(ar_config_path) as f:
                 ar_config = json.load(f)

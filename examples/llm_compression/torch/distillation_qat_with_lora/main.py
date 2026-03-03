@@ -883,20 +883,17 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
         model = load_checkpoint(model, ckpt_file)
     else:
         model = compress_weights(model, dataset=dataset, **compression_config)
-        save_checkpoint(model, ckpt_file, model_state=not args.basic_init)
+        save_checkpoint(model, ckpt_file, model_state=False)
         print(f"Saved init checkpoint: {ckpt_file}")
 
     # Enable gradient checkpointing to reduce activation memory.
-    # use_reentrant=True is required here because the quantization functions are
-    # wrapped with torch.compile (CompilationWrapper), which changes the number of
-    # tensors saved via save_for_backward between the original forward and the
-    # recomputation pass.  use_reentrant=False counts saved tensors and raises
-    # CheckpointError on a mismatch; use_reentrant=True avoids this by running the
-    # original forward under torch.no_grad() and rebuilding the graph only during
-    # the backward recomputation.
+    # ForwardWithHooks keeps FunctionHookMode alive across forward+backward so that
+    # checkpoint recomputation sees the same FQ hooks as the original forward.
+    # use_reentrant=False is preferred: it counts saved tensors and the persistent
+    # mode ensures the counts match between forward and recomputation.
     if args.gradient_checkpointing:
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-        print("Gradient checkpointing enabled (use_reentrant=True)")
+        print("Gradient checkpointing enabled (use_reentrant=False)")
 
     param_to_train = set_trainable(
         model,
@@ -1034,7 +1031,7 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
         finished_epoch = epoch + 1
         if finished_epoch in save_epochs or epoch == args.epochs - 1:
             ckpt_name = f"nncf_checkpoint_epoch{finished_epoch}.pth"
-            save_checkpoint(model, last_dir / ckpt_name, model_state=not args.basic_init)
+            save_checkpoint(model, last_dir / ckpt_name, model_state=False)
 
 
 if __name__ == "__main__":

@@ -1,20 +1,27 @@
 #!/bin/bash
 
 # Output directories to process
-OUTPUT_DIRS=("output_pile_qwen")
+OUTPUT_DIRS=("output")
 # PRETRAINED="meta-llama/Llama-3.2-1B-Instruct"
 PRETRAINED="Qwen/Qwen3-8B"
 
 # Checkpoint files to evaluate
-CKPT_FILES=("last/nncf_checkpoint_epoch1.pth" "last/nncf_checkpoint_epoch2.pth" "last/nncf_checkpoint_epoch5.pth" "last/nncf_checkpoint_epoch10.pth" "last/nncf_checkpoint_epoch15.pth")
+CKPT_FILES=(
+    "last/nncf_checkpoint_epoch1.pth"
+    "last/nncf_checkpoint_epoch2.pth"
+    "last/nncf_checkpoint_epoch5.pth"
+    "last/nncf_checkpoint_epoch10.pth"
+    "last/nncf_checkpoint_epoch15.pth"
+)
 # CKPT_FILES=("nncf_checkpoint_after_first_epoch.pth") #"nncf_checkpoint_svd_lora_se_2bit.pth") #"nncf_checkpoint_svd_lora_se_tune_scales.pth")
-
+EVAL_DIR="eval_results/qwen3_4b_pile_sym_max"
 LOG_FILE="tune.log"
 
 # --limit 2 \
 # --log_samples \
 # Function to run lm_eval
-run_lm_eval_gsm8k() {
+run_lm_eval_gsm8k_sampling() {
+    echo "Running lm-eval on gsm8k with sampling and disabled thinking for $model_dir..."
     local model_dir="$1"
     local log_file="$2"
     lm_eval \
@@ -29,25 +36,39 @@ run_lm_eval_gsm8k() {
 }
 
 run_lm_eval_gsm8k_andrei() {
+    echo "Running lm-eval on gsm8k for $model_dir..."
     local model_dir="$1"
     local log_file="$2"
     lm_eval \
         --model vllm \
         --model_args "{\"pretrained\":\"$model_dir\",\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
         --tasks gsm8k \
-        --output_path eval_results/tmp \
+        --output_path $EVAL_DIR \
         --batch_size auto >> "$log_file" 2>&1
 }
 
-run_lm_eval() {
+run_lm_eval_lambada() {
+    echo "Running lm-eval on lambada for $model_dir..."
     local model_dir="$1"
     local log_file="$2"
     lm_eval \
         --model vllm \
         --model_args "{\"pretrained\":\"$model_dir\",\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
         --tasks lambada_openai \
-        --output_path eval_results/qwen_pile \
+        --output_path $EVAL_DIR \
         --batch_size auto >> "$log_file" 2>&1
+}
+
+run_lm_eval_mmlu() {
+    echo "Running lm-eval on mmlu for $model_dir..."
+    local model_dir="$1"
+    local log_file="$2"
+    lm_eval \
+        --model vllm \
+        --model_args "{\"pretrained\":\"$model_dir\",\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
+        --tasks mmlu \
+        --output_path $EVAL_DIR \
+        --batch_size 4 >> "$log_file" 2>&1
 }
 for OUTPUT_DIR in "${OUTPUT_DIRS[@]}"; do
     CKPT_DIR="$OUTPUT_DIR/last/stripped"
@@ -67,8 +88,9 @@ for OUTPUT_DIR in "${OUTPUT_DIRS[@]}"; do
         # python save_stripped.py -p $PRETRAINED -c "$OUTPUT_DIR/last/$CKPT_FILE" -o "$CKPT_DIR"
         python save_stripped.py -p $PRETRAINED -c "$OUTPUT_DIR/$CKPT_FILE" -o "$CKPT_DIR"
 
-        echo "Running lm-eval for $CKPT_FILE..."
         run_lm_eval_gsm8k_andrei "$CKPT_DIR" "$LOG_FILE"
+        run_lm_eval_lambada "$CKPT_DIR" "$LOG_FILE"
+        run_lm_eval_mmlu "$CKPT_DIR" "$LOG_FILE"
     done
 done
 
