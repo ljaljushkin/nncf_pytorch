@@ -23,7 +23,7 @@ set -euo pipefail
 # ────────────────────────────────────────────────────────────────────
 
 # PRETRAINED="meta-llama/Llama-3.2-1B-Instruct"
-PRETRAINED="Qwen/Qwen3-8B"
+PRETRAINED="Qwen/Qwen3-4B"
 OUTPUT_DIR="output"
 LOG_FILE="grid_search.log"
 CONFIGS_FILE=""
@@ -32,10 +32,10 @@ COMPRESSION_FORMAT="FQ_STRETCHED_LORA"
 USE_AUTOGRAD_QUANTIZE=""
 GRADIENT_CHECKPOINTING=""
 SE_INIT=false
-LORA_RANK=64
-NUM_TRAIN_SAMPLES=600
-TRAIN_SEQLEN=600
-BATCH_SIZE=8
+LORA_RANK=256
+NUM_TRAIN_SAMPLES=1024
+TRAIN_SEQLEN=1024
+BATCH_SIZE=32
 DATASET="pile"
 
 # ── Parse CLI arguments ─────────────────────────────────────────────

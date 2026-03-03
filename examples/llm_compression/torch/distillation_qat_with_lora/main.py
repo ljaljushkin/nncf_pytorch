@@ -582,7 +582,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--microbatch_size",
         type=int,
-        default=1,
+        default=2,
         help="Size of each training microbatch. Gradients will be accumulated until the batch size is reached.",
     )
     parser.add_argument(
