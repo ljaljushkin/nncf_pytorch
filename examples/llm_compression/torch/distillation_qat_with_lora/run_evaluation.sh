@@ -14,7 +14,7 @@ CKPT_FILES=(
     "last/nncf_checkpoint_epoch1.pth"
 )
 # CKPT_FILES=("nncf_checkpoint_after_first_epoch.pth") #"nncf_checkpoint_svd_lora_se_2bit.pth") #"nncf_checkpoint_svd_lora_se_tune_scales.pth")
-LOG_FILE="tune.log"
+LOG_FILE="lm_eval.log"
 
 # ── Parse CLI arguments ─────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -31,7 +31,7 @@ done
 
 run_lm_eval_gsm8k_sampling() {
     local model_dir="$1"
-    local eval_output_path="$3"
+    local eval_output_path="$2"
     local log_file=$eval_output_path/$LOG_FILE
     echo "Running lm-eval on mmlu for $model_dir... Log file: $log_file"
     lm_eval \
@@ -47,7 +47,7 @@ run_lm_eval_gsm8k_sampling() {
 
 run_lm_eval_gsm8k_andrei() {
     local model_dir="$1"
-    local eval_output_path="$3"
+    local eval_output_path="$2"
     local log_file=$eval_output_path/$LOG_FILE
     echo "Running lm-eval on mmlu for $model_dir... Log file: $log_file"
     lm_eval \
@@ -60,7 +60,7 @@ run_lm_eval_gsm8k_andrei() {
 
 run_lm_eval_lambada() {
     local model_dir="$1"
-    local eval_output_path="$3"
+    local eval_output_path="$2"
     local log_file=$eval_output_path/$LOG_FILE
     echo "Running lm-eval on mmlu for $model_dir... Log file: $log_file"
     lm_eval \
@@ -73,7 +73,7 @@ run_lm_eval_lambada() {
 
 run_lm_eval_mmlu() {
     local model_dir="$1"
-    local eval_output_path="$3"
+    local eval_output_path="$2"
     local log_file=$eval_output_path/$LOG_FILE
     echo "Running lm-eval on mmlu for $model_dir... Log file: $log_file"
     lm_eval \
