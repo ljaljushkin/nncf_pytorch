@@ -29,14 +29,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# --limit 2 \
-# --log_samples \
-# Function to run lm_eval
 run_lm_eval_gsm8k_sampling() {
-    echo "Running lm-eval on gsm8k with sampling and disabled thinking for $1..."
     local model_dir="$1"
-    local log_file="$2"
     local eval_output_path="$3"
+    local log_file=$eval_output_path/$LOG_FILE
+    echo "Running lm-eval on mmlu for $model_dir... Log file: $log_file"
     lm_eval \
         --model vllm \
         --model_args "{\"pretrained\":\"$model_dir\",\"enable_thinking\":false,\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
@@ -49,10 +46,10 @@ run_lm_eval_gsm8k_sampling() {
 }
 
 run_lm_eval_gsm8k_andrei() {
-    echo "Running lm-eval on gsm8k for $1..."
     local model_dir="$1"
-    local log_file="$2"
     local eval_output_path="$3"
+    local log_file=$eval_output_path/$LOG_FILE
+    echo "Running lm-eval on mmlu for $model_dir... Log file: $log_file"
     lm_eval \
         --model vllm \
         --model_args "{\"pretrained\":\"$model_dir\",\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
@@ -62,10 +59,10 @@ run_lm_eval_gsm8k_andrei() {
 }
 
 run_lm_eval_lambada() {
-    echo "Running lm-eval on lambada for $1..."
     local model_dir="$1"
-    local log_file="$2"
     local eval_output_path="$3"
+    local log_file=$eval_output_path/$LOG_FILE
+    echo "Running lm-eval on mmlu for $model_dir... Log file: $log_file"
     lm_eval \
         --model vllm \
         --model_args "{\"pretrained\":\"$model_dir\",\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
@@ -75,10 +72,10 @@ run_lm_eval_lambada() {
 }
 
 run_lm_eval_mmlu() {
-    echo "Running lm-eval on mmlu for $1..."
     local model_dir="$1"
-    local log_file="$2"
     local eval_output_path="$3"
+    local log_file=$eval_output_path/$LOG_FILE
+    echo "Running lm-eval on mmlu for $model_dir... Log file: $log_file"
     lm_eval \
         --model vllm \
         --model_args "{\"pretrained\":\"$model_dir\",\"dtype\":\"auto\",\"tensor_parallel_size\":2}" \
@@ -117,9 +114,9 @@ for OUTPUT_DIR in "${OUTPUT_DIRS[@]}"; do
         # python save_stripped.py -p $PRETRAINED -c "$OUTPUT_DIR/last/$CKPT_FILE" -o "$CKPT_DIR"
         python save_stripped.py -p $PRETRAINED -c "$CKPT_PATH" -o "$CKPT_DIR" || { echo "save_stripped.py failed for $CKPT_PATH, skipping eval"; continue; }
 
-        run_lm_eval_gsm8k_andrei "$CKPT_DIR" "$LOG_FILE" "$CKPT_EVAL_DIR"
-        run_lm_eval_lambada "$CKPT_DIR" "$LOG_FILE" "$CKPT_EVAL_DIR"
-        run_lm_eval_mmlu "$CKPT_DIR" "$LOG_FILE" "$CKPT_EVAL_DIR"
+        run_lm_eval_gsm8k_andrei "$CKPT_DIR" "$CKPT_EVAL_DIR"
+        run_lm_eval_lambada "$CKPT_DIR" "$CKPT_EVAL_DIR"
+        # run_lm_eval_mmlu "$CKPT_DIR" "$CKPT_EVAL_DIR"
     done
 done
 
