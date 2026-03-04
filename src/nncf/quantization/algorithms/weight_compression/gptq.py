@@ -369,6 +369,7 @@ class GPTQ:
         if wc_params.compression_config.mode in [
             CompressWeightsMode.INT8_ASYM,
             CompressWeightsMode.INT4_ASYM,
+            CompressWeightsMode.INT2_ASYM,
         ]:
             zero_points = fns.stack(zero_points, axis=1)
             if wc_params.compression_config.group_size == -1:

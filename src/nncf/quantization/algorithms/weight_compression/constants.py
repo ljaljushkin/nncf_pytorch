@@ -120,6 +120,8 @@ OPTIMIZED_COMPRESSION_COMPATIBLE_INT_MODES = (
     CompressWeightsMode.INT8_SYM,
     CompressWeightsMode.INT4_ASYM,
     CompressWeightsMode.INT4_SYM,
+    CompressWeightsMode.INT2_ASYM,
+    CompressWeightsMode.INT2_SYM,
 )
 
 OPTIMIZED_COMPRESSION_COMPATIBLE_FLOAT_MODES = (
