@@ -57,6 +57,7 @@ class WeightCompressionConfig:
             CompressWeightsMode.MXFP4: 4,
             CompressWeightsMode.FP4: 4,
             CompressWeightsMode.CB4: 4,
+            CompressWeightsMode.INT3_SYM: 3,
             CompressWeightsMode.INT2_SYM: 2,
             CompressWeightsMode.INT2_ASYM: 2,
         }.get(self.mode, 4)
@@ -111,6 +112,7 @@ class WeightCompressionConfig:
         dtype_per_mode = {
             CompressWeightsMode.INT4_SYM: TensorDataType.int4,
             CompressWeightsMode.INT4_ASYM: TensorDataType.uint4,
+            CompressWeightsMode.INT3_SYM: TensorDataType.int3,
             CompressWeightsMode.INT2_SYM: TensorDataType.int2,
             CompressWeightsMode.INT2_ASYM: TensorDataType.uint2,
             CompressWeightsMode.INT8_ASYM: TensorDataType.uint8,

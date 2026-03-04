@@ -174,6 +174,7 @@ class LoraCorrectionAlgorithm:
         if mode in (
             CompressWeightsMode.INT4_SYM,
             CompressWeightsMode.INT4_ASYM,
+            CompressWeightsMode.INT3_SYM,
             CompressWeightsMode.INT2_SYM,
             CompressWeightsMode.INT2_ASYM,
         ):
@@ -186,7 +187,7 @@ class LoraCorrectionAlgorithm:
         elif mode == CompressWeightsMode.NF4:
             fq_weights = do_float_dequantization(compressed_weight.tensor, compressed_weight.scale, reduction_axis)
         else:
-            msg = f"{mode.value} mode is invalid for Lora Correction algorithm. Supported modes: INT4_SYM, INT4_ASYM, INT2_SYM, INT2_ASYM, NF4"
+            msg = f"{mode.value} mode is invalid for Lora Correction algorithm. Supported modes: INT4_SYM, INT4_ASYM, INT3_SYM, INT2_SYM, INT2_ASYM, NF4"
             raise nncf.InternalError(msg)
         # fq_w + residual = w   =>  residual = w - fq_w
         svd_residual = fns.astype(weight - fq_weights, TensorDataType.float32)

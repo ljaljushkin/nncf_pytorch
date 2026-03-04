@@ -263,6 +263,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             CompressWeightsMode.INT4_SYM: QuantizationScheme.SYMMETRIC_LORA,
             CompressWeightsMode.INT2_ASYM: QuantizationScheme.ASYMMETRIC_LORA,
             CompressWeightsMode.INT2_SYM: QuantizationScheme.SYMMETRIC_LORA,
+            CompressWeightsMode.INT3_SYM: QuantizationScheme.SYMMETRIC_LORA,
             CompressWeightsMode.INT8_ASYM: QuantizationScheme.ASYMMETRIC,
             CompressWeightsMode.INT8_SYM: QuantizationScheme.SYMMETRIC,
         }
@@ -271,6 +272,7 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             mode_vs_schema_map[CompressWeightsMode.INT4_SYM] = QuantizationScheme.SYMMETRIC
             mode_vs_schema_map[CompressWeightsMode.INT2_ASYM] = QuantizationScheme.ASYMMETRIC
             mode_vs_schema_map[CompressWeightsMode.INT2_SYM] = QuantizationScheme.SYMMETRIC
+            mode_vs_schema_map[CompressWeightsMode.INT3_SYM] = QuantizationScheme.SYMMETRIC
         if is_all_8bit and compression_format == CompressionFormat.FQ_LORA:
             mode_vs_schema_map[CompressWeightsMode.INT8_ASYM] = QuantizationScheme.ASYMMETRIC_LORA
             mode_vs_schema_map[CompressWeightsMode.INT8_SYM] = QuantizationScheme.SYMMETRIC_LORA
@@ -279,12 +281,14 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             mode_vs_schema_map[CompressWeightsMode.INT4_SYM] = QuantizationScheme.SYMMETRIC_LORA_NLS
             mode_vs_schema_map[CompressWeightsMode.INT2_ASYM] = QuantizationScheme.ASYMMETRIC_LORA_NLS
             mode_vs_schema_map[CompressWeightsMode.INT2_SYM] = QuantizationScheme.SYMMETRIC_LORA_NLS
+            mode_vs_schema_map[CompressWeightsMode.INT3_SYM] = QuantizationScheme.SYMMETRIC_LORA_NLS
             if is_all_8bit:
                 mode_vs_schema_map[CompressWeightsMode.INT8_ASYM] = QuantizationScheme.ASYMMETRIC_LORA_NLS
                 mode_vs_schema_map[CompressWeightsMode.INT8_SYM] = QuantizationScheme.SYMMETRIC_LORA_NLS
         if compression_format == CompressionFormat.FQ_STRETCHED_LORA:
             mode_vs_schema_map[CompressWeightsMode.INT4_SYM] = QuantizationScheme.SYMMETRIC_STRETCHED_LORA
             mode_vs_schema_map[CompressWeightsMode.INT2_SYM] = QuantizationScheme.SYMMETRIC_STRETCHED_LORA
+            mode_vs_schema_map[CompressWeightsMode.INT3_SYM] = QuantizationScheme.SYMMETRIC_STRETCHED_LORA
 
         schema = mode_vs_schema_map[compression_config.mode]
 
@@ -404,7 +408,11 @@ class PTWeightCompressionAlgoBackend(WeightCompressionAlgoBackend):
             decompressor = INT8AsymmetricWeightsDecompressor(
                 compressed_weight.scale.data, compressed_weight.zero_point.data, result_dtype=weight_dtype
             )
-        elif compression_config.mode in (CompressWeightsMode.INT4_SYM, CompressWeightsMode.INT2_SYM):
+        elif compression_config.mode in (
+            CompressWeightsMode.INT4_SYM,
+            CompressWeightsMode.INT3_SYM,
+            CompressWeightsMode.INT2_SYM,
+        ):
             decompressor = INT4SymmetricWeightsDecompressor(
                 scale=compressed_weight.scale.data,
                 compressed_weight_shape=compressed_weight.tensor.shape,

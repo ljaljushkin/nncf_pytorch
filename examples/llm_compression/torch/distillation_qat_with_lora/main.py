@@ -295,7 +295,7 @@ def log_quantizer_stats(model: nn.Module, step: int, optimizer: torch.optim.Opti
     for name, module in hook_storage.named_hooks():
         if not isinstance(module, (AsymmetricLoraQuantizer, SymmetricLoraQuantizer, StretchedSymmetricLoraQuantizer)):
             continue
-        if module.num_bits not in (2, 4):
+        if module.num_bits not in (2, 3, 4):
             continue
         if module.num_bits in logged_bits:
             continue
@@ -381,11 +381,12 @@ def set_trainable(
     :param fq_lr: Learning rate for the quantizer scales.
     :param lora_weight_decay: Weight decay for LoRA adapter parameters.
     :param fq_weight_decay: Weight decay for quantizer scale parameters.
-    :param tune_bits: List of bit-widths to tune (e.g. [2], [4], or [2, 4]). If None, tunes both 2 and 4 bit layers.
+    :param tune_bits: List of bit-widths to tune (e.g. [2], [3], [4], or [2, 3, 4]).
+        If None, tunes 2, 3, and 4 bit layers.
     :return: A list of dictionaries containing the parameters to be optimized and their corresponding learning rates.
     """
     if tune_bits is None:
-        tune_bits = [2, 4]
+        tune_bits = [2, 3, 4]
     model.requires_grad_(False)
     scales_to_train = []
     adapters_to_train = []
@@ -670,11 +671,11 @@ def get_argument_parser() -> argparse.ArgumentParser:
         "--tune_bits",
         type=int,
         nargs="+",
-        default=[2, 4],
-        help="Which bit-width layers to tune. Use for 2-stage tuning: "
+        default=[2, 3, 4],
+        help="Which bit-width layers to tune. Use for staged tuning: "
         "first run with --tune_bits 2 to tune only 2-bit layers, "
         "then run with --tune_bits 4 --init_ckpt <2bit_ckpt> to tune only 4-bit layers "
-        "while keeping 2-bit layers frozen. Default: [2, 4] (tune both).",
+        "while keeping 2-bit layers frozen. Default: [2, 3, 4] (tune all).",
     )
     return parser
 

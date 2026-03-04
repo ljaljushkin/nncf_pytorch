@@ -88,6 +88,8 @@ class CompressWeightsMode(StrEnum):
     :param INT4_ASYM: The same as INT4_SYM mode, but weights are quantized to a primary precision asymmetrically
         with a typical non-fixed zero point.
         https://github.com/openvinotoolkit/nncf/blob/develop/docs/usage/training_time_compression/other_algorithms/LegacyQuantization.md#asymmetric-quantization
+    :param INT3_SYM: Stands for 3-bit integer symmetric quantization without zero point.
+        Similar to INT4_SYM but with a 3-bit primary precision.
     :param INT2_SYM: Stands for 2-bit integer symmetric quantization without zero point.
         Similar to INT4_SYM but with a 2-bit primary precision.
     :param INT2_ASYM: Stands for 2-bit integer asymmetric quantization with a non-fixed zero point.
@@ -107,6 +109,7 @@ class CompressWeightsMode(StrEnum):
     INT8_ASYM = "int8_asym"
     INT4_SYM = "int4_sym"
     INT4_ASYM = "int4_asym"
+    INT3_SYM = "int3_sym"
     INT2_SYM = "int2_sym"
     INT2_ASYM = "int2_asym"
     NF4 = "nf4"

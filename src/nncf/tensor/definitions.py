@@ -54,6 +54,8 @@ class TensorDataType(StrEnum):
     uint8 = auto()
     uint4 = auto()
     int4 = auto()
+    uint3 = auto()
+    int3 = auto()
     uint2 = auto()
     int2 = auto()
 
@@ -81,6 +83,8 @@ class TensorDataType(StrEnum):
             TensorDataType.nf4: 4,
             TensorDataType.uint4: 4,
             TensorDataType.int4: 4,
+            TensorDataType.uint3: 3,
+            TensorDataType.int3: 3,
             TensorDataType.uint2: 2,
             TensorDataType.int2: 2,
             TensorDataType.f8e4m3: 8,
