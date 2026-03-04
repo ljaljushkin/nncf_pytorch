@@ -19,6 +19,7 @@ from torch.quantization.fake_quantize import FakeQuantize
 import nncf
 from nncf.torch.quantization.layers import AsymmetricQuantizer
 from nncf.torch.quantization.layers import BaseQuantizer
+from nncf.torch.quantization.layers import INT2SymmetricWeightsDecompressor
 from nncf.torch.quantization.layers import INT4AsymmetricWeightsDecompressor
 from nncf.torch.quantization.layers import INT4SymmetricWeightsDecompressor
 from nncf.torch.quantization.layers import INT8AsymmetricWeightsDecompressor
@@ -145,7 +146,10 @@ def asym_fq_to_decompressor(
 
 def sym_fq_to_decompressor(
     quantizer: SymmetricQuantizer, weight: torch.Tensor
-) -> tuple[Union[INT8SymmetricWeightsDecompressor, INT4SymmetricWeightsDecompressor], torch.Tensor]:
+) -> tuple[
+    Union[INT8SymmetricWeightsDecompressor, INT4SymmetricWeightsDecompressor, INT2SymmetricWeightsDecompressor],
+    torch.Tensor,
+]:
     """
     Converts an asymmetric quantizer and original weight tensor to a decompressor and quantized weight tensor.
 
@@ -178,6 +182,17 @@ def sym_fq_to_decompressor(
 
     if quantizer.num_bits == 8:
         decompressor = INT8SymmetricWeightsDecompressor(scale=scale, result_dtype=weight_dtype)
+    elif quantizer.num_bits == 2:
+        zero_point = torch.full_like(scale, 2, dtype=torch.uint8)
+        # Shift signed weights to unsigned: [-2, 1] -> [0, 3]
+        q_weight = (q_weight + 2).to(torch.uint8)
+        decompressor = INT2SymmetricWeightsDecompressor(
+            scale=scale,
+            zero_point=zero_point,
+            compressed_weight_shape=q_weight.shape,
+            result_shape=weight_shape,
+            result_dtype=weight_dtype,
+        )
     else:
         decompressor = INT4SymmetricWeightsDecompressor(
             scale=scale,

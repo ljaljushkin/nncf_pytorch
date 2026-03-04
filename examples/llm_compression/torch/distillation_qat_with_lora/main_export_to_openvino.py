@@ -19,6 +19,7 @@ import nncf
 from nncf.parameters import StripFormat
 from nncf.torch.function_hook.wrapper import get_hook_storage
 from nncf.torch.model_creation import load_from_config
+from nncf.torch.quantization.layers import SymmetricLoraQuantizer  # noqa: F401
 
 
 def load_checkpoint(model: nn.Module, ckpt_file: Path) -> nn.Module:
