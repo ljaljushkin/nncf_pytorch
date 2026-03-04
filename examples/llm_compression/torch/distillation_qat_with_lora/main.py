@@ -443,18 +443,11 @@ def save_checkpoint(model: nn.Module, ckpt_file: Path, model_state: bool = True)
         AWQ method which fuses scaling factors into weights. When False, only NNCF configuration and state are saved,
         as they're maintained separately from the model's weights.
     """
-    was_compiled = False
-    if hasattr(model, "_orig_mod"):
-        was_compiled = True
-        model = model._orig_mod
-
     hook_storage = get_hook_storage(model)
     ckpt = {"nncf_state_dict": hook_storage.state_dict(), "nncf_config": nncf.torch.get_config(model)}
     if model_state:
         ckpt["model_state"] = model.state_dict()
     torch.save(ckpt, ckpt_file)
-    if was_compiled:
-        model = torch.compile(model)
 
 
 def load_checkpoint(model: nn.Module, ckpt_file: Path) -> nn.Module:
@@ -582,7 +575,7 @@ def get_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--microbatch_size",
         type=int,
-        default=2,
+        default=4,
         help="Size of each training microbatch. Gradients will be accumulated until the batch size is reached.",
     )
     parser.add_argument(
@@ -876,7 +869,6 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
         orig_hiddens = calc_hiddens(model, train_loader)
         torch.save(orig_hiddens, hidden_file)
 
-    # model = torch.compile(model)
     # Create or load model to tune with Fake Quantizers and absorbable LoRA adapters.
     if ckpt_file.exists():
         print(f"Loading existing init checkpoint: {ckpt_file}")
@@ -986,9 +978,6 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
     loss_numerator = grad_steps = total_steps = 0
     save_epochs = set(args.save_epochs)
 
-    # # Save epoch-0 checkpoint (after initialization, before any training).
-    # if 0 in save_epochs:
-
     for epoch in range(args.epochs):
         batch_indices_epoch = torch.randperm(num_samples)[:epoch_samples].chunk(microbatches_per_epoch)
         for indices in track(batch_indices_epoch, description=f"Train epoch {epoch}"):
@@ -1035,4 +1024,4 @@ def _train(args, compression_config, device, torch_dtype, last_dir, output_dir, 
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    main(sys.argv[1:])

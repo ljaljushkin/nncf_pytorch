@@ -28,10 +28,11 @@ OUTPUT_DIR="output"
 LOG_FILE="grid_search.log"
 CONFIGS_FILE=""
 DEBUG_FLAG=""
-COMPRESSION_FORMAT="FQ_STRETCHED_LORA"
+COMPRESSION_FORMAT="FQ_LORA"
 USE_AUTOGRAD_QUANTIZE=""
 GRADIENT_CHECKPOINTING=""
-SE_INIT=false
+SE_INIT=true
+INIT_CKPT=""
 LORA_RANK=256
 NUM_TRAIN_SAMPLES=1024
 TRAIN_SEQLEN=1024
@@ -50,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         --use_autograd_quantize) USE_AUTOGRAD_QUANTIZE="--use_autograd_quantize"; shift ;;
         --gradient_checkpointing) GRADIENT_CHECKPOINTING="--gradient_checkpointing"; shift ;;
         --se-init) SE_INIT=true; shift ;;
+        --init-ckpt|--init_ckpt) INIT_CKPT="$2"; shift 2 ;;
         --lora_rank) LORA_RANK="$2"; shift 2 ;;
         --num_train_samples) NUM_TRAIN_SAMPLES="$2"; shift 2 ;;
         --train_seqlen) TRAIN_SEQLEN="$2"; shift 2 ;;
@@ -142,6 +144,7 @@ run_config() {
         $BASIC_INIT_FLAG \
         $USE_AUTOGRAD_QUANTIZE \
         $GRADIENT_CHECKPOINTING \
+        ${INIT_CKPT:+--init_ckpt "$INIT_CKPT"} \
         $DEBUG_FLAG \
         >> "$LOG_FILE" 2>&1; then
         echo "  ✓ ${RUN_NAME} succeeded"
