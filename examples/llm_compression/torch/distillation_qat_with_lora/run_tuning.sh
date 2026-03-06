@@ -112,13 +112,14 @@ run_config() {
     local run_batch="${13:-$BATCH_SIZE}"
 
     RUN_NAME="${FMT_TAG}_fq${fq_lr}_lora${lora_lr}_fqwd${fq_wd}_lorawd${lora_wd}_w${warmup}_c${constant}_cos${cosine}"
+    local run_output_dir="${OUTPUT_DIR}_${idx}"
 
     echo "============================================================"
     echo "[${idx}/${total}] ${RUN_NAME}"
     echo "  fq_lr=${fq_lr}  lora_lr=${lora_lr}  fq_wd=${fq_wd}  lora_wd=${lora_wd}  warmup=${warmup}  constant=${constant}  cosine=${cosine}"
     echo "  lora_rank=${run_lora_rank}  num_train_samples=${run_num_samples}  train_seqlen=${run_seqlen}  batch_size=${run_batch}"
     echo "  compression_format=${COMPRESSION_FORMAT}"
-    echo "  output_dir=$(realpath -m "$OUTPUT_DIR")"
+    echo "  output_dir=$(realpath -m "$run_output_dir")"
     echo "  log_file - $(realpath -m "$LOG_FILE")"
     echo "============================================================"
 
@@ -136,7 +137,7 @@ run_config() {
         --constant_epochs "$constant" \
         --cosine_epochs "$cosine" \
         --min_lr_ratio 0.1 \
-        --output_dir "$OUTPUT_DIR" \
+        --output_dir "$run_output_dir" \
         --run_name "$RUN_NAME" \
         --compression_format "$COMPRESSION_FORMAT" \
         --dataset "$DATASET" \

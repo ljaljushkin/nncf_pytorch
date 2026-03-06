@@ -28,11 +28,12 @@ import torch
 import torch.nn.functional as F
 import transformers
 from datasets import load_dataset
-from lm_eval import simple_evaluate
-from lm_eval.models.optimum_lm import OptimumLM
-from optimum.exporters.openvino.convert import export_from_model
-from optimum.intel.openvino import OVModelForCausalLM
-from optimum.modeling_base import OptimizedModel
+
+# from lm_eval import simple_evaluate
+# from lm_eval.models.optimum_lm import OptimumLM
+# from optimum.exporters.openvino.convert import export_from_model
+# from optimum.intel.openvino import OVModelForCausalLM
+# from optimum.modeling_base import OptimizedModel
 from torch import Tensor
 from torch import nn
 from torch.jit import TracerWarning
@@ -45,7 +46,6 @@ from nncf.common.logging.track_progress import track
 from nncf.data.dataset import Dataset
 from nncf.parameters import CompressionFormat
 from nncf.parameters import CompressWeightsMode
-from nncf.parameters import StripFormat
 from nncf.quantization.advanced_parameters import AdvancedAWQParameters
 from nncf.quantization.advanced_parameters import AdvancedCompressionParameters
 from nncf.quantization.quantize_model import compress_weights
@@ -114,25 +114,25 @@ DATASET_LOADERS = {
 }
 
 
-def measure_perplexity(
-    optimum_model: OptimizedModel,
-    max_length: Optional[int] = None,
-    limit: Optional[Union[int, float]] = None,
-) -> float:
-    """
-    Measure perplexity on the Wikitext dataset, via rolling loglikelihoods for a given model.
+# def measure_perplexity(
+#     optimum_model: OptimizedModel,
+#     max_length: Optional[int] = None,
+#     limit: Optional[Union[int, float]] = None,
+# ) -> float:
+#     """
+#     Measure perplexity on the Wikitext dataset, via rolling loglikelihoods for a given model.
 
-    :param optimum_model: A model to be evaluated.
-    :param max_length: The maximum sequence length for evaluation.
-    :param limit: Limit the number of examples per task (only use this for testing).
-        If <1, limit is a percentage of the total number of examples.
-    :return: The similarity score as a float.
-    """
-    task = "wikitext"
-    print("#" * 50 + " Evaluate via lm-eval-harness " + "#" * 50)
-    lm_obj = OptimumLM(pretrained=optimum_model, max_length=max_length)
-    results = simple_evaluate(lm_obj, tasks=[task], limit=limit, log_samples=False)
-    return results["results"][task]["word_perplexity,none"]
+#     :param optimum_model: A model to be evaluated.
+#     :param max_length: The maximum sequence length for evaluation.
+#     :param limit: Limit the number of examples per task (only use this for testing).
+#         If <1, limit is a percentage of the total number of examples.
+#     :return: The similarity score as a float.
+#     """
+#     task = "wikitext"
+#     print("#" * 50 + " Evaluate via lm-eval-harness " + "#" * 50)
+#     lm_obj = OptimumLM(pretrained=optimum_model, max_length=max_length)
+#     results = simple_evaluate(lm_obj, tasks=[task], limit=limit, log_samples=False)
+#     return results["results"][task]["word_perplexity,none"]
 
 
 def evaluate_with_vllm(
@@ -469,26 +469,26 @@ def load_checkpoint(model: nn.Module, ckpt_file: Path) -> nn.Module:
     return model
 
 
-@torch.no_grad()
-def export_to_openvino(pretrained: str, ckpt_file: Path, ir_dir: Path) -> OVModelForCausalLM:
-    """
-    Create a wrapper of OpenVINO model from the checkpoint for evaluation on CPU via WWB.
+# @torch.no_grad()
+# def export_to_openvino(pretrained: str, ckpt_file: Path, ir_dir: Path) -> OVModelForCausalLM:
+#     """
+#     Create a wrapper of OpenVINO model from the checkpoint for evaluation on CPU via WWB.
 
-    :param pretrained: The name or path of the pretrained model.
-    :param ckpt_file: The path to the checkpoint file to load the model weights and NNCF configurations.
-    :param last_dir: The directory where the OpenVINO model will be saved.
-    :return: A wrapper of OpenVINO model ready for evaluation.
-    """
-    model_to_eval = AutoModelForCausalLM.from_pretrained(pretrained, torch_dtype=torch.float32, device_map="cpu")
-    model_to_eval = load_checkpoint(model_to_eval, ckpt_file)
-    model_to_eval = nncf.strip(model_to_eval, do_copy=False, strip_format=StripFormat.DQ)
-    export_from_model(model_to_eval, ir_dir, device="cpu")
-    return OVModelForCausalLM.from_pretrained(
-        model_id=ir_dir,
-        trust_remote_code=True,
-        load_in_8bit=False,
-        compile=True,
-    )
+#     :param pretrained: The name or path of the pretrained model.
+#     :param ckpt_file: The path to the checkpoint file to load the model weights and NNCF configurations.
+#     :param last_dir: The directory where the OpenVINO model will be saved.
+#     :return: A wrapper of OpenVINO model ready for evaluation.
+#     """
+#     model_to_eval = AutoModelForCausalLM.from_pretrained(pretrained, torch_dtype=torch.float32, device_map="cpu")
+#     model_to_eval = load_checkpoint(model_to_eval, ckpt_file)
+#     model_to_eval = nncf.strip(model_to_eval, do_copy=False, strip_format=StripFormat.DQ)
+#     export_from_model(model_to_eval, ir_dir, device="cpu")
+#     return OVModelForCausalLM.from_pretrained(
+#         model_id=ir_dir,
+#         trust_remote_code=True,
+#         load_in_8bit=False,
+#         compile=True,
+#     )
 
 
 def limit_type(astr: str):
@@ -713,7 +713,7 @@ def _main_impl(args) -> int:
     device = "cuda"
     torch_dtype = torch.bfloat16
     compression_config = dict(
-        mode=CompressWeightsMode.INT2_SYM,
+        mode=CompressWeightsMode.INT3_SYM,
         group_size=64,
         awq=not args.basic_init,
         backup_mode=nncf.BackupMode.INT8_SYM,
