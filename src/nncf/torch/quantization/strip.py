@@ -183,12 +183,10 @@ def sym_fq_to_decompressor(
     if quantizer.num_bits == 8:
         decompressor = INT8SymmetricWeightsDecompressor(scale=scale, result_dtype=weight_dtype)
     elif quantizer.num_bits == 2:
-        zero_point = torch.full_like(scale, 2, dtype=torch.uint8)
         # Shift signed weights to unsigned: [-2, 1] -> [0, 3]
         q_weight = (q_weight + 2).to(torch.uint8)
         decompressor = INT2SymmetricWeightsDecompressor(
             scale=scale,
-            zero_point=zero_point,
             compressed_weight_shape=q_weight.shape,
             result_shape=weight_shape,
             result_dtype=weight_dtype,

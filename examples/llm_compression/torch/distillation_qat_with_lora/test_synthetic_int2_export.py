@@ -42,6 +42,8 @@ class INT2SymmetricLinear(torch.nn.Module):
     matching the NNCF INT2SymmetricWeightsDecompressor pattern.
     """
 
+    ZERO_POINT_VALUE = 2
+
     def __init__(self, in_features, out_features, group_size):
         super().__init__()
         assert out_features % group_size == 0
@@ -49,19 +51,16 @@ class INT2SymmetricLinear(torch.nn.Module):
 
         compressed_weight_shape = (ngroups, group_size, in_features)
         scale_shape = (ngroups, 1, in_features)
-        zero_point_shape = scale_shape
 
         # Random uint2 weights [0, 3]
         rng = np.random.default_rng(seed=42)
         raw_weights = rng.integers(0, 4, size=compressed_weight_shape, dtype=np.uint8)
         scale = (rng.random(scale_shape, dtype=np.float32) * 2.0 - 1.0).astype(np.float32)
-        zero_point = np.full(zero_point_shape, 2, dtype=np.uint8)
 
         self.compressed_weight_shape = compressed_weight_shape
         self.packed_weight = torch.nn.Parameter(pack_uint2(torch.from_numpy(raw_weights)), requires_grad=False)
         self.register_buffer("_scale", torch.from_numpy(scale).to(torch.float16))
-        self.zero_point_shape = zero_point_shape
-        self.register_buffer("_zero_point", torch.from_numpy(zero_point).to(torch.uint8))
+        self.register_buffer("_zero_point", torch.tensor(self.ZERO_POINT_VALUE, dtype=torch.uint8))
         self.result_shape = (out_features, in_features)
         self.result_dtype = torch.float32
 

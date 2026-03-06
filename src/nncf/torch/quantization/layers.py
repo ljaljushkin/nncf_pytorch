@@ -1669,29 +1669,30 @@ class INT2SymmetricWeightsDecompressor(BaseWeightsDecompressor):
     Applies symmetric decompression of 2-bit compressed weights in the forward pass.
 
     Weights with values in [-2, -1, 0, 1] are stored as uint2 [0, 1, 2, 3] using
-    a zero point of 2. Four uint2 values are packed into each uint8 byte.
+    a hardcoded zero point of 2. Four uint2 values are packed into each uint8 byte.
     """
+
+    ZERO_POINT_VALUE = 2
 
     def __init__(
         self,
         scale: torch.Tensor,
-        zero_point: torch.Tensor,
         compressed_weight_shape: tuple[int, ...],
         result_shape: Optional[tuple[int, ...]] = None,
         result_dtype: Optional[torch.dtype] = None,
     ):
         """
         :param scale: A scale in quantization scheme
-        :param zero_point: A zero point in quantization scheme
         :param compressed_weight_shape: A compressed weight shape
         :param result_shape: (Optional) A shape that result should be reshaped to
         :param result_dtype: (Optional) A data type that result should be cast to
         """
         super().__init__()
         self.register_buffer("_scale", scale.type(dtype=torch.float16))
-
-        self.zero_point_shape = zero_point.shape
-        self.register_buffer("_zero_point", zero_point.type(dtype=torch.uint8))
+        self.register_buffer(
+            "_zero_point",
+            torch.tensor(self.ZERO_POINT_VALUE, dtype=torch.uint8),
+        )
 
         self.compressed_weight_shape = compressed_weight_shape
         self.result_shape = result_shape

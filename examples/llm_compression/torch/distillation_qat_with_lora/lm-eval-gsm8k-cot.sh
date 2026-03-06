@@ -417,16 +417,26 @@ OUT_DIR="$ROOT_DIR/output"
 # --gen_kwargs do_sample=True,temperature=0.7,top_p=0.8,top_k=20,min_p=0
 
 # MODEL_DIR=meta-llama/Llama-3.2-1B-Instruct
-MODEL_DIR=Qwen/Qwen3-4B
+# MODEL_DIR=Qwen/Qwen3-4B
 # MODEL_DIR=output/last/stripped
-lm_eval \
---model vllm \
---model_args "{\"pretrained\":\"${MODEL_DIR}\",\"dtype\":\"auto\",\"tensor_parallel_size\":1}" \
---tasks gsm8k \
---batch_size auto
+# lm_eval \
+# --model vllm \
+# --model_args "{\"pretrained\":\"${MODEL_DIR}\",\"dtype\":\"auto\",\"tensor_parallel_size\":1}" \
+# --tasks gsm8k \
+# --batch_size auto
+# lm_eval \
+# --model vllm \
+# --model_args "{\"pretrained\":\"${MODEL_DIR}\",\"dtype\":\"auto\",\"tensor_parallel_size\":1}" \
+# --tasks lambada_openai \
+# --batch_size auto
 
+# --limit 3 \
+# --log_samples \
+
+CKPT_DIR=/home/nlyaly/projects/nncf/examples/llm_compression/torch/distillation_qat_with_lora/output_pile_qwen3_4b_avg3bit_max_15e_r256/last/ov_1zp
 lm_eval \
---model vllm \
---model_args "{\"pretrained\":\"${MODEL_DIR}\",\"dtype\":\"auto\",\"tensor_parallel_size\":1}" \
---tasks lambada_openai \
---batch_size auto
+--model openvino \
+--model_args pretrained=$CKPT_DIR \
+--device cpu \
+--output_path ov_eval \
+--tasks lambada_openai

@@ -42,7 +42,7 @@ def load_checkpoint(model: nn.Module, ckpt_file: Path) -> nn.Module:
 
 pretrained = "Qwen/Qwen3-4B"
 ckpt_file = "/home/nlyaly/projects/nncf/examples/llm_compression/torch/distillation_qat_with_lora/output_pile_qwen3_4b_avg3bit_max_15e_r256/last/nncf_checkpoint_epoch10.pth"
-ir_dir = "/home/nlyaly/projects/nncf/examples/llm_compression/torch/distillation_qat_with_lora/output_pile_qwen3_4b_avg3bit_max_15e_r256/last/ov"
+ir_dir = "/home/nlyaly/projects/nncf/examples/llm_compression/torch/distillation_qat_with_lora/output_pile_qwen3_4b_avg3bit_max_15e_r256/last/ov_1zp"
 with torch.no_grad():
     model_to_eval = AutoModelForCausalLM.from_pretrained(pretrained, torch_dtype=torch.float32, device_map="cpu")
     model_to_eval = load_checkpoint(model_to_eval, ckpt_file)
